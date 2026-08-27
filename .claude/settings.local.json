@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:claudemarketplaces.com)",
+      "WebFetch(domain:developertoolkit.ai)",
+      "WebFetch(domain:www.aihero.dev)"
+    ]
+  }
+}

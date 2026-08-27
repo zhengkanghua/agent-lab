@@ -1,0 +1,418 @@
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import { BookOpenText, ChevronDown, Clock3, ExternalLink, Radar, Tag } from '@lucide/vue'
+import { formatPublishedAt, formatScore, type NewsChunkResult } from '../model/search-result'
+
+const props = defineProps<{
+  result: NewsChunkResult
+  rank: number
+}>()
+
+const emit = defineEmits<{
+  read: [result: NewsChunkResult, trigger: HTMLButtonElement | null]
+}>()
+
+const COLLAPSED_CHARACTERS = 520
+const expanded = ref(false)
+const rankLabel = computed(() => String(props.rank + 1).padStart(2, '0'))
+const excerptIsLong = computed(() => props.result.excerpt.length > COLLAPSED_CHARACTERS)
+const visibleExcerpt = computed(() => {
+  if (expanded.value || !excerptIsLong.value) return props.result.excerpt
+  return `${props.result.excerpt.slice(0, COLLAPSED_CHARACTERS).trimEnd()}…`
+})
+const authorLine = computed(() => {
+  const authors = [...new Set(props.result.authors.map((author) => author.trim()).filter(Boolean))]
+  if (authors.length <= 2) return authors.join('、')
+  return `${authors.slice(0, 2).join('、')} 等`
+})
+
+function requestFullText(event: MouseEvent): void {
+  emit('read', props.result, event.currentTarget as HTMLButtonElement | null)
+}
+</script>
+
+<template>
+  <article class="chunk-card">
+    <div class="chunk-locator" aria-hidden="true">
+      <strong>{{ rankLabel }}</strong>
+      <span class="locator-line"></span>
+      <span>
+        <small>片段</small>
+        <b>{{ result.chunkIndex + 1 }} / {{ result.chunkCount }}</b>
+      </span>
+    </div>
+
+    <div class="chunk-main">
+      <header class="chunk-header">
+        <div class="chunk-meta">
+          <span class="source-name">{{ result.sourceName }}</span>
+          <span class="meta-item">
+            <Clock3 :size="13" aria-hidden="true" />
+            {{ formatPublishedAt(result.publishedAt) }}
+          </span>
+          <span v-if="authorLine" class="author-line">{{ authorLine }}</span>
+        </div>
+
+        <div
+          class="score-block"
+          :aria-label="`Cosine 相关度分数 ${formatScore(result.score)}，不是概率`"
+          title="原始 Cosine 相关度分数，不是概率"
+        >
+          <Radar :size="15" aria-hidden="true" />
+          <span>{{ formatScore(result.score) }}</span>
+        </div>
+      </header>
+
+      <h3 class="chunk-title">{{ result.title }}</h3>
+
+      <section class="chunk-match" aria-label="语义命中片段">
+        <div class="match-heading">
+          <span>语义命中</span>
+          <span>片段 {{ result.chunkIndex + 1 }} / {{ result.chunkCount }}</span>
+        </div>
+        <p class="chunk-excerpt" :class="{ 'is-collapsed': excerptIsLong && !expanded }">
+          {{ visibleExcerpt }}
+        </p>
+        <button
+          v-if="excerptIsLong"
+          class="expand-button"
+          type="button"
+          :aria-expanded="expanded"
+          @click="expanded = !expanded"
+        >
+          {{ expanded ? '收起片段' : '展开片段' }}
+          <ChevronDown :size="15" :class="{ 'is-open': expanded }" aria-hidden="true" />
+        </button>
+      </section>
+
+      <ul v-if="result.labels.length" class="label-list" aria-label="新闻标签">
+        <li v-for="(label, index) in result.labels" :key="`${label}-${index}`">
+          <Tag :size="12" aria-hidden="true" />
+          {{ label }}
+        </li>
+      </ul>
+
+      <footer class="chunk-actions">
+        <button class="read-button" type="button" @click="requestFullText">
+          <BookOpenText :size="16" aria-hidden="true" />
+          阅读全文
+        </button>
+        <a :href="result.url" target="_blank" rel="noopener noreferrer">
+          <ExternalLink :size="15" aria-hidden="true" />
+          访问原文
+        </a>
+      </footer>
+    </div>
+  </article>
+</template>
+
+<style scoped>
+.chunk-card {
+  display: grid;
+  grid-template-columns: 50px minmax(0, 1fr);
+  gap: 18px;
+  padding: 22px 22px 20px 18px;
+  border: 1px solid var(--paper-300);
+  border-radius: var(--radius-md);
+  background: var(--paper-50);
+  box-shadow: 0 6px 20px rgba(24, 33, 31, 0.035);
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+.chunk-card:hover {
+  border-color: #b8c3bf;
+  box-shadow: var(--shadow-soft);
+  transform: translateY(-1px);
+}
+
+.chunk-locator {
+  display: grid;
+  grid-template-rows: auto minmax(20px, 1fr) auto;
+  justify-items: center;
+  align-self: stretch;
+  min-height: 126px;
+  padding: 2px 0;
+  color: var(--source-600);
+  font-family: var(--mono-font);
+}
+
+.chunk-locator > strong {
+  font-size: 0.88rem;
+}
+
+.locator-line {
+  width: 1px;
+  min-height: 24px;
+  margin: 8px 0;
+  background: linear-gradient(var(--source-500), var(--paper-300));
+}
+
+.chunk-locator > span:last-child {
+  display: grid;
+  justify-items: center;
+  gap: 1px;
+}
+
+.chunk-locator small {
+  color: var(--ink-500);
+  font-family: var(--body-font);
+  font-size: 0.62rem;
+}
+
+.chunk-locator b {
+  color: var(--ink-700);
+  font-size: 0.67rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.chunk-main {
+  min-width: 0;
+}
+
+.chunk-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.chunk-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px 10px;
+  min-width: 0;
+  color: var(--ink-700);
+  font-size: 0.73rem;
+}
+
+.source-name {
+  max-width: 260px;
+  overflow: hidden;
+  padding: 3px 7px;
+  border-radius: 4px;
+  color: var(--source-600);
+  background: var(--source-100);
+  font-weight: 740;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.author-line {
+  max-width: 240px;
+  overflow: hidden;
+  color: var(--ink-500);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.score-block {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
+  min-width: 76px;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid var(--paper-300);
+  border-radius: var(--radius-sm);
+  color: var(--source-600);
+  background: var(--paper-100);
+  font-family: var(--mono-font);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.chunk-title {
+  margin-top: 12px;
+  overflow-wrap: anywhere;
+  color: var(--ink-950);
+  font-family: var(--display-font);
+  font-size: 1.28rem;
+  font-weight: 780;
+  line-height: 1.36;
+}
+
+.chunk-match {
+  margin-top: 14px;
+}
+
+.match-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  color: var(--ink-500);
+  font-family: var(--mono-font);
+  font-size: 0.66rem;
+}
+
+.match-heading span:first-child {
+  color: var(--source-600);
+  font-family: var(--body-font);
+  font-weight: 760;
+}
+
+.chunk-excerpt {
+  max-width: 82ch;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+  color: var(--ink-800);
+  font-size: 0.92rem;
+  line-height: 1.76;
+  white-space: pre-line;
+}
+
+.chunk-excerpt.is-collapsed {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 8;
+  overflow: hidden;
+}
+
+.expand-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 3px 0;
+  border: 0;
+  color: var(--signal-600);
+  background: transparent;
+  font-size: 0.76rem;
+  font-weight: 720;
+}
+
+.expand-button svg {
+  transition: transform 150ms ease;
+}
+
+.expand-button svg.is-open {
+  transform: rotate(180deg);
+}
+
+.label-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0;
+  margin: 15px 0 0;
+  list-style: none;
+}
+
+.label-list li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 3px 7px;
+  border: 1px solid var(--paper-300);
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+  color: var(--ink-700);
+  background: var(--paper-100);
+  font-size: 0.68rem;
+}
+
+.chunk-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 17px;
+  padding-top: 15px;
+  border-top: 1px solid var(--paper-200);
+}
+
+.read-button,
+.chunk-actions a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.76rem;
+  font-weight: 740;
+  text-decoration: none;
+}
+
+.read-button {
+  border: 1px solid var(--signal-500);
+  color: var(--paper-50);
+  background: var(--signal-500);
+}
+
+.read-button:hover {
+  background: var(--signal-600);
+}
+
+.chunk-actions a {
+  border: 1px solid var(--paper-300);
+  color: var(--ink-800);
+  background: var(--paper-50);
+}
+
+.chunk-actions a:hover {
+  border-color: var(--source-500);
+  color: var(--source-600);
+}
+
+@media (max-width: 680px) {
+  .chunk-card {
+    grid-template-columns: 38px minmax(0, 1fr);
+    gap: 12px;
+    padding: 18px 14px 17px 11px;
+  }
+
+  .chunk-locator {
+    min-height: 110px;
+  }
+
+  .chunk-header {
+    align-items: flex-start;
+    flex-direction: column-reverse;
+    gap: 9px;
+  }
+
+  .score-block {
+    min-height: 29px;
+    padding: 3px 7px;
+  }
+
+  .chunk-title {
+    margin-top: 10px;
+    font-size: 1.12rem;
+  }
+
+  .chunk-excerpt {
+    font-size: 0.88rem;
+  }
+
+  .match-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .chunk-actions {
+    align-items: stretch;
+  }
+
+  .read-button,
+  .chunk-actions a {
+    flex: 1 1 132px;
+  }
+}
+</style>
