@@ -6,8 +6,8 @@ import os
 
 import pytest
 
-from news_vector_service.config.ollama_embedding import OllamaEmbeddingSettings
-from news_vector_service.pipeline.ollama_embedding_provider import (
+from agent_lab.config.ollama_embedding import OllamaEmbeddingSettings
+from agent_lab.pipeline.ollama_embedding_provider import (
     OllamaEmbeddingProvider,
 )
 

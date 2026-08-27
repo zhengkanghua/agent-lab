@@ -17,19 +17,19 @@ import pytest
 import httpx
 from pydantic import SecretStr
 
-import news_vector_service.services.freshrss_import_service as import_module
-from news_vector_service.config.freshrss import FreshRSSSettings
-from news_vector_service.domain.source_document import SourceDocument, SourceInfo
-from news_vector_service.ingestion.freshrss_client import FreshRSSConnectionError
-from news_vector_service.ingestion.freshrss_client import FreshRSSClient
-from news_vector_service.schemas.freshrss import (
+import agent_lab.services.freshrss_import_service as import_module
+from agent_lab.config.freshrss import FreshRSSSettings
+from agent_lab.domain.source_document import SourceDocument, SourceInfo
+from agent_lab.ingestion.freshrss_client import FreshRSSConnectionError
+from agent_lab.ingestion.freshrss_client import FreshRSSClient
+from agent_lab.schemas.freshrss import (
     FreshRSSItem,
     FreshRSSItemIdPage,
     FreshRSSSubscription,
     freshrss_item_id_key,
 )
-from news_vector_service.repositories.source_repository import SourceRepository
-from news_vector_service.services.freshrss_import_service import FreshRSSImportService
+from agent_lab.repositories.source_repository import SourceRepository
+from agent_lab.services.freshrss_import_service import FreshRSSImportService
 
 
 def run(coroutine: Any) -> Any:
@@ -46,7 +46,7 @@ def test_freshrss_client_module_import_has_no_cross_layer_cycle() -> None:
             sys.executable,
             "-c",
             (
-                "from news_vector_service.ingestion.freshrss_client "
+                "from agent_lab.ingestion.freshrss_client "
                 "import FreshRSSClient; print(FreshRSSClient.__name__)"
             ),
         ],

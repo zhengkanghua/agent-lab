@@ -16,19 +16,19 @@ import pytest
 from langchain_core.documents import Document
 from qdrant_client import AsyncQdrantClient
 
-from news_vector_service.main import create_app
-from news_vector_service.config.ollama_embedding import OllamaEmbeddingSettings
-from news_vector_service.config.qdrant import QdrantSettings
-from news_vector_service.pipeline.ollama_embedding_provider import (
+from agent_lab.main import create_app
+from agent_lab.config.ollama_embedding import OllamaEmbeddingSettings
+from agent_lab.config.qdrant import QdrantSettings
+from agent_lab.pipeline.ollama_embedding_provider import (
     OllamaEmbeddingProvider,
 )
-from news_vector_service.qdrant.index_spec import VectorIndexSpec
-from news_vector_service.qdrant.lifecycle import QdrantCollectionLifecycle
-from news_vector_service.qdrant.runtime import VectorSearchRuntime
-from news_vector_service.qdrant.search import QdrantVectorSearch
-from news_vector_service.qdrant.store import QdrantChunkStore
-from news_vector_service.schemas.vector_search import VectorSearchResult
-from news_vector_service.services.vector_search_service import VectorSearchService
+from agent_lab.qdrant.index_spec import VectorIndexSpec
+from agent_lab.qdrant.lifecycle import QdrantCollectionLifecycle
+from agent_lab.qdrant.runtime import VectorSearchRuntime
+from agent_lab.qdrant.search import QdrantVectorSearch
+from agent_lab.qdrant.store import QdrantChunkStore
+from agent_lab.schemas.vector_search import VectorSearchResult
+from agent_lab.services.vector_search_service import VectorSearchService
 from tests.auth_helpers import allow_reader, skip_environment_admin_sync
 
 

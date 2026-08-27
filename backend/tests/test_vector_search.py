@@ -22,15 +22,15 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse
 
-from news_vector_service.config.ollama_embedding import OllamaEmbeddingSettings
-from news_vector_service.config.qdrant import QdrantSettings
-from news_vector_service.domain.enums import DocumentType
-from news_vector_service.pipeline.ollama_embedding_provider import (
+from agent_lab.config.ollama_embedding import OllamaEmbeddingSettings
+from agent_lab.config.qdrant import QdrantSettings
+from agent_lab.domain.enums import DocumentType
+from agent_lab.pipeline.ollama_embedding_provider import (
     OllamaEmbeddingProvider,
 )
-from news_vector_service.qdrant.index_spec import VectorIndexSpec
-from news_vector_service.qdrant.lifecycle import QdrantCollectionLifecycle
-from news_vector_service.qdrant.search import (
+from agent_lab.qdrant.index_spec import VectorIndexSpec
+from agent_lab.qdrant.lifecycle import QdrantCollectionLifecycle
+from agent_lab.qdrant.search import (
     QdrantSearchAuthenticationError,
     QdrantSearchConfigurationError,
     QdrantSearchConnectionError,
@@ -40,13 +40,13 @@ from news_vector_service.qdrant.search import (
     QdrantSearchTimeoutError,
     QdrantVectorSearch,
 )
-from news_vector_service.schemas.vector_search import (
+from agent_lab.schemas.vector_search import (
     DEFAULT_TOP_K,
     MAX_TOP_K,
     VectorSearchFilters,
     VectorSearchRequest,
 )
-from news_vector_service.services.vector_search_service import (
+from agent_lab.services.vector_search_service import (
     QueryVectorValidationError,
     VectorSearchService,
 )

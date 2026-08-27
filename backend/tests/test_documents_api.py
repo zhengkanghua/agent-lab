@@ -13,8 +13,8 @@ import httpx
 from fastapi import FastAPI
 from sqlalchemy.exc import SQLAlchemyError
 
-from news_vector_service.api.documents import get_document_repository
-from news_vector_service.main import create_app
+from agent_lab.api.documents import get_document_repository
+from agent_lab.main import create_app
 from tests.auth_helpers import allow_reader, skip_environment_admin_sync
 
 

@@ -1,9 +1,13 @@
-# News RAG Platform
+# Agent Lab
+
+仓库当前只有一个模块：新闻语义检索。后端的 Qdrant 与 Ollama 组件目前仍与新闻领域
+耦合（Payload 契约、Collection 命名、单份配置），尚未抽离为可被多模块、多 Collection
+复用的公共层；接入第二个模块前需要先完成抽离。
 
 该工作区把新闻向量服务与浏览器工作台作为两个独立运行时维护：
 
 ```text
-news-rag-platform/
+agent-lab/
 ├── backend/   # FastAPI、FreshRSS、Ollama Embedding、Qdrant
 ├── frontend/  # Vue 3 + TypeScript + Vite 的 Signal Desk
 └── docs/      # 平台级路线图与决策记录
@@ -31,8 +35,8 @@ Copy-Item .env.example .env
 # 编辑 .env：同时配置 AUTH_ADMIN_EMAIL、AUTH_ADMIN_PASSWORD，
 # 并在本地 HTTP 环境设置 AUTH_COOKIE_SECURE=false。
 uv run alembic upgrade head
-uv run uvicorn news_vector_service.main:app --reload --host 127.0.0.1 --port 8000 `
-  --loop news_vector_service.runtime:selector_loop_factory
+uv run uvicorn agent_lab.main:app --reload --host 127.0.0.1 --port 8000 `
+  --loop agent_lab.runtime:selector_loop_factory
 ```
 
 再启动前端：

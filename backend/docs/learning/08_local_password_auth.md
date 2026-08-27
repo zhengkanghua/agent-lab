@@ -122,7 +122,7 @@ uv run alembic upgrade head
 CLI 仍可作为恢复入口（例如误停用全部网页超级用户、Secret 暂时不可用时）：
 
 ```powershell
-uv run news-vector-service create-user --email recovery@example.com --superuser
+uv run agent-lab create-user --email recovery@example.com --superuser
 ```
 
 CLI 使用终端隐藏输入并要求重复确认，密码不会进入命令参数、Shell 历史或 JSON 输出。它

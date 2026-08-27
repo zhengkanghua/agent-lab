@@ -1,6 +1,6 @@
 # VPS 部署：Cloudflare + Nginx + Uvicorn
 
-本文是 News RAG Platform 当前实际部署模型的操作手册，不假设 Docker Compose，也不把
+本文是 Agent Lab 当前实际部署模型的操作手册，不假设 Docker Compose，也不把
 PostgreSQL、Ollama 或 Qdrant 搬进同一台机器。目标链路如下：
 
 ```text
@@ -21,7 +21,7 @@ PostgreSQL、Ollama 或 Qdrant 搬进同一台机器。目标链路如下：
 
 ## 1. 准备 VPS 与域名
 
-以下示例假定部署目录为 `/opt/news-rag-platform`、运行用户为 `newsrag`、域名为
+以下示例假定部署目录为 `/opt/agent-lab`、运行用户为 `newsrag`、域名为
 `news.example.com`。请把示例中的域名、路径、用户和远程服务地址替换为实际值。
 
 1. 创建没有 shell 登录权限的 `newsrag` 用户，并把代码以该用户可读方式放到部署目录。
@@ -39,10 +39,10 @@ PostgreSQL、Ollama 或 Qdrant 搬进同一台机器。目标链路如下：
 在发布版本目录执行。后端和前端依赖分别由各自目录管理：
 
 ```bash
-cd /opt/news-rag-platform/backend
+cd /opt/agent-lab/backend
 uv sync --frozen --no-dev
 
-cd /opt/news-rag-platform/frontend
+cd /opt/agent-lab/frontend
 npm ci
 npm run build
 ```
@@ -53,7 +53,7 @@ npm run build
 ## 3. 配置后端 Secret
 
 本地开发可以编辑 `backend/.env`；VPS 推荐把部署变量放在代码目录之外，例如
-`/etc/news-rag-platform/backend.env`，由 systemd 注入。文件内容遵守 dotenv/EnvironmentFile
+`/etc/agent-lab/backend.env`，由 systemd 注入。文件内容遵守 dotenv/EnvironmentFile
 格式：
 
 ```dotenv
@@ -93,9 +93,9 @@ QDRANT_DISTANCE=Cosine
 构建读取：
 
 ```bash
-sudo install -d -o newsrag -g newsrag -m 0750 /etc/news-rag-platform
-sudo chown newsrag:newsrag /etc/news-rag-platform/backend.env
-sudo chmod 0600 /etc/news-rag-platform/backend.env
+sudo install -d -o newsrag -g newsrag -m 0750 /etc/agent-lab
+sudo chown newsrag:newsrag /etc/agent-lab/backend.env
+sudo chmod 0600 /etc/agent-lab/backend.env
 ```
 
 如果使用其他 Secret 管理器，等价地把变量注入 Uvicorn 进程即可；不要把所有用户写成
@@ -108,11 +108,11 @@ JSON 放进 `.env`。`.env` 只负责一个保底管理员，日常账号由网�
 
 ```bash
 sudo systemd-run --wait --pipe --collect \
-  --unit=news-rag-migrate \
+  --unit=agent-lab-migrate \
   --property=User=newsrag \
-  --property=WorkingDirectory=/opt/news-rag-platform/backend \
-  --property=EnvironmentFile=/etc/news-rag-platform/backend.env \
-  /opt/news-rag-platform/backend/.venv/bin/alembic upgrade head
+  --property=WorkingDirectory=/opt/agent-lab/backend \
+  --property=EnvironmentFile=/etc/agent-lab/backend.env \
+  /opt/agent-lab/backend/.venv/bin/alembic upgrade head
 ```
 
 这样由 systemd 解析同一个 Secret 文件，不把变量展开到命令参数，也不依赖 `grep | xargs`
@@ -124,11 +124,11 @@ sudo systemd-run --wait --pipe --collect \
 
 ## 5. systemd 服务
 
-创建 `/etc/systemd/system/news-rag-platform.service`：
+创建 `/etc/systemd/system/agent-lab.service`：
 
 ```ini
 [Unit]
-Description=News RAG Platform API
+Description=Agent Lab API
 After=network-online.target
 Wants=network-online.target
 
@@ -136,10 +136,10 @@ Wants=network-online.target
 Type=exec
 User=newsrag
 Group=newsrag
-WorkingDirectory=/opt/news-rag-platform/backend
-EnvironmentFile=/etc/news-rag-platform/backend.env
+WorkingDirectory=/opt/agent-lab/backend
+EnvironmentFile=/etc/agent-lab/backend.env
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/opt/news-rag-platform/backend/.venv/bin/uvicorn news_vector_service.main:app --host 127.0.0.1 --port 8000
+ExecStart=/opt/agent-lab/backend/.venv/bin/uvicorn agent_lab.main:app --host 127.0.0.1 --port 8000
 Restart=on-failure
 RestartSec=5
 PrivateTmp=true
@@ -155,25 +155,25 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now news-rag-platform
-sudo systemctl status news-rag-platform
-sudo journalctl -u news-rag-platform -n 100 --no-pager
+sudo systemctl enable --now agent-lab
+sudo systemctl status agent-lab
+sudo journalctl -u agent-lab -n 100 --no-pager
 ```
 
 Linux 默认事件循环可直接运行；Windows 本地开发需按项目 README 使用
-`news_vector_service.runtime:selector_loop_factory`，因为 Psycopg 异步驱动不支持
+`agent_lab.runtime:selector_loop_factory`，因为 Psycopg 异步驱动不支持
 Proactor loop。systemd 环境不需要该 Windows 参数。
 
 先在 VPS 本机检查：
 
 ```bash
 curl --fail http://127.0.0.1:8000/health
-curl --fail http://127.0.0.1:8000/openapi.json >/tmp/news-rag-openapi.json
+curl --fail http://127.0.0.1:8000/openapi.json >/tmp/agent-lab-openapi.json
 ```
 
 ## 6. Nginx 同域静态资源与 `/api` 反代
 
-在 `/etc/nginx/conf.d/news-rag-login-limit.conf`（`http` 上下文）加入登录限流区域：
+在 `/etc/nginx/conf.d/agent-lab-login-limit.conf`（`http` 上下文）加入登录限流区域：
 
 ```nginx
 limit_req_zone $binary_remote_addr zone=news_rag_login:10m rate=5r/m;
@@ -197,7 +197,7 @@ server {
     ssl_certificate /etc/letsencrypt/live/news.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/news.example.com/privkey.pem;
 
-    root /opt/news-rag-platform/frontend/dist;
+    root /opt/agent-lab/frontend/dist;
     index index.html;
     client_max_body_size 1m;
 
@@ -253,7 +253,7 @@ Cloudflare 官方 IP 段配置 `real_ip` 模块，只信任来自 Cloudflare 的
 
 ## 8. 轮换与恢复规则
 
-修改 `/etc/news-rag-platform/backend.env` 后重启服务：
+修改 `/etc/agent-lab/backend.env` 后重启服务：
 
 - 修改 `AUTH_ADMIN_PASSWORD`：启动同步 Argon2 Hash；若密码真的变化，撤销该账号所有
   现有会话。新密码可立即登录。
@@ -264,13 +264,13 @@ Cloudflare 官方 IP 段配置 `real_ip` 模块，只信任来自 Cloudflare 的
 - 只删除其中一项：配置校验失败，服务不会以半配置状态启动；请同时恢复两项或同时移除。
 
 推荐的轮换顺序是：先确认新 Secret 已写入并备份，再执行唯一 migration（如版本有变化），
-最后 `sudo systemctl restart news-rag-platform`，随后检查 `/health`、登录和
+最后 `sudo systemctl restart agent-lab`，随后检查 `/health`、登录和
 `journalctl`。不要把密码写进命令行参数、shell history、截图或工单。
 
 CLI 恢复只在网页无法进入时使用：
 
 ```bash
-sudo -u newsrag /opt/news-rag-platform/backend/.venv/bin/news-vector-service \
+sudo -u newsrag /opt/agent-lab/backend/.venv/bin/agent-lab \
   create-user --email recovery@example.com --superuser
 ```
 
@@ -282,19 +282,19 @@ sudo -u newsrag /opt/news-rag-platform/backend/.venv/bin/news-vector-service \
 每次发布至少执行：
 
 ```bash
-cd /opt/news-rag-platform/backend
+cd /opt/agent-lab/backend
 uv sync --frozen --no-dev
 uv run --frozen --no-dev alembic upgrade head
 uv run --frozen --no-dev alembic check
 
-cd /opt/news-rag-platform/frontend
+cd /opt/agent-lab/frontend
 npm ci
 npm run typecheck
 npm run lint
 npm run test:run
 npm run build
 
-sudo systemctl restart news-rag-platform
+sudo systemctl restart agent-lab
 sudo nginx -t && sudo systemctl reload nginx
 curl --fail https://news.example.com/api/health
 ```

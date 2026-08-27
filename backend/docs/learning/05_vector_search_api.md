@@ -329,8 +329,8 @@ OpenAPI 明确声明：
 启动：
 
 ```powershell
-uv run uvicorn news_vector_service.main:app --reload `
-  --loop news_vector_service.runtime:selector_loop_factory
+uv run uvicorn agent_lab.main:app --reload `
+  --loop agent_lab.runtime:selector_loop_factory
 ```
 
 PowerShell 请求：

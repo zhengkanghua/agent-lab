@@ -7,9 +7,9 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context
-from news_vector_service.config.settings import get_settings
-from news_vector_service.db.base import Base
-from news_vector_service import models  # noqa: F401
+from agent_lab.config.settings import get_settings
+from agent_lab.db.base import Base
+from agent_lab import models  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

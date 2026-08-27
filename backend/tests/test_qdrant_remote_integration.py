@@ -9,13 +9,13 @@ from langchain_core.documents import Document
 from pydantic import SecretStr
 from qdrant_client.http import models
 
-from news_vector_service.config.qdrant import QdrantSettings
-from news_vector_service.qdrant.index_spec import VectorIndexSpec
-from news_vector_service.qdrant.lifecycle import (
+from agent_lab.config.qdrant import QdrantSettings
+from agent_lab.qdrant.index_spec import VectorIndexSpec
+from agent_lab.qdrant.lifecycle import (
     QdrantCollectionLifecycle,
     build_qdrant_client,
 )
-from news_vector_service.qdrant.store import QdrantChunkStore
+from agent_lab.qdrant.store import QdrantChunkStore
 
 
 pytestmark = pytest.mark.skipif(

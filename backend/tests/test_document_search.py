@@ -17,21 +17,21 @@ from fastapi import FastAPI
 from pydantic import SecretStr, ValidationError
 from qdrant_client.http import models
 
-from news_vector_service.api.vector_search import VectorSearchErrorResponse
-from news_vector_service.config.ollama_embedding import OllamaEmbeddingSettings
-from news_vector_service.config.qdrant import QdrantSettings
-from news_vector_service.main import create_app
-from news_vector_service.qdrant.index_spec import VectorIndexSpec
-from news_vector_service.qdrant.search import (
+from agent_lab.api.vector_search import VectorSearchErrorResponse
+from agent_lab.config.ollama_embedding import OllamaEmbeddingSettings
+from agent_lab.config.qdrant import QdrantSettings
+from agent_lab.main import create_app
+from agent_lab.qdrant.index_spec import VectorIndexSpec
+from agent_lab.qdrant.search import (
     QdrantSearchResponseError,
     QdrantVectorSearch,
 )
-from news_vector_service.schemas.document_search import (
+from agent_lab.schemas.document_search import (
     DocumentSearchRequest,
     DocumentSearchResult,
 )
-from news_vector_service.schemas.vector_search import VectorSearchFilters
-from news_vector_service.services.vector_search_service import VectorSearchService
+from agent_lab.schemas.vector_search import VectorSearchFilters
+from agent_lab.services.vector_search_service import VectorSearchService
 from tests.auth_helpers import allow_reader, skip_environment_admin_sync
 
 
@@ -304,7 +304,7 @@ def test_document_search_http_forwards_limits_and_empty_success() -> None:
 
 
 def test_document_search_http_preserves_known_upstream_error_mapping() -> None:
-    from news_vector_service.qdrant.search import QdrantSearchTimeoutError
+    from agent_lab.qdrant.search import QdrantSearchTimeoutError
 
     class ErrorService(FakeDocumentSearchService):
         async def search_documents(self, request: DocumentSearchRequest) -> list[DocumentSearchResult]:

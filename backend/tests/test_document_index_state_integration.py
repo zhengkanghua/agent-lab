@@ -8,17 +8,17 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import delete, select
 
-from news_vector_service.db.session import async_session_factory, engine
-from news_vector_service.domain.enums import DocumentType, ProcessingStatus
-from news_vector_service.domain.source_document import (
+from agent_lab.db.session import async_session_factory, engine
+from agent_lab.domain.enums import DocumentType, ProcessingStatus
+from agent_lab.domain.source_document import (
     ImageReference,
     SourceDocument,
     SourceInfo,
 )
-from news_vector_service.models.document import DocumentRecord
-from news_vector_service.models.source import SourceRecord
-from news_vector_service.repositories.document_repository import DocumentRepository
-from news_vector_service.repositories.source_repository import SourceRepository
+from agent_lab.models.document import DocumentRecord
+from agent_lab.models.source import SourceRecord
+from agent_lab.repositories.document_repository import DocumentRepository
+from agent_lab.repositories.source_repository import SourceRepository
 
 
 pytestmark = pytest.mark.skipif(

@@ -10,10 +10,10 @@ import os
 
 import pytest
 
-from news_vector_service.config.ollama_embedding import OllamaEmbeddingSettings
-from news_vector_service.config.qdrant import QdrantSettings
-from news_vector_service.qdrant.runtime import VectorSearchRuntime
-from news_vector_service.schemas.vector_search import VectorSearchRequest
+from agent_lab.config.ollama_embedding import OllamaEmbeddingSettings
+from agent_lab.config.qdrant import QdrantSettings
+from agent_lab.qdrant.runtime import VectorSearchRuntime
+from agent_lab.schemas.vector_search import VectorSearchRequest
 
 
 pytestmark = pytest.mark.skipif(

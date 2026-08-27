@@ -8,12 +8,12 @@ from hashlib import sha256
 
 import pytest
 
-from news_vector_service.ingestion.content_quality import ContentQualityNormalizer
-from news_vector_service.ingestion.freshrss_mapper import (
+from agent_lab.ingestion.content_quality import ContentQualityNormalizer
+from agent_lab.ingestion.freshrss_mapper import (
     FreshRSSContentQualityError,
     FreshRSSItemMapper,
 )
-from news_vector_service.schemas.freshrss import FreshRSSItem, FreshRSSSubscription
+from agent_lab.schemas.freshrss import FreshRSSItem, FreshRSSSubscription
 
 
 def subscription() -> FreshRSSSubscription:

@@ -18,7 +18,7 @@ WebSocket、生成式 LLM、Retriever 或 RAG，也没有 ``pipeline_runs`` 表�
 “有 HTTP 路由”不等于“自动任务”。当前两个组合入口都由操作者显式触发：
 
 ```text
-CLI:  uv run news-vector-service run-once ...
+CLI:  uv run agent-lab run-once ...
 HTTP: POST /pipeline/run-once
 ```
 
@@ -340,8 +340,8 @@ VectorSearchRuntime
 普通用户得到 403，匿名调用得到 401。开发仍建议显式绑定：
 
 ```powershell
-uv run uvicorn news_vector_service.main:app --host 127.0.0.1 `
-  --loop news_vector_service.runtime:selector_loop_factory
+uv run uvicorn agent_lab.main:app --host 127.0.0.1 `
+  --loop agent_lab.runtime:selector_loop_factory
 ```
 
 生产必须使用 HTTPS/Secure Cookie，并继续放在具有限流、请求体上限和 timeout 的网关

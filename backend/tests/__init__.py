@@ -1,1 +1,1 @@
-"""News Vector Service 的离线与显式集成测试包。"""
+"""Agent Lab 的离线与显式集成测试包。"""

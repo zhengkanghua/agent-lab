@@ -59,13 +59,13 @@ PostgreSQL 是新闻业务事实来源；Qdrant 是可从 PostgreSQL 正文和�
 安装项目后可查看帮助：
 
 ```powershell
-uv run news-vector-service --help
+uv run agent-lab --help
 ```
 
 ### sync-news
 
 ```powershell
-uv run news-vector-service sync-news --limit-per-source 2
+uv run agent-lab sync-news --limit-per-source 2
 ```
 
 调用流程：
@@ -92,7 +92,7 @@ FreshRSS 分类白名单
 ### index-pending
 
 ```powershell
-uv run news-vector-service index-pending `
+uv run agent-lab index-pending `
   --batch-size 20 `
   --stale-after-minutes 60
 ```
@@ -121,7 +121,7 @@ uv run news-vector-service index-pending `
 ### run-once
 
 ```powershell
-uv run news-vector-service run-once `
+uv run agent-lab run-once `
   --limit-per-source 2 `
   --batch-size 20 `
   --stale-after-minutes 60

@@ -141,11 +141,11 @@ result = await indexing_service.index_document(session, document_id)
 关闭时调用 `await runtime.close()` 释放 Ollama 与 Qdrant 连接池。
 
 ```python
-from news_vector_service.config.ollama_embedding import (
+from agent_lab.config.ollama_embedding import (
     get_ollama_embedding_settings,
 )
-from news_vector_service.config.qdrant import get_qdrant_settings
-from news_vector_service.qdrant.runtime import DocumentIndexingRuntime
+from agent_lab.config.qdrant import get_qdrant_settings
+from agent_lab.qdrant.runtime import DocumentIndexingRuntime
 
 runtime = DocumentIndexingRuntime.build(
     get_qdrant_settings(),

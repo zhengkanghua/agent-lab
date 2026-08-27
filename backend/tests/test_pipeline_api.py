@@ -16,22 +16,22 @@ from fastapi import FastAPI
 from pydantic import SecretStr, ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
-from news_vector_service.api.pipeline import build_pipeline_error_response
-from news_vector_service.config.freshrss import FreshRSSSettings
-from news_vector_service.ingestion.freshrss_client import (
+from agent_lab.api.pipeline import build_pipeline_error_response
+from agent_lab.config.freshrss import FreshRSSSettings
+from agent_lab.ingestion.freshrss_client import (
     FreshRSSAuthenticationError,
     FreshRSSConnectionError,
     FreshRSSTimeoutError,
 )
-from news_vector_service.main import create_app
-from news_vector_service.pipeline.ollama_embedding_provider import OllamaTimeoutError
-from news_vector_service.pipeline.write_runtime import (
+from agent_lab.main import create_app
+from agent_lab.pipeline.ollama_embedding_provider import OllamaTimeoutError
+from agent_lab.pipeline.write_runtime import (
     PipelineRunOnceExecutionResult,
     PipelineWriteRuntime,
 )
-from news_vector_service.qdrant.lifecycle import QdrantLifecycleError
-from news_vector_service.services.freshrss_import_service import SourceSyncFailure
-from news_vector_service.services.news_pipeline_execution_service import (
+from agent_lab.qdrant.lifecycle import QdrantLifecycleError
+from agent_lab.services.freshrss_import_service import SourceSyncFailure
+from agent_lab.services.news_pipeline_execution_service import (
     IndexExecutionFailure,
     NewsSyncExecutionResult,
     PendingIndexExecutionResult,

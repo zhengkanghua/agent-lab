@@ -8,13 +8,13 @@ from uuid import uuid4
 import pytest
 from langchain_core.documents import Document
 
-import news_vector_service.services.document_indexing_service as service_module
-from news_vector_service.models.document import DocumentRecord
-from news_vector_service.pipeline.ollama_embedding_provider import ChunkEmbedding
-from news_vector_service.qdrant.index_spec import VectorIndexSpec
-from news_vector_service.qdrant.index_spec import VectorIndexConfigurationError
-from news_vector_service.qdrant.store import ReplaceChunksResult
-from news_vector_service.services.document_indexing_service import (
+import agent_lab.services.document_indexing_service as service_module
+from agent_lab.models.document import DocumentRecord
+from agent_lab.pipeline.ollama_embedding_provider import ChunkEmbedding
+from agent_lab.qdrant.index_spec import VectorIndexSpec
+from agent_lab.qdrant.index_spec import VectorIndexConfigurationError
+from agent_lab.qdrant.store import ReplaceChunksResult
+from agent_lab.services.document_indexing_service import (
     DocumentIndexingService,
 )
 

@@ -14,23 +14,23 @@ from pydantic import SecretStr, ValidationError
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models
 
-from news_vector_service.config.ollama_embedding import OllamaEmbeddingSettings
-from news_vector_service.config.qdrant import QdrantSettings
-from news_vector_service.qdrant.index_spec import (
+from agent_lab.config.ollama_embedding import OllamaEmbeddingSettings
+from agent_lab.config.qdrant import QdrantSettings
+from agent_lab.qdrant.index_spec import (
     VectorIndexConfigurationError,
     VectorIndexSpec,
 )
-from news_vector_service.qdrant.lifecycle import (
+from agent_lab.qdrant.lifecycle import (
     PAYLOAD_INDEX_SCHEMAS,
     QdrantAliasConflictError,
     QdrantCollectionLifecycle,
     build_qdrant_client,
 )
-from news_vector_service.qdrant.payload import (
+from agent_lab.qdrant.payload import (
     QdrantPayloadError,
     QdrantPayloadMapper,
 )
-from news_vector_service.qdrant.store import QdrantChunkStore, QdrantPointStoreError
+from agent_lab.qdrant.store import QdrantChunkStore, QdrantPointStoreError
 
 
 def run(coroutine: Any) -> Any:
@@ -496,7 +496,7 @@ def test_lifecycle_does_not_create_missing_alias_target() -> None:
         finally:
             await client.close()
 
-    from news_vector_service.qdrant.lifecycle import QdrantLifecycleError
+    from agent_lab.qdrant.lifecycle import QdrantLifecycleError
 
     run(verify())
 

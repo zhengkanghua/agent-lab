@@ -11,11 +11,11 @@ from langchain_core.documents import Document
 from ollama import ResponseError
 from pydantic import SecretStr, ValidationError
 
-from news_vector_service.config.ollama_embedding import (
+from agent_lab.config.ollama_embedding import (
     OllamaEmbeddingSettings,
     build_ollama_headers,
 )
-from news_vector_service.pipeline.ollama_embedding_provider import (
+from agent_lab.pipeline.ollama_embedding_provider import (
     EmbeddingResponseError,
     OllamaAuthenticationError,
     OllamaConnectionError,

@@ -4,9 +4,9 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 
-from news_vector_service.auth.dependencies import current_active_user, current_superuser
-from news_vector_service.auth.bootstrap import EnvironmentAdminSyncResult
-from news_vector_service.models.user import UserRecord
+from agent_lab.auth.dependencies import current_active_user, current_superuser
+from agent_lab.auth.bootstrap import EnvironmentAdminSyncResult
+from agent_lab.models.user import UserRecord
 
 
 async def skip_environment_admin_sync() -> EnvironmentAdminSyncResult:

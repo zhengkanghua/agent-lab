@@ -230,12 +230,12 @@ published_from/to = 带时区且包含端点
 新闻多个 Chunk 可以分别返回，不做 document 聚合或新闻时间加权。
 
 ```python
-from news_vector_service.config.ollama_embedding import (
+from agent_lab.config.ollama_embedding import (
     get_ollama_embedding_settings,
 )
-from news_vector_service.config.qdrant import get_qdrant_settings
-from news_vector_service.qdrant.runtime import VectorSearchRuntime
-from news_vector_service.schemas.vector_search import (
+from agent_lab.config.qdrant import get_qdrant_settings
+from agent_lab.qdrant.runtime import VectorSearchRuntime
+from agent_lab.schemas.vector_search import (
     VectorSearchFilters,
     VectorSearchRequest,
 )
@@ -365,13 +365,13 @@ pending/failed -> processing
 
 ```powershell
 # 只执行 FreshRSS -> PostgreSQL；每个白名单来源默认最多 2 篇
-uv run news-vector-service sync-news --limit-per-source 2
+uv run agent-lab sync-news --limit-per-source 2
 
 # 显式准备 Qdrant langchain Alias，并顺序处理最多 20 个 pending/failed 文档
-uv run news-vector-service index-pending --batch-size 20 --stale-after-minutes 60
+uv run agent-lab index-pending --batch-size 20 --stale-after-minutes 60
 
 # 先同步，再处理一个索引批次，然后退出
-uv run news-vector-service run-once --limit-per-source 2 --batch-size 20
+uv run agent-lab run-once --limit-per-source 2 --batch-size 20
 ```
 
 ``sync-news`` 不构造 Qdrant/Ollama Runtime；``index-pending`` 在领取 PostgreSQL 候选
@@ -476,9 +476,9 @@ Copy-Item .env.example .env
 # 编辑 .env，同时填写 AUTH_ADMIN_EMAIL/AUTH_ADMIN_PASSWORD；
 # 本地 HTTP 设置 AUTH_COOKIE_SECURE=false，生产 HTTPS 必须保持 true。
 uv run alembic upgrade head
-uv run news-vector-service run-once --limit-per-source 2 --batch-size 20
-uv run uvicorn news_vector_service.main:app --reload --host 127.0.0.1 `
-  --loop news_vector_service.runtime:selector_loop_factory
+uv run agent-lab run-once --limit-per-source 2 --batch-size 20
+uv run uvicorn agent_lab.main:app --reload --host 127.0.0.1 `
+  --loop agent_lab.runtime:selector_loop_factory
 ```
 
 健康检查：
@@ -586,8 +586,8 @@ Git 隔离不等于运行时隔离。本项目 `.env` 已使用独立 PostgreSQL
 不同端口，例如本项目可使用：
 
 ```powershell
-uv run uvicorn news_vector_service.main:app --reload --port 8001 `
-  --loop news_vector_service.runtime:selector_loop_factory
+uv run uvicorn agent_lab.main:app --reload --port 8001 `
+  --loop agent_lab.runtime:selector_loop_factory
 ```
 
 Qdrant 已使用 ``QDRANT_ENVIRONMENT``、Schema 版本和 generation 组成物理 Collection

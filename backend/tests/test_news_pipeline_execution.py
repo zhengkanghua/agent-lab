@@ -13,10 +13,10 @@ from uuid import UUID, uuid4
 
 import pytest
 
-import news_vector_service.services.news_pipeline_execution_service as execution_module
-from news_vector_service.services.document_indexing_service import DocumentIndexingResult
-from news_vector_service.services.freshrss_import_service import FreshRSSImportResult
-from news_vector_service.services.news_pipeline_execution_service import (
+import agent_lab.services.news_pipeline_execution_service as execution_module
+from agent_lab.services.document_indexing_service import DocumentIndexingResult
+from agent_lab.services.freshrss_import_service import FreshRSSImportResult
+from agent_lab.services.news_pipeline_execution_service import (
     NewsPipelineExecutionService,
 )
 

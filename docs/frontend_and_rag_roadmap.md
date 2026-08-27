@@ -52,8 +52,8 @@ Chunk 契约；Signal Desk 的“按片段”模式会直接消费它，但不�
 建议创建一个父项目，以单个 Git 仓库管理两个运行时独立的项目：
 
 ```text
-news-rag-platform/
-├── backend/                 # 当前 news-vector-service-LangChain 项目
+agent-lab/
+├── backend/                 # 当前 agent-lab-LangChain 项目
 │   ├── pyproject.toml
 │   ├── src/
 │   ├── tests/
@@ -78,7 +78,7 @@ news-rag-platform/
 - 前端不能直接连接 PostgreSQL、Ollama 或 Qdrant，也不能持有这些服务的凭据。
 - 根目录只负责编排、部署、平台文档和统一开发入口。
 
-用户创建并打开 `news-rag-platform` 父目录后，Codex 才能稳定地把前后端作为同一个
+用户创建并打开 `agent-lab` 父目录后，Codex 才能稳定地把前后端作为同一个
 工作区理解。当前文档随原项目移动后会暂时位于
 `backend/docs/frontend_and_rag_roadmap.md`；完成重组时应把它复制或移动到平台根目录
 的 `docs/` 下，并保留后端 README 对自身能力的说明。
@@ -336,7 +336,7 @@ DDoS、防火墙、Bot 和限流能力，但都需要显式配置；仅托管域
 
 ### 阶段 A：工作区重组与留档迁移
 
-- 创建 `news-rag-platform` 父目录；
+- 创建 `agent-lab` 父目录；
 - 把当前项目完整移动到 `backend/`；
 - 创建空的 `frontend/` 位置，但不手工拼装框架文件；
 - 把本留档迁移到平台根 `docs/`；

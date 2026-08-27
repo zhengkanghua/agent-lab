@@ -9,16 +9,16 @@ from pydantic import SecretStr
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from news_vector_service.auth.bootstrap import synchronize_environment_admin
-from news_vector_service.config.auth import AuthSettings
-from news_vector_service.db.session import engine
-from news_vector_service.models.user import AccessTokenRecord, UserRecord
-from news_vector_service.schemas.user_admin import (
+from agent_lab.auth.bootstrap import synchronize_environment_admin
+from agent_lab.config.auth import AuthSettings
+from agent_lab.db.session import engine
+from agent_lab.models.user import AccessTokenRecord, UserRecord
+from agent_lab.schemas.user_admin import (
     UserAdminCreateRequest,
     UserAdminPasswordRequest,
     UserAdminUpdateRequest,
 )
-from news_vector_service.services.user_admin_service import (
+from agent_lab.services.user_admin_service import (
     UserAdminDomainError,
     UserAdminService,
 )

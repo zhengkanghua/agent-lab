@@ -1,7 +1,7 @@
 [project]
-name = "news-vector-service"
+name = "agent-lab"
 version = "0.1.0"
-description = "FreshRSS news ingestion, Qdrant indexing, and vector search service"
+description = "Agent Lab backend: FreshRSS ingestion, Qdrant indexing, and vector search"
 readme = "README.md"
 authors = [
     { name = "zhengkanghua", email = "2040803007@qq.com" }
@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [project.scripts]
-news-vector-service = "news_vector_service.cli:main"
+agent-lab = "agent_lab.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]

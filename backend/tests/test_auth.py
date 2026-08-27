@@ -10,15 +10,15 @@ import pytest
 from fastapi_users import exceptions
 from pydantic import SecretStr, ValidationError
 
-from news_vector_service.auth.dependencies import (
+from agent_lab.auth.dependencies import (
     get_database_strategy,
     get_user_manager,
 )
-from news_vector_service.auth.manager import UserManager
-from news_vector_service.config.auth import AuthSettings
-from news_vector_service.main import create_app
-from news_vector_service.models.user import UserRecord
-from news_vector_service.schemas.auth import AuthUserCreate
+from agent_lab.auth.manager import UserManager
+from agent_lab.config.auth import AuthSettings
+from agent_lab.main import create_app
+from agent_lab.models.user import UserRecord
+from agent_lab.schemas.auth import AuthUserCreate
 from tests.auth_helpers import skip_environment_admin_sync
 
 
@@ -218,7 +218,7 @@ def test_user_manager_enforces_minimum_password_rules() -> None:
 def test_auth_tables_define_required_comments_and_indexes() -> None:
     """认证表保持仓库要求的列注释、主外键和授权查询索引。"""
 
-    from news_vector_service.models.user import AccessTokenRecord
+    from agent_lab.models.user import AccessTokenRecord
 
     assert all(column.comment for column in UserRecord.__table__.columns)
     assert all(column.comment for column in AccessTokenRecord.__table__.columns)

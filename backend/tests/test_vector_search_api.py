@@ -14,9 +14,9 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from news_vector_service.api.vector_search import VectorSearchErrorResponse
-from news_vector_service.main import create_app
-from news_vector_service.pipeline.ollama_embedding_provider import (
+from agent_lab.api.vector_search import VectorSearchErrorResponse
+from agent_lab.main import create_app
+from agent_lab.pipeline.ollama_embedding_provider import (
     EmbeddingResponseError,
     OllamaAuthenticationError,
     OllamaConnectionError,
@@ -25,7 +25,7 @@ from news_vector_service.pipeline.ollama_embedding_provider import (
     OllamaServiceError,
     OllamaTimeoutError,
 )
-from news_vector_service.qdrant.search import (
+from agent_lab.qdrant.search import (
     QdrantSearchAuthenticationError,
     QdrantSearchConfigurationError,
     QdrantSearchConnectionError,
@@ -34,12 +34,12 @@ from news_vector_service.qdrant.search import (
     QdrantSearchTargetNotFoundError,
     QdrantSearchTimeoutError,
 )
-from news_vector_service.schemas.vector_search import (
+from agent_lab.schemas.vector_search import (
     VectorSearchFilters,
     VectorSearchRequest,
     VectorSearchResult,
 )
-from news_vector_service.services.vector_search_service import (
+from agent_lab.services.vector_search_service import (
     QueryVectorValidationError,
 )
 from tests.auth_helpers import allow_reader, skip_environment_admin_sync

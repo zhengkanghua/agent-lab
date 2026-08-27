@@ -9,14 +9,14 @@ from uuid import uuid4
 
 import pytest
 
-import news_vector_service.cli as cli_module
-from news_vector_service.cli import CommandOutcome, build_parser, main
-from news_vector_service.services.news_pipeline_execution_service import (
+import agent_lab.cli as cli_module
+from agent_lab.cli import CommandOutcome, build_parser, main
+from agent_lab.services.news_pipeline_execution_service import (
     IndexExecutionFailure,
     NewsSyncExecutionResult,
     PendingIndexExecutionResult,
 )
-from news_vector_service.services.freshrss_import_service import SourceSyncFailure
+from agent_lab.services.freshrss_import_service import SourceSyncFailure
 
 
 def run(coroutine: Any) -> Any:

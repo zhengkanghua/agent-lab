@@ -8,13 +8,13 @@ import pytest
 import tiktoken
 from langchain_core.documents import Document
 
-from news_vector_service.domain.enums import DocumentType
-from news_vector_service.models.document import DocumentRecord
-from news_vector_service.models.source import SourceRecord
-from news_vector_service.pipeline.document_builder import DocumentBuilder
-from news_vector_service.pipeline.document_chunk_pipeline import DocumentChunkPipeline
-from news_vector_service.pipeline.document_chunker import DocumentChunker
-from news_vector_service.runtime import selector_loop_factory
+from agent_lab.domain.enums import DocumentType
+from agent_lab.models.document import DocumentRecord
+from agent_lab.models.source import SourceRecord
+from agent_lab.pipeline.document_builder import DocumentBuilder
+from agent_lab.pipeline.document_chunk_pipeline import DocumentChunkPipeline
+from agent_lab.pipeline.document_chunker import DocumentChunker
+from agent_lab.runtime import selector_loop_factory
 
 
 def build_record(*, content_text: str = "正文内容") -> DocumentRecord:

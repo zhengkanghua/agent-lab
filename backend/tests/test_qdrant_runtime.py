@@ -6,9 +6,9 @@ from typing import Any
 
 from qdrant_client import AsyncQdrantClient
 
-from news_vector_service.config.ollama_embedding import OllamaEmbeddingSettings
-from news_vector_service.config.qdrant import QdrantSettings
-from news_vector_service.qdrant.runtime import (
+from agent_lab.config.ollama_embedding import OllamaEmbeddingSettings
+from agent_lab.config.qdrant import QdrantSettings
+from agent_lab.qdrant.runtime import (
     DocumentIndexingRuntime,
     VectorSearchRuntime,
 )

@@ -9,16 +9,16 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 
-from news_vector_service.api.user_admin import get_user_admin_service
-from news_vector_service.auth.dependencies import current_superuser
-from news_vector_service.main import create_app
-from news_vector_service.models.user import UserRecord
-from news_vector_service.schemas.user_admin import (
+from agent_lab.api.user_admin import get_user_admin_service
+from agent_lab.auth.dependencies import current_superuser
+from agent_lab.main import create_app
+from agent_lab.models.user import UserRecord
+from agent_lab.schemas.user_admin import (
     UserAdminCreateRequest,
     UserAdminPasswordRequest,
     UserAdminUpdateRequest,
 )
-from news_vector_service.services.user_admin_service import (
+from agent_lab.services.user_admin_service import (
     UserAdminDomainError,
     UserAdminService,
 )
