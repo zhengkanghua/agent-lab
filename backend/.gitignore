@@ -1,18 +1,47 @@
-# Python-generated files
+# ============================================================
+# backend/ —— Python / uv 生态专属规则
+#
+# 与仓库根 .gitignore 分层：根管全局兜底与跨模块产物，本文件管 Python。
+# 部分规则（如 .env、__pycache__）在根已有兜底，这里仍保留一份，
+# 以便本模块被单独抽出为独立仓库时规则不丢。
+# ============================================================
+
+# ---------- Python 字节码与构建产物 ----------
 __pycache__/
-*.py[oc]
+*.py[cod]
+*$py.class
 build/
 dist/
 wheels/
-*.egg-info
+*.egg-info/
+*.egg
+# 编译扩展
+*.so
+*.pyd
+
+# ---------- 测试与类型检查缓存 ----------
 .pytest_cache/
 .mypy_cache/
+.dmypy.json
+dmypy.json
 .ruff_cache/
+.tox/
+.nox/
+
+# ---------- 覆盖率 ----------
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
 
-# Virtual environments
-.venv
+# ---------- 虚拟环境 ----------
+# 注意：.python-version 是 uv 的固定版本声明，有意提交，不要忽略
+.venv/
+venv/
+ENV/
 
-# Local environment variables
+# ---------- 本地环境变量 ----------
 .env
+.env.local
+.env.*.local
+!.env.example

@@ -1,5 +1,36 @@
-# Logs
-logs
+# ============================================================
+# frontend/ —— Node / Vite 生态专属规则
+#
+# 与仓库根 .gitignore 分层：根管全局兜底与跨模块产物，本文件管 Node。
+# 部分规则（如 node_modules、*.log）在根已有兜底，这里仍保留一份，
+# 以便本模块被单独抽出为独立仓库时规则不丢。
+# ============================================================
+
+# ---------- 依赖 ----------
+node_modules/
+.pnp
+.pnp.js
+
+# ---------- 构建产物 ----------
+dist/
+dist-ssr/
+# Vite 与 TS 增量缓存均落在 node_modules/ 下，已被上面覆盖
+*.tsbuildinfo
+
+# ---------- 测试与覆盖率 ----------
+coverage/
+.nyc_output/
+
+# ---------- 本地环境变量 ----------
+# Vite 约定：*.local 一律不提交；VITE_* 会进入公开产物，禁止放密钥
+*.local
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ---------- 日志 ----------
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -7,18 +38,11 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
-
-# Editor directories and files
+# ---------- 编辑器（extensions.json 有意提交，作为推荐插件清单）----------
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
+
+# ---------- 操作系统 ----------
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+Thumbs.db

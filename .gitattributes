@@ -1,0 +1,70 @@
+# ============================================================
+# 仓库级 .gitattributes
+#
+# 作用：把换行符规则写进仓库，不再依赖各设备的 core.autocrlf 配置。
+# 场景：Windows 本机开发 + Linux 生产部署 + 多设备同步。
+#
+# 当前仓库内所有文本 blob 已是 LF，本文件是把既有行为固化下来，
+# 不会引起重新规范化。
+# ============================================================
+
+# ---------- 默认：由 Git 自动识别文本并在仓库内统一存为 LF ----------
+# 检出时按平台还原（Windows 得到 CRLF，Linux 得到 LF）
+* text=auto
+
+# ---------- 必须为 LF：在 Linux 上执行或被解析 ----------
+# CRLF 会导致 `bad interpreter: /bin/bash^M`
+*.sh            text eol=lf
+*.bash          text eol=lf
+# 部署相关：systemd 单元、nginx 配置、Docker
+*.service       text eol=lf
+*.socket        text eol=lf
+*.timer         text eol=lf
+*.conf          text eol=lf
+Dockerfile      text eol=lf
+Dockerfile.*    text eol=lf
+*.dockerfile    text eol=lf
+.dockerignore   text eol=lf
+# uv / pip 依赖锁与配置在 Linux 侧消费
+uv.lock         text eol=lf
+*.python-version text eol=lf
+
+# ---------- 必须为 CRLF：Windows 脚本 ----------
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
+*.ps1           text eol=crlf
+
+# ---------- 二进制：禁止任何换行符或编码转换 ----------
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.ico           binary
+*.webp          binary
+*.pdf           binary
+*.woff          binary
+*.woff2         binary
+*.ttf           binary
+*.eot           binary
+*.zip           binary
+*.gz            binary
+*.tar           binary
+*.7z            binary
+*.pyc           binary
+*.pyd           binary
+*.so            binary
+*.dll           binary
+*.exe           binary
+*.db            binary
+*.sqlite        binary
+*.sqlite3       binary
+
+# ---------- 生成物：GitHub 上折叠 diff、不计入语言统计 ----------
+# 这些文件由工具生成，不应手工修改
+frontend/src/api/generated/**  linguist-generated=true
+frontend/package-lock.json     linguist-generated=true
+backend/uv.lock                linguist-generated=true
+
+# ---------- 语言识别修正 ----------
+*.mako          text linguist-language=Mako
+*.vue           text linguist-language=Vue

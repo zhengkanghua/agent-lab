@@ -1,3 +1,77 @@
-.playwright-cli/
-output/playwright/
+# ============================================================
+# 仓库级 .gitignore —— 只放跨模块 / 全局规则
+#
+# 分层约定：
+#   - 本文件：所有模块共享的规则、全局兜底、以及不属于任何模块的根级产物
+#   - backend/.gitignore：Python / uv 生态专属
+#   - frontend/.gitignore：Node / Vite 生态专属
+# 新增模块时，模块内自建 .gitignore 管自己的生态，本文件无需改动。
+# ============================================================
 
+# ---------- 根级工作产物（不属于任何模块）----------
+output/
+.playwright-cli/
+
+# ---------- 密钥与本地环境（全局兜底）----------
+# 模块内仍各自声明一次，这里是防止漏网的最后一道
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ---------- 依赖与虚拟环境（全局兜底）----------
+node_modules/
+.venv/
+venv/
+
+# ---------- 缓存（全局兜底）----------
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+__pycache__/
+
+# ---------- 日志与临时文件 ----------
+*.log
+*.tmp
+*.bak
+*.orig
+*.rej
+
+# ---------- 操作系统 ----------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+desktop.ini
+$RECYCLE.BIN/
+# Linux
+.directory
+.Trash-*
+
+# ---------- 编辑器 / IDE ----------
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# ---------- Agent 工具 ----------
+# .claude/ 与 .codex/ 的技能定义和共享配置有意提交，便于多设备同步。
+# 仅忽略确定与单机绑定、无法跨设备复用的运行时产物。
+.claude/**/cache/
+.codex/**/cache/
