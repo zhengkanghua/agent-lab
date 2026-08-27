@@ -1,4 +1,4 @@
-# News Vector Service
+# Agent Lab 后端
 
 该服务从 FreshRSS 获取新闻，规范化后保存业务状态，并逐步接入 LangChain、
 Embedding 和 Qdrant。当前已经实现按 FreshRSS 分类白名单读取文章、按来源小批量

@@ -97,7 +97,7 @@
 四、一张你能带走的"总地图"（浓缩版）
 
  ```
-                        ┌────────── 后端 News Vector Service ──────────┐
+                        ┌─────────────── 后端 Agent Lab ───────────────┐
                         │                                              │
      FreshRSS ──► ingestion ──► PostgreSQL ──► pipeline(切块+embed) ──► Qdrant
      (RSS聚合)    (拉取/清洗)   (事实源/状态机)   (RAG处理)          (向量库)
