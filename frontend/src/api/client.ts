@@ -40,11 +40,16 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * 判断异常是否来自 AbortController 主动取消，用于把「我们自己取消的」与真实故障分开。
+ *
+ * 只认 DOMException：浏览器与 jsdom 的 fetch 在信号中止时抛的都是标准
+ * DOMException。曾另有一支兼容「name 为 AbortError 的普通 Error」的运行时，
+ * 已按项目只跑在浏览器的前提删除；若将来这些 api 函数要在 Node 里直跑，
+ * 需要连同该环境的实际抛出类型一起重新判断。
+ */
 export function isAbortError(error: unknown): boolean {
-  return (
-    (error instanceof DOMException && error.name === 'AbortError') ||
-    (isRecord(error) && error.name === 'AbortError')
-  )
+  return error instanceof DOMException && error.name === 'AbortError'
 }
 
 export async function requestJson<T>(
