@@ -105,13 +105,7 @@ class ContentQualityNormalizer:
 
         Returns:
             规范化正文、删除计数和稳定拒绝原因。相同输入重复调用得到完全相同结果。
-
-        Raises:
-            ValueError: ``content_kind`` 不是约定值；正常类型化调用不会发生。
         """
-
-        if content_kind not in {"content", "summary", "unknown"}:
-            raise ValueError("content_kind 必须是 content、summary 或 unknown")
 
         # 1. 全文先做 Unicode NFC + HTML entity 解码，再按换行切成「段落」
         normalized_title = self.normalize_inline_text(title)

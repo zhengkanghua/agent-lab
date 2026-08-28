@@ -427,7 +427,6 @@ class FreshRSSImportService:
             provider=self._settings.provider_key,
             external_id=subscription.id,
         )
-        # 旧游标
         expected_checkpoint = (
             existing_source.sync_checkpoint if existing_source is not None else None
         )
@@ -445,9 +444,7 @@ class FreshRSSImportService:
         data_page = await client.fetch_subscription_item_id_page(
             subscription_id=subscription.id,
             limit=limit_per_source,
-            # 这里有传递旧游标
             continuation=expected_checkpoint,
-            # 如果有旧游标，旧从旧的开始读取
             order="oldest" if expected_checkpoint is not None else "newest",
         )
         # 4. 拉正文（严格一一对应）+ 映射成领域文档
@@ -633,17 +630,32 @@ class FreshRSSImportService:
         expected_checkpoint: str | None,
         new_checkpoint: str | None,
     ) -> tuple[list[DocumentRecord], bool]:
-        """
-        事务提交Source表和Document表
-        把一个来源的「文档 + checkpoint」放进同一个数据库事务提交。
+        """把一个来源的「文档 + checkpoint」放进同一个数据库事务提交。
 
         为什么必须同一个事务：文档保存成功但 checkpoint 没保存，下次会重复处理
         这批文章；checkpoint 保存了但文档没保存，就会漏掉文章。只有原子提交才能
         保证「要么都成、要么都不成」。
 
-        checkpoint 更新用「条件 UPDATE」（WHERE 里带 expected_checkpoint）：如果
-        并发执行已经推进了游标，条件不满足就不覆盖，文档仍可幂等提交，但本次不
-        报告游标推进——这是多 Worker 竞争时的安全兜底。
+        checkpoint 更新用「条件 UPDATE」（WHERE 里带 expected_checkpoint）：只有
+        数据库里的游标仍等于本次读到的旧值才覆盖，否则放弃推进。
+
+        这一段不是冗余防御，删掉会真的丢数据或重复处理，原因是竞态窗口客观存在：
+        ``_import_source_page`` 读完 expected_checkpoint 后立刻 rollback 结束只读
+        事务（为了不在等 FreshRSS 时占着连接），随后要发三次网络请求（marker 页、
+        数据页、正文）。这段时间 sources 行上没有任何锁，谁都可以推进游标。
+
+        谁可能在这个窗口里推进游标：本服务没有内置调度器，``sync-news`` /
+        ``run-once`` 由外部 cron、systemd timer 或运维手动触发，FreshRSS 慢时上一
+        次执行还没结束下一次就已启动；多实例部署共用同一个 PostgreSQL 时同样如此。
+
+        破坏后的后果是「重复处理」而不是「漏文章」：无条件覆盖会把先提交者的较新
+        游标退回本次读到的旧值，下次执行从已经处理过的位置重新追赶，重复 upsert
+        并再次把文档标成 pending，触发多余的 revision 与 Embedding 重算。注意
+        ``update_sync_checkpoint`` 的「游标不能回退」校验挡不住这种情况——它比较的
+        是本次读到的旧值，看不到并发者已提交的新值，只有这里的条件 UPDATE 能拦住。
+
+        条件不满足时不算错误：文档 upsert 仍在同一事务里幂等提交，只是本次不报告
+        游标推进，让先提交的那次执行结果获胜。
 
         Args:
             session: 当前来源事务独占的异步 Session。
@@ -660,8 +672,8 @@ class FreshRSSImportService:
             Exception: 任一 PostgreSQL 写入或 commit 失败；方法先 rollback 再传播。
 
         Notes:
-            条件 UPDATE 失败表示并发执行已经改变游标；文档 upsert 仍可幂等提交，
-            但本次不报告游标推进。同步不会修改既有 processing/revision 并发规则。
+            本方法执行 PostgreSQL 写入并自行 commit / rollback。同步不会修改既有
+            processing/revision 并发规则。
         """
 
         # 没有文档也没推进需求：无事可做，直接返回

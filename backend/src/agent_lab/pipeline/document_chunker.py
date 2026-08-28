@@ -1,7 +1,5 @@
 """把 LangChain ``Document`` 切分成可独立检索的 Chunk Document。
 
-将文档内容，切割问你多个chunk
-
 为什么要切分：一篇新闻可能很长，超过了模型/检索适合处理的长度。所以把完整正文
 切成多个小块（Chunk），每一块都是能独立检索的 Document。
 
@@ -140,7 +138,6 @@ class DocumentChunker:
 
         # 2. 用 LangChain 切分器切出原始片段（它会复制父 Metadata，避免多个 Chunk
         #    共享同一个可变 dict）。先生成所有 ID，后续才能一次遍历写入准确前后关系。
-        # 这里就是调用了LangChain的方法来切分文档。
         raw_chunks = self._splitter.split_documents([document])
         # 3. 过滤空白 Chunk 和同文档内完全重复的正文（排序用最终列表重建）
         chunks: list[Document] = []
@@ -156,25 +153,15 @@ class DocumentChunker:
             raise ValueError("文档切分没有产生任何非空的唯一分块。")
 
         # 4. 为每个 Chunk 生成稳定 ID（uuid5，重跑不变）
-        # 相同父文档使用相同编码和切分参数重复处理时结果一致，所以保证了uuid不变
         chunk_ids = [
             self._build_chunk_id(document_uuid, chunk_index)
             for chunk_index in range(len(chunks))
         ]
 
-        # 5. 按去重后的最终列表统一重建关系字段（index/count/prev/next）
+        # 5. 关系字段（index/count/prev/next）按去重后的最终列表计算，不用切分器
+        #    返回的原始顺序，否则被丢弃的空白/重复片段会在链上留下空洞
         for chunk_index, chunk in enumerate(chunks):
             chunk.id = chunk_ids[chunk_index]
-            # 父 Metadata 理论上不含关系字段，但显式清理可防止调用方重复把 Chunk
-            # 当父文档输入时留下过期链接；所有关系只基于去重后的最终列表重建。
-            for relationship_key in (
-                "parent_document_id",
-                "chunk_index",
-                "chunk_count",
-                "previous_chunk_id",
-                "next_chunk_id",
-            ):
-                chunk.metadata.pop(relationship_key, None)
             chunk.metadata.update(
                 {
                     "parent_document_id": str(document_uuid),

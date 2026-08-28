@@ -78,11 +78,7 @@ class VectorIndexSpec:
         )
 
     def __post_init__(self) -> None:
-        """
-        验证规格自身，避免错误配置进入 Collection 生命周期操作。
-        
-        是 Python dataclass 的一个特殊方法：当 @dataclass 生成构造器把所有字段赋值完毕后，会自动调用它，用来做"构造后的额外校验/初始化"。等价 Java 里"构造方法里最后几行校验"（或在 record compact constructor 里校验）。这里用它检查"维度>0、chunk 参数合法、版本号格式对"等,保证不合法配置在构造时就被拦下,而不是跑到生成 Collection 时才炸。
-        """
+        """在构造时校验规格自身，让错误配置在这里就失败，而不是流到 Collection 生命周期操作。"""
 
         if not self.schema_version.startswith("v") or not self.schema_version[1:].isdigit():
             raise ValueError("schema_version 必须形如 v1 或 v2")
@@ -133,18 +129,11 @@ class VectorIndexSpec:
         """
 
         # 1. 校验「向量配置」：维度与 Distance 必须和规格一致
-        # vectors 就是个配置对象
         vectors = info.config.params.vectors
 
-        """
-        这个对比的原因是，项目目前约束时只用一个密度向量，也就是一个point，只存放一个向量，比如正文向量，不会出现同时存放多个向量的情况，比如标题向量+正文向量
-
-        Qdrant 里向量有两种组织方式：
-        1. 单一无名向量（dense）：一个 Point 只存一个向量。vectors 直接是一个"向量参数对象
-            "VectorParams{size, distance}。
-        2. 多命名向量（named vectors）：一个 Point 可以同时存多个不同向量（比如同时存"标题向量"和"正文向量
-            "）。这种情况下 vectors 是一个 dict，形如 {"title": VectorParams, "body": VectorParams}。
-        """
+        # 本项目约定每个 Point 只存一个未命名稠密向量。Qdrant 用 named vectors 时
+        # params.vectors 是 dict（形如 {"title": VectorParams}），因此 dict 即表示
+        # 集合结构与规格不符，直接拒绝而不去猜该取哪个向量。
         if isinstance(vectors, dict):
             raise VectorIndexConfigurationError(
                 "应只有一个未命名稠密向量，但集合使用了命名向量。"

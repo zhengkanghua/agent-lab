@@ -21,7 +21,6 @@ class QdrantPayloadError(ValueError):
     """Chunk 缺少 Payload 必需字段或字段类型不符合契约。"""
 
 
-# mapper 就是中转序列化的对象
 class QdrantPayloadMapper:
     """
     封装Qdrant Payload的，维持Payload结构
@@ -36,7 +35,8 @@ class QdrantPayloadMapper:
     实例无状态、可多任务共享；映射过程不进行任何网络/数据库/Embedding/向量库 I/O。
     """
 
-    # 这些就是需要转为Payload的字段
+    # 缺少其中任何一个字段就无法回查 PostgreSQL 实体或按来源过滤，因此宁可整批失败
+    # 也不写入半残 Payload；chunk_index/chunk_count 另行校验，它们是 Chunk 级而非文档级。
     REQUIRED_FIELDS = (
         "document_id",
         "source_id",
@@ -79,7 +79,6 @@ class QdrantPayloadMapper:
         if chunk.id is None or not chunk.id.strip():
             raise QdrantPayloadError("映射到 Qdrant 前必须设置 Chunk 的 Document.id。")
 
-        # 非空文本
         if not isinstance(chunk.page_content, str) or not chunk.page_content.strip():
             raise QdrantPayloadError("Chunk 的 page_content 必须包含非空白文本。")
 
