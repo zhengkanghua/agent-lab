@@ -47,20 +47,11 @@ export function toNewsDocumentResult(dto: DocumentSearchResultDto): NewsDocument
   }
 }
 
+// 不去重也不重排：document_id 唯一性和「最高分降序 + document_id 升序」的顺序都由
+// Qdrant grouped query 在后端保证，重复 document_id 会被后端直接拒绝。前端再算一遍
+// 只会在两边规则漂移时产生分歧。
 export function toNewsDocumentResults(dtos: DocumentSearchResultDto[]): NewsDocumentResult[] {
-  const grouped = new Map<string, NewsDocumentResult>()
-
-  for (const dto of dtos) {
-    const current = toNewsDocumentResult(dto)
-    const documentKey = current.documentId.toLowerCase()
-    const existing = grouped.get(documentKey)
-    grouped.set(documentKey, existing ? mergeDuplicateDocument(existing, current) : current)
-  }
-
-  return [...grouped.values()].sort(
-    (left, right) =>
-      right.bestScore - left.bestScore || left.documentId.localeCompare(right.documentId),
-  )
+  return dtos.map(toNewsDocumentResult)
 }
 
 function toNewsDocumentMatch(dto: DocumentSearchMatchDto): NewsDocumentMatch {
@@ -70,36 +61,6 @@ function toNewsDocumentMatch(dto: DocumentSearchMatchDto): NewsDocumentMatch {
     score: dto.score,
     chunkIndex: dto.chunk_index,
     chunkCount: dto.chunk_count,
-  }
-}
-
-function mergeDuplicateDocument(
-  left: NewsDocumentResult,
-  right: NewsDocumentResult,
-): NewsDocumentResult {
-  const representative = right.bestScore > left.bestScore ? right : left
-  const matches = [
-    left.bestMatch,
-    ...left.additionalMatches,
-    right.bestMatch,
-    ...right.additionalMatches,
-  ]
-  const uniqueMatches = new Map<string, NewsDocumentMatch>()
-  for (const match of matches) {
-    const existing = uniqueMatches.get(match.id)
-    if (!existing || match.score > existing.score) {
-      uniqueMatches.set(match.id, match)
-    }
-  }
-  const sortedMatches = [...uniqueMatches.values()].sort(
-    (a, b) => b.score - a.score || a.chunkIndex - b.chunkIndex,
-  )
-
-  return {
-    ...representative,
-    bestScore: sortedMatches[0]?.score ?? representative.bestScore,
-    bestMatch: sortedMatches[0] ?? representative.bestMatch,
-    additionalMatches: sortedMatches.slice(1),
   }
 }
 

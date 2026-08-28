@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { toNewsDocumentResult, toNewsDocumentResults } from '../model/search-result'
+import { toNewsDocumentResult } from '../model/search-result'
 
 const firstMatch = {
   chunk_id: '10000000-0000-4000-8000-000000000001',
@@ -48,27 +48,5 @@ describe('document search view model', () => {
       },
     })
     expect(result.additionalMatches).toHaveLength(1)
-  })
-
-  it('merges duplicate document ids into one sorted news result', () => {
-    const duplicate = {
-      ...dto,
-      document_id: dto.document_id.toUpperCase(),
-      best_score: 0.95,
-      best_match: {
-        chunk_id: '10000000-0000-4000-8000-000000000003',
-        score: 0.95,
-        page_content: '重复分组中的更高分片段',
-        chunk_index: 0,
-        chunk_count: 4,
-      },
-    }
-
-    const results = toNewsDocumentResults([dto, duplicate])
-
-    expect(results).toHaveLength(1)
-    expect(results[0]?.bestScore).toBe(0.95)
-    expect(results[0]?.bestMatch.id).toBe(duplicate.best_match.chunk_id)
-    expect(results[0]?.additionalMatches.map((match) => match.score)).toEqual([0.91, 0.82])
   })
 })

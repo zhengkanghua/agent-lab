@@ -1,6 +1,15 @@
 import type { components } from './generated/openapi'
 import { ApiError, requestJson } from './client'
-import { isSha256 } from './json-guards'
+import {
+  hasText,
+  isFiniteNumber,
+  isHttpUrl,
+  isNonNegativeInteger,
+  isNullableString,
+  isRecord,
+  isSha256,
+  isStringArray,
+} from './json-guards'
 
 export type VectorSearchRequest = components['schemas']['VectorSearchRequest']
 export type VectorSearchResultDto = components['schemas']['VectorSearchResult']
@@ -57,41 +66,12 @@ function isVectorSearchResultDto(value: unknown): value is VectorSearchResultDto
     hasText(value.source_name) &&
     hasText(value.embedding_model) &&
     isHttpUrl(value.url) &&
-    typeof value.score === 'number' &&
-    Number.isFinite(value.score) &&
-    typeof value.chunk_index === 'number' &&
-    Number.isInteger(value.chunk_index) &&
-    typeof value.chunk_count === 'number' &&
-    Number.isInteger(value.chunk_count) &&
-    value.chunk_index >= 0 &&
+    isFiniteNumber(value.score) &&
+    isNonNegativeInteger(value.chunk_index) &&
+    isNonNegativeInteger(value.chunk_count) &&
     value.chunk_count > value.chunk_index &&
     isStringArray(value.labels) &&
     isStringArray(value.authors) &&
-    (value.published_at === undefined ||
-      value.published_at === null ||
-      typeof value.published_at === 'string')
+    isNullableString(value.published_at)
   )
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function hasText(value: unknown): value is string {
-  return typeof value === 'string' && value.trim().length > 0
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string')
-}
-
-function isHttpUrl(value: unknown): value is string {
-  if (typeof value !== 'string') return false
-
-  try {
-    const url = new URL(value)
-    return url.protocol === 'http:' || url.protocol === 'https:'
-  } catch {
-    return false
-  }
 }

@@ -1,3 +1,5 @@
+import { isRecord } from './json-guards'
+
 export type ClientErrorCode =
   'network_error' | 'request_timeout' | 'validation_error' | 'response_invalid' | 'unknown_error'
 
@@ -190,8 +192,4 @@ async function readJsonBody(response: Response): Promise<unknown> {
     }
     return undefined
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
