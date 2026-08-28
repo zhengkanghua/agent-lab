@@ -15,7 +15,7 @@ import {
   X,
 } from '@lucide/vue'
 import { useRouter } from 'vue-router'
-import { ApiError } from '../api/client'
+import { resolveErrorCopy } from '../api/error-copy'
 import {
   createUser,
   listUsers,
@@ -263,18 +263,21 @@ function validatePassword(password: string): string {
   return ''
 }
 
+// 账号管理的失败都由后端 code 区分，与状态码无关（invalid_password 是 422、
+// last_superuser_protected 是 409，但两者要说的话完全不同）。兜底文案按调用点传入，
+// 因为「读列表失败」和「改密码失败」该说的下一步动作不一样。
+const ADMIN_MESSAGE_BY_CODE: Readonly<Partial<Record<string, string>>> = {
+  user_already_exists: '该邮箱已经存在账号。',
+  invalid_password: '密码不符合安全要求：需要 12 到 128 个字符，且不能与账号邮箱相同。',
+  environment_admin_protected: '保底管理员由部署 Secret 托管，不能在网页中修改。',
+  last_superuser_protected: '不能停用或降级最后一个启用的超级用户。',
+  user_not_found: '该账号已不存在，请刷新列表。',
+  permission_denied: '当前账号没有管理权限。',
+  invalid_request: '提交内容不符合账号管理要求，请检查后重试。',
+}
+
 function adminErrorMessage(cause: unknown, fallback: string): string {
-  if (!(cause instanceof ApiError)) return fallback
-  const messages: Record<string, string> = {
-    user_already_exists: '该邮箱已经存在账号。',
-    invalid_password: '密码不符合安全要求：需要 12 到 128 个字符，且不能与账号邮箱相同。',
-    environment_admin_protected: '保底管理员由部署 Secret 托管，不能在网页中修改。',
-    last_superuser_protected: '不能停用或降级最后一个启用的超级用户。',
-    user_not_found: '该账号已不存在，请刷新列表。',
-    permission_denied: '当前账号没有管理权限。',
-    invalid_request: '提交内容不符合账号管理要求，请检查后重试。',
-  }
-  return messages[cause.code] ?? fallback
+  return resolveErrorCopy(cause, { byCode: ADMIN_MESSAGE_BY_CODE, fallback })
 }
 
 function sortUsers(items: UserAdminDto[]): UserAdminDto[] {

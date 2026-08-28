@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { Eye, EyeOff, LogIn, RefreshCw, ScanSearch, Search } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ApiError } from '../api/client'
+import { resolveErrorCopy } from '../api/error-copy'
 import { queryClient } from '../app/query-client'
 import { authSession } from '../features/auth/auth-session'
 
@@ -14,6 +14,14 @@ const showPassword = ref(false)
 const submitting = ref(false)
 const loginError = ref<string | null>(null)
 const sessionUnavailable = computed(() => authSession.status.value === 'error')
+
+// 登录只有两种要单独说明的失败：凭据不对（后端 400）和连不上（client.ts 在 fetch
+// 失败时把 status 记成 0）。两者的 code 分别是 unknown_error 和 network_error，
+// 但按状态分类更直观，也不依赖后端是否在 400 响应体里给 code。
+const LOGIN_MESSAGE_BY_STATUS: Readonly<Partial<Record<number, string>>> = {
+  400: '账号或密码不正确，请重新输入。',
+  0: '暂时无法连接登录服务，请检查网络后重试。',
+}
 
 function safeRedirect(value: unknown): string {
   if (
@@ -37,13 +45,10 @@ async function submitLogin(): Promise<void> {
     queryClient.clear()
     await router.replace(safeRedirect(route.query.redirect))
   } catch (cause) {
-    if (cause instanceof ApiError && cause.status === 400) {
-      loginError.value = '账号或密码不正确，请重新输入。'
-    } else if (cause instanceof ApiError && cause.status === 0) {
-      loginError.value = '暂时无法连接登录服务，请检查网络后重试。'
-    } else {
-      loginError.value = '登录没有完成，请稍后重试。'
-    }
+    loginError.value = resolveErrorCopy(cause, {
+      byStatus: LOGIN_MESSAGE_BY_STATUS,
+      fallback: '登录没有完成，请稍后重试。',
+    })
   } finally {
     submitting.value = false
   }

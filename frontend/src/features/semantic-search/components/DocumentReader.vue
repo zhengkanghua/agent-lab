@@ -10,6 +10,7 @@ import {
   X,
 } from '@lucide/vue'
 import type { ApiError } from '../../../api/client'
+import { resolveErrorCopy, type ErrorCopy } from '../../../api/error-copy'
 import type { NewsDocumentDetail } from '../model/document-detail'
 import { formatPublishedAt, type NewsReadableResult } from '../model/search-result'
 
@@ -32,24 +33,27 @@ const panel = ref<HTMLElement | null>(null)
 const closeButton = ref<HTMLButtonElement | null>(null)
 let previousBodyOverflow = ''
 
-const errorCopy = computed(() => {
-  if (props.error?.status === 404) {
-    return {
-      title: '未找到这篇新闻全文',
-      description: '新闻可能已经移除，搜索结果仍可继续查看。',
-    }
-  }
-  if (props.error?.status === 503) {
-    return {
-      title: '全文服务暂时不可用',
-      description: '搜索结果没有受到影响，可以稍后重试当前新闻。',
-    }
-  }
-  return {
-    title: '全文加载未完成',
-    description: '当前新闻的完整正文没有载入，搜索结果仍保留在页面中。',
-  }
-})
+// 全文接口的失败按 HTTP 状态分类就够：它不像检索链路那样有一串上游 code，
+// 「没这篇」和「服务不可用」正好对应 404 与 503。
+const COPY_BY_STATUS: Readonly<Partial<Record<number, ErrorCopy>>> = {
+  404: {
+    title: '未找到这篇新闻全文',
+    description: '新闻可能已经移除，搜索结果仍可继续查看。',
+  },
+  503: {
+    title: '全文服务暂时不可用',
+    description: '搜索结果没有受到影响，可以稍后重试当前新闻。',
+  },
+}
+
+const FALLBACK_COPY: ErrorCopy = {
+  title: '全文加载未完成',
+  description: '当前新闻的完整正文没有载入，搜索结果仍保留在页面中。',
+}
+
+const errorCopy = computed(() =>
+  resolveErrorCopy(props.error, { byStatus: COPY_BY_STATUS, fallback: FALLBACK_COPY }),
+)
 
 watch(
   () => props.open,
