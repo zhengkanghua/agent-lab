@@ -11,5 +11,8 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue"],
+  // *.node.spec.ts 直接读源文件，需要 node 类型，归 tsconfig.node.json 检查。
+  // 这里排除掉，浏览器工程的全局环境才不会掺进 process 和 fs。
+  "exclude": ["src/**/*.node.spec.ts"]
 }
