@@ -697,6 +697,8 @@ function clearSensitiveInputs(): void {
   white-space: nowrap;
 }
 
+/* 本页通用的小图标幽灵按钮，退出登录与关闭表单两处复用。
+   SearchComposer 的清空按钮曾同名但是 44px 实底填充，现已改名 .clear-button。 */
 .icon-button {
   display: grid;
   place-items: center;

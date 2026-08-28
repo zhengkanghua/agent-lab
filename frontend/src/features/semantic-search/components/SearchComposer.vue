@@ -151,7 +151,7 @@ const counterTone = computed(() => {
         <div class="composer-actions">
           <button
             v-if="query"
-            class="icon-button"
+            class="clear-button"
             type="button"
             aria-label="清空检索内容"
             title="清空检索内容"
@@ -395,7 +395,9 @@ const counterTone = computed(() => {
   gap: 8px;
 }
 
-.icon-button,
+/* 与 UserAdminPage 的 .icon-button 无关：那里是 34px 透明幽灵按钮，这里是 44px 实底
+   填充按钮，与同行的 .search-button 共享基础几何。曾同名但实现完全不同，已改名区分。 */
+.clear-button,
 .search-button {
   display: inline-flex;
   align-items: center;
@@ -409,13 +411,13 @@ const counterTone = computed(() => {
     transform 150ms ease;
 }
 
-.icon-button {
+.clear-button {
   flex: 0 0 44px;
   color: var(--ink-700);
   background: var(--paper-200);
 }
 
-.icon-button:hover {
+.clear-button:hover {
   color: var(--ink-950);
   background: var(--paper-300);
 }
