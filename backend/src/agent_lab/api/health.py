@@ -77,7 +77,7 @@ async def health(
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="数据库不可用",
+            detail="数据库不可用。",
         ) from exc
 
     return HealthResponse(status="ok", database="ok")

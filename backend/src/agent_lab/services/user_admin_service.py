@@ -30,6 +30,11 @@ class UserAdminDomainError(Exception):
     detail: str
 
 
+# 对外密码策略文案。不转发 InvalidPasswordException.reason：该异常来自 fastapi-users，
+# 其文本不受本项目控制，读它就等于把上游文本送进响应体。前端也只按 code 取文案。
+INVALID_PASSWORD_DETAIL = "密码必须包含 12 到 128 个字符，且不能与登录邮箱完全相同。"
+
+
 class UserAdminService:
     """以一个请求级 AsyncSession 管理用户和登录 Token 的事务边界。"""
 
@@ -64,7 +69,7 @@ class UserAdminService:
         except exceptions.InvalidPasswordException as error:
             raise UserAdminDomainError(
                 "invalid_password",
-                str(error.reason),
+                INVALID_PASSWORD_DETAIL,
             ) from error
 
         user = UserRecord(
@@ -147,7 +152,7 @@ class UserAdminService:
             await self._session.rollback()
             raise UserAdminDomainError(
                 "invalid_password",
-                str(error.reason),
+                INVALID_PASSWORD_DETAIL,
             ) from error
 
         user.hashed_password = self._password_helper.hash(request.password)
