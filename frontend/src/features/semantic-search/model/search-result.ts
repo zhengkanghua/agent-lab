@@ -48,8 +48,8 @@ export function toNewsDocumentResult(dto: DocumentSearchResultDto): NewsDocument
 }
 
 // 不去重也不重排：document_id 唯一性和「最高分降序 + document_id 升序」的顺序都由
-// Qdrant grouped query 在后端保证，重复 document_id 会被后端直接拒绝。前端再算一遍
-// 只会在两边规则漂移时产生分歧。
+// Qdrant grouped query 在后端保证——group_by document_id 每组只出一条结果，结构上
+// 产不出重复，并非依赖某个校验器拒绝。前端再算一遍只会在两边规则漂移时产生分歧。
 export function toNewsDocumentResults(dtos: DocumentSearchResultDto[]): NewsDocumentResult[] {
   return dtos.map(toNewsDocumentResult)
 }

@@ -36,17 +36,8 @@ const emit = defineEmits<{
 const examples = ['央行近期是否调整利率？', '新能源车出口趋势', '宏观数据与居民消费']
 
 const errorPresentation = computed(() => (props.error ? presentSearchError(props.error) : null))
-const uniqueResults = computed(() => {
-  const seen = new Set<string>()
-  return props.results.filter((result) => {
-    const documentKey = result.documentId.toLowerCase()
-    if (seen.has(documentKey)) return false
-    seen.add(documentKey)
-    return true
-  })
-})
 const resultCount = computed(() =>
-  props.mode === 'document' ? uniqueResults.value.length : props.chunkResults.length,
+  props.mode === 'document' ? props.results.length : props.chunkResults.length,
 )
 const isDocumentMode = computed(() => props.mode === 'document')
 </script>
@@ -175,7 +166,7 @@ const isDocumentMode = computed(() => props.mode === 'document')
     >
       <template v-if="isDocumentMode">
         <SearchResultCard
-          v-for="(result, index) in uniqueResults"
+          v-for="(result, index) in results"
           :key="result.documentId"
           :result="result"
           :rank="index"
