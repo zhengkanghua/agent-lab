@@ -59,7 +59,7 @@ async def vector_search(
 ) -> list[VectorSearchResult] | JSONResponse:
     """执行一次只读搜索：query 向量化 → Qdrant current Alias 查最相似的新闻 Chunk。
 
-    搜索链路（完整说明见 docs/learning/04_vector_search.md）：
+    搜索链路：
     1. service.search() 先把 query 交给 Ollama 的 bge-m3 模型转成 1024 维向量；
     2. 再用向量查 Qdrant 的 current Alias——一个不存数据的「指针」，指向真正保存
        数据的物理 Collection（news_chunks_langchain_v1_001），部署时统一切换。

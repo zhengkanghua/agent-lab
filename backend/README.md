@@ -841,18 +841,8 @@ uv sync --all-groups
 已验证的 RSS 地址、正文获取方式和 FreshRSS CSS selector 记录在
 [`docs/rss_sources.md`](docs/rss_sources.md)。
 
-按主题深入的设计说明（按实现顺序编号，保留当时的设计背景；与本文冲突时以本文和代码
-为准）：
-
-- [Document 与 Chunk](docs/learning/00_document_pipeline.md)
-- [Ollama Embedding](docs/learning/01_ollama_embedding.md)
-- [Qdrant 基础概念](docs/learning/02_qdrant_concepts.md)
-- [文档索引流水线与 processing_status](docs/learning/03_document_indexing_pipeline.md)
-- [Qdrant Vector Search](docs/learning/04_vector_search.md)
-- [Vector Search HTTP API](docs/learning/05_vector_search_api.md)
-- [新闻同步与向量索引执行入口](docs/learning/06_news_pipeline_execution.md)
-- [增量同步、内容质量与手动执行 API](docs/learning/07_incremental_sync_content_quality_and_manual_api.md)
-- [本地账号密码认证](docs/learning/08_local_password_auth.md)
+跨会话需要留存的架构决策记录在平台根 [`docs/adr/`](../docs/adr/)，按 `NNNN-slug.md`
+编号。本文描述系统当前是什么样，ADR 解释某处为什么是这样、以及当时放弃了什么。
 
 ## 明确不做
 
