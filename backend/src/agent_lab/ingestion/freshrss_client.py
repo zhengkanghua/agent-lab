@@ -198,38 +198,6 @@ class FreshRSSClient:
         stream_id = f"{self._CATEGORY_STREAM_PREFIX}{normalized_category}"
         return await self._fetch_stream_item_ids(stream_id=stream_id, limit=limit)
 
-    async def fetch_subscription_item_ids(
-        self,
-        *,
-        subscription_id: str,
-        limit: int = 1,
-    ) -> list[str]:
-        """
-        根据freshRss的分类id，获取limit条数据
-        从新到旧
-        Args:
-            subscription_id: ``subscription/list`` 返回的订阅 ID，例如 ``feed/12``。
-                调用方应先根据分类白名单筛选订阅，不能用本方法绕过同步范围。
-            limit: 本次从该订阅源最多返回的文章数量，必须大于零。
-
-        Returns:
-            指定订阅源中的 FreshRSS 文章 ID 列表。
-
-        Notes:
-            “按分类取两篇”可能全部来自分类中更新最频繁的 Feed；按订阅源取两篇
-            才能保证低频来源也参与小批量导入验证。
-        """
-
-        normalized_subscription_id = subscription_id.strip()
-        if not normalized_subscription_id.startswith("feed/"):
-            raise ValueError("subscription_id 必须以 'feed/' 开头")
-        if limit < 1:
-            raise ValueError("limit 必须大于零")
-        return await self._fetch_stream_item_ids(
-            stream_id=normalized_subscription_id,
-            limit=limit,
-        )
-
     async def fetch_subscription_item_id_page(
         self,
         *,

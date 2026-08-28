@@ -105,36 +105,6 @@ class SourceRepository:
             raise RuntimeError("来源 upsert 未返回行")
         return existing
 
-    async def get_sync_checkpoint(
-        self,
-        *,
-        provider: str,
-        external_id: str,
-    ) -> str | None:
-        """读取一个来源的增量 continuation 游标。
-
-        Args:
-            provider: 数据提供方稳定标识，与 ``sources.provider`` 对应。
-            external_id: 提供方中的来源 ID，与 ``sources.external_id`` 对应。
-
-        Returns:
-            已成功提交的 FreshRSS continuation 字符串；来源不存在或尚未同步时为
-            ``None``。
-
-        Raises:
-            Exception: PostgreSQL 查询失败时传播。
-
-        Notes:
-            这是短 PostgreSQL 只读 I/O。调用方应在发起 FreshRSS 网络请求前结束该
-            事务；游标最终是否推进由 ``update_sync_checkpoint`` 的条件 UPDATE 决定。
-        """
-
-        statement = select(SourceRecord.sync_checkpoint).where(
-            SourceRecord.provider == provider,
-            SourceRecord.external_id == external_id,
-        )
-        return await self._session.scalar(statement)
-
     async def get_by_business_key(
         self,
         *,

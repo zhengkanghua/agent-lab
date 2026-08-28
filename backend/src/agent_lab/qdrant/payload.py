@@ -155,26 +155,6 @@ class QdrantPayloadMapper:
                 )
         return payload
 
-    def build_many(self, chunks: list[Document]) -> list[dict[str, Any]]:
-        """
-        多个 Chunk批量 转换为Payload
-        按输入顺序映射多个 Chunk，遇到任何错误立即停止。
-
-        Args:
-            chunks: 按原文顺序排列的 LangChain Chunk 列表。
-
-        Returns:
-            与输入一一对应的 Payload 列表。
-
-        Raises:
-            QdrantPayloadError: 任一 Chunk 不符合 Payload 契约。
-
-        Notes:
-            空列表返回空列表，不进行 I/O。
-        """
-
-        return [self.build(chunk) for chunk in chunks]
-
     @staticmethod
     def _required_string(metadata: Mapping[str, Any], field: str) -> str:
         value = metadata.get(field)

@@ -113,86 +113,6 @@ class FreshRSSImportService:
         self._mapper = FreshRSSItemMapper()
         self._client_factory = client_factory
 
-    async def fetch_latest(self) -> SourceDocument | None:
-        """获取同步白名单分类中的最新文章并转换成 ``SourceDocument``。
-
-        Returns:
-            最新文章对应的统一领域文档；允许分类中没有文章时返回 ``None``。
-
-        Raises:
-            FreshRSSMappingError: 文章所属订阅不存在或内容无法规范化。
-            FreshRSSError: FreshRSS 认证、网络、超时、HTTP 或协议失败。
-
-        Notes:
-            本方法只执行 FreshRSS 只读网络 I/O 和内存映射，不写 PostgreSQL。它用于
-            诊断和单篇预览，不承担可靠增量同步；正式执行入口使用
-            ``import_recent_per_source``。
-        """
-
-        async with self._client_factory(self._settings) as client:
-            item = await client.fetch_latest_article()
-            if item is None:
-                return None
-            subscriptions = await client.fetch_subscriptions()
-
-        subscription = next(
-            (
-                candidate
-                for candidate in subscriptions
-                if candidate.id == item.origin.stream_id
-            ),
-            None,
-        )
-        if subscription is None:
-            raise FreshRSSMappingError(
-                f"未找到 FreshRSS 订阅 {item.origin.stream_id!r}。"
-            )
-        return self._mapper.map(
-            item,
-            subscription,
-            provider=self._settings.provider_key,
-        )
-
-    async def fetch_recent_per_source(
-        self,
-        *,
-        limit_per_source: int = 2,
-    ) -> list[SourceDocument]:
-        """读取每个白名单来源最近一页，供只读诊断使用。
-
-        Args:
-            limit_per_source: 每个符合白名单的订阅源最多读取多少篇，必须大于零。
-
-        Returns:
-            已完成协议校验和正文清洗的 ``SourceDocument`` 列表。
-
-        Raises:
-            ValueError: 上限小于一。
-            FreshRSSError: 任一 FreshRSS 请求或响应失败。
-            FreshRSSMappingError: 任一文章无法映射。
-
-        Notes:
-            本方法不读取或推进 checkpoint，也不写数据库，因此不能作为生产同步入口。
-            它保留给人工检查；可靠手动执行必须调用 ``import_recent_per_source``。
-        """
-
-        if limit_per_source < 1:
-            raise ValueError("limit_per_source 必须大于零")
-
-        async with self._client_factory(self._settings) as client:
-            subscriptions = await client.fetch_subscriptions()
-            allowed_subscriptions = self._filter_allowed_subscriptions(subscriptions)
-            documents: list[SourceDocument] = []
-            for subscription in allowed_subscriptions:
-                page = await client.fetch_subscription_item_id_page(
-                    subscription_id=subscription.id,
-                    limit=limit_per_source,
-                    order="newest",
-                )
-                items = await self._fetch_complete_page(client, page)
-                documents.extend(self._map_page(items, subscription))
-        return documents
-
     def _filter_allowed_subscriptions(
         self,
         subscriptions: list[FreshRSSSubscription],
@@ -215,27 +135,6 @@ class FreshRSSImportService:
                 for category in subscription.categories
             )
         ]
-
-    async def save(
-        self,
-        session: AsyncSession,
-        document: SourceDocument,
-    ) -> DocumentRecord:
-        """在一个数据库事务中幂等保存一篇来源文档。
-
-        Args:
-            session: 当前工作单元独占的 SQLAlchemy 异步 Session。
-            document: 已完成外部协议转换和正文清洗的统一文档。
-
-        Returns:
-            新建、更新或命中现有数据后的 ORM 文档对象。
-
-        Raises:
-            Exception: 来源或文档保存失败时，事务先回滚再原样抛出。
-        """
-
-        records = await self.save_many(session, [document])
-        return records[0]
 
     async def save_many(
         self,
@@ -286,24 +185,6 @@ class FreshRSSImportService:
         except Exception:
             await session.rollback()
             raise
-
-    async def import_latest(self, session: AsyncSession) -> DocumentRecord | None:
-        """获取并保存白名单分类中的最新文章。
-
-        Args:
-            session: 当前导入操作使用的 SQLAlchemy 异步 Session。
-
-        Returns:
-            已持久化的 ORM 文档；所有允许分类都没有文章时返回 ``None``。
-
-        Notes:
-            这是保留的单篇诊断入口，不推进来源 checkpoint。
-        """
-
-        document = await self.fetch_latest()
-        if document is None:
-            return None
-        return await self.save(session, document)
 
     async def import_recent_per_source(
         self,
