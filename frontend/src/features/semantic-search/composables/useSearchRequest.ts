@@ -1,6 +1,6 @@
 import { computed, onScopeDispose, shallowRef, ref, watch } from 'vue'
 import { ApiError, isAbortError } from '../../../api/client'
-import { MAX_QUERY_CHARACTERS, validateQuery, type SearchStatus } from './search-validation'
+import { MAX_QUERY_CHARACTERS, validateQuery, type SearchStatus } from '../model/search-validation'
 
 /**
  * 一次搜索请求的执行体。由调用方提供，负责归一化自己的请求参数、调用 api 层并把响应

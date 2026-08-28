@@ -1,6 +1,16 @@
 /**
  * 搜索输入和数量参数的共享约束。
  * 该模块只负责前端输入校验与边界归一化，不执行任何网络请求。
+ *
+ * 放在 model/ 而不是 composables/：这里全是纯常量与纯函数，没有任何 ref 或
+ * 响应式状态，与 search-result.ts 的格式化函数同类。
+ *
+ * 三个上界与后端契约一一对应，不要按当前 UI 的下拉选项收窄：
+ * MAX_QUERY_CHARACTERS 对应 schemas 两个 SearchRequest 的 query 上限，
+ * MAX_RESULT_LIMIT 对应 vector_search.py 的 top_k 与 document_search.py 的
+ * document_limit（都是 1..100），MAX_MATCHES_PER_DOCUMENT 对应
+ * matches_per_document（1..20）。UI 只给到 20 是产品选择，归一化仍按契约兜底，
+ * 以免发出后端必然拒绝的请求。
  */
 
 export const MAX_QUERY_CHARACTERS = 4096

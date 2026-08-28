@@ -6,7 +6,7 @@ import {
   DEFAULT_RESULT_LIMIT,
   normalizeMatchesPerDocument,
   normalizeResultLimit,
-} from './search-validation'
+} from '../model/search-validation'
 import { useSearchRequest } from './useSearchRequest'
 
 /**

@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { ArrowUpRight, CircleAlert, LoaderCircle, RotateCcw, Search, SearchX } from '@lucide/vue'
 import type { ApiError } from '../../../api/client'
-import type { SearchStatus } from '../composables/search-validation'
+import type { SearchStatus } from '../model/search-validation'
 import { presentSearchError } from '../model/search-error'
 import type {
   NewsChunkResult,

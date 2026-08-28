@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { BookOpenText, Eraser, Layers3, ListFilter, LoaderCircle, Search } from '@lucide/vue'
 import type { SearchMode } from '../model/search-result'
+import { MAX_QUERY_CHARACTERS } from '../model/search-validation'
 
 const props = defineProps<{
   mode: SearchMode
@@ -94,7 +95,7 @@ const counterTone = computed(() => {
         class="query-input"
         name="query"
         rows="6"
-        maxlength="4096"
+        :maxlength="MAX_QUERY_CHARACTERS"
         placeholder="例如：央行近期是否调整利率？"
         :aria-invalid="Boolean(inputError)"
         :aria-describedby="inputError ? 'query-error' : 'query-count'"

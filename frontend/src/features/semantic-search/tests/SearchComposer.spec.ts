@@ -1,6 +1,7 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import SearchComposer from '../components/SearchComposer.vue'
+import { MAX_QUERY_CHARACTERS } from '../model/search-validation'
 
 function mountComposer(mode: 'document' | 'chunk' = 'document') {
   return mount(SearchComposer, {
@@ -18,6 +19,13 @@ function mountComposer(mode: 'document' | 'chunk' = 'document') {
 }
 
 describe('SearchComposer', () => {
+  // 输入框上界必须与校验用的常量同源，否则会出现「能打进去但一提交就报错」。
+  it('caps the textarea at the shared query length limit', () => {
+    const textarea = mountComposer().get<HTMLTextAreaElement>('.query-input')
+
+    expect(textarea.attributes('maxlength')).toBe(String(MAX_QUERY_CHARACTERS))
+  })
+
   it('offers one article as the minimum document result count', () => {
     const wrapper = mountComposer()
     const select = wrapper.get<HTMLSelectElement>('select[aria-label="最多显示的新闻数量"]')
