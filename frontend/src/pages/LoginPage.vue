@@ -369,23 +369,28 @@ async function retrySessionCheck(): Promise<void> {
   margin-top: 31px;
 }
 
+/* 本页控件尺寸与 UserAdminPage 的 .field-control / .icon-button / .primary-command
+   保持同一套刻度（输入框 42px、图标按钮 34px、标签 0.75rem、输入文字 0.84rem）。
+   两页类名不同、不共享 CSS，所以这里是刻意对齐而非继承，改动其中一页时另一页
+   不会跟着变。.password-toggle 的 34px 与输入框的 42px 是耦合的：上右各内缩 4px，
+   4 + 34 + 4 = 42 才能正好嵌在输入框里。 */
 .login-field {
   display: grid;
-  gap: 8px;
+  gap: 7px;
   color: var(--ink-800);
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   font-weight: 700;
 }
 
 .login-field input {
   width: 100%;
-  height: 46px;
-  padding: 0 13px;
+  height: 42px;
+  padding: 0 12px;
   border: 1px solid var(--paper-300);
   border-radius: var(--radius-sm);
   color: var(--ink-950);
   background: var(--paper-50);
-  font-size: 0.9rem;
+  font-size: 0.84rem;
   font-weight: 450;
   outline: none;
   transition:
@@ -408,7 +413,7 @@ async function retrySessionCheck(): Promise<void> {
 }
 
 .password-control input {
-  padding-right: 46px;
+  padding-right: 42px;
 }
 
 .password-toggle {
@@ -417,8 +422,8 @@ async function retrySessionCheck(): Promise<void> {
   right: 4px;
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -444,14 +449,14 @@ async function retrySessionCheck(): Promise<void> {
   align-items: center;
   justify-content: center;
   width: 100%;
-  min-height: 46px;
+  min-height: 42px;
   gap: 9px;
   padding: 0 18px;
   border: 1px solid var(--ink-950);
   border-radius: var(--radius-sm);
   color: var(--paper-50);
   background: var(--ink-950);
-  font-size: 0.88rem;
+  font-size: 0.81rem;
   font-weight: 720;
   transition:
     background 140ms ease,
