@@ -334,19 +334,8 @@ uv run pytest -q
 
 它使用 fake 状态组件和真实内存 Qdrant，不访问 Ollama、PostgreSQL 或远程 Qdrant。
 
-显式 PostgreSQL 状态测试会创建随机临时来源/新闻并在 `finally` 删除：
-
-```powershell
-$env:RUN_POSTGRES_INDEX_STATE_INTEGRATION_TEST="1"
-uv run pytest -q tests/test_document_index_state_integration.py
-```
-
-显式 Ollama -> 内存 Qdrant 测试只发送一条无敏感短文本，不修改远程 Qdrant：
-
-```powershell
-$env:RUN_QDRANT_OLLAMA_INTEGRATION_TEST="1"
-uv run pytest -q tests/test_qdrant_ollama_integration.py
-```
+PostgreSQL 的 revision 版本语义由 `tests/test_document_indexing_service.py` 用 fake 状态组件
+覆盖，不需要真实数据库。
 
 如果 `.env` 已配置可用的远程 Qdrant，并明确允许创建临时测试资源，可运行：
 

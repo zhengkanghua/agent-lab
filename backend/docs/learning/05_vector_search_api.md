@@ -383,17 +383,12 @@ uv run pytest -q
 
 ## 可选真实验证
 
-显式启用的真实测试会使用 Ollama 生成 document/query Vector，把测试 Point 只写入
-进程内 Qdrant，并通过完整 `POST /vector-search` 路径查询 current Alias：
+HTTP 路径本身（状态码、错误码契约、422 query 脱敏）由 `tests/test_vector_search_api.py`
+用 fake service 完整覆盖，不需要真实 Ollama 或 Qdrant。真实外部系统的契约测试见
+`docs/learning/04_vector_search.md` 的「可选真实只读验证」一节。
 
-```powershell
-$env:RUN_VECTOR_SEARCH_OLLAMA_INTEGRATION_TEST="1"
-uv run pytest -q tests/test_vector_search_ollama_integration.py
-```
-
-该测试不连接或写入远程 Qdrant，也不访问 PostgreSQL。若要再验证部署进程，可以启动
-本地服务后发送上面的短 query；当前没有已确认的远程 Qdrant current Alias 时，不应
-把 503 伪造成成功。
+若要验证部署进程，启动本地服务后发送一条短 query；当前没有已确认的远程 Qdrant
+current Alias 时，不应把 503 伪造成成功。
 
 ## 常见故障
 

@@ -522,39 +522,23 @@ uv run pytest -q tests/test_vector_search.py tests/test_qdrant_runtime.py
 
 ## 可选真实只读验证
 
-当前 `.env` 若没有可用的远程 Qdrant，默认测试仍可完整验证实现，不能伪造远程成功。
-可以先只访问真实 Ollama，并把 document/query Vector 写入和查询进程内 Qdrant：
+默认测试用进程内 Qdrant 和 fake Embedding 完整验证搜索实现，不能伪造远程成功。真实
+外部系统只保留两个契约级测试，因为它们验证的东西 mock 无法表达：
 
 ```powershell
-$env:RUN_VECTOR_SEARCH_OLLAMA_INTEGRATION_TEST="1"
-uv run pytest -q tests/test_vector_search_ollama_integration.py
+# 真实 bge-m3:567m 返回 1024 维有限 Vector——维度和 Cosine 距离的前提
+$env:RUN_OLLAMA_INTEGRATION_TEST="1"
+uv run pytest -q tests/test_ollama_embedding_integration.py
+
+# 真实 Qdrant 的 Alias 间接层与 Point 往返——Alias 切换语义 mock 不了
+$env:RUN_QDRANT_REMOTE_INTEGRATION_TEST="1"
+uv run pytest -q tests/test_qdrant_remote_integration.py
 ```
 
-该测试使用真实 ``bge-m3:567m``，但 Collection、Alias 和 Point 全部只存在于
-``AsyncQdrantClient(location=":memory:")``，不会污染远程 Qdrant。
-
-只有明确确认 Ollama 和远程 Qdrant 均可访问、current Alias 已由运维准备好后，才
-执行远程只读查询：
-
-```powershell
-$env:RUN_VECTOR_SEARCH_INTEGRATION_TEST="1"
-uv run pytest -q tests/test_vector_search_integration.py
-```
-
-该测试：
-
-- 只发送短小的无敏感 query `利率政策`；
-- 调用真实 `embed_query`；
-- 只查询配置的 current Alias；
-- 不调用 `ensure_ready()`；
-- 不创建 Collection、Payload index 或 Alias；
-- 不写、更新或删除任何 Point；
-- 不访问 PostgreSQL；
-- 不打印密钥、完整 query Vector 或结果正文；
-- 允许合法返回零条结果。
-
-Alias 不存在、认证失败或连接失败会让测试明确失败并报告安全错误类别，而不是被当作
-“没有结果”。
+搜索本身的只读性不依赖集成测试：`tests/test_vector_search.py` 用 read-only spy 断言
+只调用 `query_points`，物理 Collection 名从未进入查询，
+`upsert/delete/create_collection/update_collection_aliases` 均未执行。这条边界由
+`VectorSearchRuntime` 的结构保证，比在真实环境里跑一次更可靠。
 
 ## 常见故障排查
 
