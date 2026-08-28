@@ -14,3 +14,23 @@
 9. `typecheck` 必须保留 `vue-tsc -b` 的 `-b`。根 `tsconfig.json` 是 solution-style
    （`"files": []` + 只有 `references`），不加 `-b` 时 `vue-tsc` 只检查那个空的根 project，
    不会跟进 references，对任何真实类型错误都报 0 错误——门禁会静默空转而不是失败。
+10. skill 以 `.codex/skills/` 为唯一源，`.claude/skills/` 是它的副本。改完源必须同步副本，
+    两份内容保持一致；只改一侧会让 Codex 和 Claude Code 读到不同版本的同名 skill。
+    同步与校验（`diff` 无输出即一致）：
+
+    ```bash
+    # <name> 为 skill 目录名
+    rm -rf .claude/skills/<name> && cp -r .codex/skills/<name> .claude/skills/<name>
+    diff -r .codex/skills/<name> .claude/skills/<name>
+    ```
+
+    新增 skill 时两侧一起建。删除 skill 时两侧一起删。
+11. 探索代码前先读仓库根 `CONTEXT.md`（术语表）和 `docs/adr/`（决策记录）。两者都不存在就直接
+    跳过，不要提示缺失、也不要提议预先创建——它们由 `/grill-with-docs` 在术语或决策真正落地时
+    懒创建。输出里提到领域概念时沿用 `CONTEXT.md` 的既定说法，不要换同义词。
+    若结论与某条 ADR 冲突，显式指出是哪条，不要静默绕过。
+12. `CONTEXT.md` 只是术语表：一个词条一句定义，不放实现细节、需求、规范或待办。决策和取舍写进
+    `docs/adr/`，文件名 `NNNN-slug.md`，编号扫目录内最大号 +1。混着写会让它退化成第二份
+    `AGENTS.md`，两份都没人信。
+13. 用中文沟通：回复、报告，以及规格、设计、需求文档和 ADR 都用中文写。代码标识符、命令、
+    文件路径和工具原始输出保持原样，不翻译。ADR 文件名用 ASCII kebab-case，正文用中文。
