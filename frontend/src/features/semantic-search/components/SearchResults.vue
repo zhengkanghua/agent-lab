@@ -371,7 +371,7 @@ h2 {
   border-radius: 3px;
   background: linear-gradient(90deg, var(--paper-200), #f8faf9, var(--paper-200));
   background-size: 200% 100%;
-  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+  animation: shimmer 1.5s ease-in-out infinite;
 }
 
 .skeleton-locator {
@@ -419,24 +419,10 @@ h2 {
   font-size: 0.7rem;
 }
 
-.spin {
-  animation: spin 900ms linear infinite;
-}
+/* .spin 见 styles/components/motion.css。 */
 
-@keyframes skeleton-shimmer {
-  0% {
-    background-position: 100% 0;
-  }
-  100% {
-    background-position: -100% 0;
-  }
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
+/* 原 @keyframes skeleton-shimmer 与 DocumentReader 的 shimmer 逐字节相同，
+   已合并为 styles/components/motion.css 里的 shimmer。 */
 
 @media (max-width: 680px) {
   .results-heading {

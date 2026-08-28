@@ -23,29 +23,34 @@ const documentSearch = useSemanticSearch()
 const chunkSearch = useChunkSearch()
 const reader = useDocumentReader()
 
+// 两个模式各自维护完整的请求状态，页面只需要知道「当前是哪一个」。所有 query 状态和
+// 动作都从这一个 computed 派生，新增模式时不必再逐个补分叉。
+const activeSearch = computed(() => (mode.value === 'document' ? documentSearch : chunkSearch))
+
 const activeQuery = computed({
-  get: () => (mode.value === 'document' ? documentSearch.query.value : chunkSearch.query.value),
+  get: () => activeSearch.value.query.value,
   set: (value: string) => {
-    if (mode.value === 'document') documentSearch.query.value = value
-    else chunkSearch.query.value = value
+    activeSearch.value.query.value = value
   },
 })
-const activeStatus = computed(() =>
-  mode.value === 'document' ? documentSearch.status.value : chunkSearch.status.value,
-)
-const activeInputError = computed(() =>
-  mode.value === 'document' ? documentSearch.inputError.value : chunkSearch.inputError.value,
-)
-const activeRequestError = computed(() =>
-  mode.value === 'document' ? documentSearch.requestError.value : chunkSearch.requestError.value,
-)
-const activeLastQuery = computed(() =>
-  mode.value === 'document' ? documentSearch.lastQuery.value : chunkSearch.lastQuery.value,
-)
-const activeRemainingCharacters = computed(() =>
+const activeStatus = computed(() => activeSearch.value.status.value)
+const activeInputError = computed(() => activeSearch.value.inputError.value)
+const activeRequestError = computed(() => activeSearch.value.requestError.value)
+const activeLastQuery = computed(() => activeSearch.value.lastQuery.value)
+const activeRemainingCharacters = computed(() => activeSearch.value.remainingCharacters.value)
+
+const modeCopy = computed(() =>
   mode.value === 'document'
-    ? documentSearch.remainingCharacters.value
-    : chunkSearch.remainingCharacters.value,
+    ? {
+        badge: '按新闻分组',
+        intro: '输入一个问题或主题，工作台会按语义相关性分组新闻，并保留来源与发布时间。',
+        fact: '每篇新闻集中展示',
+      }
+    : {
+        badge: '原始片段模式',
+        intro: '输入一个问题或主题，工作台会逐条展示向量检索返回的原始新闻片段。',
+        fact: '每个 Chunk 独立展示',
+      },
 )
 
 function switchMode(nextMode: SearchMode): void {
@@ -57,16 +62,15 @@ function switchMode(nextMode: SearchMode): void {
 }
 
 function submitSearch(): Promise<void> {
-  return mode.value === 'document' ? documentSearch.search() : chunkSearch.search()
+  return activeSearch.value.search()
 }
 
 function clearSearch(): void {
-  if (mode.value === 'document') documentSearch.clear()
-  else chunkSearch.clear()
+  activeSearch.value.clear()
 }
 
 function retrySearch(): Promise<void> {
-  return mode.value === 'document' ? documentSearch.retry() : chunkSearch.retry()
+  return activeSearch.value.retry()
 }
 
 async function chooseExample(value: string): Promise<void> {
@@ -114,7 +118,7 @@ async function logout(): Promise<void> {
         <div class="topbar-actions">
           <div class="mode-note">
             <span class="mode-dot" aria-hidden="true"></span>
-            <span>{{ mode === 'document' ? '按新闻分组' : '原始片段模式' }}</span>
+            <span>{{ modeCopy.badge }}</span>
             <span class="mode-detail">不生成答案</span>
           </div>
 
@@ -156,18 +160,12 @@ async function logout(): Promise<void> {
             <span>从新闻原文里，</span>
             <span>找到相关证据。</span>
           </h1>
-          <p>
-            {{
-              mode === 'document'
-                ? '输入一个问题或主题，工作台会按语义相关性分组新闻，并保留来源与发布时间。'
-                : '输入一个问题或主题，工作台会逐条展示向量检索返回的原始新闻片段。'
-            }}
-          </p>
+          <p>{{ modeCopy.intro }}</p>
 
           <div class="workspace-facts" aria-label="检索结果说明">
             <span>
               <BookOpenText :size="16" aria-hidden="true" />
-              {{ mode === 'document' ? '每篇新闻集中展示' : '每个 Chunk 独立展示' }}
+              {{ modeCopy.fact }}
             </span>
             <span><ShieldCheck :size="16" aria-hidden="true" />全文按需读取</span>
           </div>
@@ -236,13 +234,7 @@ async function logout(): Promise<void> {
   backdrop-filter: blur(12px);
 }
 
-.topbar-inner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 68px;
-  gap: 24px;
-}
+/* .topbar-inner 见 styles/components/topbar.css。 */
 
 .brand-lockup {
   display: inline-flex;
@@ -252,21 +244,7 @@ async function logout(): Promise<void> {
   text-decoration: none;
 }
 
-.brand-mark {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: var(--radius-sm);
-  color: var(--paper-50);
-  background: var(--ink-950);
-  box-shadow: inset 4px 0 var(--signal-500);
-}
-
-.brand-copy {
-  display: grid;
-  gap: 1px;
-}
+/* .brand-mark、.brand-copy 见 styles/components/topbar.css。 */
 
 .brand-copy strong {
   font-family: var(--display-font);

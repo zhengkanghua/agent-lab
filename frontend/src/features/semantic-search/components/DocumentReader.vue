@@ -458,9 +458,7 @@ function handleKeydown(event: KeyboardEvent): void {
   white-space: pre-wrap;
 }
 
-.spin {
-  animation: spin 900ms linear infinite;
-}
+/* .spin 见 styles/components/motion.css。 */
 
 .reader-enter-active,
 .reader-leave-active {
@@ -482,20 +480,7 @@ function handleKeydown(event: KeyboardEvent): void {
   transform: translateX(100%);
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes shimmer {
-  0% {
-    background-position: 100% 0;
-  }
-  100% {
-    background-position: -100% 0;
-  }
-}
+/* @keyframes shimmer 见 styles/components/motion.css。 */
 
 @media (max-width: 760px) {
   .reader-panel {

@@ -76,5 +76,4 @@ npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated/o
 - `src/features/semantic-search`：文档/Chunk 搜索状态、全文 Query、展示模型和两类结果
   组件；
 - `src/pages`：登录、搜索与超级用户账号管理的路由级组合，不直接执行 `fetch`；
-- `src/components/ui`：预留给不含业务概念的交互原语；
-- `src/styles`：设计令牌和全局基础样式。
+- `src/styles`：设计令牌（`tokens.css`）；全局 reset/base/components 分层写在 `src/style.css`。

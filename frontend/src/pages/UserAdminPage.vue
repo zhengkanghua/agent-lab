@@ -29,6 +29,18 @@ import { authSession } from '../features/auth/auth-session'
 
 type LoadState = 'loading' | 'ready' | 'error'
 
+// 与后端 UserAdminCreateRequest / UserAdminPasswordRequest 的 Field 约束一致，用于在提交前
+// 给出即时提示。密码策略的其余部分（例如不得与邮箱相同）只由后端判定，前端读 invalid_password。
+const PASSWORD_MIN_LENGTH = 12
+const PASSWORD_MAX_LENGTH = 128
+
+// 提到模块作用域：Intl.DateTimeFormat 的构造开销远高于 format()，账号列表每行都会调用。
+const createdAtFormatter = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
 const router = useRouter()
 const users = ref<UserAdminDto[]>([])
 const loadState = ref<LoadState>('loading')
@@ -186,7 +198,7 @@ function cancelPasswordReset(): void {
 
 async function submitPasswordReset(user: UserAdminDto): Promise<void> {
   if (isBusy(user.id)) return
-  const validation = validatePassword(resetPassword.value, user.email)
+  const validation = validatePassword(resetPassword.value)
   if (validation) {
     resetError.value = validation
     return
@@ -244,12 +256,13 @@ async function logout(): Promise<void> {
 
 function validateCredentials(email: string, password: string): string {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return '请输入有效的账号邮箱。'
-  return validatePassword(password, email)
+  return validatePassword(password)
 }
 
-function validatePassword(password: string, email: string): string {
-  if (password.length < 12 || password.length > 128) return '密码长度需要在 12 到 128 个字符之间。'
-  if (password.toLocaleLowerCase() === email.toLocaleLowerCase()) return '密码不能与账号邮箱相同。'
+function validatePassword(password: string): string {
+  if (password.length < PASSWORD_MIN_LENGTH || password.length > PASSWORD_MAX_LENGTH) {
+    return `密码长度需要在 ${PASSWORD_MIN_LENGTH} 到 ${PASSWORD_MAX_LENGTH} 个字符之间。`
+  }
   return ''
 }
 
@@ -257,7 +270,7 @@ function adminErrorMessage(cause: unknown, fallback: string): string {
   if (!(cause instanceof ApiError)) return fallback
   const messages: Record<string, string> = {
     user_already_exists: '该邮箱已经存在账号。',
-    invalid_password: '密码不符合安全要求，请使用 12 到 128 个字符。',
+    invalid_password: '密码不符合安全要求：需要 12 到 128 个字符，且不能与账号邮箱相同。',
     environment_admin_protected: '保底管理员由部署 Secret 托管，不能在网页中修改。',
     last_superuser_protected: '不能停用或降级最后一个启用的超级用户。',
     user_not_found: '该账号已不存在，请刷新列表。',
@@ -296,11 +309,7 @@ function setRowError(userId: string, message: string): void {
 }
 
 function formatCreatedAt(value: string): string {
-  return new Intl.DateTimeFormat('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(value))
+  return createdAtFormatter.format(new Date(value))
 }
 
 function clearSensitiveInputs(): void {
@@ -626,7 +635,7 @@ function clearSensitiveInputs(): void {
   backdrop-filter: blur(12px);
 }
 
-.topbar-inner,
+/* .topbar-inner 见 styles/components/topbar.css。 */
 .topbar-actions,
 .brand-lockup,
 .account-identity,
@@ -635,33 +644,15 @@ function clearSensitiveInputs(): void {
   align-items: center;
 }
 
-.topbar-inner {
-  justify-content: space-between;
-  min-height: 68px;
-  gap: 24px;
-}
-
 .brand-lockup {
   gap: 11px;
   color: inherit;
   text-decoration: none;
 }
 
-.brand-mark {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: var(--radius-sm);
-  color: var(--paper-50);
-  background: var(--ink-950);
-  box-shadow: inset 4px 0 var(--signal-500);
-}
+/* .brand-mark 见 styles/components/topbar.css。 */
 
-.brand-copy {
-  display: grid;
-  gap: 1px;
-}
+/* .brand-copy 见 styles/components/topbar.css。 */
 
 .brand-copy strong {
   font-family: var(--display-font);
@@ -1211,14 +1202,10 @@ function clearSensitiveInputs(): void {
   font-size: 0.73rem;
 }
 
+/* 本页刻意用 800ms，与 styles/components/motion.css 的共享 900ms 不同；
+   scoped 样式未分层，恒定覆盖 @layer components。 */
 .spin {
   animation: spin 800ms linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 @media (max-width: 1040px) {

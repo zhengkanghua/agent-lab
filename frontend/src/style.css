@@ -1,4 +1,7 @@
-@layer reset, base, components, utilities;
+/* 层序声明必须是首条语句：后续 @layer 块按此顺序参与级联，与文件引入顺序无关。
+   styles/components/*.css 在 main.ts 里于本文件之后引入，并入同一个 components 层。
+   Vue <style scoped> 不分层，恒定覆盖以上所有层，无需提升选择器特异度。 */
+@layer reset, base, components;
 
 @layer reset {
   *,

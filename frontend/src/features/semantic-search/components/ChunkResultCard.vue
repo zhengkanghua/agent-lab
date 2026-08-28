@@ -143,10 +143,8 @@ function requestFullText(event: MouseEvent): void {
   font-size: 0.88rem;
 }
 
+/* 几何属性见 styles/components/result-card.css；这里只给 Chunk 的强调色。 */
 .locator-line {
-  width: 1px;
-  min-height: 24px;
-  margin: 8px 0;
   background: linear-gradient(var(--source-500), var(--paper-300));
 }
 
@@ -190,47 +188,11 @@ function requestFullText(event: MouseEvent): void {
   font-size: 0.73rem;
 }
 
-.source-name {
-  max-width: 260px;
-  overflow: hidden;
-  padding: 3px 7px;
-  border-radius: 4px;
-  color: var(--source-600);
-  background: var(--source-100);
-  font-weight: 740;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* .source-name、.meta-item、.author-line 见 styles/components/result-card.css。 */
 
-.meta-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.author-line {
-  max-width: 240px;
-  overflow: hidden;
-  color: var(--ink-500);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
+/* 其余属性见 styles/components/result-card.css；这里只给 Chunk 的强调色。 */
 .score-block {
-  display: inline-flex;
-  align-items: center;
-  flex: 0 0 auto;
-  gap: 6px;
-  min-width: 76px;
-  min-height: 32px;
-  padding: 5px 8px;
-  border: 1px solid var(--paper-300);
-  border-radius: var(--radius-sm);
   color: var(--source-600);
-  background: var(--paper-100);
-  font-family: var(--mono-font);
-  font-size: 0.8rem;
-  font-weight: 700;
 }
 
 .chunk-title {
@@ -247,21 +209,7 @@ function requestFullText(event: MouseEvent): void {
   margin-top: 14px;
 }
 
-.match-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  color: var(--ink-500);
-  font-family: var(--mono-font);
-  font-size: 0.66rem;
-}
-
-.match-heading span:first-child {
-  color: var(--source-600);
-  font-family: var(--body-font);
-  font-weight: 760;
-}
+/* .match-heading 见 styles/components/result-card.css。 */
 
 .chunk-excerpt {
   max-width: 82ch;
@@ -301,28 +249,7 @@ function requestFullText(event: MouseEvent): void {
   transform: rotate(180deg);
 }
 
-.label-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 0;
-  margin: 15px 0 0;
-  list-style: none;
-}
-
-.label-list li {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 100%;
-  padding: 3px 7px;
-  border: 1px solid var(--paper-300);
-  border-radius: 4px;
-  overflow-wrap: anywhere;
-  color: var(--ink-700);
-  background: var(--paper-100);
-  font-size: 0.68rem;
-}
+/* .label-list 见 styles/components/result-card.css。 */
 
 .chunk-actions {
   display: flex;
@@ -334,7 +261,7 @@ function requestFullText(event: MouseEvent): void {
   border-top: 1px solid var(--paper-200);
 }
 
-.read-button,
+/* .read-button 见 styles/components/result-card.css；这里只留同组的链接样式。 */
 .chunk-actions a {
   display: inline-flex;
   align-items: center;
@@ -346,16 +273,6 @@ function requestFullText(event: MouseEvent): void {
   font-size: 0.76rem;
   font-weight: 740;
   text-decoration: none;
-}
-
-.read-button {
-  border: 1px solid var(--signal-500);
-  color: var(--paper-50);
-  background: var(--signal-500);
-}
-
-.read-button:hover {
-  background: var(--signal-600);
 }
 
 .chunk-actions a {
@@ -386,10 +303,8 @@ function requestFullText(event: MouseEvent): void {
     gap: 9px;
   }
 
-  .score-block {
-    min-height: 29px;
-    padding: 3px 7px;
-  }
+  /* .score-block、.match-heading、.read-button 的窄屏覆盖见
+     styles/components/result-card.css。 */
 
   .chunk-title {
     margin-top: 10px;
@@ -400,17 +315,10 @@ function requestFullText(event: MouseEvent): void {
     font-size: 0.88rem;
   }
 
-  .match-heading {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 3px;
-  }
-
   .chunk-actions {
     align-items: stretch;
   }
 
-  .read-button,
   .chunk-actions a {
     flex: 1 1 132px;
   }

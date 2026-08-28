@@ -446,15 +446,7 @@ const counterTone = computed(() => {
   font-weight: 650;
 }
 
-.spin {
-  animation: spin 900ms linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
+/* .spin 见 styles/components/motion.css。 */
 
 @media (max-width: 980px) and (min-width: 641px) {
   .composer-toolbar {
