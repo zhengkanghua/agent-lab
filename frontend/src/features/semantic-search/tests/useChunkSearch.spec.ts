@@ -1,6 +1,5 @@
 import { defineComponent, h, nextTick } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
-import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { searchVector, type VectorSearchResultDto } from '../../../api/vector-search'
 import { useChunkSearch } from '../composables/useChunkSearch'
@@ -38,6 +37,7 @@ const dto: VectorSearchResultDto = {
   embedding_model: 'bge-m3:567m',
 }
 
+// 仍然挂载组件而不是裸调 composable：onScopeDispose 的取消语义需要真实的 effect scope。
 function mountHarness() {
   let composable: ReturnType<typeof useChunkSearch> | undefined
   const Harness = defineComponent({
@@ -46,12 +46,7 @@ function mountHarness() {
       return () => h('div')
     },
   })
-  const queryClient = new QueryClient({
-    defaultOptions: { mutations: { retry: false } },
-  })
-  const wrapper = mount(Harness, {
-    global: { plugins: [[VueQueryPlugin, { queryClient }]] },
-  })
+  const wrapper = mount(Harness)
   if (!composable) throw new Error('Test harness did not initialize Chunk search')
   return { wrapper, search: composable }
 }

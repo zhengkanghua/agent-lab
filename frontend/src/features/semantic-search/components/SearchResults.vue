@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { ArrowUpRight, CircleAlert, LoaderCircle, RotateCcw, Search, SearchX } from '@lucide/vue'
 import type { ApiError } from '../../../api/client'
+import type { SearchStatus } from '../composables/search-validation'
 import { presentSearchError } from '../model/search-error'
 import type {
   NewsChunkResult,
@@ -12,20 +13,14 @@ import type {
 import ChunkResultCard from './ChunkResultCard.vue'
 import SearchResultCard from './SearchResultCard.vue'
 
-const props = withDefaults(
-  defineProps<{
-    mode?: SearchMode
-    status: 'idle' | 'loading' | 'success' | 'empty' | 'error'
-    results: NewsDocumentResult[]
-    chunkResults?: NewsChunkResult[]
-    error: ApiError | null
-    lastQuery: string
-  }>(),
-  {
-    mode: 'document',
-    chunkResults: () => [],
-  },
-)
+const props = defineProps<{
+  mode: SearchMode
+  status: SearchStatus
+  results: NewsDocumentResult[]
+  chunkResults: NewsChunkResult[]
+  error: ApiError | null
+  lastQuery: string
+}>()
 
 const emit = defineEmits<{
   retry: []

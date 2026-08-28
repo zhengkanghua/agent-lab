@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { BookOpenText, ChevronDown, Clock3, ExternalLink, Radar, Tag } from '@lucide/vue'
-import { formatPublishedAt, formatScore, type NewsChunkResult } from '../model/search-result'
+import {
+  collapseExcerpt,
+  formatAuthorLine,
+  formatPublishedAt,
+  formatRankLabel,
+  formatScore,
+  isExcerptLong,
+  type NewsChunkResult,
+} from '../model/search-result'
 
 const props = defineProps<{
   result: NewsChunkResult
@@ -12,19 +20,11 @@ const emit = defineEmits<{
   read: [result: NewsChunkResult, trigger: HTMLButtonElement | null]
 }>()
 
-const COLLAPSED_CHARACTERS = 520
 const expanded = ref(false)
-const rankLabel = computed(() => String(props.rank + 1).padStart(2, '0'))
-const excerptIsLong = computed(() => props.result.excerpt.length > COLLAPSED_CHARACTERS)
-const visibleExcerpt = computed(() => {
-  if (expanded.value || !excerptIsLong.value) return props.result.excerpt
-  return `${props.result.excerpt.slice(0, COLLAPSED_CHARACTERS).trimEnd()}…`
-})
-const authorLine = computed(() => {
-  const authors = [...new Set(props.result.authors.map((author) => author.trim()).filter(Boolean))]
-  if (authors.length <= 2) return authors.join('、')
-  return `${authors.slice(0, 2).join('、')} 等`
-})
+const rankLabel = computed(() => formatRankLabel(props.rank))
+const excerptIsLong = computed(() => isExcerptLong(props.result.excerpt))
+const visibleExcerpt = computed(() => collapseExcerpt(props.result.excerpt, expanded.value))
+const authorLine = computed(() => formatAuthorLine(props.result.authors))
 
 function requestFullText(event: MouseEvent): void {
   emit('read', props.result, event.currentTarget as HTMLButtonElement | null)
@@ -269,16 +269,13 @@ function requestFullText(event: MouseEvent): void {
   gap: 7px;
   min-height: 38px;
   padding: 7px 12px;
+  border: 1px solid var(--paper-300);
   border-radius: var(--radius-sm);
+  color: var(--ink-800);
+  background: var(--paper-50);
   font-size: 0.76rem;
   font-weight: 740;
   text-decoration: none;
-}
-
-.chunk-actions a {
-  border: 1px solid var(--paper-300);
-  color: var(--ink-800);
-  background: var(--paper-50);
 }
 
 .chunk-actions a:hover {

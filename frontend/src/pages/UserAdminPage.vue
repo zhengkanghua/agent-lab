@@ -100,6 +100,10 @@ function openCreate(): void {
 
 function closeCreate(): void {
   if (creating.value) return
+  resetCreateForm()
+}
+
+function resetCreateForm(): void {
   createExpanded.value = false
   createError.value = ''
   createEmail.value = ''
@@ -127,21 +131,14 @@ async function submitCreate(): Promise<void> {
       isSuperuser: createSuperuser.value,
     })
     users.value = sortUsers([...users.value, created])
-    closeCreateAfterSuccess()
+    // 不走 closeCreate：那里的 creating 守卫此刻恒为真，会把表单留在展开状态。
+    resetCreateForm()
     feedback.value = `已创建账号 ${created.email}。`
   } catch (cause) {
     createError.value = adminErrorMessage(cause, '账号创建失败，请稍后重试。')
   } finally {
     creating.value = false
   }
-}
-
-function closeCreateAfterSuccess(): void {
-  createExpanded.value = false
-  createEmail.value = ''
-  createPassword.value = ''
-  createSuperuser.value = false
-  createError.value = ''
 }
 
 async function changeActive(user: UserAdminDto, event: Event): Promise<void> {

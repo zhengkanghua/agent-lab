@@ -10,7 +10,6 @@
   --paper-300: #d3dad7;
   --signal-600: #b63b2e;
   --signal-500: #d24b3b;
-  --signal-100: #fbe9e5;
   --source-600: #25675e;
   --source-500: #2f796e;
   --source-100: #e3efec;
@@ -18,7 +17,6 @@
   --danger-600: #a83232;
   --danger-100: #fae6e4;
   --shadow-soft: 0 14px 34px rgba(24, 33, 31, 0.07);
-  --shadow-lifted: 0 22px 52px rgba(24, 33, 31, 0.12);
   --radius-sm: 6px;
   --radius-md: 8px;
   --content-width: 1420px;

@@ -60,12 +60,12 @@ async function retrySessionCheck(): Promise<void> {
 <template>
   <div class="login-shell">
     <header class="login-topbar">
-      <div class="login-wrap login-topbar-inner">
+      <div class="login-wrap topbar-inner">
         <a class="login-brand" href="/" aria-label="Signal Desk 首页">
-          <span class="login-brand-mark" aria-hidden="true">
+          <span class="brand-mark" aria-hidden="true">
             <Search :size="19" stroke-width="2.2" />
           </span>
-          <span>
+          <span class="brand-copy">
             <strong>Signal Desk</strong>
             <small>新闻语义研究台</small>
           </span>
@@ -172,6 +172,9 @@ async function retrySessionCheck(): Promise<void> {
   background: var(--paper-50);
 }
 
+/* .topbar-inner、.brand-mark、.brand-copy 见 styles/components/topbar.css。
+   容器不复用 .content-wrap：登录页刻意收窄到 1080px（正文页是 --content-width 1420px），
+   且换行断点是 560px 而非 720px，两者只是形状相似，不是同一个容器。 */
 .login-wrap {
   width: min(calc(100% - 48px), 1080px);
   margin: 0 auto;
@@ -182,36 +185,12 @@ async function retrySessionCheck(): Promise<void> {
   background: var(--paper-50);
 }
 
-.login-topbar-inner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 68px;
-  gap: 24px;
-}
-
 .login-brand {
   display: inline-flex;
   align-items: center;
   gap: 11px;
   color: inherit;
   text-decoration: none;
-}
-
-.login-brand-mark {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: var(--radius-sm);
-  color: var(--paper-50);
-  background: var(--ink-950);
-  box-shadow: inset 4px 0 var(--signal-500);
-}
-
-.login-brand > span:last-child {
-  display: grid;
-  gap: 1px;
 }
 
 .login-brand strong {
@@ -523,7 +502,7 @@ async function retrySessionCheck(): Promise<void> {
     width: min(calc(100% - 30px), 1080px);
   }
 
-  .login-topbar-inner {
+  .topbar-inner {
     min-height: 62px;
   }
 

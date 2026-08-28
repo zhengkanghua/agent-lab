@@ -1,15 +1,8 @@
 import { ref } from 'vue'
-import { useMutation } from '@tanstack/vue-query'
 import { searchVector } from '../../../api/vector-search'
 import { toNewsChunkResults, type NewsChunkResult } from '../model/search-result'
 import { DEFAULT_RESULT_LIMIT, normalizeResultLimit } from './search-validation'
 import { useSearchRequest } from './useSearchRequest'
-
-interface SearchVariables {
-  query: string
-  topK: number
-  signal: AbortSignal
-}
 
 /**
  * 编排兼容的 Chunk 级语义搜索。
@@ -19,15 +12,11 @@ interface SearchVariables {
 export function useChunkSearch() {
   const topK = ref(DEFAULT_RESULT_LIMIT)
 
-  const mutation = useMutation({
-    mutationFn: ({ query, topK, signal }: SearchVariables) => searchVector({ query, topK, signal }),
-  })
-
   const request = useSearchRequest<NewsChunkResult>(async (query, signal) => {
     const normalizedTopK = normalizeResultLimit(topK.value)
     topK.value = normalizedTopK
 
-    const response = await mutation.mutateAsync({ query, topK: normalizedTopK, signal })
+    const response = await searchVector({ query, topK: normalizedTopK, signal })
 
     // Chunk 模式必须保留后端返回顺序；同一 document 的重复命中是有意的兼容语义。
     return toNewsChunkResults(response)

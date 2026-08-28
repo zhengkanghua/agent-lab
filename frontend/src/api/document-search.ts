@@ -20,8 +20,6 @@ export interface SearchDocumentsOptions {
   query: string
   documentLimit: number
   matchesPerDocument: number
-  scoreThreshold?: number | null
-  filters?: components['schemas']['VectorSearchFilters']
   signal?: AbortSignal
 }
 
@@ -29,16 +27,12 @@ export async function searchDocuments({
   query,
   documentLimit,
   matchesPerDocument,
-  scoreThreshold,
-  filters,
   signal,
 }: SearchDocumentsOptions): Promise<DocumentSearchResultDto[]> {
   const payload: DocumentSearchRequest = {
     query,
     document_limit: documentLimit,
     matches_per_document: matchesPerDocument,
-    ...(scoreThreshold === undefined ? {} : { score_threshold: scoreThreshold }),
-    ...(filters === undefined ? {} : { filters }),
   }
 
   const response = await requestJson<unknown>('/document-search', {
@@ -64,7 +58,7 @@ export async function searchDocuments({
   return response
 }
 
-export function isDocumentSearchResultDto(value: unknown): value is DocumentSearchResultDto {
+function isDocumentSearchResultDto(value: unknown): value is DocumentSearchResultDto {
   if (!isRecord(value)) return false
 
   if (

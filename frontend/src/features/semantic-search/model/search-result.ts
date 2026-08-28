@@ -93,6 +93,31 @@ export function formatScore(value: number): string {
   return scoreFormatter.format(value)
 }
 
+/** 片段折叠阈值：超过这个字符数的正文先截断，由卡片自己提供展开开关。 */
+export const COLLAPSED_CHARACTERS = 520
+
+/** 结果序号的展示形式，从 0 起的下标转成 01、02 这样的定宽编号。 */
+export function formatRankLabel(rank: number): string {
+  return String(rank + 1).padStart(2, '0')
+}
+
+/** 作者行：去空白、去重、最多列两位，更多时以「等」收尾。 */
+export function formatAuthorLine(authors: string[]): string {
+  const unique = [...new Set(authors.map((author) => author.trim()).filter(Boolean))]
+  if (unique.length <= 2) return unique.join('、')
+  return `${unique.slice(0, 2).join('、')} 等`
+}
+
+export function isExcerptLong(excerpt: string): boolean {
+  return excerpt.length > COLLAPSED_CHARACTERS
+}
+
+/** expanded 为真或正文本就不长时原样返回，否则截断到阈值并补省略号。 */
+export function collapseExcerpt(excerpt: string, expanded: boolean): string {
+  if (expanded || !isExcerptLong(excerpt)) return excerpt
+  return `${excerpt.slice(0, COLLAPSED_CHARACTERS).trimEnd()}…`
+}
+
 // 保留原始 Chunk 展示模型导出，供仍直接消费 /vector-search 的独立调用方使用。
 export interface NewsChunkResult extends NewsReadableResult {
   id: string

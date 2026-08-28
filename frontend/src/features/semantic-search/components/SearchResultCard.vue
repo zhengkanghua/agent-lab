@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { BookOpenText, ChevronDown, Clock3, ExternalLink, Layers3, Radar, Tag } from '@lucide/vue'
-import { formatPublishedAt, formatScore, type NewsDocumentResult } from '../model/search-result'
+import {
+  collapseExcerpt,
+  formatAuthorLine,
+  formatPublishedAt,
+  formatRankLabel,
+  formatScore,
+  isExcerptLong,
+  type NewsDocumentResult,
+} from '../model/search-result'
 
 const props = defineProps<{
   result: NewsDocumentResult
@@ -14,19 +22,12 @@ const emit = defineEmits<{
 
 const showAdditional = ref(false)
 const bestExpanded = ref(false)
-const COLLAPSED_CHARACTERS = 520
-const rankLabel = computed(() => String(props.rank + 1).padStart(2, '0'))
-const bestIsLong = computed(() => props.result.bestMatch.excerpt.length > COLLAPSED_CHARACTERS)
-const visibleBestExcerpt = computed(() => {
-  const excerpt = props.result.bestMatch.excerpt
-  if (bestExpanded.value || !bestIsLong.value) return excerpt
-  return `${excerpt.slice(0, COLLAPSED_CHARACTERS).trimEnd()}…`
-})
-const authorLine = computed(() => {
-  const authors = [...new Set(props.result.authors.map((author) => author.trim()).filter(Boolean))]
-  if (authors.length <= 2) return authors.join('、')
-  return `${authors.slice(0, 2).join('、')} 等`
-})
+const rankLabel = computed(() => formatRankLabel(props.rank))
+const bestIsLong = computed(() => isExcerptLong(props.result.bestMatch.excerpt))
+const visibleBestExcerpt = computed(() =>
+  collapseExcerpt(props.result.bestMatch.excerpt, bestExpanded.value),
+)
+const authorLine = computed(() => formatAuthorLine(props.result.authors))
 const additionalRegionId = computed(() => `matches-${props.result.documentId}`)
 
 function requestFullText(event: MouseEvent): void {
@@ -368,16 +369,13 @@ function requestFullText(event: MouseEvent): void {
   gap: 7px;
   min-height: 38px;
   padding: 7px 12px;
+  border: 1px solid var(--paper-300);
   border-radius: var(--radius-sm);
+  color: var(--ink-800);
+  background: var(--paper-50);
   font-size: 0.76rem;
   font-weight: 740;
   text-decoration: none;
-}
-
-.result-actions a {
-  border: 1px solid var(--paper-300);
-  color: var(--ink-800);
-  background: var(--paper-50);
 }
 
 .result-actions a:hover {

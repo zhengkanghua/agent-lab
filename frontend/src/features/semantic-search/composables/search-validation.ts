@@ -22,15 +22,12 @@ export function validateQuery(query: string): string | null {
   return null
 }
 
-export function normalizeResultLimit(value: number, fallback = DEFAULT_RESULT_LIMIT): number {
-  if (!Number.isFinite(value)) return fallback
+export function normalizeResultLimit(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_RESULT_LIMIT
   return Math.min(MAX_RESULT_LIMIT, Math.max(MIN_RESULT_LIMIT, Math.trunc(value)))
 }
 
-export function normalizeMatchesPerDocument(
-  value: number,
-  fallback = DEFAULT_MATCHES_PER_DOCUMENT,
-): number {
-  if (!Number.isFinite(value)) return fallback
+export function normalizeMatchesPerDocument(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_MATCHES_PER_DOCUMENT
   return Math.min(MAX_MATCHES_PER_DOCUMENT, Math.max(MIN_RESULT_LIMIT, Math.trunc(value)))
 }

@@ -115,16 +115,6 @@
     white-space: nowrap;
     border: 0;
   }
-
-  .page-fade-enter-active,
-  .page-fade-leave-active {
-    transition: opacity 180ms ease;
-  }
-
-  .page-fade-enter-from,
-  .page-fade-leave-to {
-    opacity: 0;
-  }
 }
 
 @media (max-width: 720px) {

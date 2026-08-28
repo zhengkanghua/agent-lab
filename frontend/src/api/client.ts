@@ -1,8 +1,5 @@
 import { isRecord } from './json-guards'
 
-export type ClientErrorCode =
-  'network_error' | 'request_timeout' | 'validation_error' | 'response_invalid' | 'unknown_error'
-
 export const API_REQUEST_TIMEOUT_MS = 45_000
 
 interface ApiErrorBody {

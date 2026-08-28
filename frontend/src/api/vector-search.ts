@@ -13,7 +13,6 @@ import {
 
 export type VectorSearchRequest = components['schemas']['VectorSearchRequest']
 export type VectorSearchResultDto = components['schemas']['VectorSearchResult']
-export type VectorSearchErrorDto = components['schemas']['VectorSearchErrorResponse']
 
 export interface SearchVectorOptions {
   query: string

@@ -1,10 +1,11 @@
-/* 顶栏与品牌标识：SearchPage 与 UserAdminPage 共用的部分。
+/* 顶栏与品牌标识：SearchPage、UserAdminPage 与 LoginPage 共用的部分。
  *
- * 只收录两页规则完全一致的类。刻意排除 .brand-lockup、.account-identity、
- * .topbar-actions、.logout-error——它们在两页存在细微差异（display 取值、字号、
+ * 只收录各页规则完全一致的类。刻意排除 .brand-lockup、.account-identity、
+ * .topbar-actions、.logout-error——它们在两个正文页存在细微差异（display 取值、字号、
  * gap、white-space），统一会改变渲染，因此留在各自的 scoped 块里。
+ * 登录页的外层容器 .login-wrap 同理不并入：它刻意收窄到 1080px。
  *
- * .topbar-inner 的窄屏覆盖也留在各页：两页断点不同（560px 与 720px），不是重复。
+ * .topbar-inner 的窄屏覆盖也留在各页：各页断点不同（560px 与 720px），不是重复。
  *
  * 放在 @layer components 内，组件 scoped 样式（未分层）恒定胜出，
  * 各页无需靠特异性即可覆盖。

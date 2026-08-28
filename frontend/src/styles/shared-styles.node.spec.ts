@@ -152,11 +152,12 @@ describe('共享类未被组件重新声明', () => {
 
   it('取到了共享类与组件清单', () => {
     expect(sharedClasses.length).toBeGreaterThanOrEqual(12)
-    // 不锁总数，只确认遍历真的走到了参与提取的四个文件——它们是断言的实际对象。
+    // 不锁总数，只确认遍历真的走到了参与提取的五个文件——它们是断言的实际对象。
     expect(vueFiles).toEqual(
       expect.arrayContaining([
         'features/semantic-search/components/ChunkResultCard.vue',
         'features/semantic-search/components/SearchResultCard.vue',
+        'pages/LoginPage.vue',
         'pages/SearchPage.vue',
         'pages/UserAdminPage.vue',
       ]),
