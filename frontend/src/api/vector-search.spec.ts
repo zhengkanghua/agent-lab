@@ -34,8 +34,14 @@ describe('searchVector', () => {
   })
 
   it('sends the typed search payload and preserves backend result order', async () => {
+    const second = {
+      ...result,
+      point_id: '10000000-0000-4000-8000-000000000002',
+      chunk_id: '10000000-0000-4000-8000-000000000002',
+      score: 0.7,
+    }
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify([result, { ...result, chunk_id: 'second', score: 0.7 }]), {
+      new Response(JSON.stringify([result, second]), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       }),
@@ -44,7 +50,7 @@ describe('searchVector', () => {
 
     const response = await searchVector({ query: '央行利率', topK: 5 })
 
-    expect(response.map((item) => item.chunk_id)).toEqual([result.chunk_id, 'second'])
+    expect(response.map((item) => item.chunk_id)).toEqual([result.chunk_id, second.chunk_id])
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/vector-search',
       expect.objectContaining({
@@ -59,6 +65,23 @@ describe('searchVector', () => {
       'fetch',
       vi.fn().mockResolvedValue(
         new Response(JSON.stringify([{ ...result, labels: null }]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    )
+
+    await expect(searchVector({ query: '宏观', topK: 10 })).rejects.toMatchObject({
+      code: 'response_invalid',
+    })
+  })
+
+  // 后端这两个字段是 UUID 类型；非 UUID 说明契约已经漂移，不能放进展示模型。
+  it.each([['chunk_id'], ['document_id']])('rejects a non-UUID %s', async (field) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify([{ ...result, [field]: 'not-a-uuid' }]), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         }),

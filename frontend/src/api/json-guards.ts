@@ -18,6 +18,10 @@ export function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0
 }
 
+export function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0
+}
+
 export function isHttpUrl(value: unknown): value is string {
   if (typeof value !== 'string') return false
 

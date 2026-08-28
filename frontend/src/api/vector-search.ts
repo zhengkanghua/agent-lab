@@ -9,6 +9,7 @@ import {
   isRecord,
   isSha256,
   isStringArray,
+  isUuid,
 } from './json-guards'
 
 export type VectorSearchRequest = components['schemas']['VectorSearchRequest']
@@ -56,9 +57,11 @@ export async function searchVector({
 function isVectorSearchResultDto(value: unknown): value is VectorSearchResultDto {
   if (!isRecord(value)) return false
 
+  // chunk_id / document_id 在后端 schemas/vector_search.py 是 UUID 类型，与
+  // document-search、documents、user-admin 的同类 id 用同一个 isUuid 判定。
   return (
-    hasText(value.chunk_id) &&
-    hasText(value.document_id) &&
+    isUuid(value.chunk_id) &&
+    isUuid(value.document_id) &&
     isSha256(value.content_hash) &&
     hasText(value.title) &&
     hasText(value.page_content) &&

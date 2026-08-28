@@ -6,6 +6,7 @@ import {
   isHttpUrl,
   isNonNegativeInteger,
   isNullableString,
+  isPositiveInteger,
   isRecord,
   isSha256,
   isStringArray,
@@ -70,8 +71,7 @@ function isDocumentSearchResultDto(value: unknown): value is DocumentSearchResul
     !isNullableString(value.published_at) ||
     !isStringArray(value.authors) ||
     !isStringArray(value.labels) ||
-    !isNonNegativeInteger(value.chunk_count) ||
-    value.chunk_count === 0 ||
+    !isPositiveInteger(value.chunk_count) ||
     !isFiniteNumber(value.best_score) ||
     !isDocumentSearchMatchDto(value.best_match)
   ) {

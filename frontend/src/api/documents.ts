@@ -3,8 +3,8 @@ import { ApiError, requestJson } from './client'
 import {
   hasText,
   isHttpUrl,
-  isNonNegativeInteger,
   isNullableString,
+  isPositiveInteger,
   isRecord,
   isSha256,
   isStringArray,
@@ -50,8 +50,7 @@ function isDocumentDetailDto(value: unknown): value is DocumentDetailDto {
   return (
     isUuid(value.document_id) &&
     isSha256(value.content_hash) &&
-    isNonNegativeInteger(value.revision) &&
-    value.revision > 0 &&
+    isPositiveInteger(value.revision) &&
     hasText(value.title) &&
     isHttpUrl(value.url) &&
     hasText(value.source_name) &&
