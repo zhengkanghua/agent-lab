@@ -23,12 +23,10 @@ from agent_lab.api.auth import router as auth_router
 from agent_lab.api.health import router as health_router
 from agent_lab.api.document_search import router as document_search_router
 from agent_lab.api.documents import router as documents_router
+from agent_lab.api.dependencies import VectorSearchRuntimeUnavailableError
+from agent_lab.api.error_contract import build_vector_search_error_response
 from agent_lab.api.pipeline import router as pipeline_router
-from agent_lab.api.vector_search import (
-    VectorSearchRuntimeUnavailableError,
-    build_vector_search_error_response,
-    router as vector_search_router,
-)
+from agent_lab.api.vector_search import router as vector_search_router
 from agent_lab.api.user_admin import router as user_admin_router
 from agent_lab.auth.dependencies import current_active_user, current_superuser
 from agent_lab.auth.bootstrap import (
@@ -241,38 +239,31 @@ def create_app(
 
     @application.exception_handler(RequestValidationError)
     async def sanitized_request_validation_error(
-        request: Request,
+        _request: Request,
         error: RequestValidationError,
     ) -> JSONResponse:
         """把请求校验失败统一转成「不含原始输入」的 422 响应（脱敏）。
 
         为什么必须脱敏：Pydantic 校验错误的 input/ctx 里可能带着用户提交的完整
         query（比如"央行是否加息？"）或原始值，直接回显等于把请求内容泄露给响应方。
-        账号管理路由统一返回稳定 ``invalid_request``；其他路由只保留字段位置、稳定
-        错误类型和安全消息。两种分支都丢弃 input 和 ctx。
+        这里只保留字段位置、稳定错误类型和安全消息，丢弃 input 和 ctx。
+
+        本 handler 是应用级默认兜底，不认识任何具体路由：需要更强脱敏（例如请求体带
+        明文密码、必须收敛成单一 ``invalid_request``）的路由改用
+        ``SanitizedValidationRoute``，在自己的 route class 里接住校验错误，所以装配根
+        不再维护「哪些 URL 前缀要特殊处理」的字符串常量。
 
         Args:
-            request: 当前 HTTP 请求；只读取 URL path，不读取或记录 body。
+            _request: 当前 HTTP 请求；不读取 path 或 body，因此以下划线标记未使用。
             error: FastAPI/Pydantic 产生的结构化请求校验错误。
 
         Returns:
-            账号管理使用 ``code/detail/retryable``，其他路由使用脱敏 detail 列表的 422
-            JSON 响应。
+            仅含脱敏 detail 列表的 422 JSON 响应。
 
         Notes:
             只处理进程内校验结果，不记录请求 body，不执行数据库、Embedding 或 Qdrant
             I/O。``input`` 和 ``ctx`` 可能包含完整 query 或原始值，因此统一移除。
         """
-
-        if request.url.path.startswith("/admin/users"):
-            return JSONResponse(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                content={
-                    "code": "invalid_request",
-                    "detail": "The account management request is invalid.",
-                    "retryable": False,
-                },
-            )
 
         details = [
             {

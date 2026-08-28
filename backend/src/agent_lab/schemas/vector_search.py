@@ -19,7 +19,6 @@ Vector Search（向量检索）把用户 query 变成向量，与 Qdrant 里存�
 """
 
 from datetime import datetime
-from numbers import Real
 from typing import Any
 from uuid import UUID
 
@@ -33,6 +32,10 @@ from pydantic import (
 )
 
 from agent_lab.domain.enums import DocumentType
+from agent_lab.schemas._query_validators import (
+    require_non_whitespace_query,
+    require_numeric_threshold,
+)
 
 
 DEFAULT_TOP_K = 10
@@ -259,45 +262,11 @@ class VectorSearchRequest(BaseModel):
         hide_input_in_errors=True,
     )
 
-    @field_validator("query")
-    @classmethod
-    def require_non_whitespace_query(cls, value: str) -> str:
-        """在任何 Embedding 网络调用前拒绝空白 query。
-
-        Args:
-            value: 调用方提交的原始 query。
-
-        Returns:
-            保留原始有效空白的 query，避免擅自改变模型输入。
-
-        Raises:
-            ValueError: query 只包含空白字符。
-        """
-
-        if not value.strip():
-            raise ValueError("query 不能只包含空白字符")
-        return value
-
-    @field_validator("score_threshold", mode="before")
-    @classmethod
-    def require_numeric_threshold(cls, value: Any) -> Any:
-        """拒绝 bool 和字符串等会被宽松转换成浮点数的 threshold。
-
-        Args:
-            value: 调用方传入的可选 Cosine score threshold。
-
-        Returns:
-            ``None`` 或真实数值，随后由 Field 检查有限性与 ``[-1, 1]`` 范围。
-
-        Raises:
-            ValueError: 值不是非 bool 的实数。
-        """
-
-        if value is not None and (
-            isinstance(value, bool) or not isinstance(value, Real)
-        ):
-            raise ValueError("score_threshold 必须是数值型 Cosine 分数")
-        return value
+    # 与 DocumentSearchRequest 共用同一份实现和同一份错误文案，见 _query_validators。
+    _validate_query = field_validator("query")(require_non_whitespace_query)
+    _validate_threshold = field_validator("score_threshold", mode="before")(
+        require_numeric_threshold
+    )
 
 
 class VectorSearchResult(BaseModel):

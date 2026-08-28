@@ -9,46 +9,29 @@
 
 它不创建 asyncio 后台 Task、队列、Scheduler、Worker 或 WebSocket，也不复用只读的
 Vector Search Runtime（写和读是两个独立的 Runtime，权限分开）。
+
+写 Runtime 工厂的取用在 ``agent_lab.api.dependencies``，批次级异常到 HTTP 错误的映射表
+在 ``agent_lab.api.error_contract``；本模块只负责编排一轮执行和聚合脱敏统计。
 """
 
 import logging
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from datetime import timedelta
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
-from pydantic import ValidationError
-from sqlalchemy.exc import SQLAlchemyError
 
-from agent_lab.ingestion.freshrss_client import (
-    FreshRSSAuthenticationError,
-    FreshRSSConnectionError,
-    FreshRSSProtocolError,
-    FreshRSSError,
-    FreshRSSServiceError,
-    FreshRSSTimeoutError,
+from agent_lab.api.dependencies import (
+    PipelineWriteRuntimeFactory,
+    PipelineWriteRuntimeUnavailableError,
+    get_pipeline_write_runtime_factory,
 )
-from agent_lab.ingestion.freshrss_mapper import FreshRSSMappingError
-from agent_lab.pipeline.ollama_embedding_provider import (
-    EmbeddingResponseError,
-    OllamaAuthenticationError,
-    OllamaConnectionError,
-    OllamaEmbeddingError,
-    OllamaModelNotFoundError,
-    OllamaServiceError,
-    OllamaTimeoutError,
-)
+from agent_lab.api.error_contract import build_pipeline_error_response
 from agent_lab.pipeline.write_runtime import (
     PipelineRunOnceExecutionResult,
     PipelineWriteRuntime,
 )
-from agent_lab.qdrant.index_spec import VectorIndexConfigurationError
-from agent_lab.qdrant.lifecycle import (
-    QdrantAliasConflictError,
-    QdrantLifecycleError,
-)
-from agent_lab.qdrant.store import QdrantPointStoreError
 from agent_lab.schemas.pipeline import (
     PipelineErrorResponse,
     PipelineFailureType,
@@ -61,12 +44,6 @@ from agent_lab.schemas.pipeline import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
-
-type PipelineWriteRuntimeFactory = Callable[[], PipelineWriteRuntime]
-
-
-class PipelineWriteRuntimeUnavailableError(RuntimeError):
-    """应用没注册写 Runtime 工厂时的内部异常（会被映射成 503）。"""
 
 
 @router.post(
@@ -135,7 +112,9 @@ async def run_pipeline_once(
     result: PipelineRunOnceExecutionResult | None = None
     try:
         # 1. 从应用 state 取出工厂，新建「本次请求专用」的写 Runtime
-        runtime_factory = _get_runtime_factory(request)
+        runtime_factory: PipelineWriteRuntimeFactory = (
+            get_pipeline_write_runtime_factory(request)
+        )
         runtime = runtime_factory()
         # 2. 同步跑完一轮：FreshRSS 同步 → 入库 → 索引（切分/向量化/写 Qdrant）
         result = await runtime.run_once(
@@ -171,38 +150,6 @@ async def run_pipeline_once(
             RuntimeError("pipeline execution returned no result")
         )
     return _build_success_response(result)
-
-
-def _get_runtime_factory(request: Request) -> PipelineWriteRuntimeFactory:
-    """从应用 state 取出「写 Runtime 工厂」（只取不建）。
-
-    main.py 的 create_app 把工厂函数存进了 application.state.pipeline_write_runtime_factory，
-    这里通过 request.app.state 取回。取到的是「能造 Runtime 的函数」，不是 Runtime
-    本身——真正构造发生在调用方，这样每次请求都能拿到一个全新的 Runtime。
-
-    Args:
-        request: 当前 FastAPI 请求。
-
-    Returns:
-        composition root 在创建应用时保存的同步工厂。
-
-    Raises:
-        PipelineWriteRuntimeUnavailableError: 应用状态缺少可调用工厂。
-
-    Notes:
-        读取进程内对象，不构造 Runtime，也不执行任何外部 I/O。
-    """
-
-    runtime_factory = getattr(
-        request.app.state,
-        "pipeline_write_runtime_factory",
-        None,
-    )
-    if not callable(runtime_factory):
-        raise PipelineWriteRuntimeUnavailableError(
-            "流水线写入运行时工厂不可用。"
-        )
-    return runtime_factory
 
 
 def _build_success_response(
@@ -271,167 +218,8 @@ def _summarize_error_types(error_types: Iterable[str]) -> tuple[PipelineFailureT
     )
 
 
-def build_pipeline_error_response(error: Exception) -> JSONResponse:
-    """把批次级异常映射成稳定、脱敏的 HTTP 错误（一张大查表）。
-
-    和 vector_search 的错误映射同理：只认异常「类型」不读异常「文本」，所以数据库
-    URL、密钥、正文、向量等敏感信息永远进不了响应。分类顺序刻意从「具体子类」排到
-    「基础异常」，保证最精确的匹配先命中；完全未知的异常兜底为 500。
-
-    Args:
-        error: Runtime 构造、执行或关闭阶段捕获的根异常。函数只读取其类型。
-
-    Returns:
-        包含固定 ``code/detail/error_type/retryable`` 的 JSONResponse。
-
-    Notes:
-        不调用 ``str(error)``，因此数据库 URL、密钥、正文、Vector 或第三方响应不会
-        进入响应。未知异常统一为 500；分类顺序从具体子类到基础异常。
-    """
-
-    status_code: int
-    code: str
-    detail: str
-    retryable: bool
-    if isinstance(error, FreshRSSAuthenticationError):
-        status_code, code, detail, retryable = (
-            502,
-            "freshrss_authentication_failed",
-            "FreshRSS authentication failed.",
-            False,
-        )
-    elif isinstance(error, FreshRSSConnectionError):
-        status_code, code, detail, retryable = (
-            503,
-            "freshrss_unavailable",
-            "FreshRSS is unavailable.",
-            True,
-        )
-    elif isinstance(error, FreshRSSTimeoutError):
-        status_code, code, detail, retryable = (
-            504,
-            "freshrss_timeout",
-            "FreshRSS request timed out.",
-            True,
-        )
-    elif isinstance(error, FreshRSSProtocolError):
-        status_code, code, detail, retryable = (
-            502,
-            "freshrss_response_invalid",
-            "FreshRSS returned an invalid response.",
-            False,
-        )
-    elif isinstance(error, (FreshRSSServiceError, FreshRSSError, FreshRSSMappingError)):
-        status_code, code, detail, retryable = (
-            502,
-            "freshrss_sync_failed",
-            "FreshRSS synchronization failed.",
-            True,
-        )
-    elif isinstance(error, SQLAlchemyError):
-        status_code, code, detail, retryable = (
-            503,
-            "postgresql_unavailable",
-            "PostgreSQL operation failed.",
-            True,
-        )
-    elif isinstance(error, OllamaAuthenticationError):
-        status_code, code, detail, retryable = (
-            502,
-            "embedding_authentication_failed",
-            "Embedding authentication failed.",
-            False,
-        )
-    elif isinstance(error, OllamaConnectionError):
-        status_code, code, detail, retryable = (
-            503,
-            "embedding_unavailable",
-            "Embedding service is unavailable.",
-            True,
-        )
-    elif isinstance(error, OllamaTimeoutError):
-        status_code, code, detail, retryable = (
-            504,
-            "embedding_timeout",
-            "Embedding request timed out.",
-            True,
-        )
-    elif isinstance(error, OllamaModelNotFoundError):
-        status_code, code, detail, retryable = (
-            503,
-            "embedding_model_not_found",
-            "Configured embedding model is unavailable.",
-            False,
-        )
-    elif isinstance(error, (EmbeddingResponseError, OllamaServiceError, OllamaEmbeddingError)):
-        status_code, code, detail, retryable = (
-            502,
-            "embedding_failed",
-            "Embedding operation failed.",
-            True,
-        )
-    elif isinstance(error, (QdrantAliasConflictError, VectorIndexConfigurationError)):
-        status_code, code, detail, retryable = (
-            503,
-            "qdrant_configuration_invalid",
-            "Qdrant index configuration is invalid.",
-            False,
-        )
-    elif isinstance(error, QdrantLifecycleError):
-        status_code, code, detail, retryable = (
-            503,
-            "qdrant_unavailable",
-            "Qdrant lifecycle operation failed.",
-            True,
-        )
-    elif isinstance(error, QdrantPointStoreError):
-        status_code, code, detail, retryable = (
-            502,
-            "qdrant_write_failed",
-            "Qdrant point write failed.",
-            True,
-        )
-    elif isinstance(error, ValidationError):
-        status_code, code, detail, retryable = (
-            503,
-            "pipeline_configuration_invalid",
-            "Pipeline configuration is invalid.",
-            False,
-        )
-    elif isinstance(error, TimeoutError):
-        status_code, code, detail, retryable = (
-            504,
-            "pipeline_timeout",
-            "Pipeline operation timed out.",
-            True,
-        )
-    elif isinstance(error, PipelineWriteRuntimeUnavailableError):
-        status_code, code, detail, retryable = (
-            503,
-            "pipeline_runtime_unavailable",
-            "Pipeline write runtime is unavailable.",
-            False,
-        )
-    else:
-        status_code, code, detail, retryable = (
-            500,
-            "pipeline_internal_error",
-            "Pipeline execution failed.",
-            False,
-        )
-
-    payload = PipelineErrorResponse(
-        code=code,
-        detail=detail,
-        error_type=type(error).__name__,
-        retryable=retryable,
-    )
-    return JSONResponse(
-        status_code=status_code,
-        content=payload.model_dump(mode="json"),
-    )
-
-
+# 前两个名字的定义已分别移到 dependencies 与 error_contract；这里继续导出，是为了让
+# 既有调用方（含测试）无需关心它们搬到了哪个模块。
 __all__ = [
     "PipelineWriteRuntimeUnavailableError",
     "build_pipeline_error_response",

@@ -23,10 +23,9 @@ from agent_lab.qdrant.index_spec import (
     VectorIndexConfigurationError,
     VectorIndexSpec,
 )
-from agent_lab.qdrant.search import QdrantVectorSearch
 from agent_lab.qdrant.search import (
     QdrantDocumentSearchGroup,
-    QdrantSearchResponseError,
+    QdrantVectorSearch,
 )
 from agent_lab.schemas.document_search import (
     DocumentSearchMatch,
@@ -116,7 +115,7 @@ class VectorSearchService:
             可以分别出现，本阶段不聚合、不按时间重排或加权。
 
         Raises:
-            ValueError: 请求不是 ``VectorSearchRequest``，或 query Vector 数值不合法。
+            QueryVectorValidationError: query Embedding 不符合当前索引规格。
             OllamaEmbeddingError: query Embedding 认证、连接、超时、模型或响应失败。
             QdrantVectorSearchError: Qdrant 认证、连接、超时、目标、配置或响应失败。
 
@@ -126,8 +125,6 @@ class VectorSearchService:
             不自动创建 Collection、不切换 Alias、不修改 processing_status。
         """
 
-        if not isinstance(request, VectorSearchRequest):
-            raise TypeError("请求必须是经过验证的 VectorSearchRequest。")
         validated_vector = await self._embed_and_validate_query(request.query)
         # 拿向量去 Qdrant current Alias 查询，保持 Qdrant 的 score 顺序返回
         return await self._vector_search.search(
@@ -154,8 +151,8 @@ class VectorSearchService:
             按每篇新闻最高 Chunk score 降序排列的 ``DocumentSearchResult`` 列表。
 
         Raises:
-            TypeError: 请求不是 ``DocumentSearchRequest``。
             QueryVectorValidationError: query Embedding 不符合当前索引规格。
+            OllamaEmbeddingError: query Embedding 认证、连接、超时、模型或响应失败。
             QdrantVectorSearchError: grouped query 上游失败或响应契约非法。
 
         Notes:
@@ -163,8 +160,6 @@ class VectorSearchService:
             必须由调用方稍后请求 ``GET /documents/{document_id}`` 才访问 PostgreSQL。
         """
 
-        if not isinstance(request, DocumentSearchRequest):
-            raise TypeError("请求必须是经过验证的 DocumentSearchRequest。")
         validated_vector = await self._embed_and_validate_query(request.query)
         groups = await self._vector_search.search_groups(
             validated_vector,
@@ -182,34 +177,20 @@ class VectorSearchService:
         """
 
         # 这里是唯一的 query Embedding 入口；调用方不会把原文写入日志或外部存储。
-        # 这里就是把query转向量
         query_vector = await self._embedding_provider.embed_query(query)
-        # 向量再去校验看看有没有问题，没问题返回
         return self._validate_query_vector(query_vector)
 
     @staticmethod
     def _map_document_group(group: QdrantDocumentSearchGroup) -> DocumentSearchResult:
-        """把基础设施分组映射成公开文档 DTO，并校验组内业务元数据一致。"""
+        """把基础设施分组纯映射成公开文档 DTO。
 
-        if not group.matches:
-            raise QdrantSearchResponseError("Qdrant 文档分组不能为空。")
+        这里只做字段搬运，不校验分组不变量。``QdrantDocumentSearchGroup`` 由
+        ``search_groups`` 构造，那里已经在信任边界上验完「组非空、组内 document_id
+        一致、chunk_id 不重复、文档级元数据一致、matches 按 score 降序」。因此可以
+        直接取 ``matches[0]`` 当 best match，并用它的文档级字段代表整篇文档。
+        """
+
         first = group.matches[0]
-        comparable_fields = (
-            "content_hash",
-            "title",
-            "url",
-            "source_name",
-            "published_at",
-            "authors",
-            "labels",
-            "chunk_count",
-        )
-        for match in group.matches[1:]:
-            if any(getattr(match, field) != getattr(first, field) for field in comparable_fields):
-                raise QdrantSearchResponseError(
-                    "Qdrant 文档分组内的文档元数据不一致。"
-                )
-
         matches = [
             DocumentSearchMatch(
                 chunk_id=match.chunk_id,
@@ -242,9 +223,14 @@ class VectorSearchService:
         有限数字（拒绝 NaN/Infinity）、L2 范数不为 0。为什么查 L2 范数：一个全零
         向量和任何向量的余弦相似度都无意义，必须在查询前拦截。
 
+        Args:
+            vector: Provider 刚返回的 query Embedding。
 
-        拿这个向量去 Qdrant 向量库里找最相似的 Top-K 条，并带上top_k（返回几条）、score_threshold（最低相似度门槛，低于就不返回）、filters（来源/类型/时间过滤）。
+        Returns:
+            逐位转成 ``float`` 的向量，可直接交给 Qdrant。
 
+        Raises:
+            QueryVectorValidationError: 类型、维度、数值有限性或 L2 范数不合法。
         """
 
         if not isinstance(vector, Sequence) or isinstance(vector, (str, bytes)):

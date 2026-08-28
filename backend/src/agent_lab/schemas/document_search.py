@@ -6,12 +6,15 @@ Embedding、不访问 Qdrant 或 PostgreSQL，也不负责把多个 Chunk 分组
 """
 
 from datetime import datetime
-from numbers import Real
 from typing import Any
 from uuid import UUID
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from agent_lab.schemas._query_validators import (
+    require_non_whitespace_query,
+    require_numeric_threshold,
+)
 from agent_lab.schemas.vector_search import (
     MAX_QUERY_CHARACTERS,
     VectorSearchFilters,
@@ -83,23 +86,11 @@ class DocumentSearchRequest(BaseModel):
         hide_input_in_errors=True,
     )
 
-    @field_validator("query")
-    @classmethod
-    def require_non_whitespace_query(cls, value: str) -> str:
-        """在任何 Embedding 网络调用前拒绝空白 query。"""
-
-        if not value.strip():
-            raise ValueError("query 不能只包含空白字符")
-        return value
-
-    @field_validator("score_threshold", mode="before")
-    @classmethod
-    def require_numeric_threshold(cls, value: Any) -> Any:
-        """拒绝 bool、字符串等会被宽松转换成浮点数的 threshold。"""
-
-        if value is not None and (isinstance(value, bool) or not isinstance(value, Real)):
-            raise ValueError("score_threshold 必须是数值型 Cosine 分数")
-        return value
+    # 与 VectorSearchRequest 共用同一份实现和同一份错误文案，见 _query_validators。
+    _validate_query = field_validator("query")(require_non_whitespace_query)
+    _validate_threshold = field_validator("score_threshold", mode="before")(
+        require_numeric_threshold
+    )
 
 
 class DocumentSearchMatch(BaseModel):
@@ -157,6 +148,11 @@ class DocumentSearchResult(BaseModel):
     ``best_match`` 是该文档本次命中中 score 最高的片段；``additional_matches`` 只
     保存本次搜索返回的其他相关片段，不是文章全部物理 Chunk。完整正文通过
     ``GET /documents/{document_id}`` 按需读取。
+
+    本模型只约束单个字段的形状。跨片段的关系不变量（best_score 等于 best_match.score、
+    片段按 score 降序、chunk_id 不重复、chunk_count 组内一致）由基础设施层的
+    ``QdrantVectorSearch.search_groups`` 在信任边界上保证——那里是唯一能拿到 Qdrant 原始
+    响应的地方。本模型的数据来自那一层的纯映射，重复校验不增加安全性。
     """
 
     document_id: UUID = Field(
@@ -235,24 +231,6 @@ class DocumentSearchResult(BaseModel):
         if value is not None and value.utcoffset() is None:
             raise ValueError("published_at 必须包含时区信息")
         return value
-
-    @model_validator(mode="after")
-    def validate_group_contract(self) -> "DocumentSearchResult":
-        """保证 best match、片段总数和排序元数据彼此一致。"""
-
-        matches = [self.best_match, *self.additional_matches]
-        if self.best_score != self.best_match.score:
-            raise ValueError("best_score 必须等于 best_match.score")
-        if any(match.chunk_count != self.chunk_count for match in matches):
-            raise ValueError("所有匹配结果必须使用同一文档的 chunk_count")
-        if len({match.chunk_id for match in matches}) != len(matches):
-            raise ValueError("文档检索结果的 chunk_id 必须唯一")
-        if any(
-            matches[index].score < matches[index + 1].score
-            for index in range(len(matches) - 1)
-        ):
-            raise ValueError("文档检索结果必须按得分降序排列")
-        return self
 
 
 class DocumentDetailResponse(BaseModel):

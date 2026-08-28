@@ -9,6 +9,11 @@
 3. 把远程错误分类成稳定异常（认证/连接/超时/目标缺失/配置/响应契约）；
 4. 校验返回的每个 Point/Payload 是否符合 v1 契约，转成强类型结果。
 
+本模块是「Qdrant 响应可信度」的信任边界：Qdrant 返回的内容一律当作外部不可信输入，
+Point/Payload 契约和文档分组的跨 Chunk 不变量都在这里一次验干净。上层的 Service 与
+Pydantic 响应模型不再重复这些校验——它们拿到的数据来自本模块，重复校验不增加安全性，
+只会让契约变更需要改多处。
+
 它不调用 Ollama、不读 PostgreSQL、不创建/切换 Alias、不写 Point、不生成 LLM 回答；
 物理 Collection 名在本模块不可见——所有查询只能访问 current Alias。
 """
@@ -71,8 +76,12 @@ class QdrantDocumentSearchGroup:
     """Qdrant grouped query 返回的一篇新闻及其相关 Chunk。
 
     该值对象仍处在基础设施层，保留每个 Chunk 的完整 ``VectorSearchResult``，由
-    应用 Service 再映射成公开的 ``DocumentSearchResult``。``document_id`` 必须和组内
-    每个 Payload 的 document_id 一致；不一致的第三方响应会被拒绝。
+    应用 Service 再映射成公开的 ``DocumentSearchResult``。
+
+    构造它的 ``search_groups`` 已经保证：``matches`` 非空、按 score 降序、组内每个
+    Payload 的 document_id 都等于本组 ``document_id``、组内 chunk_id 互不重复、文档级
+    元数据组内一致。因此持有该对象的代码可以直接取 ``matches[0]`` 当 best match，
+    也可以直接用任一 Chunk 的文档级字段代表整篇文档，无需再次校验。
     """
 
     document_id: UUID
@@ -91,26 +100,28 @@ class QdrantVectorSearch:
     - 和 Service 的区别：它不知道原始 query 文本长什么样。
     """
 
-    _REQUIRED_STRING_PAYLOAD_FIELDS = (
-        "page_content",
+    # 这些 Payload 字段在 VectorSearchResult 里的类型不是 str（UUID / datetime），
+    # 因此 Pydantic 的宽松解析会接受多种输入形态，无法替我们守住「阶段 2 一定写成
+    # JSON 字符串」这条约定。详见 _validate_payload_json_types。
+    _STRING_ENCODED_PAYLOAD_FIELDS = (
         "document_id",
+        "source_id",
+        "previous_chunk_id",
+        "next_chunk_id",
+        "published_at",
+        "source_updated_at",
+    )
+    # 同一个 document 分组内，这些字段描述的是「文档级」事实而不是「Chunk 级」事实，
+    # 因此组内每个 Chunk 必须完全一致；Service 只取第一个 Chunk 的值代表整篇文档。
+    _GROUP_CONSISTENT_PAYLOAD_FIELDS = (
         "content_hash",
         "title",
         "url",
-        "document_type",
-        "source_id",
-        "source_provider",
         "source_name",
-        "source_external_id",
-        "document_external_id",
-        "index_schema_version",
-        "embedding_model",
-    )
-    _OPTIONAL_STRING_PAYLOAD_FIELDS = (
         "published_at",
-        "source_updated_at",
-        "previous_chunk_id",
-        "next_chunk_id",
+        "authors",
+        "labels",
+        "chunk_count",
     )
 
     def __init__(
@@ -219,7 +230,7 @@ class QdrantVectorSearch:
     ) -> list[QdrantDocumentSearchGroup]:
         """通过 Qdrant 正式 grouped query 返回按文档分组的相关 Chunk。
 
-        直接按照document_id直接分组
+        分组在 Qdrant 侧按 ``document_id`` 完成，不在 Python 里对 top_k 结果二次去重。
 
         Args:
             query_vector: 上层已按 VectorIndexSpec 校验的 query Embedding。
@@ -232,14 +243,19 @@ class QdrantVectorSearch:
             按每组最高 score 降序排列、组内按 score 降序排列的强类型分组列表。
 
         Raises:
-            QdrantSearchResponseError: grouped 响应缺少 groups、组 ID 非 UUID、组内
-                document_id 不一致、重复分组或任一 Point 不符合 Payload 契约。
+            QdrantSearchResponseError: grouped 响应缺少 groups、组 ID 非 UUID、分组为空、
+                重复分组、组内 document_id 不一致、组内 chunk_id 重复、组内文档级元数据
+                不一致，或任一 Point 不符合 Payload 契约。
             QdrantVectorSearchError: Qdrant 认证、连接、超时、目标或服务错误。
 
         Notes:
             本方法只执行一次 ``query_points_groups`` 只读网络 I/O，不访问 PostgreSQL，
             不执行 Point 写入、Alias 生命周期或自动重试。``group_by`` 使用已有的
             ``document_id`` keyword Payload index，避免前端在有限 top_k 上错误去重。
+
+            本方法是分组不变量的唯一后端防线：Qdrant 响应属于不可信输入，必须在此
+            一次验干净。下游 Service 只做纯映射、``DocumentSearchResult`` 只做字段级
+            约束，都不再重复校验这些跨 Chunk 的关系。
         """
 
         query_filter = self._build_filter(filters)
@@ -288,6 +304,7 @@ class QdrantVectorSearch:
                     f"Qdrant 第 {group_index} 处的文档分组没有命中结果。"
                 )
             mapped_matches: list[VectorSearchResult] = []
+            seen_chunk_ids: set[UUID] = set()
             for hit_index, point in enumerate(hits):
                 result = self._map_point(point, hit_index)
                 if result.document_id != document_id:
@@ -295,7 +312,26 @@ class QdrantVectorSearch:
                         f"Qdrant 第 {group_index} 处文档分组中的 Point "
                         "具有不同的 document_id。"
                     )
+                # 同一个 Chunk 在一组里出现两次会让 best_match 和 additional_matches
+                # 重复展示同一段正文，且下游按 chunk_id 去重会得到比声明更少的片段。
+                if result.chunk_id in seen_chunk_ids:
+                    raise QdrantSearchResponseError(
+                        f"Qdrant 第 {group_index} 处文档分组重复出现了同一个 chunk_id。"
+                    )
+                seen_chunk_ids.add(result.chunk_id)
                 mapped_matches.append(result)
+
+            # 文档级字段必须组内一致：Service 只取第一个 Chunk 的值代表整篇文档，
+            # 若组内不一致就会把 A 版本正文的标题/哈希安到 B 版本的片段上。
+            first_match = mapped_matches[0]
+            for match in mapped_matches[1:]:
+                if any(
+                    getattr(match, field) != getattr(first_match, field)
+                    for field in self._GROUP_CONSISTENT_PAYLOAD_FIELDS
+                ):
+                    raise QdrantSearchResponseError(
+                        f"Qdrant 第 {group_index} 处文档分组内的文档元数据不一致。"
+                    )
 
             mapped_matches.sort(key=lambda result: result.score, reverse=True)
             mapped_groups.append(
@@ -305,15 +341,12 @@ class QdrantVectorSearch:
                 )
             )
 
-        # -matches[0].score：组内最高分取负号。sort 默认升序，负号一加，“升序排列负分数” = “降序排列正分数” → 最高分的组排最前；  就是取反，把升序变为降序
-        # document_id 字符串：万一两组最高分恰好相等（浮点世界会遇到），按文档 ID 字典序排——保证结果确定性（同样输入永远同样输出，测试友好、分页稳定）；
-        # float("inf") 兜底：万一某组空（前面已校验过不会发生，纯防御），让它永远沉底。
-        # 注意！这里为什么要用-score，而不是直接score(reverse=True)，因为如果score变为降序，那后面的document_id的排序也会从A-Z变为Z-A，所以为了只改分数，则加负号是比较好的，也就是为了第一个键降序，第二个键升序，而且float("inf")也是配合升序使用的，inf在升序里面才会永远沉底，做到空组排在最好的逻辑。【也可以拆为两个排序。】
+        # 排序键取负分数而不是 reverse=True：需要「第一个键降序、第二个键升序」的混合
+        # 方向。reverse=True 会把 document_id 也一起翻成 Z→A，而给分数取负号只翻转分数
+        # 这一个键。第二个键存在的意义是确定性：两组最高分浮点相等时，按文档 ID 字典序
+        # 固定顺序，保证同样输入永远产出同样输出（测试可断言、分页不跳动）。
         mapped_groups.sort(
-            key=lambda group: (
-                -group.matches[0].score if group.matches else float("inf"),
-                str(group.document_id),
-            )
+            key=lambda group: (-group.matches[0].score, str(group.document_id))
         )
         return mapped_groups
 
@@ -445,37 +478,23 @@ class QdrantVectorSearch:
         payload: Mapping[str, Any],
         result_index: int,
     ) -> None:
-        """在 Pydantic 格式解析前保护阶段 2 的扁平 JSON 类型契约。
+        """补上 Pydantic 覆盖不到的那一类 Payload 类型漂移检查。
 
-        Qdrant Payload 是 JSON 对象，阶段 2 mapper 明确把 UUID 和 datetime 写成字符串。
-        Pydantic 默认会把整数时间戳转换成 datetime；这里先拒绝这种类型漂移，避免损坏
-        Payload 被悄悄修复成看似合法的搜索结果。缺失字段仍交给结果模型统一报告。
+        为什么这里还需要手工检查——Pydantic 管不到的是「目标类型不是 str」的字段：
+        ``document_id``/``source_id``/``*_chunk_id`` 声明为 ``UUID``，
+        ``published_at``/``source_updated_at`` 声明为 ``datetime``。Pydantic 的宽松模式
+        会接受真正的 ``UUID`` 对象，也会把整数/浮点数当成 Unix timestamp 解析成
+        ``datetime``。而阶段 2 mapper 约定这些值一律写成 JSON 字符串，所以一个被写坏
+        或来自旧 Schema 的 Payload 会被 Pydantic 悄悄「修复」成看似合法的搜索结果。
+
+        其余字段不在这里重复检查：str/AnyHttpUrl/DocumentType 字段上 Pydantic 的 ``str``
+        解析已经拒绝全部非字符串 JSON 类型；``chunk_index``/``chunk_count`` 用了
+        ``strict=True``；``authors``/``labels`` 有要求 JSON array 的 before-validator。
+        缺失字段同样交给结果模型统一报告。
         """
 
-        for field in cls._REQUIRED_STRING_PAYLOAD_FIELDS:
+        for field in cls._STRING_ENCODED_PAYLOAD_FIELDS:
             if field in payload and not isinstance(payload[field], str):
-                raise QdrantSearchResponseError(
-                    f"Qdrant 结果第 {result_index} 项违反了响应契约，"
-                    f"涉及字段：{field}。"
-                )
-        for field in cls._OPTIONAL_STRING_PAYLOAD_FIELDS:
-            if field in payload and not isinstance(payload[field], str):
-                raise QdrantSearchResponseError(
-                    f"Qdrant 结果第 {result_index} 项违反了响应契约，"
-                    f"涉及字段：{field}。"
-                )
-        for field in ("chunk_index", "chunk_count"):
-            value = payload.get(field)
-            if field in payload and (
-                isinstance(value, bool) or not isinstance(value, int)
-            ):
-                raise QdrantSearchResponseError(
-                    f"Qdrant 结果第 {result_index} 项违反了响应契约，"
-                    f"涉及字段：{field}。"
-                )
-        for field in ("authors", "labels"):
-            value = payload.get(field)
-            if field in payload and not isinstance(value, list):
                 raise QdrantSearchResponseError(
                     f"Qdrant 结果第 {result_index} 项违反了响应契约，"
                     f"涉及字段：{field}。"

@@ -2,6 +2,11 @@
 
 本层校验 OpenAPI 输入、调用 UserAdminService，并把预期领域错误或数据库故障转换成稳定
 脱敏响应；不开放注册，不返回密码 Hash、环境 Secret 或 access token。
+
+两类失败的来源不同：数据库故障按「异常类型」查 ``agent_lab.api.error_contract`` 的共享
+错误表；领域错误自带稳定 code 和安全中文 detail，直接用同一个响应构造器包装，因此三条
+路由族的错误结构完全一致。请求体里含明文密码，所以路由挂 ``SanitizedValidationRoute``
+把校验失败换成固定 ``invalid_request``，绝不回显原始输入。
 """
 
 from typing import Annotated
@@ -12,6 +17,11 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_lab.api.error_contract import (
+    SanitizedValidationRoute,
+    build_error_response,
+    build_user_admin_error_response,
+)
 from agent_lab.db.session import get_db_session
 from agent_lab.schemas.user_admin import (
     UserAdminCreateRequest,
@@ -27,7 +37,11 @@ from agent_lab.services.user_admin_service import (
 )
 
 
-router = APIRouter(prefix="/admin/users", tags=["user-admin"])
+router = APIRouter(
+    prefix="/admin/users",
+    tags=["user-admin"],
+    route_class=SanitizedValidationRoute,
+)
 
 
 def get_user_admin_service(
@@ -51,8 +65,8 @@ async def list_users(
 
     try:
         users = await service.list_users()
-    except SQLAlchemyError:
-        return _database_error()
+    except SQLAlchemyError as error:
+        return _database_error(error)
     return [UserAdminResponse.model_validate(user) for user in users]
 
 
@@ -77,8 +91,8 @@ async def create_user(
         user = await service.create_user(body)
     except UserAdminDomainError as error:
         return _domain_error(error)
-    except SQLAlchemyError:
-        return _database_error()
+    except SQLAlchemyError as error:
+        return _database_error(error)
     return UserAdminResponse.model_validate(user)
 
 
@@ -103,8 +117,8 @@ async def update_user(
         user = await service.update_user(user_id, body)
     except UserAdminDomainError as error:
         return _domain_error(error)
-    except SQLAlchemyError:
-        return _database_error()
+    except SQLAlchemyError as error:
+        return _database_error(error)
     return UserAdminResponse.model_validate(user)
 
 
@@ -130,8 +144,8 @@ async def reset_user_password(
         user = await service.reset_password(user_id, body)
     except UserAdminDomainError as error:
         return _domain_error(error)
-    except SQLAlchemyError:
-        return _database_error()
+    except SQLAlchemyError as error:
+        return _database_error(error)
     return UserAdminResponse.model_validate(user)
 
 
@@ -154,12 +168,25 @@ async def revoke_user_sessions(
         count = await service.revoke_sessions(user_id)
     except UserAdminDomainError as error:
         return _domain_error(error)
-    except SQLAlchemyError:
-        return _database_error()
+    except SQLAlchemyError as error:
+        return _database_error(error)
     return UserSessionRevocationResponse(revoked_sessions=count)
 
 
 def _domain_error(error: UserAdminDomainError) -> JSONResponse:
+    """把账号管理领域错误的稳定 code 映射成 HTTP 状态码并复用统一响应结构。
+
+    这里读取的是领域层刻意提供的安全字段（``code`` 与预写的中文 ``detail``），不是
+    ``str(error)``，所以不会把密码、Hash 或数据库文本带进响应。领域错误无法按异常类型
+    区分（同一个类携带不同 code），因此不进共享错误表，只共享响应构造器。
+
+    Args:
+        error: Service 抛出的预期账号管理失败。
+
+    Returns:
+        与其他错误路径同构的 ``code/detail/retryable`` JSON 响应；未知 code 归为 409。
+    """
+
     status_code = {
         "user_not_found": status.HTTP_404_NOT_FOUND,
         "invalid_password": status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -167,18 +194,22 @@ def _domain_error(error: UserAdminDomainError) -> JSONResponse:
         "environment_admin_protected": status.HTTP_409_CONFLICT,
         "last_superuser_protected": status.HTTP_409_CONFLICT,
     }.get(error.code, status.HTTP_409_CONFLICT)
-    return JSONResponse(
-        status_code=status_code,
-        content={"code": error.code, "detail": error.detail, "retryable": False},
+    return build_error_response(
+        status_code,
+        error.code,
+        error.detail,
+        retryable=False,
     )
 
 
-def _database_error() -> JSONResponse:
-    return JSONResponse(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        content={
-            "code": "user_admin_database_unavailable",
-            "detail": "Account management is temporarily unavailable.",
-            "retryable": True,
-        },
-    )
+def _database_error(error: SQLAlchemyError) -> JSONResponse:
+    """把数据库故障交给共享错误表映射成稳定 503（只读异常类型）。
+
+    Args:
+        error: 请求期间捕获的 SQLAlchemy 异常。
+
+    Returns:
+        含 ``user_admin_database_unavailable`` 的 503 JSON 响应。
+    """
+
+    return build_user_admin_error_response(error)
