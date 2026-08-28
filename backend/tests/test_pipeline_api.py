@@ -277,7 +277,7 @@ def test_batch_error_response_is_classified_and_never_echoes_exception_text() ->
     assert response.status_code == 504
     assert response.json() == {
         "code": "freshrss_timeout",
-        "detail": "FreshRSS request timed out.",
+        "detail": "FreshRSS 请求超时。",
         "error_type": "FreshRSSTimeoutError",
         "retryable": True,
     }
@@ -401,3 +401,6 @@ def test_openapi_exposes_manual_route_without_background_fields() -> None:
     assert "202" not in operation["responses"]
     tag_descriptions = {item["name"]: item["description"] for item in schema["tags"]}
     assert "手动、有界且同步" in tag_descriptions["pipeline"]
+
+
+# 错误契约的跨表不变量与 detail 文案守护见 tests/test_error_contract.py。

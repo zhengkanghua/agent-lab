@@ -224,15 +224,99 @@ def test_document_search_empty_groups_returns_empty_list() -> None:
     assert run(service.search_documents(DocumentSearchRequest(query="无结果"))) == []
 
 
-def test_grouped_response_rejects_mismatched_document_id() -> None:
-    document_id = uuid4()
-    other_id = uuid4()
+def test_equal_best_scores_break_ties_by_document_id_for_determinism() -> None:
+    """最高分相同时按 document_id 字典序排，保证同样输入永远同样输出。"""
+
+    first, second = sorted([uuid4(), uuid4()], key=str)
+    # 故意用「字典序在后」的文档打头，验证排序键真的生效而不是保持输入顺序。
     client = GroupedClient(
-        [SimpleNamespace(id=str(document_id), hits=[point(other_id, 0.8, chunk_index=0, chunk_count=1)])]
+        [
+            SimpleNamespace(id=str(second), hits=[point(second, 0.8, chunk_index=0, chunk_count=1)]),
+            SimpleNamespace(id=str(first), hits=[point(first, 0.8, chunk_index=0, chunk_count=1)]),
+        ]
     )
     service, _provider = build_service(client)
 
-    with pytest.raises(QdrantSearchResponseError, match="不同的 document_id"):
+    results = run(service.search_documents(DocumentSearchRequest(query="并列分数")))
+
+    assert [result.document_id for result in results] == [first, second]
+
+
+def _group_id_not_uuid(document_id: UUID, _other_id: UUID) -> list[Any]:
+    return [SimpleNamespace(id="not-a-uuid", hits=[point(document_id, 0.8, chunk_index=0, chunk_count=1)])]
+
+
+def _group_without_hits(document_id: UUID, _other_id: UUID) -> list[Any]:
+    return [SimpleNamespace(id=str(document_id), hits=[])]
+
+
+def _same_document_in_two_groups(document_id: UUID, _other_id: UUID) -> list[Any]:
+    return [
+        SimpleNamespace(id=str(document_id), hits=[point(document_id, 0.8, chunk_index=0, chunk_count=1)]),
+        SimpleNamespace(id=str(document_id), hits=[point(document_id, 0.7, chunk_index=0, chunk_count=1)]),
+    ]
+
+
+def _point_document_id_differs_from_group(document_id: UUID, other_id: UUID) -> list[Any]:
+    return [SimpleNamespace(id=str(document_id), hits=[point(other_id, 0.8, chunk_index=0, chunk_count=1)])]
+
+
+def _same_chunk_id_twice(document_id: UUID, _other_id: UUID) -> list[Any]:
+    duplicate_chunk = models.ScoredPoint(
+        id=uuid4(),
+        version=1,
+        score=0.8,
+        payload=payload(document_id, chunk_index=0, chunk_count=2),
+    )
+    return [SimpleNamespace(id=str(document_id), hits=[duplicate_chunk, duplicate_chunk])]
+
+
+def _inconsistent_document_metadata(document_id: UUID, _other_id: UUID) -> list[Any]:
+    """同一 document_id 的两个 Chunk 给出不同标题。"""
+
+    return [
+        SimpleNamespace(
+            id=str(document_id),
+            hits=[
+                point(document_id, 0.9, chunk_index=0, chunk_count=2, title="标题 A"),
+                point(document_id, 0.8, chunk_index=1, chunk_count=2, title="标题 B"),
+            ],
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("build_groups", "message"),
+    [
+        (_group_id_not_uuid, "不是 UUID"),
+        (_group_without_hits, "没有命中结果"),
+        (_same_document_in_two_groups, "重复出现了同一文档"),
+        (_point_document_id_differs_from_group, "不同的 document_id"),
+        (_same_chunk_id_twice, "同一个 chunk_id"),
+        (_inconsistent_document_metadata, "元数据不一致"),
+    ],
+    ids=[
+        "group_id_not_uuid",
+        "group_without_hits",
+        "same_document_in_two_groups",
+        "point_document_id_differs_from_group",
+        "same_chunk_id_twice",
+        "inconsistent_document_metadata",
+    ],
+)
+def test_grouped_response_rejects_broken_group_contracts(
+    build_groups: Any, message: str
+) -> None:
+    """search_groups 是分组不变量的唯一后端防线，逐项确认它仍然拒绝坏响应。
+
+    用 parametrize 而不是循环：每个 case 独立报告，一个失败不会掩盖后面的 case。
+    """
+
+    document_id = uuid4()
+    other_id = uuid4()
+    service, _provider = build_service(GroupedClient(build_groups(document_id, other_id)))
+
+    with pytest.raises(QdrantSearchResponseError, match=message):
         run(service.search_documents(DocumentSearchRequest(query="校验")))
 
 

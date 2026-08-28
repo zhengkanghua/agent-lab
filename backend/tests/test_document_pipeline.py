@@ -122,11 +122,7 @@ def test_chunker_drops_blank_and_duplicate_chunks_then_rebuilds_relationships() 
     document = Document(
         id=str(parent_id),
         page_content="有效正文",
-        metadata={
-            "document_id": str(parent_id),
-            "previous_chunk_id": "stale",
-            "next_chunk_id": "stale",
-        },
+        metadata={"document_id": str(parent_id)},
     )
     chunker = DocumentChunker(chunk_size=32, chunk_overlap=4)
 

@@ -19,6 +19,7 @@ from agent_lab.schemas.user_admin import (
     UserAdminUpdateRequest,
 )
 from agent_lab.services.user_admin_service import (
+    INVALID_PASSWORD_DETAIL,
     UserAdminDomainError,
     UserAdminService,
 )
@@ -246,7 +247,7 @@ def test_user_admin_validation_error_is_stable_and_does_not_echo_password() -> N
     assert response.status_code == 422
     assert response.json() == {
         "code": "invalid_request",
-        "detail": "The account management request is invalid.",
+        "detail": "请求参数无效。",
         "retryable": False,
     }
     assert private_password not in response.text
@@ -325,3 +326,31 @@ def test_service_rolls_back_before_protecting_environment_admin() -> None:
     assert error.value.code == "environment_admin_protected"
     assert session.rollback_count == 1
     assert session.commit_count == 0
+
+
+def test_password_policy_detail_is_local_and_never_upstream_text() -> None:
+    """密码策略拒绝时，detail 必须来自本地常量，不能转发 fastapi-users 的 reason。
+
+    reason 由上游库定义，文本不受本项目控制，转发它等于把上游文本送进响应体。
+
+    这里只用「密码等于邮箱」触发：长度违例在 Service 层不可达，
+    `UserAdminCreateRequest.password` 已声明 min_length=12/max_length=128，
+    过短请求在 Pydantic 阶段就是 422，到不了 validate_password_strength。
+    长度分支的真实入口是 `auth/bootstrap.py`，那里密码来自 .env 且没有 schema 约束。
+    """
+
+    same_as_email = "reader@example.com"
+    service = UserAdminService(object())  # type: ignore[arg-type]
+
+    with pytest.raises(UserAdminDomainError) as error:
+        run(
+            service.create_user(
+                UserAdminCreateRequest(
+                    email=same_as_email, password=same_as_email, is_superuser=False
+                )
+            )
+        )
+
+    assert error.value.code == "invalid_password"
+    assert error.value.detail == INVALID_PASSWORD_DETAIL
+    assert same_as_email not in error.value.detail

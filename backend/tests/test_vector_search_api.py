@@ -14,7 +14,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from agent_lab.api.vector_search import VectorSearchErrorResponse
+from agent_lab.api.error_contract import VectorSearchErrorResponse
 from agent_lab.main import create_app
 from agent_lab.pipeline.ollama_embedding_provider import (
     EmbeddingResponseError,
@@ -353,3 +353,50 @@ def test_openapi_exposes_search_route_and_error_schemas() -> None:
     assert "502" in operation["responses"]
     assert "503" in operation["responses"]
     assert "504" in operation["responses"]
+
+
+def test_missing_lifespan_runtime_is_the_same_503_for_both_search_routes() -> None:
+    """Chunk 级与文档级搜索共用同一条 Runtime 缺失响应，不再各自处理一遍。"""
+
+    service = FakeSearchService()
+    app, _runtime = app_for(service)
+
+    chunk_response = run(
+        request_without_lifespan(
+            app,
+            "POST",
+            "/vector-search",
+            json={"query": "安全测试"},
+        )
+    )
+    document_response = run(
+        request_without_lifespan(
+            app,
+            "POST",
+            "/document-search",
+            json={"query": "安全测试"},
+        )
+    )
+
+    assert chunk_response.status_code == document_response.status_code == 503
+    assert chunk_response.json() == document_response.json()
+    assert service.requests == []
+
+
+def test_error_details_are_chinese_and_exclude_upstream_text() -> None:
+    """同一份错误契约不再中英混杂；detail 只用预写中文常量。"""
+
+    service = FakeSearchService(error=OllamaTimeoutError("upstream trace"))
+    app, _runtime = app_for(service)
+
+    response = run(
+        request(app, "POST", "/vector-search", json={"query": "安全短 query"})
+    )
+
+    assert response.status_code == 504
+    assert response.json() == {
+        "code": "embedding_timeout",
+        "detail": "Embedding 服务请求超时。",
+        "retryable": True,
+    }
+    assert "upstream trace" not in response.text
