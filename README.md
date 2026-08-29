@@ -49,5 +49,4 @@ npm run dev
 
 浏览器访问 <http://127.0.0.1:5173>，使用 `.env` 中的保底管理员登录，再从顶部账号管理
 入口添加其他用户。详细前端命令见 `frontend/README.md`，生产发布步骤见
-`docs/vps_deployment.md`，当前能力清单见 `docs/FEATURE_MAP.md`，范围边界见
-`backend/README.md` 的「明确不做」。
+`docs/vps_deployment.md`，当前能力清单见 `docs/FEATURE_MAP.md`。

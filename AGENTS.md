@@ -22,6 +22,7 @@
 | 项目介绍、安装、配置、启动、目录 | `README.md` |
 | 用户能力、入口和影响范围 | `docs/FEATURE_MAP.md`，再按条目读取 `docs/flows/`、代码和测试 |
 | 改 `frontend/` 或 `backend/` 代码 | 对应模块的 `AGENTS.md`（代码规范），验证命令见模块 `README.md` |
+| 后端内部实现、对外契约细节、错误码 | `backend/docs/architecture.md` |
 
 - 文档解释稳定职责、语义和外部契约；代码、测试和sql文件是精确行为真源。
 - `docs/FEATURE_MAP.md` 只做能力到流程、代码和测试的导航；`docs/flows/` 只记录跨模块时序、终态和失败边界。不要在文档中复制 SQL、枚举、阈值或单模块算法。
