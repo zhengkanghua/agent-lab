@@ -20,6 +20,13 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
   unauthorizedHandler = handler
 }
 
+/**
+ * 归一化后的接口异常。
+ *
+ * `status` 缺省记 0，表示「请求没拿到 HTTP 响应」（网络不通、超时、被取消）。这个 0 是有语义的：
+ * 登录页靠它区分「连不上服务器」和「服务器拒绝了本次登录」。改动缺省值会静默改掉登录页的
+ * 文案分支——不报错，只是提示变成误导。
+ */
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
