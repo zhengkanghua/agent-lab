@@ -432,10 +432,9 @@ class QdrantVectorSearch:
         # 浅拷贝一份（后面要往里加字段，不动原件）
         values = dict(payload)
         self._validate_payload_json_types(values, result_index)
-        # 4. 补上 Point/Chunk ID 和 score，交给 Pydantic 按 v1 契约整体校验
+        # 4. 补上 Chunk ID 和 score，交给 Pydantic 按 v1 契约整体校验
         values.update(
             {
-                "point_id": canonical_point_id,
                 "chunk_id": canonical_point_id,
                 "score": numeric_score,
             }
@@ -459,8 +458,10 @@ class QdrantVectorSearch:
                 f"涉及字段：{field_context}。"
             ) from None
 
-        # 5. 核对 Schema 版本和 Embedding 模型：防止搜到别的索引空间的数据
-        if result.index_schema_version != self._spec.schema_version:
+        # 5. 核对 Schema 版本和 Embedding 模型：防止搜到别的索引空间的数据。
+        # schema 版本直接读 Payload：它不进 VectorSearchResult（响应里恒等于当前 spec
+        # 版本，对调用方是常量），所以这里是它唯一的把关点，缺失或不匹配都要拒绝。
+        if values.get("index_schema_version") != self._spec.schema_version:
             raise QdrantSearchResponseError(
                 f"Qdrant 结果第 {result_index} 项使用了非预期的索引 "
                 "schema 版本。"

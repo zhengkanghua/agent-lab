@@ -355,7 +355,7 @@ def test_query_service_uses_embed_query_and_qdrant_current_alias() -> None:
             results = await service.search(VectorSearchRequest(query="安全 query"))
             assert fake_embeddings.query_calls == ["安全 query"]
             assert fake_embeddings.document_calls == []
-            assert results[0].point_id == point_id
+            assert results[0].chunk_id == point_id
             assert results[0].score == pytest.approx(1.0)
             assert query_calls[0]["collection_name"] == settings.collection_alias
             assert collection not in [call["collection_name"] for call in query_calls]
@@ -405,7 +405,7 @@ def test_memory_qdrant_cosine_score_threshold_and_order_are_preserved() -> None:
             threshold_results = await service.search(
                 VectorSearchRequest(query="阈值", top_k=3, score_threshold=0.7)
             )
-            assert [result.point_id for result in all_results] == [
+            assert [result.chunk_id for result in all_results] == [
                 UUID(str(point.id)) for point in points
             ]
             assert [result.score for result in all_results] == pytest.approx(
@@ -479,7 +479,7 @@ def test_memory_qdrant_combined_filters_and_missing_published_at_semantics() -> 
                 ),
             )
             results = await service.search(request)
-            assert [result.point_id for result in results] == [UUID(str(matching.id))]
+            assert [result.chunk_id for result in results] == [UUID(str(matching.id))]
             assert results[0].published_at == datetime(
                 2026, 8, 13, 1, 2, 3, tzinfo=UTC
             )
@@ -645,6 +645,10 @@ def test_search_response_requires_uuid_and_complete_typed_payload() -> None:
         (SimpleNamespace(id=valid_point_id, score=1.0, payload={**valid_payload, "published_at": 1786579200}), "published_at"),
         (SimpleNamespace(id=valid_point_id, score=1.0, payload={**valid_payload, "labels": "宏观"}), "labels"),
         (SimpleNamespace(id=valid_point_id, score=1.0, payload={**valid_payload, "chunk_index": 2}), "响应契约"),
+        # index_schema_version 不进 VectorSearchResult，所以它的把关全靠 _map_point 里
+        # 对 Payload 的等值比较：写坏、缺失都必须拒绝，否则会把别的索引空间的数据搜出来。
+        (SimpleNamespace(id=valid_point_id, score=1.0, payload={**valid_payload, "index_schema_version": "v2"}), "非预期的索引"),
+        (SimpleNamespace(id=valid_point_id, score=1.0, payload={key: value for key, value in valid_payload.items() if key != "index_schema_version"}), "非预期的索引"),
     ]
     for point, message in cases:
         fake_embeddings = FakeEmbeddings([1.0, 0.0, 0.0])
@@ -742,7 +746,7 @@ def test_same_document_chunk_hits_are_not_aggregated_or_reordered() -> None:
         )
     )
 
-    assert [result.point_id for result in results] == [first_id, second_id]
+    assert [result.chunk_id for result in results] == [first_id, second_id]
     assert [result.document_id for result in results] == [document_id, document_id]
     assert [result.score for result in results] == [0.91, 0.82]
 

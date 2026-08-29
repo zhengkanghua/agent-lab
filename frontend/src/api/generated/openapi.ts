@@ -110,7 +110,7 @@ export interface paths {
          * 按语义相似度搜索新闻 Chunk
          * @description 执行一次只读搜索：query 向量化 → Qdrant current Alias 查最相似的新闻 Chunk。
          *
-         *     搜索链路（完整说明见 docs/learning/04_vector_search.md）：
+         *     搜索链路：
          *     1. service.search() 先把 query 交给 Ollama 的 bge-m3 模型转成 1024 维向量；
          *     2. 再用向量查 Qdrant 的 current Alias——一个不存数据的「指针」，指向真正保存
          *        数据的物理 Collection（news_chunks_langchain_v1_001），部署时统一切换。
@@ -130,6 +130,7 @@ export interface paths {
          *     Notes:
          *         本方法不执行 PostgreSQL I/O。Service 会执行一次 Ollama query Embedding 和一次
          *         Qdrant current Alias 只读查询；不执行 upsert/delete/lifecycle/状态写入或自动重试。
+         *         Runtime 缺失由依赖在进入本方法前抛出，两条搜索路由共用应用级 handler 的 503。
          */
         post: operations["vector_search_vector_search_post"];
         delete?: never;
@@ -496,6 +497,11 @@ export interface components {
          *     ``best_match`` 是该文档本次命中中 score 最高的片段；``additional_matches`` 只
          *     保存本次搜索返回的其他相关片段，不是文章全部物理 Chunk。完整正文通过
          *     ``GET /documents/{document_id}`` 按需读取。
+         *
+         *     本模型只约束单个字段的形状。跨片段的关系不变量（best_score 等于 best_match.score、
+         *     片段按 score 降序、chunk_id 不重复、chunk_count 组内一致）由基础设施层的
+         *     ``QdrantVectorSearch.search_groups`` 在信任边界上保证——那里是唯一能拿到 Qdrant 原始
+         *     响应的地方。本模型的数据来自那一层的纯映射，重复校验不增加安全性。
          */
         DocumentSearchResult: {
             /**
@@ -924,7 +930,7 @@ export interface components {
          *
          *     只存在于单次 HTTP 响应里，不落库、不进日志。三个字段各有分工：
          *     - ``code``：稳定错误码字符串，客户端据此分支处理（如 embedding_timeout）；
-         *     - ``detail``：给人看的安全概述，绝不含密钥、query、向量或第三方响应原文；
+         *     - ``detail``：给人看的安全中文概述，绝不含密钥、query、向量或第三方响应原文；
          *     - ``retryable``：是否「不改请求、稍后重试就可能成功」；true 不代表会自动重试。
          */
         VectorSearchErrorResponse: {
@@ -936,7 +942,7 @@ export interface components {
             code: "search_runtime_unavailable" | "embedding_authentication_failed" | "embedding_unavailable" | "embedding_timeout" | "embedding_model_not_found" | "embedding_response_invalid" | "qdrant_authentication_failed" | "qdrant_unavailable" | "qdrant_timeout" | "qdrant_target_missing" | "qdrant_configuration_invalid" | "qdrant_response_invalid" | "qdrant_service_error";
             /**
              * Detail
-             * @description 由 API 层生成的必需安全错误概述；不可空，不包含用户 query、密钥、Vector、新闻正文或第三方原始响应。
+             * @description 由 API 层生成的必需安全中文错误概述；不可空，不包含用户 query、密钥、Vector、新闻正文或第三方原始响应。
              */
             detail: string;
             /**
@@ -1019,23 +1025,21 @@ export interface components {
          * VectorSearchResult
          * @description 一条按 Qdrant score 排序的命中结果（一个新闻 Chunk）。
          *
-         *     对象生命周期只覆盖搜索响应。注意三个身份的对应：point_id 是 Qdrant 存储层
-         *     主键，chunk_id 是 LangChain 切分层主键，当前 v1 契约里两者是同一个稳定 UUID；
-         *     document_id / source_id 关联 PostgreSQL 业务实体，但本对象本身不是 ORM 记录。
-         *     page_content 来自 Qdrant Payload，它曾经作为 document Embedding 的输入；
+         *     对象生命周期只覆盖搜索响应。chunk_id 是本次命中的 Chunk 身份，值就是 Qdrant
+         *     Point ID；document_id / source_id 关联 PostgreSQL 业务实体，但本对象本身不是 ORM
+         *     记录。page_content 来自 Qdrant Payload，它曾经作为 document Embedding 的输入；
          *     其他 Payload 字段不进入 Embedding。
+         *
+         *     不含 point_id：它与 chunk_id 恒为同一个 UUID，两个名字表达的「存储层主键 / 切分层
+         *     主键」之别在 v1 契约里没有对应的实际差异，只会让调用方纠结该用哪个。也不含
+         *     index_schema_version：它由 QdrantVectorSearch 在映射时对着当前 VectorIndexSpec
+         *     校验，不匹配直接拒绝，所以调用方能拿到的值恒等于当前 spec 版本，是个常量。
          */
         VectorSearchResult: {
             /**
-             * Point Id
-             * Format: uuid
-             * @description 来自 Qdrant ScoredPoint.id 的必需 UUID；不可空，是向量库 Point 主键，用于稳定定位本次命中的存储对象。
-             */
-            point_id: string;
-            /**
              * Chunk Id
              * Format: uuid
-             * @description 由 Qdrant Point ID 映射的必需稳定 Chunk UUID；不可空，与 point_id 相同，用于表达它在 LangChain Chunk 层的身份。
+             * @description 来自 Qdrant ScoredPoint.id 的必需稳定 Chunk UUID；不可空，既是向量库 Point 主键，也是它在 LangChain Chunk 层的身份。
              */
             chunk_id: string;
             /**
@@ -1138,11 +1142,6 @@ export interface components {
              * @description 来自 Qdrant Point Payload.next_chunk_id 的可选稳定 Chunk UUID；末个 Chunk 缺失时为 None，用于显式读取相邻上下文，本阶段不会自动扩展。
              */
             next_chunk_id?: string | null;
-            /**
-             * Index Schema Version
-             * @description 来自 Qdrant Point Payload.index_schema_version 的必需非空版本，例如 v1；不可空，用于确认结果属于当前 VectorIndexSpec。
-             */
-            index_schema_version: string;
             /**
              * Embedding Model
              * @description 来自 Qdrant Point Payload.embedding_model 的必需非空模型名；不可空，用于确认命中 Vector 与 query embedding 位于同一模型空间。

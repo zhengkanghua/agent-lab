@@ -11,7 +11,6 @@ vi.mock('../../../api/vector-search', () => ({
 const mockedSearchVector = vi.mocked(searchVector)
 
 const dto: VectorSearchResultDto = {
-  point_id: '10000000-0000-4000-8000-000000000001',
   chunk_id: '10000000-0000-4000-8000-000000000001',
   score: 0.72,
   page_content: '第一条原始片段。',
@@ -33,7 +32,6 @@ const dto: VectorSearchResultDto = {
   labels: ['宏观'],
   previous_chunk_id: null,
   next_chunk_id: '10000000-0000-4000-8000-000000000002',
-  index_schema_version: 'v1',
   embedding_model: 'bge-m3:567m',
 }
 
@@ -57,7 +55,6 @@ describe('useChunkSearch', () => {
   it('calls /vector-search semantics and preserves order plus duplicate document ids', async () => {
     const second = {
       ...dto,
-      point_id: '10000000-0000-4000-8000-000000000002',
       chunk_id: '10000000-0000-4000-8000-000000000002',
       score: 0.91,
       page_content: '第二条原始片段，分数更高但仍保持后端顺序。',

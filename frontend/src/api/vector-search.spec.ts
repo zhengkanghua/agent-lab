@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { searchVector } from './vector-search'
 
 const result = {
-  point_id: '10000000-0000-4000-8000-000000000001',
   chunk_id: '10000000-0000-4000-8000-000000000001',
   score: 0.8123,
   page_content: '央行维持政策利率不变。',
@@ -24,7 +23,6 @@ const result = {
   labels: ['宏观'],
   previous_chunk_id: null,
   next_chunk_id: null,
-  index_schema_version: 'v1',
   embedding_model: 'bge-m3:567m',
 }
 
@@ -36,7 +34,6 @@ describe('searchVector', () => {
   it('sends the typed search payload and preserves backend result order', async () => {
     const second = {
       ...result,
-      point_id: '10000000-0000-4000-8000-000000000002',
       chunk_id: '10000000-0000-4000-8000-000000000002',
       score: 0.7,
     }

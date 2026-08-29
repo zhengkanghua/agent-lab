@@ -54,10 +54,8 @@ def run(coroutine: Any) -> Any:
 def result() -> VectorSearchResult:
     """构造一个不依赖 Qdrant 的有效搜索结果。"""
 
-    point_id = uuid4()
     return VectorSearchResult(
-        point_id=point_id,
-        chunk_id=point_id,
+        chunk_id=uuid4(),
         score=0.91,
         page_content="政策利率新闻正文",
         document_id=uuid4(),
@@ -78,7 +76,6 @@ def result() -> VectorSearchResult:
         labels=["宏观"],
         previous_chunk_id=None,
         next_chunk_id=None,
-        index_schema_version="v1",
         embedding_model="bge-m3:567m",
     )
 
@@ -176,7 +173,7 @@ def test_successful_search_returns_result_array_and_forwards_filters() -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body[0]["point_id"] == str(service.results[0].point_id)
+    assert body[0]["chunk_id"] == str(service.results[0].chunk_id)
     assert body[0]["score"] == pytest.approx(0.91)
     assert len(service.requests) == 1
     forwarded = service.requests[0]

@@ -27,7 +27,6 @@ const documentResult = {
 }
 
 const chunkResult = {
-  point_id: match.chunk_id,
   chunk_id: match.chunk_id,
   score: 0.82,
   page_content: '原始 Chunk 模式结果。',
@@ -49,7 +48,6 @@ const chunkResult = {
   labels: ['宏观'],
   previous_chunk_id: null,
   next_chunk_id: null,
-  index_schema_version: 'v1',
   embedding_model: 'bge-m3:567m',
 }
 

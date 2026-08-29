@@ -272,23 +272,21 @@ class VectorSearchRequest(BaseModel):
 class VectorSearchResult(BaseModel):
     """一条按 Qdrant score 排序的命中结果（一个新闻 Chunk）。
 
-    对象生命周期只覆盖搜索响应。注意三个身份的对应：point_id 是 Qdrant 存储层
-    主键，chunk_id 是 LangChain 切分层主键，当前 v1 契约里两者是同一个稳定 UUID；
-    document_id / source_id 关联 PostgreSQL 业务实体，但本对象本身不是 ORM 记录。
-    page_content 来自 Qdrant Payload，它曾经作为 document Embedding 的输入；
+    对象生命周期只覆盖搜索响应。chunk_id 是本次命中的 Chunk 身份，值就是 Qdrant
+    Point ID；document_id / source_id 关联 PostgreSQL 业务实体，但本对象本身不是 ORM
+    记录。page_content 来自 Qdrant Payload，它曾经作为 document Embedding 的输入；
     其他 Payload 字段不进入 Embedding。
+
+    不含 point_id：它与 chunk_id 恒为同一个 UUID，两个名字表达的「存储层主键 / 切分层
+    主键」之别在 v1 契约里没有对应的实际差异，只会让调用方纠结该用哪个。也不含
+    index_schema_version：它由 QdrantVectorSearch 在映射时对着当前 VectorIndexSpec
+    校验，不匹配直接拒绝，所以调用方能拿到的值恒等于当前 spec 版本，是个常量。
     """
 
-    point_id: UUID = Field(
-        description=(
-            "来自 Qdrant ScoredPoint.id 的必需 UUID；不可空，是向量库 Point 主键，"
-            "用于稳定定位本次命中的存储对象。"
-        ),
-    )
     chunk_id: UUID = Field(
         description=(
-            "由 Qdrant Point ID 映射的必需稳定 Chunk UUID；不可空，与 point_id 相同，"
-            "用于表达它在 LangChain Chunk 层的身份。"
+            "来自 Qdrant ScoredPoint.id 的必需稳定 Chunk UUID；不可空，既是向量库 Point "
+            "主键，也是它在 LangChain Chunk 层的身份。"
         ),
     )
     score: float = Field(
@@ -427,13 +425,6 @@ class VectorSearchResult(BaseModel):
             "缺失时为 None，用于显式读取相邻上下文，本阶段不会自动扩展。"
         ),
     )
-    index_schema_version: str = Field(
-        min_length=1,
-        description=(
-            "来自 Qdrant Point Payload.index_schema_version 的必需非空版本，例如 v1；"
-            "不可空，用于确认结果属于当前 VectorIndexSpec。"
-        ),
-    )
     embedding_model: str = Field(
         min_length=1,
         description=(
@@ -451,7 +442,6 @@ class VectorSearchResult(BaseModel):
         "source_name",
         "source_external_id",
         "document_external_id",
-        "index_schema_version",
         "embedding_model",
     )
     @classmethod
@@ -512,19 +502,17 @@ class VectorSearchResult(BaseModel):
 
     @model_validator(mode="after")
     def validate_chunk_relationship(self) -> "VectorSearchResult":
-        """保证 Chunk 顺序与总数及 Point/Chunk 身份一致。
+        """保证 Chunk 顺序与总数一致。
 
         Returns:
             已确认可按 Chunk 关系导航的当前结果对象。
 
         Raises:
-            ValueError: ``chunk_index`` 越界，或 Point ID 与 Chunk ID 不一致。
+            ValueError: ``chunk_index`` 越界。
         """
 
         if self.chunk_index >= self.chunk_count:
             raise ValueError("chunk_index 必须小于 chunk_count")
-        if self.point_id != self.chunk_id:
-            raise ValueError("point_id 与 chunk_id 必须指向同一个 Chunk")
         return self
 
 
