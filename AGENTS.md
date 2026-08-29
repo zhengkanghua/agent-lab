@@ -21,6 +21,7 @@
 |---|---|
 | 项目介绍、安装、配置、启动、目录 | `README.md` |
 | 用户能力、入口和影响范围 | `docs/FEATURE_MAP.md`，再按条目读取 `docs/flows/`、代码和测试 |
+| 改 `frontend/` 或 `backend/` 代码 | 对应模块的 `AGENTS.md`（代码规范），验证命令见模块 `README.md` |
 
 - 文档解释稳定职责、语义和外部契约；代码、测试和sql文件是精确行为真源。
 - `docs/FEATURE_MAP.md` 只做能力到流程、代码和测试的导航；`docs/flows/` 只记录跨模块时序、终态和失败边界。不要在文档中复制 SQL、枚举、阈值或单模块算法。
@@ -38,15 +39,12 @@
     新增 skill 时两侧一起建。删除 skill 时两侧一起删。
 3. 探索代码前先读仓库根 `CONTEXT.md`（术语表）和 `docs/adr/`（决策记录）。两者都不存在就直接跳过，不要提示缺失、也不要提议预先创建——它们由 `/grill-with-docs` 在术语或决策真正落地时懒创建。输出里提到领域概念时沿用 `CONTEXT.md` 的既定说法，不要换同义词。若结论与某条 ADR 冲突，显式指出是哪条，不要静默绕过。
 4. `CONTEXT.md` 只是术语表：一个词条一句定义，不放实现细节、需求、规范或待办。决策和取舍写进`docs/adr/`，文件名 `NNNN-slug.md`，编号扫目录内最大号 +1。混着写会让它退化成第二份`AGENTS.md`，两份都没人信。
+5. 各模块的验证命令和代码规范由模块自己的文件承载，不在本文复制：改 `frontend/` 看 `frontend/AGENTS.md`，改 `backend/` 看 `backend/AGENTS.md`（注释规范）和 `backend/README.md` 的「测试」一节（验证命令）。
 
 ## 业务与数据约束
 
 1. 前端只通过 HTTP/OpenAPI 契约访问后端，不直接连接 PostgreSQL、Ollama 或 Qdrant。
 2. 浏览器 API 使用同域相对前缀 `/api`；任何 `VITE_*` 值都会进入公开构建产物，不能放密钥。
-
-## 构建、测试与前端
-
-1. 修改前端行为后至少运行 `npm run typecheck`、`npm run lint`、`npm run test:run` 和 `npm run build`；修改后端行为时继续遵守 `backend/AGENTS.md`。
 
 ## 完成条件
 
