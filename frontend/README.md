@@ -20,10 +20,10 @@ Session Storage 保存密码和 Token。退出调用 `POST /auth/logout` 撤销�
 ## 交互与数据边界
 
 - “按新闻”中 `document_limit` 控制不同新闻数量（下限 1、默认 10），
-  `matches_per_document` 控制每篇新闻返回的有限相关片段数量；前端不会对有限的 Chunk
-  top-k 做伪分组。
-- “按片段”中 `top_k` 控制原始 Chunk 数量（下限 1、默认 10）；结果不按 document 去重，
-  也不在前端重新排序。
+  `matches_per_document` 控制每篇新闻返回的有限相关片段数量。分组由后端 Qdrant grouped
+  query 完成，前端直接按返回顺序渲染。
+- “按片段”中 `top_k` 控制原始 Chunk 数量（下限 1、默认 10）；同一 document 的多个 Chunk
+  会分别出现，后端已排好序，前端不再重排。
 - 每篇新闻默认只展示最高分片段，其他相关片段使用无框分隔列表展开；score 始终显示
   原始数值，不转换成概率或百分比。
 - 全文由 Vue Query 以 `document_id + content_hash` 为缓存 key 按需加载，关闭或快速
@@ -62,8 +62,11 @@ npm run test:run
 npm run build
 ```
 
-`src/api/generated/openapi.ts` 由后端 `/openapi.json` 使用 `openapi-typescript` 生成，
-不能手工修改。后端契约变化后，在后端服务运行时重新执行：
+`vue-tsc` 的 `-b` 是必需的：本项目是 solution 风格 tsconfig（根 tsconfig 只有 `references`），
+不加 `-b` 读不到子项目，会报 0 个错误并正常退出。
+
+`src/api/generated/openapi.ts` 由后端 `/openapi.json` 使用 `openapi-typescript` 生成（文件头有
+生成声明）。后端契约变化后，在后端服务运行时重新执行：
 
 ```powershell
 npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated/openapi.ts
