@@ -38,7 +38,7 @@ SearchPage.vue
 Qdrant 的 grouped query 按 `document_id` 分组，`document_limit` 控制返回几篇、
 `matches_per_document` 控制每篇几个片段。结果按每篇最高分降序。
 
-**前端不重排、不聚合、不二次去重**（`useSemanticSearch.ts:13` 有同样的注释）。前端再排一遍
+**前端不重排、不聚合、不二次去重**（`useSemanticSearch.ts` 的模块 docstring 有同样的注释）。前端再排一遍
 的话，两边规则一有出入，用户看到的顺序就和后端算出来的不一致，而且很难查。
 
 背景见 [`../adr/0001-backend-owns-result-uniqueness-and-order.md`](../adr/0001-backend-owns-result-uniqueness-and-order.md)。
@@ -48,8 +48,8 @@ Qdrant 的 grouped query 按 `document_id` 分组，`document_limit` 控制返�
 `useSearchRequest.ts` 用两道机制防止旧响应盖掉新结果：
 
 1. **AbortController**：发新请求前 abort 上一个。
-2. **请求序号**：`:22` 记了一个 abort 管不到的窗口——请求已经 resolve、`await` 还没恢复执行
-   的那一瞬间，`abort()` 不再起作用，只能靠序号比对丢弃。
+2. **请求序号**：`useSearchRequest()` 的 docstring 记了一个 abort 管不到的窗口——请求已经
+   resolve、`await` 还没恢复执行的那一瞬间，`abort()` 不再起作用，只能靠序号比对丢弃。
 
 只做第一道会漏。这个窗口很窄但真实存在，用户连续输入时能碰到。
 
@@ -57,7 +57,7 @@ Qdrant 的 grouped query 按 `document_id` 分组，`document_limit` 控制返�
 
 | 出错的地方 | 用户看到 |
 | --- | --- |
-| 查询为空或超长 | 前端 `model/search-validation.ts` 直接拦，不发请求 |
+| 查询为空或超长 | 前端 `features/semantic-search/model/search-validation.ts` 直接拦，不发请求 |
 | 参数不合法 | 422，后端 Pydantic |
 | Ollama 挂了或超时 | 503 |
 | Qdrant 挂了或响应契约非法 | 503 |

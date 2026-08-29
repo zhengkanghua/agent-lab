@@ -39,7 +39,9 @@
     新增 skill 时两侧一起建。删除 skill 时两侧一起删。
 3. 探索代码前先读仓库根 `CONTEXT.md`（术语表）和 `docs/adr/`（决策记录）。两者都不存在就直接跳过，不要提示缺失、也不要提议预先创建——它们由 `/grill-with-docs` 在术语或决策真正落地时懒创建。输出里提到领域概念时沿用 `CONTEXT.md` 的既定说法，不要换同义词。若结论与某条 ADR 冲突，显式指出是哪条，不要静默绕过。
 4. `CONTEXT.md` 只是术语表：一个词条一句定义，不放实现细节、需求、规范或待办。决策和取舍写进`docs/adr/`，文件名 `NNNN-slug.md`，编号扫目录内最大号 +1。混着写会让它退化成第二份`AGENTS.md`，两份都没人信。
-5. 各模块的验证命令和代码规范由模块自己的文件承载，不在本文复制：改 `frontend/` 看 `frontend/AGENTS.md`，改 `backend/` 看 `backend/AGENTS.md`（注释规范）和 `backend/README.md` 的「测试」一节（验证命令）。
+5. 术语表和决策记录都在仓库根各一份，不按运行时拆。当前是一个业务领域（新闻语义检索）被 `frontend/` 和 `backend/` 两个运行时切开，两侧共用同一套词汇——Document、Chunk、score、revision、current Alias 含义一致，前端类型由后端 `/openapi.json` 生成，所以前后端分离是技术边界、不是词汇边界。接入词汇会撞名的第二个业务领域时再重新判断要不要拆成 `CONTEXT-MAP.md` 加分目录 `CONTEXT.md`；触发条件是词汇冲突，不是目录变多。
+6. 「模块」在本仓库指运行时目录（`frontend/`、`backend/`），业务侧的那层含义写「业务领域」。Python 模块、Nginx 模块这类行业固定叫法不受影响。
+7. 各运行时的验证命令和代码规范由自己的文件承载，不在本文复制：改 `frontend/` 看 `frontend/AGENTS.md`，改 `backend/` 看 `backend/AGENTS.md`（注释规范）和 `backend/README.md` 的「测试」一节（验证命令）。
 
 ## 业务与数据约束
 

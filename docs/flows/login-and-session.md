@@ -23,8 +23,8 @@ router.beforeEach ──► authSession.initialize() ──► GET /auth/me
 ```
 
 `app/router.ts` 的 `beforeEach` **每次导航都先 await `initialize()`**，再判断权限。`initialize`
-内部有两道防抖：状态已知就直接返回，并发调用共用同一个 in-flight Promise（`auth-session.ts:59`），
-所以不会每次跳转都打一次 `/auth/me`。
+内部有两道防抖：状态已知就直接返回，并发调用共用同一个 in-flight Promise（`auth-session.ts`
+的 `initialize()`），所以不会每次跳转都打一次 `/auth/me`。
 
 三条判断：
 
@@ -40,7 +40,7 @@ router.beforeEach ──► authSession.initialize() ──► GET /auth/me
 ## 登录
 
 `login()` 是两步，不是一步：先 `POST /auth/login`，再**立刻 `GET /auth/me`** 确认会话真的建立了
-（`auth-session.ts:69`）。第二步没变成 authenticated 就抛错。
+（`auth-session.ts` 的 `login()`）。第二步没变成 authenticated 就抛错。
 
 这么做是因为登录接口返回 200 只说明 Cookie 发出来了，不代表后续请求真能带上它（跨域、
 Cookie 属性、代理都可能出问题）。多这一次往返换来的是「登录成功」这个状态可信。
@@ -51,7 +51,7 @@ Cookie 属性、代理都可能出问题）。多这一次往返换来的是「�
 
 ## 会话中途失效
 
-这是最容易看漏的一根线，接线点在 `main.ts:15`：
+这是最容易看漏的一根线，接线点在 `main.ts` 的 `setUnauthorizedHandler()` 调用：
 
 ```
 任意请求收到 401 ──► client.ts 的 unauthorizedHandler
@@ -63,13 +63,13 @@ Cookie 属性、代理都可能出问题）。多这一次往返换来的是「�
 
 `api/client.ts` 只负责「发现 401 就喊一声」，它不知道有路由和会话；具体怎么响应由 `main.ts`
 在启动时注入。这样 `client.ts` 不依赖 router 和 auth，测试里也能单独换掉这个 handler
-（`client.spec.ts:93`）。
+（`client.spec.ts` 的 `notifies the application when an authenticated API request returns 401`）。
 
 `queryClient.clear()` 不能省。不清缓存的话，换账号登录后可能看到上一个账号的检索结果。
 
 ## 退出
 
-`logout()` 把 401 当成成功（`auth-session.ts:83`）：会话本来就已经没了，目的已经达到，
+`logout()` 把 401 当成成功（`auth-session.ts` 的 `logout()`）：会话本来就已经没了，目的已经达到，
 不该给用户报错。
 
 ## 边界

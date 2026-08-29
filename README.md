@@ -1,8 +1,8 @@
 # Agent Lab
 
-仓库当前只有一个模块：新闻语义检索。后端的 Qdrant 与 Ollama 组件目前仍与新闻领域
-耦合（Payload 契约、Collection 命名、单份配置），尚未抽离为可被多模块、多 Collection
-复用的公共层；接入第二个模块前需要先完成抽离。
+仓库当前只有一个业务领域：新闻语义检索。后端的 Qdrant 与 Ollama 组件目前仍与新闻领域
+耦合（Payload 契约、Collection 命名、单份配置），尚未抽离为可被多业务领域、多 Collection
+复用的公共层；接入第二个业务领域前需要先完成抽离。
 
 该工作区把新闻向量服务与浏览器工作台作为两个独立运行时维护：
 
@@ -49,4 +49,5 @@ npm run dev
 
 浏览器访问 <http://127.0.0.1:5173>，使用 `.env` 中的保底管理员登录，再从顶部账号管理
 入口添加其他用户。详细前端命令见 `frontend/README.md`，生产发布步骤见
-`docs/vps_deployment.md`，平台范围见 `docs/frontend_and_rag_roadmap.md`。
+`docs/vps_deployment.md`，当前能力清单见 `docs/FEATURE_MAP.md`，范围边界见
+`backend/README.md` 的「明确不做」。

@@ -19,12 +19,15 @@
 | 语义检索（Chunk 级） | `/` | `POST /vector-search` | `api/vector_search.py` → `services/vector_search_service.py` → `qdrant/search.py`；前端 `api/vector-search.ts`、`features/semantic-search/composables/useChunkSearch.ts` | `tests/test_vector_search.py`、`tests/test_vector_search_api.py`、`src/api/vector-search.spec.ts` |
 | 文档检索（文档级） | `/` | `POST /document-search` | `api/document_search.py` → `services/vector_search_service.py`；前端 `api/document-search.ts`、`features/semantic-search/composables/useSearchRequest.ts` | `tests/test_document_search.py`、`src/api/document-search.spec.ts` |
 | 读取单篇文档 | `/`（结果内展开） | `GET /documents/{document_id}` | `api/documents.py` → `repositories/document_repository.py`；前端 `api/documents.ts`、`features/semantic-search/composables/useDocumentReader.ts` | `tests/test_documents_api.py`、`src/api/documents.spec.ts` |
-| 用户管理（增删改、改密、踢会话） | `/admin/users` | `GET /user-admin`、`POST /user-admin`、`PATCH /user-admin/{user_id}`、`POST /user-admin/{user_id}/password`、`DELETE /user-admin/{user_id}/sessions` | `api/user_admin.py` → `services/user_admin_service.py`；前端 `api/user-admin.ts`、`pages/UserAdminPage.vue` | `tests/test_user_admin.py`、`src/api/user-admin.spec.ts`、`src/pages/UserAdminPage.spec.ts` |
+| 用户管理（增删改、改密、踢会话） | `/admin/users` | `GET /admin/users`、`POST /admin/users`、`PATCH /admin/users/{user_id}`、`POST /admin/users/{user_id}/password`、`DELETE /admin/users/{user_id}/sessions` | `api/user_admin.py` → `services/user_admin_service.py`；前端 `api/user-admin.ts`、`pages/UserAdminPage.vue` | `tests/test_user_admin.py`、`src/api/user-admin.spec.ts`、`src/pages/UserAdminPage.spec.ts` |
 | 手工触发同步加索引 | 无页面 | `POST /pipeline/run-once` | `api/pipeline.py` → `services/news_pipeline_execution_service.py` | `tests/test_pipeline_api.py`、`tests/test_news_pipeline_execution.py` |
 | 健康检查 | 无 | `GET /health` | `api/health.py` | `tests/test_error_contract.py` |
 
-`/vector-search`、`/document-search`、`/documents` 要求登录；`/pipeline`、`/user-admin` 要求超级用户。
+`/vector-search`、`/document-search`、`/documents` 要求登录；`/pipeline`、`/admin/users` 要求超级用户。
 挂载点和依赖在 `backend/src/agent_lab/main.py` 的 `include_router` 处。
+
+用户管理这一行前后端两列写的都是 `/admin/users`，不是抄错：前端页面路由和后端 API 前缀刚好同名，
+浏览器实际请求 `/api/admin/users`。后端路由的 `tags=["user-admin"]` 只是 OpenAPI 分组标签，不是路径。
 
 ## 命令行能力
 
