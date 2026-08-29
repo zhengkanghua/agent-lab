@@ -6,10 +6,7 @@ import { MAX_QUERY_CHARACTERS, validateQuery, type SearchStatus } from '../model
  * 一次搜索请求的执行体。由调用方提供，负责归一化自己的请求参数、调用 api 层并把响应
  * 映射成展示模型。底座只关心它返回的数组长度和它可能抛出的错误。
  */
-export type SearchExecutor<TResult> = (
-  query: string,
-  signal: AbortSignal,
-) => Promise<TResult[]>
+export type SearchExecutor<TResult> = (query: string, signal: AbortSignal) => Promise<TResult[]>
 
 /**
  * 文档模式与 Chunk 模式共用的搜索请求底座。
