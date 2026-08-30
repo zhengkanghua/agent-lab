@@ -123,7 +123,7 @@ class FreshRSSClient:
         """
 
         try:
-            # 1. 用用户名 + API 密码调 ClientLogin 换 Token
+            # 1、用用户名 + API 密码调 ClientLogin 换 Token
             response = await self._http_client.post(
                 self._CLIENT_LOGIN_PATH,
                 data={
@@ -133,7 +133,7 @@ class FreshRSSClient:
             )
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            # 2. 把 HTTP 状态分类成稳定领域异常（认证/超时/服务端），不泄露凭据
+            # 2、把 HTTP 状态分类成稳定领域异常（认证/超时/服务端），不泄露凭据
             if exc.response.status_code in {401, 403}:
                 raise FreshRSSAuthenticationError(
                     "FreshRSS 拒绝了 API 凭据。"
@@ -148,7 +148,7 @@ class FreshRSSClient:
         except httpx.RequestError as exc:
             raise FreshRSSConnectionError("无法连接到 FreshRSS。") from exc
 
-        # 3. ClientLogin 用 key=value 文本行返回（非 JSON）；partition 能安全处理
+        # 3、ClientLogin 用 key=value 文本行返回（非 JSON）；partition 能安全处理
         #    值里可能出现的 '='
         login_fields: dict[str, str] = {}
         for line in response.text.splitlines():
@@ -157,7 +157,7 @@ class FreshRSSClient:
             if separator:
                 login_fields[key] = value
 
-        # 4. 从响应里取出 Auth token，用 SecretStr 包住（打印对象时不会泄露）
+        # 4、从响应里取出 Auth token，用 SecretStr 包住（打印对象时不会泄露）
         auth_token = login_fields.get("Auth")
         if not auth_token:
             raise FreshRSSAuthenticationError(
@@ -529,11 +529,11 @@ class FreshRSSClient:
             FreshRSSAuthenticationError: 首次请求触发认证且凭据无效。
         """
 
-        # 1. 首次请求自动先登录拿 Token（懒登录）
+        # 1、首次请求自动先登录拿 Token（懒登录）
         if self._auth_token is None:
             await self.authenticate()
 
-        # 2. 带上 GoogleLogin 认证头请求；所有真实 HTTP 请求都集中走这里
+        # 2、带上 GoogleLogin 认证头请求；所有真实 HTTP 请求都集中走这里
         headers = {
             "Authorization": (f"GoogleLogin auth={self._auth_token.get_secret_value()}")
         }
@@ -548,7 +548,7 @@ class FreshRSSClient:
             response.raise_for_status()
             return response
         except httpx.HTTPStatusError as exc:
-            # 3. 按 HTTP 状态分类成稳定领域异常，不让响应正文/凭据外泄
+            # 3、按 HTTP 状态分类成稳定领域异常，不让响应正文/凭据外泄
             if exc.response.status_code in {401, 403}:
                 raise FreshRSSAuthenticationError(
                     "FreshRSS API 身份验证被拒绝。"

@@ -122,9 +122,9 @@ class DocumentRepository:
             RuntimeError: 冲突分支未返回记录且无法查询到现有行时抛出。
         """
 
-        # 1. 计算规范化正文的 SHA-256（内容指纹，用于判断是否变化/是否需重建向量）
+        # 1、计算规范化正文的 SHA-256（内容指纹，用于判断是否变化/是否需重建向量）
         content_hash = sha256(document.content_text.encode("utf-8")).hexdigest()
-        # 2. 准备「插入值」：新行默认 pending、index_revision=1
+        # 2、准备「插入值」：新行默认 pending、index_revision=1
         values = {
             "id": uuid4(),
             "source_id": source_id,
@@ -144,7 +144,7 @@ class DocumentRepository:
         }
         insert_statement = insert(DocumentRecord).values(**values)
         excluded = insert_statement.excluded
-        # 3. 「会影响向量/切分结果」的字段是否变化：变了就重建/重埋向量
+        # 3、「会影响向量/切分结果」的字段是否变化：变了就重建/重埋向量
         index_inputs_changed = or_(
             DocumentRecord.document_type.is_distinct_from(excluded.document_type),
             DocumentRecord.title.is_distinct_from(excluded.title),
@@ -155,7 +155,7 @@ class DocumentRepository:
             DocumentRecord.labels.is_distinct_from(excluded.labels),
             DocumentRecord.content_hash.is_distinct_from(excluded.content_hash),
         )
-        # 4. 「是否需要写这行」：索引相关字段变了，或纯图片变了（后者无需重埋向量）
+        # 4、「是否需要写这行」：索引相关字段变了，或纯图片变了（后者无需重埋向量）
         has_changes = or_(
             index_inputs_changed,
             # image_urls 是 PostgreSQL 业务字段，但当前不进入 page_content 或 Qdrant
@@ -210,12 +210,12 @@ class DocumentRepository:
             .execution_options(populate_existing=True)
         )
 
-        # 5. 执行 UPSERT；有返回行说明发生了 INSERT 或 UPDATE（内容确实变了）
+        # 5、执行 UPSERT；有返回行说明发生了 INSERT 或 UPDATE（内容确实变了）
         record = (await self._session.scalars(upsert_statement)).one_or_none()
         if record is not None:
             return record
 
-        # 6. 内容完全相同 → ON CONFLICT 的 WHERE 不匹配，没有 UPDATE，也不改
+        # 6、内容完全相同 → ON CONFLICT 的 WHERE 不匹配，没有 UPDATE，也不改
         #    updated_at。这里需再查一次现有行返回给调用方（纯幂等命中）。
         existing_statement = select(DocumentRecord).where(
             DocumentRecord.source_id == source_id,

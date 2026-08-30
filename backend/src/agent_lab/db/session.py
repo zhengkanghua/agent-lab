@@ -54,9 +54,9 @@ async def get_db_session() -> AsyncIterator[AsyncSession]:
 
     async with async_session_factory() as session:
         try:
-            # 1. 把 Session 交还给请求处理逻辑（FastAPI 依赖注入）
+            # 1、把 Session 交还给请求处理逻辑（FastAPI 依赖注入）
             yield session
         except Exception:
-            # 2. 请求内部出错：回滚，确保失败的操作不留未提交修改
+            # 2、请求内部出错：回滚，确保失败的操作不留未提交修改
             await session.rollback()
             raise

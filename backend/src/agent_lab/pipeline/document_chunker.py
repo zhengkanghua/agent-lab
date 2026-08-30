@@ -129,17 +129,17 @@ class DocumentChunker:
             ValueError: 文档 ID 缺失、不是 UUID，或正文为空时抛出。
         """
 
-        # 1. 校验：父文档要有合法 UUID、正文得非空
+        # 1、校验：父文档要有合法 UUID、正文得非空
         document_uuid = self._document_uuid(document)
         if not document.page_content.strip():
             raise ValueError(
                 "page_content 为空，无法对 LangChain 文档进行分块。"
             )
 
-        # 2. 用 LangChain 切分器切出原始片段（它会复制父 Metadata，避免多个 Chunk
+        # 2、用 LangChain 切分器切出原始片段（它会复制父 Metadata，避免多个 Chunk
         #    共享同一个可变 dict）。先生成所有 ID，后续才能一次遍历写入准确前后关系。
         raw_chunks = self._splitter.split_documents([document])
-        # 3. 过滤空白 Chunk 和同文档内完全重复的正文（排序用最终列表重建）
+        # 3、过滤空白 Chunk 和同文档内完全重复的正文（排序用最终列表重建）
         chunks: list[Document] = []
         seen_page_content: set[str] = set()
         for chunk in raw_chunks:
@@ -152,13 +152,13 @@ class DocumentChunker:
         if not chunks:
             raise ValueError("文档切分没有产生任何非空的唯一分块。")
 
-        # 4. 为每个 Chunk 生成稳定 ID（uuid5，重跑不变）
+        # 4、为每个 Chunk 生成稳定 ID（uuid5，重跑不变）
         chunk_ids = [
             self._build_chunk_id(document_uuid, chunk_index)
             for chunk_index in range(len(chunks))
         ]
 
-        # 5. 关系字段（index/count/prev/next）按去重后的最终列表计算，不用切分器
+        # 5、关系字段（index/count/prev/next）按去重后的最终列表计算，不用切分器
         #    返回的原始顺序，否则被丢弃的空白/重复片段会在链上留下空洞
         for chunk_index, chunk in enumerate(chunks):
             chunk.id = chunk_ids[chunk_index]

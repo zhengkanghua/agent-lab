@@ -145,18 +145,18 @@ def build_agent_middleware(
     """
 
     return [
-        # 1. 决定本次用哪份系统提示词。放最外层：它只改写请求，不处理异常。
+        # 1、决定本次用哪份系统提示词。放最外层：它只改写请求，不处理异常。
         resolve_system_prompt,
-        # 2. 主模型彻底失败后降级到备用模型。必须在 retry 外层——先让 retry 试完再降级，
+        # 2、主模型彻底失败后降级到备用模型。必须在 retry 外层——先让 retry 试完再降级，
         #    反过来会变成「第一次失败就换模型」。
         ModelFallbackMiddleware(fallback_model),
-        # 3. 模型调用重试。on_failure="error" 才能在重试耗尽时把异常交给外层降级。
+        # 3、模型调用重试。on_failure="error" 才能在重试耗尽时把异常交给外层降级。
         ModelRetryMiddleware(
             max_retries=MODEL_RETRY_MAX,
             initial_delay=RETRY_INITIAL_DELAY_SECONDS,
             on_failure="error",
         ),
-        # 4. 历史过长时压缩成摘要。按消息条数触发而非 token：token 计数依赖分词器，
+        # 4、历史过长时压缩成摘要。按消息条数触发而非 token：token 计数依赖分词器，
         #    而中转站背后用哪个分词器我们并不掌握，条数是此处唯一确定的量。
         #    summary_prompt 传中文版，否则默认英文提示词会把对话语言带偏。
         SummarizationMiddleware(
@@ -165,21 +165,21 @@ def build_agent_middleware(
             keep=("messages", SUMMARIZATION_KEEP_MESSAGES),
             summary_prompt=SUMMARY_PROMPT,
         ),
-        # 5. 一次运行内的模型调用次数上限。exit_behavior="end" 表示到顶就收尾，
+        # 5、一次运行内的模型调用次数上限。exit_behavior="end" 表示到顶就收尾，
         #    用户至少拿到已经生成的内容，而不是一个错误。
         ModelCallLimitMiddleware(
             run_limit=MODEL_CALL_RUN_LIMIT,
             exit_behavior="end",
         ),
-        # 6. 一次运行内的工具调用次数上限。exit_behavior="continue" 表示到顶后不再执行
+        # 6、一次运行内的工具调用次数上限。exit_behavior="continue" 表示到顶后不再执行
         #    工具，但模型可以带着已有材料继续作答。
         ToolCallLimitMiddleware(
             run_limit=TOOL_CALL_RUN_LIMIT,
             exit_behavior="continue",
         ),
-        # 7. 工具异常兜底（外层）。内层重试耗尽后才轮到它，把异常翻成安全文案。
+        # 7、工具异常兜底（外层）。内层重试耗尽后才轮到它，把异常翻成安全文案。
         ToolErrorMiddleware(sanitize_tool_error),
-        # 8. 工具重试（内层，最先执行）。必须排在兜底之后：反过来兜底会先把异常吞成
+        # 8、工具重试（内层，最先执行）。必须排在兜底之后：反过来兜底会先把异常吞成
         #    ToolMessage，这里永远收不到异常、重试成为死代码。见 ADR 0005。
         ToolRetryMiddleware(
             max_retries=TOOL_RETRY_MAX,

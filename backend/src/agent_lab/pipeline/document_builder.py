@@ -44,14 +44,14 @@ class DocumentBuilder:
             ValueError: 正文为空，``source`` 关系尚未加载，或关系值为空时抛出。
         """
 
-        # 1. 正文必须非空：没有正文就无法切分/向量化
+        # 1、正文必须非空：没有正文就无法切分/向量化
         content_text = record.content_text.strip()
         if not content_text:
             raise ValueError(
                 "content_text 为空，无法构建 LangChain 文档。"
             )
 
-        # 2. 要求调用方已 eager-load source 关系：异步 SQLAlchemy 下，若此时才触发
+        # 2、要求调用方已 eager-load source 关系：异步 SQLAlchemy 下，若此时才触发
         #    懒加载，会在同步属性访问里发起隐式数据库 I/O，不安全
         state = inspect(record)
         if "source" in state.unloaded:
@@ -66,7 +66,7 @@ class DocumentBuilder:
                 "LangChain 文档前必须包含来源。"
             )
 
-        # 3. 组装 Metadata：关联类字段用于定位 DB/外部原记录；语义类字段用于过滤、
+        # 3、组装 Metadata：关联类字段用于定位 DB/外部原记录；语义类字段用于过滤、
         #    展示和构造提示词。值限定为字符串或字符串列表，方便日后直接序列化成
         #    Qdrant payload，无需自定义编码
         metadata: dict[str, str | list[str]] = {
@@ -85,14 +85,14 @@ class DocumentBuilder:
             "authors": list(record.authors),
             "labels": list(record.labels),
         }
-        # 4. 缺失时间时省略 key 而不是写 None：让 payload 类型稳定，向量库做过滤时
+        # 4、缺失时间时省略 key 而不是写 None：让 payload 类型稳定，向量库做过滤时
         #    也不用同时判断「字段不存在」和「字段为 null」两种情况
         if record.published_at is not None:
             metadata["published_at"] = record.published_at.isoformat()
         if record.source_updated_at is not None:
             metadata["source_updated_at"] = record.source_updated_at.isoformat()
 
-        # 5. 生成 Document：LangChain Embedding 默认只嵌入 page_content，metadata
+        # 5、生成 Document：LangChain Embedding 默认只嵌入 page_content，metadata
         #    不会拼进向量输入，所以 UUID/URL 等字段可完整保留用于过滤和回查
         return Document(
             id=str(record.id),

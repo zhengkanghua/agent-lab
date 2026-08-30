@@ -149,19 +149,19 @@ class VectorSearchRuntime:
             Payload index 或 Alias。qdrant-client 的构造兼容性探测已在统一 builder 中关闭。
         """
 
-        # 1. 规格 + Qdrant client + Embedding Provider（与写 Runtime 共用的中立零件）
+        # 1、规格 + Qdrant client + Embedding Provider（与写 Runtime 共用的中立零件）
         spec, qdrant_client, embedding_provider = _build_shared_components(
             qdrant_settings,
             ollama_settings,
             client,
         )
-        # 2. 只往上装只读零件：只查 current Alias 的搜索组件
+        # 2、只往上装只读零件：只查 current Alias 的搜索组件
         vector_search = QdrantVectorSearch(
             qdrant_client,
             qdrant_settings,
             spec,
         )
-        # 3. 用同一个 spec 拼装 Service（构造时就会校验模型一致性）
+        # 3、用同一个 spec 拼装 Service（构造时就会校验模型一致性）
         service = VectorSearchService(
             embedding_provider=embedding_provider,
             vector_search=vector_search,
@@ -236,13 +236,13 @@ class DocumentIndexingRuntime:
             其关闭责任也转移给返回的 runtime，避免连接池泄漏。
         """
 
-        # 1. 规格 + Qdrant client + Embedding Provider（与读 Runtime 共用的中立零件）
+        # 1、规格 + Qdrant client + Embedding Provider（与读 Runtime 共用的中立零件）
         spec, qdrant_client, embedding_provider = _build_shared_components(
             qdrant_settings,
             ollama_settings,
             client,
         )
-        # 2. 往上装写路径零件：切分流水线（参数取自 spec）、Collection/Alias 生命周期、
+        # 2、往上装写路径零件：切分流水线（参数取自 spec）、Collection/Alias 生命周期、
         #    只用 current Alias 的 Point Store
         chunk_pipeline = DocumentChunkPipeline(
             document_chunker=DocumentChunker(
@@ -261,7 +261,7 @@ class DocumentIndexingRuntime:
             qdrant_settings,
             spec,
         )
-        # 3. 用同一 spec 拼装索引 Service（构造时会校验 Chunk 参数/模型一致性）
+        # 3、用同一 spec 拼装索引 Service（构造时会校验 Chunk 参数/模型一致性）
         service = DocumentIndexingService(
             chunk_pipeline=chunk_pipeline,
             embedding_provider=embedding_provider,

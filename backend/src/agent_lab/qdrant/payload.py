@@ -75,20 +75,20 @@ class QdrantPayloadMapper:
             不写入 null，以保持时间字段类型稳定；新闻没有发布时间时不伪造抓取时间。
         """
 
-        # 1. 校验 Chunk 本身：必须要有稳定 ID 和非空正文
+        # 1、校验 Chunk 本身：必须要有稳定 ID 和非空正文
         if chunk.id is None or not chunk.id.strip():
             raise QdrantPayloadError("映射到 Qdrant 前必须设置 Chunk 的 Document.id。")
 
         if not isinstance(chunk.page_content, str) or not chunk.page_content.strip():
             raise QdrantPayloadError("Chunk 的 page_content 必须包含非空白文本。")
 
-        # 2. 校验必需 Metadata：白名单字段一个都不能缺
+        # 2、校验必需 Metadata：白名单字段一个都不能缺
         metadata = chunk.metadata
         for field in self.REQUIRED_FIELDS:
             if field not in metadata or metadata[field] in (None, ""):
                 raise QdrantPayloadError(f"缺少必需的 Chunk 元数据字段 {field!r}。")
 
-        # 3. 抽取并强类型校验关键字段（UUID / 内容哈希 / Chunk 序号）
+        # 3、抽取并强类型校验关键字段（UUID / 内容哈希 / Chunk 序号）
         document_id = self._required_uuid(metadata, "document_id")
         source_id = self._required_uuid(metadata, "source_id")
         content_hash = self._required_string(metadata, "content_hash")
@@ -105,7 +105,7 @@ class QdrantPayloadMapper:
                 "Chunk 元数据要求 chunk_count > 0 且 chunk_index < chunk_count。"
             )
 
-        # 4. 组装扁平 Payload：正文 + 业务字段 + 索引规格审计字段
+        # 4、组装扁平 Payload：正文 + 业务字段 + 索引规格审计字段
         payload: dict[str, Any] = {
             "page_content": chunk.page_content,
             "document_id": document_id,
@@ -128,7 +128,7 @@ class QdrantPayloadMapper:
             "embedding_model": self._spec.embedding_model,
         }
 
-        # 5. 可选关系字段（前/后 Chunk）：有值才写入，缺失不写 null（保持类型稳定）
+        # 5、可选关系字段（前/后 Chunk）：有值才写入，缺失不写 null（保持类型稳定）
         for optional_field in (
             "previous_chunk_id",
             "next_chunk_id",
@@ -145,7 +145,7 @@ class QdrantPayloadMapper:
                     raise QdrantPayloadError(
                         f"可选 Chunk 元数据字段 {optional_field!r} 必须是 UUID 字符串。"
                     ) from exc
-        # 6. 可选时间字段：缺失不伪造抓取时间，有值则强制带时区
+        # 6、可选时间字段：缺失不伪造抓取时间，有值则强制带时区
         for optional_time_field in ("published_at", "source_updated_at"):
             value = metadata.get(optional_time_field)
             if value is not None:

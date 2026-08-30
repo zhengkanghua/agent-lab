@@ -302,7 +302,7 @@ class FreshRSSImportService:
         """
 
         source_repository = SourceRepository(session)
-        # 1. 先查该来源已提交的 checkpoint（旧游标），然后立刻结束只读事务——
+        # 1、先查该来源已提交的 checkpoint（旧游标），然后立刻结束只读事务——
         #    不能在等 FreshRSS 网络响应时一直占着数据库事务连接
         existing_source = await source_repository.get_by_business_key(
             provider=self._settings.provider_key,
@@ -314,31 +314,31 @@ class FreshRSSImportService:
         existing_source_id = existing_source.id if existing_source is not None else None
         await session.rollback()
 
-        # 2. 取「最新 marker」：n=1&r=n 读一页，得到当前最新文章的游标位置
+        # 2、取「最新 marker」：n=1&r=n 读一页，得到当前最新文章的游标位置
         marker_page = await client.fetch_subscription_item_id_page(
             subscription_id=subscription.id,
             limit=1,
             order="newest",
         )
         latest_marker = self._require_marker(marker_page)
-        # 3. 取「数据页」：有 checkpoint 时从旧到新追赶；首次按最新排序建基线
+        # 3、取「数据页」：有 checkpoint 时从旧到新追赶；首次按最新排序建基线
         data_page = await client.fetch_subscription_item_id_page(
             subscription_id=subscription.id,
             limit=limit_per_source,
             continuation=expected_checkpoint,
             order="oldest" if expected_checkpoint is not None else "newest",
         )
-        # 4. 拉正文（严格一一对应）+ 映射成领域文档
+        # 4、拉正文（严格一一对应）+ 映射成领域文档
         items = await self._fetch_complete_page(client, data_page)
         documents = self._map_page(items, subscription)
-        # 5. 决定成功后 checkpoint 推进到哪（推错：推太远漏文章、推太近重复处理）
+        # 5、决定成功后 checkpoint 推进到哪（推错：推太远漏文章、推太近重复处理）
         new_checkpoint = self._select_new_checkpoint(
             expected_checkpoint=expected_checkpoint,
             latest_marker=latest_marker,
             data_page=data_page,
             limit_per_source=limit_per_source,
         )
-        # 6. 文档 + 新 checkpoint 放进同一个事务原子提交
+        # 6、文档 + 新 checkpoint 放进同一个事务原子提交
         return await self._save_source_page(
             session,
             documents=documents,
@@ -563,7 +563,7 @@ class FreshRSSImportService:
         try:
             source_repository = SourceRepository(session)
             document_repository = DocumentRepository(session)
-            # 1. 确定来源主键：有文档就 upsert 来源；没有文档但有旧来源就用旧主键
+            # 1、确定来源主键：有文档就 upsert 来源；没有文档但有旧来源就用旧主键
             if documents:
                 source_record = await source_repository.upsert(documents[0].source)
                 source_id = source_record.id
@@ -574,12 +574,12 @@ class FreshRSSImportService:
                     "FreshRSS 为没有任何文档的来源提供了检查点。"
                 )
 
-            # 2. 幂等保存每篇文档（同 external_id 存在则更新、不存在则插入）
+            # 2、幂等保存每篇文档（同 external_id 存在则更新、不存在则插入）
             records = [
                 await document_repository.upsert(document, source_id=source_id)
                 for document in documents
             ]
-            # 3. 条件推进 checkpoint（WHERE 带旧值，并发已改则不覆盖）
+            # 3、条件推进 checkpoint（WHERE 带旧值，并发已改则不覆盖）
             checkpoint_advanced = False
             if new_checkpoint is not None and new_checkpoint != expected_checkpoint:
                 checkpoint_advanced = await source_repository.update_sync_checkpoint(
@@ -587,7 +587,7 @@ class FreshRSSImportService:
                     expected_checkpoint=expected_checkpoint,
                     new_checkpoint=new_checkpoint,
                 )
-            # 4. 一次性提交：文档和 checkpoint 要么都成、要么都不成
+            # 4、一次性提交：文档和 checkpoint 要么都成、要么都不成
             await session.commit()
             return records, checkpoint_advanced
         except Exception:

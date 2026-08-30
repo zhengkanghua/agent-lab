@@ -192,7 +192,7 @@ class DocumentIndexingService:
 
         repository = DocumentRepository(session)
         revision = record.index_revision
-        # 1. 原子领取：把 pending/failed → processing（条件 UPDATE），抢不到就跳过
+        # 1、原子领取：把 pending/failed → processing（条件 UPDATE），抢不到就跳过
         claimed = await repository.claim_for_indexing(
             document_id=record.id,
             expected_revision=revision,
@@ -206,24 +206,24 @@ class DocumentIndexingService:
             )
 
         try:
-            # 2. 切分：ORM 文档 → LangChain Chunk（纯内存）
+            # 2、切分：ORM 文档 → LangChain Chunk（纯内存）
             chunks = self._chunk_pipeline.build_chunks(record)
             if not chunks:
                 raise ValueError("文档分块流水线针对非空内容未返回任何分块。")
-            # 3. 向量化：逐批调 Ollama，返回与 Chunks 一一对应的向量
+            # 3、向量化：逐批调 Ollama，返回与 Chunks 一一对应的向量
             chunk_embeddings = await self._embedding_provider.embed_chunks(chunks)
             if self._embedding_provider.dimension != self._spec.dimension:
                 raise ValueError(
                     f"嵌入维度 {self._embedding_provider.dimension} 与"
                     f"索引规格 {self._spec.dimension} 不匹配。"
                 )
-            # 4. 写入 Qdrant：整篇替换该新闻在 current Alias 下的 Point
+            # 4、写入 Qdrant：整篇替换该新闻在 current Alias 下的 Point
             qdrant_result = await self._point_store.replace_document_chunks(
                 str(record.id),
                 chunks,
                 [item.embedding for item in chunk_embeddings],
             )
-            # 5. 确认：带 revision 条件标记 indexed；若处理期间内容已更新则条件不满足
+            # 5、确认：带 revision 条件标记 indexed；若处理期间内容已更新则条件不满足
             indexed = await repository.mark_indexed(
                 document_id=record.id,
                 index_revision=revision,
@@ -244,7 +244,7 @@ class DocumentIndexingService:
                 qdrant_result=qdrant_result,
             )
         except Exception as exc:
-            # 6. 任何一步失败：尽力标记 failed（也带 revision 条件），再原样抛出
+            # 6、任何一步失败：尽力标记 failed（也带 revision 条件），再原样抛出
             try:
                 failed = await repository.mark_failed(
                     document_id=record.id,

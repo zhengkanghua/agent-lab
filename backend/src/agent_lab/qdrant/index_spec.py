@@ -128,7 +128,7 @@ class VectorIndexSpec:
             停止，而不是自动删除或修改已有数据，避免错误覆盖生产索引。
         """
 
-        # 1. 校验「向量配置」：维度与 Distance 必须和规格一致
+        # 1、校验「向量配置」：维度与 Distance 必须和规格一致
         vectors = info.config.params.vectors
 
         # 本项目约定每个 Point 只存一个未命名稠密向量。Qdrant 用 named vectors 时
@@ -150,7 +150,7 @@ class VectorIndexSpec:
                 f"实际 {vectors.distance.value}。"
             )
 
-        # 2. 核对写入 Collection 的 metadata 快照，防止误用错模型/错版本的索引
+        # 2、核对写入 Collection 的 metadata 快照，防止误用错模型/错版本的索引
         actual_metadata = info.config.metadata or {}
         for key, expected in self.collection_metadata.items():
             if actual_metadata.get(key) != expected:

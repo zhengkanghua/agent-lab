@@ -87,17 +87,17 @@ class FreshRSSItemMapper:
             pydantic.ValidationError: 外部 URL 等值无法满足领域模型约束时抛出。
         """
 
-        # 1. 取文章 URL（canonical 优先），缺了就拒绝——没有 URL 无法回查原文
+        # 1、取文章 URL（canonical 优先），缺了就拒绝——没有 URL 无法回查原文
         article_url = item.article_url()
         if article_url is None:
             raise FreshRSSMappingError("FreshRSS 条目没有规范链接或备用链接（URL）。")
 
-        # 2. 清洗标题并抽纯文本，空标题按质量原因拒绝（can't 入库检索）
+        # 2、清洗标题并抽纯文本，空标题按质量原因拒绝（can't 入库检索）
         title = self._clean_title(item.title)
         if not title:
             raise FreshRSSContentQualityError("empty_title")
 
-        # 3. 选正文块（content 优先于 summary，绝不拼接二者），并转成纯文本+取图片
+        # 3、选正文块（content 优先于 summary，绝不拼接二者），并转成纯文本+取图片
         content_html, content_kind = self._select_body_html(item)
         if not content_html:
             raise FreshRSSContentQualityError("empty_content")
@@ -106,7 +106,7 @@ class FreshRSSItemMapper:
         if not content_text:
             raise FreshRSSContentQualityError("empty_content")
 
-        # 4. 统一质量规范化：HTML entity / NFC / 空白 / 边界标题块 / 相邻重复段
+        # 4、统一质量规范化：HTML entity / NFC / 空白 / 边界标题块 / 相邻重复段
         #    （只做确定性去重；合法短快讯仍保留，正文过短只是诊断信号不阻断）
         quality_result = self._content_quality_normalizer.inspect(
             title=title,
@@ -119,11 +119,11 @@ class FreshRSSItemMapper:
                 quality_result.rejection_reason or "empty_content"
             )
 
-        # 5. 抽标签和作者
+        # 5、抽标签和作者
         labels = self._extract_labels(item, subscription)
         authors = (item.author.strip(),) if item.author and item.author.strip() else ()
 
-        # 6. 组装来源信息（provider + external_id 构成来源唯一键）
+        # 6、组装来源信息（provider + external_id 构成来源唯一键）
         source = SourceInfo(
             provider=provider,
             external_id=subscription.id,
@@ -132,7 +132,7 @@ class FreshRSSItemMapper:
             home_url=item.origin.html_url or subscription.html_url,
         )
 
-        # 7. 返回与外部协议解耦的统一领域文档；时间统一转成带时区 UTC
+        # 7、返回与外部协议解耦的统一领域文档；时间统一转成带时区 UTC
         return SourceDocument(
             external_id=item.id,
             title=title,

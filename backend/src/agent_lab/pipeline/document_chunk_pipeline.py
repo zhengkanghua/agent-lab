@@ -91,8 +91,8 @@ class DocumentChunkPipeline:
                 原样向调用方传播。
         """
 
-        # 1. ORM 记录 → LangChain Document（组装正文稳定 ID 和 Metadata）
+        # 1、ORM 记录 → LangChain Document（组装正文稳定 ID 和 Metadata）
         document = self._document_builder.build(record)
-        # 2. Document → Chunk[]（按 token 预算切分 + 建立稳定关系 ID）
+        # 2、Document → Chunk[]（按 token 预算切分 + 建立稳定关系 ID）
         #    两步保持显式，调试时能清楚区分「ORM 映射失败」还是「文本切分失败」
         return self._document_chunker.chunk(document)

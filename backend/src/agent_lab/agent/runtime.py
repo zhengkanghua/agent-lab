@@ -92,20 +92,20 @@ class AgentRuntime:
             （见 ADR 0004）。
         """
 
-        # 1. 主模型与备用模型。备用模型只在主模型重试耗尽后才会被调用。
+        # 1、主模型与备用模型。备用模型只在主模型重试耗尽后才会被调用。
         primary_model = model or build_chat_model(llm_settings)
         fallback_model = model or build_chat_model(
             llm_settings,
             model=llm_settings.fallback_model,
         )
 
-        # 2. 只读工具。search 用共享 Service，read 用 Session 工厂。
+        # 2、只读工具。search 用共享 Service，read 用 Session 工厂。
         tools = build_agent_tools(
             search_service=search_service,
             session_factory=session_factory,
         )
 
-        # 3. checkpointer。注入了就直接用（且不建池），否则按配置建 psycopg 池。
+        # 3、checkpointer。注入了就直接用（且不建池），否则按配置建 psycopg 池。
         #    两边连的是同一个库，但 SQLAlchemy 走 ORM、checkpointer 走原生 psycopg，
         #    所以是两个独立连接池，而不是共用一个（见 ADR 0004）。
         #    压缩历史用主模型：它已经构造好了，再建一个客户端只是多一个连接池。
@@ -123,7 +123,7 @@ class AgentRuntime:
             )
             checkpointer = AsyncPostgresSaver(pool)
 
-        # 4. 编译图。context_schema 让 runtime.context 拿到有类型的 AgentContext。
+        # 4、编译图。context_schema 让 runtime.context 拿到有类型的 AgentContext。
         #    不传 system_prompt——提示词由 resolve_system_prompt 每次动态给出，
         #    这里再传一份会造成「两个提示词来源」的歧义。
         graph = create_agent(

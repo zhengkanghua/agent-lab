@@ -190,9 +190,9 @@ class QdrantVectorSearch:
             不自动创建缺失目标，也不在 Python 中过滤、重排或聚合结果。
         """
 
-        # 1. 把应用过滤条件翻译成 Qdrant Filter（无过滤时返回 None）
+        # 1、把应用过滤条件翻译成 Qdrant Filter（无过滤时返回 None）
         query_filter = self._build_filter(filters)
-        # 2. 发起一次只读查询：current Alias + query 向量 + 过滤 + Top-K
+        # 2、发起一次只读查询：current Alias + query 向量 + 过滤 + Top-K
         try:
             # 一次只读查询
             response = await self._client.query_points(
@@ -210,13 +210,13 @@ class QdrantVectorSearch:
         except Exception as exc:
             self._raise_mapped_error(exc)
 
-        # 3. 校验响应结构：必须有一个 points 列表
+        # 3、校验响应结构：必须有一个 points 列表
         points = getattr(response, "points", None)
         if not isinstance(points, list):
             raise QdrantSearchResponseError(
                 "Qdrant 查询响应必须包含 points 列表。"
             )
-        # 4. 逐个 Point 校验并转成强类型结果；不重新排序——Qdrant 的 score 顺序就是公开契约
+        # 4、逐个 Point 校验并转成强类型结果；不重新排序——Qdrant 的 score 顺序就是公开契约
         return [self._map_point(point, index) for index, point in enumerate(points)]
 
     async def search_groups(
@@ -401,7 +401,7 @@ class QdrantVectorSearch:
     def _map_point(self, point: Any, result_index: int) -> VectorSearchResult:
         """校验一个 ScoredPoint，并在不泄露正文的情况下报告字段错误。"""
 
-        # 1. Point ID 必须是合法 UUID（它同时就是 Chunk ID）
+        # 1、Point ID 必须是合法 UUID（它同时就是 Chunk ID）
         point_id = getattr(point, "id", None)
         try:
             canonical_point_id = UUID(str(point_id))
@@ -410,7 +410,7 @@ class QdrantVectorSearch:
                 f"Qdrant 结果第 {result_index} 项的 Point ID 不是 UUID。"
             ) from None
 
-        # 2. score 必须是有限数值（NaN/Infinity 不能进结果）
+        # 2、score 必须是有限数值（NaN/Infinity 不能进结果）
         score = getattr(point, "score", None)
         if isinstance(score, bool) or not isinstance(score, Real):
             raise QdrantSearchResponseError(
@@ -422,7 +422,7 @@ class QdrantVectorSearch:
                 f"Qdrant 结果第 {result_index} 项的分数不是有限值。"
             )
 
-        # 3. Payload 必须是对象：先做 JSON 类型预检，再交给 Pydantic 完整校验
+        # 3、Payload 必须是对象：先做 JSON 类型预检，再交给 Pydantic 完整校验
         payload = getattr(point, "payload", None)
         # payload 必须是"字典类"结构
         if not isinstance(payload, Mapping):
@@ -432,7 +432,7 @@ class QdrantVectorSearch:
         # 浅拷贝一份（后面要往里加字段，不动原件）
         values = dict(payload)
         self._validate_payload_json_types(values, result_index)
-        # 4. 补上 Chunk ID 和 score，交给 Pydantic 按 v1 契约整体校验
+        # 4、补上 Chunk ID 和 score，交给 Pydantic 按 v1 契约整体校验
         values.update(
             {
                 "chunk_id": canonical_point_id,
@@ -458,7 +458,7 @@ class QdrantVectorSearch:
                 f"涉及字段：{field_context}。"
             ) from None
 
-        # 5. 核对 Schema 版本和 Embedding 模型：防止搜到别的索引空间的数据。
+        # 5、核对 Schema 版本和 Embedding 模型：防止搜到别的索引空间的数据。
         # schema 版本直接读 Payload：它不进 VectorSearchResult（响应里恒等于当前 spec
         # 版本，对调用方是常量），所以这里是它唯一的把关点，缺失或不匹配都要拒绝。
         if values.get("index_schema_version") != self._spec.schema_version:

@@ -256,11 +256,11 @@ def create_app(
         agent_runtime: AgentRuntime | None = None
         shutdown_error: Exception | None = None
         try:
-            # 1. migration 已由部署步骤完成；先同步唯一环境管理员，再构造只读 Runtime。
+            # 1、migration 已由部署步骤完成；先同步唯一环境管理员，再构造只读 Runtime。
             await environment_admin_sync()
             runtime = runtime_factory()
             application.state.vector_search_runtime = runtime
-            # 2. Agent 复用上面那个检索 Service，所以必须排在它之后。
+            # 2、Agent 复用上面那个检索 Service，所以必须排在它之后。
             application.state.agent_runtime = None
             try:
                 agent_runtime = agent_runtime_factory(runtime.service)
@@ -271,10 +271,10 @@ def create_app(
                 agent_runtime = None
             else:
                 application.state.agent_runtime = agent_runtime
-            # 3. yield 之后是「运行期」：ASGI Server 在这里处理并发 HTTP 请求。
+            # 3、yield 之后是「运行期」：ASGI Server 在这里处理并发 HTTP 请求。
             yield
         finally:
-            # 4. 关闭阶段：按「依赖方先关」的顺序，Agent 依赖检索 Service，所以先关它。
+            # 4、关闭阶段：按「依赖方先关」的顺序，Agent 依赖检索 Service，所以先关它。
             for resource in (agent_runtime, runtime):
                 if resource is None:
                     continue
@@ -288,7 +288,7 @@ def create_app(
                             f"此外关闭 {type(resource).__name__} 也失败："
                             f"{type(exc).__name__}。"
                         )
-            # 5. 再释放数据库连接池；所有资源都要尝试释放，且不掩盖前面的异常
+            # 5、再释放数据库连接池；所有资源都要尝试释放，且不掩盖前面的异常
             try:
                 await engine.dispose()
             except Exception as engine_error:

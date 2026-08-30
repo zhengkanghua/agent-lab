@@ -111,22 +111,22 @@ async def run_pipeline_once(
     operation_error: Exception | None = None
     result: PipelineRunOnceExecutionResult | None = None
     try:
-        # 1. 从应用 state 取出工厂，新建「本次请求专用」的写 Runtime
+        # 1、从应用 state 取出工厂，新建「本次请求专用」的写 Runtime
         runtime_factory: PipelineWriteRuntimeFactory = (
             get_pipeline_write_runtime_factory(request)
         )
         runtime = runtime_factory()
-        # 2. 同步跑完一轮：FreshRSS 同步 → 入库 → 索引（切分/向量化/写 Qdrant）
+        # 2、同步跑完一轮：FreshRSS 同步 → 入库 → 索引（切分/向量化/写 Qdrant）
         result = await runtime.run_once(
             limit_per_source=body.limit_per_source,
             batch_size=body.batch_size,
             stale_after=timedelta(minutes=body.stale_after_minutes),
         )
     except Exception as exc:
-        # 3. 批次级异常先记下，统一在最后映射成脱敏 5xx
+        # 3、批次级异常先记下，统一在最后映射成脱敏 5xx
         operation_error = exc
     finally:
-        # 4. 无论成败都关闭 Runtime；关闭失败也要记日志，且不能掩盖主异常
+        # 4、无论成败都关闭 Runtime；关闭失败也要记日志，且不能掩盖主异常
         if runtime is not None:
             try:
                 await runtime.close()

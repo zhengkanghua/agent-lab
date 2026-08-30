@@ -141,17 +141,16 @@ class QdrantCollectionLifecycle:
             和 Payload index；后续调用只校验，不会删除或重建已有数据。
         """
 
-        # 1. 查 current Alias 现在指向谁；指向了别的 Collection → 冲突，显式报错
+        # 1、查 current Alias 现在指向谁；指向了别的 Collection → 冲突，显式报错
         alias_target = await self._alias_target(self.collection_alias)
-        # 1.2. 与传入的collection_name对比
         if alias_target is not None and alias_target != self.collection_name:
             raise QdrantAliasConflictError(
                 f"Alias {self.collection_alias!r} 指向 {alias_target!r}，"
                 f"而不是期望的 {self.collection_name!r}。"
             )
-        # 2. 创建（或校验）物理 Collection + Payload index
+        # 2、创建（或校验）物理 Collection + Payload index
         await self.ensure_collection(self.collection_name)
-        # 3. Alias 还没建过 → 创建它指向物理 Collection（幂等：已指向就直接用）
+        # 3、Alias 还没建过 → 创建它指向物理 Collection（幂等：已指向就直接用）
         if alias_target is None:
             await self._create_alias(self.collection_alias, self.collection_name)
         return self.collection_name
@@ -177,7 +176,7 @@ class QdrantCollectionLifecycle:
                 "物理集合的生命周期管理不能创建或校验当前 Alias。"
             )
         try:
-            # 1. 不存在才创建（幂等）：按规格建向量配置 + 可审计 metadata
+            # 1、不存在才创建（幂等）：按规格建向量配置 + 可审计 metadata
             # 检查是否有存在这个collection_name
             exists = await self._client.collection_exists(collection_name)
             if not exists:
@@ -192,12 +191,12 @@ class QdrantCollectionLifecycle:
                     raise QdrantLifecycleError(
                         f"Qdrant 未创建集合 {collection_name!r}。"
                     )
-            # 2. 已存在则校验：维度/距离/metadata 必须和规格一致（不一致就停，不自动删）
+            # 2、已存在则校验：维度/距离/metadata 必须和规格一致（不一致就停，不自动删）
             # 获取collections
             info = await self._client.get_collection(collection_name)
             # 调用封装好的校验函数
             self._spec.validate_collection_info(info)
-            # 3. 补齐过滤用的 Payload index（已有但类型错的会拒绝）
+            # 3、补齐过滤用的 Payload index（已有但类型错的会拒绝）
             # 建立索引
             await self._ensure_payload_indexes(collection_name, info)
         except (QdrantLifecycleError, VectorIndexConfigurationError):
@@ -222,7 +221,7 @@ class QdrantCollectionLifecycle:
             创建新指向。Alias 切换是 Qdrant 原子操作；本方法不移动或复制 Point。
         """
 
-        # 1. 目标 Collection 必须真实存在且通过规格校验
+        # 1、目标 Collection 必须真实存在且通过规格校验
         try:
             exists = await self._client.collection_exists(collection_name)
         except Exception as exc:
@@ -235,11 +234,11 @@ class QdrantCollectionLifecycle:
                 f"不能将当前 Alias 切换到不存在的集合 {collection_name!r}。"
             )
         await self.ensure_collection(collection_name)
-        # 2. 已经是目标就什么都不做（幂等）
+        # 2、已经是目标就什么都不做（幂等）
         current_target = await self._alias_target(self.collection_alias)
         if current_target == collection_name:
             return
-        # 3. 构造「删旧指向 + 建新指向」两个动作，一次原子提交给 Qdrant
+        # 3、构造「删旧指向 + 建新指向」两个动作，一次原子提交给 Qdrant
         actions: list[models.CreateAliasOperation | models.DeleteAliasOperation] = []
         if current_target is not None:
             actions.append(

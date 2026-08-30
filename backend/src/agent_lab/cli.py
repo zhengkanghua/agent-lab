@@ -214,7 +214,7 @@ async def dispatch_command(args: argparse.Namespace) -> CommandOutcome:
     executor = NewsPipelineExecutionService(async_session_factory)
     # 命令分派：sync-news 只同步；index-pending 只索引；run-once 两步都做
     if args.command == "sync-news":
-        # 1. 只做 FreshRSS → PostgreSQL，不接触 Qdrant
+        # 1、只做 FreshRSS → PostgreSQL，不接触 Qdrant
         sync_result = await executor.sync_news(
             FreshRSSImportService(get_freshrss_settings()),
             limit_per_source=args.limit_per_source,
@@ -226,12 +226,16 @@ async def dispatch_command(args: argparse.Namespace) -> CommandOutcome:
         return _index_outcome(args.command, index_result)
 
     if args.command == "run-once":
-        # 1. 先同步，2. 再准备 Alias 并索引，3. 合并两个子结果，任一部分失败 ok=false
+        # 1、先同步：FreshRSS → PostgreSQL
         sync_result = await executor.sync_news(
             FreshRSSImportService(get_freshrss_settings()),
             limit_per_source=args.limit_per_source,
         )
+        # 2、再准备 Alias 并索引。个别来源同步失败不影响这一步——那类失败被隔进
+        #    sync_result 里不会抛出，而上一轮可能还留着没索引的文档，值得一并处理掉。
+        #    批次级失败（订阅列表读不到等）会直接抛出，走不到这里。
         index_result = await _execute_index_batch(executor, args)
+        # 3、合并两个子结果，任一部分失败整个命令就 ok=false
         index_outcome = _index_outcome(args.command, index_result)
         sync_outcome = _sync_outcome(args.command, sync_result)
         ok = sync_outcome.exit_code == 0 and index_outcome.exit_code == 0

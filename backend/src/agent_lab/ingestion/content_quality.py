@@ -107,14 +107,14 @@ class ContentQualityNormalizer:
             规范化正文、删除计数和稳定拒绝原因。相同输入重复调用得到完全相同结果。
         """
 
-        # 1. 全文先做 Unicode NFC + HTML entity 解码，再按换行切成「段落」
+        # 1、全文先做 Unicode NFC + HTML entity 解码，再按换行切成「段落」
         normalized_title = self.normalize_inline_text(title)
         paragraphs = self._normalize_paragraphs(content_text)
         had_nonempty_content = bool(paragraphs)
         removed_title_line = False
         removed_trailing_title_line = False
 
-        # 2. 去掉「正文开头或结尾与标题完全重复的完整段落」——很多源会把标题在
+        # 2、去掉「正文开头或结尾与标题完全重复的完整段落」——很多源会把标题在
         #    正文里再贴一遍。比较键忽略标点/空白/大小写，只在首尾做
         title_key = self._title_comparison_key(normalized_title)
         if title_key and paragraphs and self._title_comparison_key(paragraphs[0]) == title_key:
@@ -124,7 +124,7 @@ class ContentQualityNormalizer:
             paragraphs.pop()
             removed_trailing_title_line = True
 
-        # 3. 只压缩「相邻且规范化后完全相同」的完整段落。非相邻重复可能是作者有意
+        # 3、只压缩「相邻且规范化后完全相同」的完整段落。非相邻重复可能是作者有意
         #    的结构回环/引用，单段内重复句子也可能有语义，都不删
         deduplicated: list[str] = []
         removed_duplicate_lines = 0
@@ -134,7 +134,7 @@ class ContentQualityNormalizer:
                 continue
             deduplicated.append(paragraph)
 
-        # 4. 用换行拼接段落（保持历史序列化格式），再统计长度、定拒绝原因
+        # 4、用换行拼接段落（保持历史序列化格式），再统计长度、定拒绝原因
         normalized_text = "\n".join(deduplicated)
         normalized_char_count = len(normalized_text)
         rejection_reason: ContentRejectionReason | None

@@ -120,14 +120,14 @@ class PipelineWriteRuntime:
             后台 Task，不循环、不自动调度，也不执行 Vector Search。
         """
 
-        # 1. 同步：FreshRSS → PostgreSQL（不做向量化，只入库并标 pending）
+        # 1、同步：FreshRSS → PostgreSQL（不做向量化，只入库并标 pending）
         sync_result = await self.executor.sync_news(
             self.import_service,
             limit_per_source=limit_per_source,
         )
-        # 2. 显式准备 Qdrant：创建/校验物理 Collection 与 current Alias
+        # 2、显式准备 Qdrant：创建/校验物理 Collection 与 current Alias
         await self.indexing_runtime.ensure_ready()
-        # 3. 索引：领取待处理文档，切分 → 向量化 → 写入 Qdrant
+        # 3、索引：领取待处理文档，切分 → 向量化 → 写入 Qdrant
         index_result = await self.executor.index_pending(
             self.indexing_runtime.service,
             batch_size=batch_size,

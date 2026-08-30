@@ -194,14 +194,14 @@ class OllamaEmbeddingProvider:
             query 与 document 使用同一个模型非常重要，否则后续无法可靠比较距离。
         """
 
-        # 1. 前置校验 query 文本非空（不发无效请求） 校验非空
+        # 1、前置校验 query 文本非空（不发无效请求） 校验非空
         normalized_text = self._validate_text(text, context="query")
         try:
-            # 2. 调 Ollama 把文本变成向量（网络 I/O） aembed_query 只传入单条返回单条
+            # 2、调 Ollama 把文本变成向量（网络 I/O） aembed_query 只传入单条返回单条
             vector = await self._embeddings.aembed_query(normalized_text)
         except Exception as exc:
             self._raise_mapped_error(exc)
-        # 3. 校验返回（数量/有限值/非零范数/维度），并校正内部记录的维度
+        # 3、校验返回（数量/有限值/非零范数/维度），并校正内部记录的维度
         validated = self._validate_vectors([vector], expected_count=1)
         await self._record_dimension(len(validated[0]))
         return validated[0]
@@ -233,7 +233,7 @@ class OllamaEmbeddingProvider:
             和超时风险也会增加，所以必须使用配置值而非在业务逻辑中写死。
         """
 
-        # 1. 先校验所有文本非空，收集待向量化列表
+        # 1、先校验所有文本非空，收集待向量化列表
         normalized_texts = [
             self._validate_text(text, context=f"document[{index}]")
             for index, text in enumerate(texts)
@@ -241,7 +241,7 @@ class OllamaEmbeddingProvider:
         if not normalized_texts:
             return []
 
-        # 2. 按配置的 batch_size 分批调 Ollama（防止一次塞太多，延迟/显存/超时失控）
+        # 2、按配置的 batch_size 分批调 Ollama（防止一次塞太多，延迟/显存/超时失控）
         all_vectors: list[list[float]] = []
         call_dimension: int | None = None
         # 根据配置分批处理
@@ -257,7 +257,7 @@ class OllamaEmbeddingProvider:
             # 向量 校验
             vectors = self._validate_vectors(raw_vectors, expected_count=len(batch))
 
-            # 3. 跨批对比维度：不同 HTTP 请求若返回不同维度，说明模型/代理配置漂移，
+            # 3、跨批对比维度：不同 HTTP 请求若返回不同维度，说明模型/代理配置漂移，
             #    不能把两个向量空间的数据混在一起
             # 检查"上一批返回的向量是几维"和"这一批返回的是几维"是否一致
             batch_dimension = len(vectors[0])
@@ -270,7 +270,7 @@ class OllamaEmbeddingProvider:
             call_dimension = batch_dimension
             all_vectors.extend(vectors)
 
-        # 4. 记下本次调用确认的真实维度
+        # 4、记下本次调用确认的真实维度
         await self._record_dimension(call_dimension)
         return all_vectors
 
@@ -361,7 +361,7 @@ class OllamaEmbeddingProvider:
         全零/NAN/维度漂移都会污染向量检索结果。
         """
 
-        # 1. 数量必须与请求一致
+        # 1、数量必须与请求一致
         if len(vectors) != expected_count:
             raise EmbeddingResponseError(
                 "Ollama 返回了意外的嵌入（embedding）数量："

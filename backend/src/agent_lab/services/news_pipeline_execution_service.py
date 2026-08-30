@@ -211,16 +211,16 @@ class NewsPipelineExecutionService:
 
         async with self._session_factory() as session:
             repository = DocumentRepository(session)
-            # 1. 回收「僵尸任务」：把 processing 超过阈值的文档重新放回 pending
+            # 1、回收「僵尸任务」：把 processing 超过阈值的文档重新放回 pending
             requeued_count = await repository.requeue_stale_processing(
                 started_before=now - stale_after,
             )
-            # 2. 领取本批候选（只是只读 list；真正的原子领取发生在 index_document 里）
+            # 2、领取本批候选（只是只读 list；真正的原子领取发生在 index_document 里）
             candidate_ids = await repository.list_index_candidate_ids(
                 limit=batch_size,
             )
 
-        # 3. 逐篇索引：每篇用独立 Session；单篇失败只记录，继续下一篇
+        # 3、逐篇索引：每篇用独立 Session；单篇失败只记录，继续下一篇
         indexed_count = 0
         skipped_count = 0
         failures: list[IndexExecutionFailure] = []

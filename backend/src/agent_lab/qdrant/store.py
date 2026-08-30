@@ -122,24 +122,24 @@ class QdrantChunkStore:
             upsert 后才删除旧尾部 Point，避免删除先于新数据造成更大的可见空窗。
         """
 
-        # 0. 前置校验：文档 ID 必须是合法 UUID；Chunk 和向量必须一一对应
+        # 0、前置校验：文档 ID 必须是合法 UUID；Chunk 和向量必须一一对应
         document_id = self._canonical_uuid(document_id, context="document_id")
         if len(chunks) != len(vectors):
             raise QdrantPointStoreError(
                 f"Chunk 与向量数量不匹配：{len(chunks)} 个 Chunk，{len(vectors)} 个向量。"
             )
 
-        # 1. 在内存中构造并验证本版全部 Point（此时不发起任何网络请求）
+        # 1、在内存中构造并验证本版全部 Point（此时不发起任何网络请求）
         points = self._build_points(document_id, chunks, vectors)
-        # 2. 读出这篇新闻当前在 Qdrant 里的旧 Point ID
+        # 2、读出这篇新闻当前在 Qdrant 里的旧 Point ID
         existing_ids = await self.list_point_ids(document_id)
         current_ids = {str(point.id) for point in points}
         if len(current_ids) != len(points):
             raise QdrantPointStoreError("同一文档批次内的 Chunk ID 必须唯一。")
 
-        # 3. 先写入新 Point（幂等覆盖同 ID 的旧版本）
+        # 3、先写入新 Point（幂等覆盖同 ID 的旧版本）
         await self._upsert_points(points)
-        # 4. 再删除「新版本已不需要」的旧 Point——先建后删，避免可见空窗
+        # 4、再删除「新版本已不需要」的旧 Point——先建后删，避免可见空窗
         # stale_ids = 旧的ID - 新的ID  多的旧id就会被删除
         # 所以使用这个方法，最好是一个文档所有chunk以前upsert，不然会导致只保留修改的chunk
         stale_ids = sorted(existing_ids - current_ids)
