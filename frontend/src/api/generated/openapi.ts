@@ -298,10 +298,228 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agent/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 与新闻 Agent 对话（SSE 流式返回）
+         * @description 发起一次 Agent 运行。模型自行决定是否调用只读检索工具，过程以 text/event-stream 逐事件返回：token 是回答增量，tool_call/tool_result 是调用轨迹，done 或 error 是最后一个事件。带上 thread_id 即接着上一轮聊。
+         *
+         *     响应体不是一个 JSON 文档，而是一串 SSE 帧，每帧形如 `data: {...}`；下面这个 schema 描述的是**单帧里那个 JSON 对象**，按 `event` 字段判别。
+         *
+         *     注意：流一旦开始，HTTP 状态码就固定为 200——响应头在第一个事件发出时已经送出，之后的失败只能作为 error 事件送达，不会改变状态码。
+         */
+        post: operations["agent_chat_agent_chat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/default-prompt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 读取服务端内置的默认系统提示词
+         * @description 返回不传 system_prompt 时实际生效的那份提示词，供前端预填到编辑框里。它是常量，不随会话变化。
+         */
+        get: operations["agent_default_prompt_agent_default_prompt_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AgentChatEventEnvelope
+         * @description SSE ``data:`` 行里那一个 JSON 对象的类型。
+         *
+         *     它存在的唯一理由是给 OpenAPI 一个「具名的联合类型」：FastAPI 的 ``responses`` 需要
+         *     一个模型类，而裸的 ``Annotated`` 联合不是类。响应体本身不是这个信封的 JSON——真正
+         *     发出去的是 ``text/event-stream``，每行 ``data:`` 后面跟着联合成员之一。
+         */
+        AgentChatEventEnvelope: components["schemas"]["AgentTokenEvent"] | components["schemas"]["AgentToolCallEvent"] | components["schemas"]["AgentToolResultEvent"] | components["schemas"]["AgentDoneEvent"] | components["schemas"]["AgentErrorEvent"];
+        /**
+         * AgentChatRequest
+         * @description 一次 Agent 对话提问。
+         *
+         *     ``thread_id`` 是「会话」的标识：带上同一个值就接着上次聊，历史由 checkpointer 按它
+         *     存取；省略则由服务端新建一个并在 ``done`` 事件里告知，这样前端不必自己生成 UUID，
+         *     也不会因为伪造一个 id 而读到别人的会话。
+         */
+        AgentChatRequest: {
+            /**
+             * Message
+             * @description 用户这一轮的提问，不可为空或纯空白；原文可能敏感，只进入模型上下文，不写入 Qdrant Payload。
+             */
+            message: string;
+            /**
+             * Thread Id
+             * @description 要接着聊的会话 id；省略表示新建会话，新 id 通过 done 事件返回。
+             */
+            thread_id?: string | null;
+            /**
+             * System Prompt
+             * @description 覆盖本次运行的系统提示词；省略则使用服务端内置的默认提示词。只影响本次请求，不会被持久化。
+             */
+            system_prompt?: string | null;
+        };
+        /**
+         * AgentDefaultPromptResponse
+         * @description ``GET /agent/default-prompt`` 的响应。
+         *
+         *     包成对象而不是直接返回一个 JSON 字符串：裸字符串的响应体没有加字段的余地，以后想带上
+         *     「这份提示词的版本号」或「可用工具清单」就得改破坏性接口。
+         */
+        AgentDefaultPromptResponse: {
+            /**
+             * System Prompt
+             * @description 不传 system_prompt 时实际生效的默认系统提示词全文。
+             */
+            system_prompt: string;
+        };
+        /**
+         * AgentDoneEvent
+         * @description 一次运行正常结束，流即将关闭。
+         *
+         *     它同时承担「告知会话 id」的职责：新建会话时前端要拿这个值发起下一轮。
+         */
+        AgentDoneEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event: "done";
+            /**
+             * Thread Id
+             * Format: uuid
+             * @description 本次运行所属会话的 id，下一轮带上它即可续聊。
+             */
+            thread_id: string;
+        };
+        /**
+         * AgentErrorEvent
+         * @description 一次运行因已分类的失败而中断。
+         *
+         *     字段与项目其他接口的错误响应保持同一形状（``code``/``detail``/``retryable``），前端
+         *     可以复用同一套错误文案映射，不必为流式接口单开一套。
+         *
+         *     为什么错误走事件而不是 HTTP 状态码：响应头在第一个 token 发出时就已经发送，之后
+         *     没法再改状态码。所以流一旦开始，所有失败都只能作为事件送达。
+         */
+        AgentErrorEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event: "error";
+            /**
+             * Code
+             * @description 稳定机器错误码，前端据此选择提示文案。
+             */
+            code: string;
+            /**
+             * Detail
+             * @description 安全中文概述，不含异常文本或上游细节。
+             */
+            detail: string;
+            /**
+             * Retryable
+             * @description 是否「不改提问、稍后重试可能成功」；认证与配置类错误为 False。
+             */
+            retryable: boolean;
+        };
+        /**
+         * AgentTokenEvent
+         * @description 模型输出的一小段文本增量。
+         *
+         *     一次运行会有很多条，前端按到达顺序追加即可。它只承载「最终回答」的增量：工具调用
+         *     的参数不走这里，避免用户看到半截 JSON。
+         */
+        AgentTokenEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event: "token";
+            /**
+             * Text
+             * @description 要追加到当前回答末尾的文本增量，可能只有一个字符。
+             */
+            text: string;
+        };
+        /**
+         * AgentToolCallEvent
+         * @description 模型决定调用某个工具。
+         *
+         *     发这个事件是为了让「模型正在查资料」这件事可见——否则工具执行期间前端只有一段
+         *     静默，用户无法区分是在检索还是卡住了。
+         */
+        AgentToolCallEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event: "tool_call";
+            /**
+             * Tool
+             * @description 被调用的工具名，如 search_news、read_document。
+             */
+            tool: string;
+            /**
+             * Arguments
+             * @description 模型给出的调用参数；可能包含它自己改写的检索词，属于展示给用户看的调用轨迹，不含服务端凭据。
+             */
+            arguments?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * AgentToolResultEvent
+         * @description 一次工具调用的结果，成功或失败。
+         *
+         *     ``failed`` 为真时 ``content`` 是查表得到的安全文案，不是异常文本——异常细节只进日志，
+         *     见 ``agent/middleware.py`` 的 ``sanitize_tool_error``。
+         */
+        AgentToolResultEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event: "tool_result";
+            /**
+             * Tool
+             * @description 返回结果的工具名。
+             */
+            tool: string;
+            /**
+             * Content
+             * @description 工具返回给模型的文本；失败时是安全中文说明，不含异常细节。
+             */
+            content: string;
+            /**
+             * Failed
+             * @description 工具是否失败；失败后模型仍会继续，可能换个检索词重试。
+             * @default false
+             */
+            failed: boolean;
+        };
         /**
          * AuthUserResponse
          * @description 返回给已登录浏览器的最小用户身份和权限视图。
@@ -1763,6 +1981,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserAdminErrorResponse"];
+                };
+            };
+        };
+    };
+    agent_chat_agent_chat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentChatRequest"];
+            };
+        };
+        responses: {
+            /** @description SSE 流；schema 描述单帧 `data:` 后面的那个 JSON 对象。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["AgentChatEventEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_default_prompt_agent_default_prompt_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentDefaultPromptResponse"];
                 };
             };
         };

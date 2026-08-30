@@ -63,13 +63,18 @@ Qdrant 的 grouped query 按 `document_id` 分组，`document_limit` 控制返�
 | Qdrant 挂了或响应契约非法 | 503 |
 | 索引规格不匹配 | 503（配置问题，不是临时故障，重试无用） |
 
-所有错误码到中文提示的映射只有一处：`frontend/src/api/error-copy.ts`。**新增错误码要在那里加**，
-不要在组件里就地拼文案。
+错误码到中文提示的**判定顺序**只有一处：`frontend/src/api/error-copy.ts` 的 `resolveErrorCopy`
+（code → status → 兜底）。**文案表在各自领域文件里**，检索这条链路的是
+`features/semantic-search/model/search-error.ts`。新增错误码时往表里加，不要在组件里就地拼文案，
+也不要另写一条 if-else 判定链。
 
 后端错误响应固定带 `code`、`detail`、`retryable` 三个字段，且**不回显 query 和上游细节**
 （`main.py` 的异常处理器）。所以日志里看不到用户搜了什么，排查时别指望。
 
 ## 边界
 
-- 只读检索。没有 LLM 生成回答、对话和流式返回。
-- 检索不写任何库，不记录检索历史。
+- 本文这条链路只读检索，不生成回答：`/document-search` 与 `/vector-search` 只返回检索到的原文
+  片段。模型作答是另一条链路（`POST /agent/chat`，SSE），它复用同一个 `DocumentSearchService`
+  作为工具，但走不同的路由、不同的权限（仅超级用户）和不同的响应形状。
+- 检索不写任何库，不记录检索历史。Agent 链路也不写业务表和 Qdrant，唯一的写入是会话历史
+  落在 checkpointer 自己的四张表里（ADR 0003、0004）。

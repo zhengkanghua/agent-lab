@@ -1,0 +1,49 @@
+# 中间件顺序的语义：越靠后越内层
+
+`create_agent(middleware=[...])` 列表里**越靠后的中间件越内层、越先执行**。也就是说重试类中间件必须排在
+兜底类之后，否则兜底会在内层先把异常吞掉，外层的重试永远收不到异常、静静地不工作。
+
+由此固定 `agent/middleware.py` 的顺序为：
+
+```text
+dynamic_prompt
+ModelFallbackMiddleware
+ModelRetryMiddleware
+SummarizationMiddleware
+ModelCallLimitMiddleware
+ToolCallLimitMiddleware
+ToolErrorMiddleware      # 外层：把异常翻成安全文案
+ToolRetryMiddleware      # 内层：先重试，重试尽了才抛给外层
+```
+
+两侧都实测过。工具侧（`max_retries=2`，工具每次抛异常）：`[ToolRetry, ToolError]` 工具只被调用 1 次，
+重试完全没发生；`[ToolError, ToolRetry]` 被调用 3 次（首次 + 2 次重试），兜底文案照样生成。模型侧同理：
+`[ModelFallback, ModelRetry]` 主模型被调 3 次后才降级；`[ModelRetry, ModelFallback]` 主模型只调 1 次就降级，
+重试白装。
+
+配套的两个约束，缺一个顺序也白排：
+
+- `ToolRetryMiddleware` 与 `ModelRetryMiddleware` 的 `on_failure` 必须显式写 `"error"`。默认值 `"continue"`
+  会让它们自己造一条 `ToolMessage` 返回，异常同样到不了外层兜底。
+- `ToolErrorMiddleware` 的 `on_error` 回调签名是 `(exc, request)`，两个参数。
+
+## Considered Options
+
+**按「读起来的顺序就是执行顺序」来排，即先重试后兜底。** 这是直觉，也是这次真踩到的坑：写出来的代码看着
+完全正确，测试如果只断言「失败时返回了安全文案」也会通过——那条断言在两种顺序下都成立。要发现问题必须断言
+工具的实际调用次数。既然直觉和实际相反，就必须写下来。
+
+**在 `agent/middleware.py` 里加注释说明，不单独立 ADR。** 注释会跟着那份列表走，看起来够了。但这条规则的
+适用面比那一个文件宽：以后加任何一对「重试 + 兜底」性质的中间件都要按它排，而人只会在改到那个文件时才看见
+注释。而且它属于「没有上下文时一定会写错」的知识，正是 ADR 该记的东西。注释仍然写，指回本文。
+
+## Consequences
+
+新增中间件时先判断它属于「重试/降级」还是「兜底/改写结果」，再决定插在哪。判断不了就照着上面那份列表的
+相对位置放，别凭直觉。
+
+针对这类中间件的测试必须断言**底层被调用的次数**，不能只断言最终返回的文案。只断言文案的测试无法区分
+两种顺序，会让顺序错误一路通过 CI。
+
+升级 `langchain` 时这条语义要重新验证：它是框架的组装行为，不是我们的代码，上游改了我们不会收到编译错误。
+验证方式就是上面那两组实测——工具抛异常，数调用次数。

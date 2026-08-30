@@ -19,12 +19,17 @@ from typing import Any
 
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 
+from agent_lab.agent.checkpointer import (
+    CHECKPOINTER_TABLE_NAMES,
+    setup_checkpointer_tables,
+)
 from agent_lab.auth.manager import UserManager
 from agent_lab.config.freshrss import get_freshrss_settings
 from agent_lab.config.ollama_embedding import (
     get_ollama_embedding_settings,
 )
 from agent_lab.config.qdrant import get_qdrant_settings
+from agent_lab.config.settings import get_settings
 from agent_lab.db.session import async_session_factory, engine
 from agent_lab.models.user import UserRecord
 from agent_lab.pipeline.limits import (
@@ -132,6 +137,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_sync_arguments(run_parser)
     _add_index_arguments(run_parser)
+
+    subparsers.add_parser(
+        "init-checkpointer",
+        help="创建或升级 Agent 会话历史所需的 LangGraph checkpointer 表。",
+    )
     return parser
 
 
@@ -197,6 +207,9 @@ async def dispatch_command(args: argparse.Namespace) -> CommandOutcome:
 
     if args.command == "create-user":
         return await _create_user(args)
+
+    if args.command == "init-checkpointer":
+        return await _init_checkpointer(args)
 
     executor = NewsPipelineExecutionService(async_session_factory)
     # 命令分派：sync-news 只同步；index-pending 只索引；run-once 两步都做
@@ -282,6 +295,42 @@ async def _create_user(args: argparse.Namespace) -> CommandOutcome:
             "user_id": str(user.id),
             "email": user.email,
             "is_superuser": user.is_superuser,
+        },
+        exit_code=0,
+    )
+
+
+async def _init_checkpointer(args: argparse.Namespace) -> CommandOutcome:
+    """创建或升级 LangGraph checkpointer 的四张表。
+
+    Args:
+        args: 只用到 ``command``，本命令没有自己的参数。
+
+    Returns:
+        建表成功的摘要与退出码 0。
+
+    Raises:
+        Exception: 无法连接 PostgreSQL 或没有建表权限时传播；最外层只按异常类型报告。
+
+    Notes:
+        这是**数据库结构写入**：``setup()`` 会 ``CREATE TABLE IF NOT EXISTS`` 那四张表，
+        并按 LangGraph 自己的迁移记录补齐缺失的版本。它不写业务表、不动 Qdrant，也不删除
+        任何已有会话历史。
+
+        为什么必须是一条显式命令、而不是服务启动时自动建：
+        应用进程通常只该有业务表的读写权限，建表是运维动作。放进启动路径意味着每次重启都
+        带着 DDL 权限，且一旦 LangGraph 升级了表结构，重启会静默改库——那种变更应当由人
+        在知情的情况下触发。理由见 docs/adr/0004-checkpointer-tables-outside-alembic.md。
+
+        幂等：重复执行安全，第二次不会报错也不会重建已存在的表。
+    """
+
+    await setup_checkpointer_tables(str(get_settings().database_url))
+    return CommandOutcome(
+        payload={
+            "command": args.command,
+            "ok": True,
+            "checkpointer_tables": sorted(CHECKPOINTER_TABLE_NAMES),
         },
         exit_code=0,
     )

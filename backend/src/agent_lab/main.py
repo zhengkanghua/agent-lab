@@ -12,6 +12,7 @@
 后台任务、LLM 或 RAG。
 """
 
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
@@ -19,12 +20,18 @@ from fastapi import Depends, FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from agent_lab.agent.errors import AgentError
+from agent_lab.agent.runtime import AgentRuntime
+from agent_lab.api.agent_chat import router as agent_chat_router
 from agent_lab.api.auth import router as auth_router
 from agent_lab.api.health import router as health_router
 from agent_lab.api.document_search import router as document_search_router
 from agent_lab.api.documents import router as documents_router
 from agent_lab.api.dependencies import VectorSearchRuntimeUnavailableError
-from agent_lab.api.error_contract import build_vector_search_error_response
+from agent_lab.api.error_contract import (
+    build_agent_chat_error_response,
+    build_vector_search_error_response,
+)
 from agent_lab.api.pipeline import router as pipeline_router
 from agent_lab.api.vector_search import router as vector_search_router
 from agent_lab.api.user_admin import router as user_admin_router
@@ -33,15 +40,20 @@ from agent_lab.auth.bootstrap import (
     EnvironmentAdminSyncResult,
     sync_configured_environment_admin,
 )
+from agent_lab.config.llm import get_llm_settings
 from agent_lab.config.ollama_embedding import (
     get_ollama_embedding_settings,
 )
 from agent_lab.config.freshrss import get_freshrss_settings
 from agent_lab.config.qdrant import get_qdrant_settings
+from agent_lab.config.settings import get_settings
 from agent_lab.db.session import async_session_factory, engine
 from agent_lab.pipeline.write_runtime import PipelineWriteRuntime
 from agent_lab.qdrant.runtime import VectorSearchRuntime
+from agent_lab.services.vector_search_service import VectorSearchService
 
+
+logger = logging.getLogger(__name__)
 
 OPENAPI_TAGS: list[dict[str, str]] = [
     {
@@ -81,6 +93,13 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "手动、有界且同步的写入流水线；会访问 FreshRSS，并写 PostgreSQL 与 Qdrant。"
         ),
     },
+    {
+        "name": "agent",
+        "description": (
+            "只读新闻 Agent 对话；模型自行决定是否调用检索与阅读工具，过程以 SSE 流式"
+            "返回。会话历史存 PostgreSQL，但不写任何新闻业务数据。"
+        ),
+    },
 ]
 
 
@@ -105,6 +124,37 @@ def build_vector_search_runtime() -> VectorSearchRuntime:
     return VectorSearchRuntime.build(
         get_qdrant_settings(),
         get_ollama_embedding_settings(),
+    )
+
+
+def build_agent_runtime(search_service: VectorSearchService) -> AgentRuntime:
+    """从环境配置组装进程级 Agent Runtime（只构造对象，不连接任何服务）。
+
+    为什么参数是「已建好的搜索 Service」而不是自己再建一个：Agent 的 ``search_news``
+    工具做的事和 ``POST /document-search`` 完全一样，共用同一个 Service 才能保证两条
+    入口的检索行为一致，也避免多出一套 Ollama/Qdrant 连接池。这也是 Agent Runtime 必须
+    在搜索 Runtime 之后装配的原因。
+
+    Args:
+        search_service: lifespan 已创建的进程级只读检索 Service。
+
+    Returns:
+        尚未建连的 Agent Runtime；调用方还要 ``await open()``。
+
+    Raises:
+        pydantic.ValidationError: LLM 环境配置缺失或不合法。
+        LlmConfigurationError: provider 为 openai_compatible 但 API Key 为空。
+
+    Notes:
+        只读本地配置并构造对象，不执行模型、PostgreSQL 或 Qdrant I/O，也不建表——
+        checkpointer 的四张表由 ``cli.py init-checkpointer`` 显式创建（见 ADR 0004）。
+    """
+
+    return AgentRuntime.build(
+        llm_settings=get_llm_settings(),
+        search_service=search_service,
+        session_factory=async_session_factory,
+        database_url=str(get_settings().database_url),
     )
 
 
@@ -141,6 +191,9 @@ def create_app(
     pipeline_runtime_factory: Callable[[], PipelineWriteRuntime] = (
         build_pipeline_write_runtime
     ),
+    agent_runtime_factory: Callable[[VectorSearchService], AgentRuntime] = (
+        build_agent_runtime
+    ),
     environment_admin_sync: Callable[
         [], Awaitable[EnvironmentAdminSyncResult]
     ] = sync_configured_environment_admin,
@@ -156,63 +209,91 @@ def create_app(
             fake Runtime 以证明 HTTP 层不访问真实 Ollama、Qdrant 或 PostgreSQL。
         pipeline_runtime_factory: 按手动请求构造写入 Runtime 的同步工厂；注册时不会
             调用，离线测试可注入 fake 以验证同步执行、参数传递和资源关闭。
+        agent_runtime_factory: 用已建好的检索 Service 构造 Agent Runtime 的同步工厂；
+            离线测试注入 fake 以证明 HTTP 层不访问真实大模型。
         environment_admin_sync: 启动时同步环境托管管理员的异步函数；生产使用 PostgreSQL
             实现，离线 HTTP 测试注入无 I/O fake。
 
     Returns:
-        已挂载登录、健康检查、受保护只读搜索和受超级用户保护 Pipeline 的应用。
+        已挂载登录、健康检查、受保护只读搜索、Agent 对话和受超级用户保护 Pipeline 的应用。
 
     Notes:
         创建应用对象本身不执行外部 I/O。lifespan 先访问 PostgreSQL 同步环境管理员，
-        再构造 Search Runtime（不 ``ensure_ready``）；写 Runtime 首次 POST 前不调用。
+        再构造 Search Runtime（不 ``ensure_ready``）和 Agent Runtime（会建 checkpointer
+        连接）；写 Runtime 首次 POST 前不调用。
     """
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         """lifespan = FastAPI 的「进程启动/退出钩子」：起来时执行一次、退出前执行一次。
 
-        这里在启动时构造共享 Search Runtime 存入 application.state，每个请求的依赖
-        函数再通过 request.app.state 取用；关闭时尽力释放 Runtime 和数据库连接池。
-        finally 里双重 try 的意义：即使关闭 Runtime 失败，也要继续尝试释放 Engine，
-        且优先把 Runtime 的异常作为根因抛出，Engine 的异常只作为附加说明。
+        这里在启动时构造共享 Search Runtime 和 Agent Runtime 存入 application.state，
+        每个请求的依赖函数再通过 request.app.state 取用；关闭时尽力释放两个 Runtime 和
+        数据库连接池。finally 里多层 try 的意义：任何一个资源关闭失败，都要继续尝试释放
+        其余资源，且优先把第一个失败作为根因抛出，后续失败只作为附加说明。
+
+        Agent Runtime 装配失败是**不致命**的：只记类型日志、把 state 留成 ``None``，
+        搜索和流水线照常服务，只有 ``/agent/*`` 返回 503。反过来（启动直接崩）会让一个
+        缺失的模型 API Key 把整个只读系统一起拖下线，那不是合理的失败半径。
 
         Args:
-            application: 当前 FastAPI 实例，用 ``state`` 暴露只读 Runtime 给依赖函数。
+            application: 当前 FastAPI 实例，用 ``state`` 暴露 Runtime 给依赖函数。
 
         Yields:
             ``None``，控制权交给 ASGI Server 处理并发 HTTP 请求。
 
         Raises:
-            Exception: Runtime 或 SQLAlchemy Engine 关闭失败；若两者都失败，保留 Runtime
-                异常为根因并通过 exception note 记录 Engine 类型。
+            Exception: 某个 Runtime 或 SQLAlchemy Engine 关闭失败；若多者都失败，保留第一个
+                异常为根因并通过 exception note 记录其余的类型。
 
         Notes:
-            启动只为环境管理员执行 PostgreSQL 认证表 I/O，不访问新闻、Ollama 或 Qdrant；
-            数据库 migration 必须先完成。关闭只释放 Runtime 和连接池。
+            启动为环境管理员执行 PostgreSQL 认证表 I/O，并为 Agent checkpointer 建
+            PostgreSQL 连接，不访问新闻表、Ollama、Qdrant 或大模型；数据库 migration 与
+            ``init-checkpointer`` 必须先完成。关闭只释放 Runtime 和连接池。
         """
 
         runtime: VectorSearchRuntime | None = None
-        runtime_error: Exception | None = None
+        agent_runtime: AgentRuntime | None = None
+        shutdown_error: Exception | None = None
         try:
             # 1. migration 已由部署步骤完成；先同步唯一环境管理员，再构造只读 Runtime。
             await environment_admin_sync()
             runtime = runtime_factory()
             application.state.vector_search_runtime = runtime
-            # 2. yield 之后是「运行期」：ASGI Server 在这里处理并发 HTTP 请求。
+            # 2. Agent 复用上面那个检索 Service，所以必须排在它之后。
+            application.state.agent_runtime = None
+            try:
+                agent_runtime = agent_runtime_factory(runtime.service)
+                await agent_runtime.open()
+            except Exception as exc:
+                # 只记类型：LLM 配置和数据库连接串里都有凭据，异常文本可能带出来。
+                logger.error("Agent 运行时装配失败 error_type=%s", type(exc).__name__)
+                agent_runtime = None
+            else:
+                application.state.agent_runtime = agent_runtime
+            # 3. yield 之后是「运行期」：ASGI Server 在这里处理并发 HTTP 请求。
             yield
         finally:
-            # 3. 关闭阶段：先关搜索 Runtime，失败先记下
-            if runtime is not None:
+            # 4. 关闭阶段：按「依赖方先关」的顺序，Agent 依赖检索 Service，所以先关它。
+            for resource in (agent_runtime, runtime):
+                if resource is None:
+                    continue
                 try:
-                    await runtime.close()
+                    await resource.close()
                 except Exception as exc:
-                    runtime_error = exc
-            # 4. 再释放数据库连接池；两个资源都要尝试释放，且不掩盖 Runtime 的异常
+                    if shutdown_error is None:
+                        shutdown_error = exc
+                    else:
+                        shutdown_error.add_note(
+                            f"此外关闭 {type(resource).__name__} 也失败："
+                            f"{type(exc).__name__}。"
+                        )
+            # 5. 再释放数据库连接池；所有资源都要尝试释放，且不掩盖前面的异常
             try:
                 await engine.dispose()
             except Exception as engine_error:
-                if runtime_error is not None:
-                    runtime_error.add_note(
+                if shutdown_error is not None:
+                    shutdown_error.add_note(
                         "此外释放 SQLAlchemy Engine 也失败："
                         f"{type(engine_error).__name__}。"
                     )
@@ -220,8 +301,9 @@ def create_app(
                     raise
             finally:
                 application.state.vector_search_runtime = None
-            if runtime_error is not None:
-                raise runtime_error
+                application.state.agent_runtime = None
+            if shutdown_error is not None:
+                raise shutdown_error
 
     application = FastAPI(
         title="Agent Lab API",
@@ -303,6 +385,30 @@ def create_app(
 
         return build_vector_search_error_response(error)
 
+    @application.exception_handler(AgentError)
+    async def agent_error(_request: Request, error: AgentError) -> JSONResponse:
+        """把流开始之前的 Agent 分类失败映射成稳定的 JSON 错误响应。
+
+        注册在 ``AgentError`` 基类上而不是逐个子类：``AGENT_CHAT_ERROR_RULES`` 已经覆盖了
+        本层的全部分类异常，多注册几个 handler 只是把同一张表拆成几个入口。
+
+        为什么它只管得住「流开始之前」：``StreamingResponse`` 一旦返回，响应头就发出去了；
+        生成器内部之后抛出的异常已经改不了状态码，那部分由 ``stream_agent_events`` 转成
+        ``error`` 事件，走的仍是这张表，所以两条路径的 ``code`` 一致。
+
+        Args:
+            _request: 当前 HTTP 请求；不读取 body，因此以下划线标记未使用。
+            error: Agent 层已分类的失败，通常来自 ``get_agent_runtime``。
+
+        Returns:
+            含稳定 ``code/detail/retryable`` 的 JSON 响应。
+
+        Notes:
+            只做进程内异常类型映射，不读异常文本，不执行任何 I/O。
+        """
+
+        return build_agent_chat_error_response(error)
+
     application.include_router(auth_router)
     application.include_router(health_router)
     application.include_router(
@@ -323,6 +429,12 @@ def create_app(
     )
     application.include_router(
         user_admin_router,
+        dependencies=[Depends(current_superuser)],
+    )
+    # Agent 只读，但限超级用户：每次对话都是真金白银的模型调用，而且自定义系统提示词
+    # 等于让调用方直接改模型行为。v1 先按「内部工具」定级，放宽是以后的事、收紧很难。
+    application.include_router(
+        agent_chat_router,
         dependencies=[Depends(current_superuser)],
     )
     return application

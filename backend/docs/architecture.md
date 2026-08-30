@@ -16,6 +16,8 @@ POST /vector-search                       Chunk 级只读语义检索
 POST /document-search                     文档分组只读语义检索
 GET  /documents/{document_id}             按需读取 PostgreSQL 完整正文
 POST /pipeline/run-once                   手动、同步、有界的写入流水线（超级用户）
+POST /agent/chat                          Agent 对话，SSE 流式（超级用户）
+GET  /agent/default-prompt                默认系统提示词（超级用户）
 GET    /admin/users                       账号列表（超级用户）
 POST   /admin/users                       创建账号（超级用户）
 PATCH  /admin/users/{user_id}             改启用状态与超级用户位（超级用户）
@@ -24,8 +26,11 @@ DELETE /admin/users/{user_id}/sessions    撤销该账号全部登录会话（�
 ```
 
 除 ``/health`` 和 ``/auth/login`` 外都需要有效登录 Cookie。搜索与全文要求普通启用
-账号，``/pipeline/run-once`` 与 ``/admin/users`` 要求 ``is_superuser=true``。
+账号，``/pipeline/run-once``、``/admin/users`` 与 ``/agent`` 要求 ``is_superuser=true``。
 **没有 ``/auth/register``**，账号只能由超级用户或 CLI 创建。
+
+``/agent`` 定成超级用户不是因为它有写权限（它没有，见 ADR 0003），而是因为每次对话都是
+真金白银的模型调用，且自定义系统提示词等于让调用方直接改模型行为。放宽容易、收紧难。
 
 ## 账号与权限
 
@@ -325,9 +330,84 @@ eager-load source，返回当前 ``documents.content_text``、``content_hash``�
 502（只记异常类型，不把字段值或正文写进日志）。前端比较搜索结果 hash 与详情 hash，不一致时
 提示新闻已更新，并使用 PostgreSQL 最新正文，不伪造历史版本。
 
+## Agent 对话：POST /agent/chat
+
+一条独立于检索的生成链路：用户提问 → 模型自己决定要不要调工具 → 拿工具结果作答，全程以 SSE
+增量返回。它**复用**只读的 ``VectorSearchService`` 与 ``DocumentRepository`` 作为工具实现，
+不复制检索逻辑；但走自己的路由、权限和响应形状。
+
+``agent/`` 的模块分工：
+
+```text
+config/llm.py       LlmSettings（LLM_ 前缀）与 LangSmithSettings（LANGSMITH_ 前缀）
+agent/limits.py     一次运行的有界执行参数，全是代码常量、刻意不进 .env
+agent/prompts.py    默认系统提示词与摘要压缩提示词
+agent/chat_model.py 构造模型客户端（OpenAI 兼容协议，指向中转站 base_url）
+agent/context.py    AgentContext：一次运行的上下文（自定义提示词等），随请求传入
+agent/tools/        两个只读工具：search_news、read_document
+agent/middleware.py 中间件流水线；顺序有语义，见 ADR 0005
+agent/runtime.py    组装根：编译一次图，进程级共享
+agent/streaming.py  把 LangGraph 的事件流翻译成本项目的五个 SSE 事件模型
+agent/checkpointer.py  四张 checkpointer 表名的唯一真源 + Alembic 的 include_object
+agent/errors.py     本层的已分类异常（叶子模块，不 import 框架图相关模块）
+```
+
+图能进程级共享是因为它无状态：会话历史存在 checkpointer 里、按 ``thread_id`` 取；系统提示词
+由 ``dynamic_prompt`` 每次从 ``AgentContext`` 读。所以「换会话」和「换提示词」都不需要重新编译。
+
+Agent 装配失败**不致命**：lifespan 捕获、只记异常类型、``app.state.agent_runtime`` 留 ``None``，
+于是只有 ``/agent/*`` 返回 503，检索和流水线照常。反过来会让一个缺失的 ``LLM_API_KEY`` 把整个
+只读系统一起拖下线。关闭顺序上先关 Agent 再关检索 Runtime——Agent 复用后者的 Service。
+
+有界执行参数（``agent/limits.py``，全部是代码常量）：
+
+```text
+MODEL_CALL_RUN_LIMIT = 8            达到后结束运行并返回已有内容
+TOOL_CALL_RUN_LIMIT = 12            达到后只是不再允许调工具，模型仍能用已有材料作答
+MODEL_RETRY_MAX / TOOL_RETRY_MAX = 2
+SUMMARIZATION_TRIGGER / KEEP = 40 / 20   按消息条数触发，不按 token
+MAX_USER_MESSAGE_CHARS = 4000       超过直接拒绝，不截断
+MAX_SYSTEM_PROMPT_CHARS = 4000      同上：截断会把提示词砍成半句，行为更难预期
+SEARCH_TOOL_MAX_DOCUMENTS = 5       给模型的上下文预算，不是给人看的分页上限
+SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT = 2
+READ_DOCUMENT_MAX_CHARS = 6000      这里截断是对的：正文是数据不是指令
+SSE_HEARTBEAT_INTERVAL_SECONDS = 15
+```
+
+SSE 侧的两个实现约束：
+
+- 响应类是 ``ServerSentEventResponse`` 子类，不是给 ``StreamingResponse`` 传
+  ``media_type``。传参数只改真实响应头、不改 OpenAPI——FastAPI 按
+  ``response_class.media_type`` 决定把 ``responses`` 里的模型挂到哪个 content key 下，
+  否则事件 schema 会被挂到 ``application/json`` 上，而这个接口从不返回 JSON 响应体。
+- 心跳用 ``asyncio.wait`` 而不是 ``wait_for``：后者超时会取消任务，等于每发一次心跳就丢掉一个
+  正在生成的事件。``wait`` 超时后不取消，下一轮接着等同一次 ``__anext__``；``finally`` 里再
+  收拾悬空的那次，否则客户端中途断开时会漏掉模型连接。
+
+五个事件模型在 ``schemas/agent_chat.py``，用 ``event`` 字段做 discriminated union
+（``AgentChatEventEnvelope``），所以生成的前端类型是可穷尽的联合：
+
+```text
+token        文本增量。只承载最终回答，工具调用参数不走这里
+tool_call    模型决定调某个工具（让「正在查资料」可见）
+tool_result  工具返回；failed 为真时 content 是查表得到的安全文案，不是异常文本
+done         运行正常结束，并告知 thread_id（新建会话时前端要拿它发起下一轮）
+error        已分类的失败
+```
+
+失败为什么走事件而不是状态码：响应头在第一个 token 发出时就已发送，之后改不了状态码。所以流
+开始之前的失败走 HTTP 状态码，开始之后只能走 ``error`` 事件——两条路径共用同一张规则表，同一种
+失败在两处拿到同一个 ``code``。
+
+会话历史由 ``langgraph-checkpoint-postgres`` 存在四张 ``checkpoint*`` 表里，**不由 Alembic 管**
+（ADR 0004）。建表是一次性运维步骤：``agent-lab init-checkpointer``。表名只写在
+``agent/checkpointer.py`` 一处，``alembic/env.py`` 的 ``include_object`` 从那里取——漏改一处的
+后果不是报错而是 ``--autogenerate`` 生成 ``op.drop_table('checkpoints')``，下一次迁移删掉全部
+会话历史。
+
 ## 集中的错误契约：api/error_contract.py
 
-搜索、文档搜索、手动流水线和账号管理四类路由共用一个错误契约层，映射收在有序的
+搜索、文档搜索、手动流水线、账号管理和 Agent 五类路由共用一个错误契约层，映射收在有序的
 ``ErrorContractRule`` 表里，各路由只负责「catch 什么异常」和「记什么日志」。
 
 三条必须长期保住的设计约束：
@@ -368,9 +448,42 @@ PIPELINE_ERROR_RULES        build_pipeline_error_response()
 USER_ADMIN_ERROR_RULES      build_user_admin_error_response()
     user_admin_database_unavailable 503
 
-UNCLASSIFIED_ERROR_RULE     全项目唯一的未分类兜底：pipeline_internal_error 500
+AGENT_CHAT_ERROR_RULES      build_agent_chat_error_response()
+    agent_runtime_unavailable 503 / agent_checkpointer_unavailable 503 /
+    llm_authentication_failed 502 / llm_request_blocked 502 / llm_timeout 504 /
+    llm_rate_limited 503 / llm_model_not_found 503 / llm_request_rejected 502 /
+    llm_unavailable 503 / llm_response_invalid 502 / llm_service_error 502 /
+    agent_internal_error 500
+
+AGENT_TOOL_ERROR_RULES      sanitize_tool_error()（结果进模型上下文，不进 HTTP 响应）
+    agent_tool_database_unavailable 503 / agent_tool_failed 500
+
+UNCLASSIFIED_ERROR_RULE     手动流水线与检索的未分类兜底：pipeline_internal_error 500
 INVALID_REQUEST_RULE        请求校验失败：invalid_request 422
 ```
+
+两张 Agent 表各自以 ``Exception`` 结尾，也就是各带一条自己的兜底。这**违反**上面「全项目只保留
+一条兜底」的写法，是刻意的：通用兜底的 code 是 ``pipeline_internal_error``（手动流水线的契约
+值），漏到 Agent 接口上前端会按它查文案、查不到就把枚举名显示给用户。检索接口能声明自己捕获
+哪些基类，Agent 面对的异常集合是开放的（模型 SDK、工具、框架内部都可能抛），所以必须有自己的
+兜底码。
+
+``AGENT_TOOL_ERROR_RULES`` 的输出方向和其余四张表不同：工具失败的文案会作为 ``ToolMessage``
+回到**模型**手里（让它换个检索词重试或直说查不到），只在 ``tool_result`` 事件里顺带给用户看，
+不构成 HTTP 错误响应。所以它查表得到的是安全中文文案，异常细节只进日志。
+
+``AGENT_CHAT_ERROR_RULES`` 里 ``llm_*`` 那几条规则挂的具体异常类型只有一部分经过真实中转站
+验证：已实测冒到我们这层并正确落到具体规则的是 ``PermissionDeniedError``（403）和
+``APITimeoutError``；其余仍是照 openai SDK 文档写的。所以那条 ``Exception`` 兜底不只是形式——
+真实调用报出没见过的错误时，应当核对它落到的是具体规则还是兜底，落到兜底就说明该补规则。
+这也是为什么兜底码是 ``agent_internal_error`` 而不是复用检索链路的值：前端能按它查到文案，
+不会把枚举名显示给用户。
+
+``llm_authentication_failed``（401）与 ``llm_request_blocked``（403）分成两条，是被一次真实
+排查逼出来的：两者曾合并在认证失败一条里，于是「中转站按 User-Agent 拦掉了 openai SDK 的默认
+标识」被报成认证失败，排查从换 Key 开始，而 Key 一直是好的。状态码和重试语义相同不足以合并，
+**要动的东西不同就得分开给码**——凭据问题改 ``LLM_API_KEY``，客户端身份问题改
+``LLM_USER_AGENT``。
 
 两处刻意保留的分叉，不能合并改值：读链路把 ``EmbeddingResponseError`` 归为
 ``embedding_response_invalid``，写链路归为 ``embedding_failed``；账号管理的
@@ -485,14 +598,24 @@ services + qdrant（索引状态编排、Point/Payload、Collection/Alias 生命
         ↓
 pipeline write runtime（只组合手动同步与索引写路径；不提供搜索）
         ↓
-api（HTTP 校验、按请求 Runtime、错误契约；不实现 Embedding/Qdrant 细节）
+agent（模型客户端、只读工具、中间件、图装配与流式翻译；只消费 services 的只读能力）
+        ↓
+api（HTTP 校验、按请求 Runtime、错误契约；不实现 Embedding/Qdrant/模型调用细节）
         ↘ cli（一次性写入命令组装；不实现 HTTP、定时器或无限循环）
 ```
 
+``agent/`` 排在 ``services`` 之后、``api`` 之前：它是 ``VectorSearchService`` 和
+``DocumentRepository`` 的**调用方**，反向不成立——检索链路不 import ``agent/`` 里的任何东西。
+``agent/checkpointer.py`` 和 ``agent/errors.py`` 是这一层的叶子模块，刻意不 import 框架的图相关
+模块，因为 ``alembic/env.py`` 每次迁移都会加载前者，不该为了四个表名把整个 Agent 依赖树拖进来。
+
 ``api/`` 内部再分一层：``dependencies.py`` 与 ``error_contract.py`` 是基础设施，
 ``vector_search.py``、``document_search.py``、``documents.py``、``pipeline.py``、
-``user_admin.py``、``auth.py``、``health.py`` 是平级特性路由，彼此不互相 import；
-``main.py`` 是唯一的装配根。
+``user_admin.py``、``auth.py``、``health.py``、``agent_chat.py`` 是平级特性路由，彼此不互相
+import；``main.py`` 是唯一的装配根。``dependencies.py`` 里 ``AgentRuntime`` 只在
+``TYPE_CHECKING`` 下导入——运行时导入会成环（``dependencies`` → ``agent.runtime`` →
+``agent.middleware`` → ``api.error_contract`` → ``dependencies``），而本模块只从 ``app.state``
+取现成对象、从不构造也不 ``isinstance``。
 
 ``FreshRSSImportService`` 只编排抓取、映射和事务，不处理 Chunk；``DocumentBuilder`` 只做 ORM 到
 RAG Document 的内存转换；``DocumentChunker`` 只负责切分。调用方依赖 Pipeline 门面，不在业务代码
@@ -506,8 +629,19 @@ documents        清洗正文、来源关联、当前处理状态，以及 Qdran
 users            内部登录邮箱、Argon2 密码 Hash、启用/超级用户状态和唯一环境托管标记
 access_tokens    浏览器登录产生的可撤销随机 Token、创建时间和所属用户
 alembic_version  由 Alembic 维护当前迁移版本
+
+以下四张由 langgraph-checkpoint-postgres 自建自迁移，Alembic 既不生成也不删除（ADR 0004）：
+checkpoints、checkpoint_blobs、checkpoint_writes、checkpoint_migrations
 ```
 
 ``documents`` 保存清洗后的 ``content_text``，不保存 FreshRSS 原始 HTML。作者、标签和
 图片 URL 使用 PostgreSQL ``text[]``。所有时间使用带时区 ``datetime``，数据库连接会话
 固定为 UTC。仍未新增 Chunk、Embedding 或 pipeline_runs 表。
+
+四张 ``checkpoint*`` 表是 Agent 会话历史，也是 Agent 链路唯一的写入。它们**没有**外键指向
+``users``，v1 也不做会话列表和会话清理。会话的访问控制到此为止：``thread_id`` 缺省时由服务端用
+``uuid4()`` 生成并通过 ``done`` 事件告知，但 ``AgentChatRequest.thread_id`` 允许客户端填，
+checkpointer 也只按 id 取历史、不校验归属——所以拿到 id 就等于拿到那次会话，这是一个凭据而不是
+一次授权检查。v1 能接受是因为 ``/agent/*`` 只对超级用户开放，且随机 UUID 猜不出来；一旦把
+``/agent`` 放给普通用户，就必须先补一张 ``thread_id → user_id`` 的归属表并在入口校验，光靠
+「id 由服务端生成」挡不住一个知道别人 id 的调用方。

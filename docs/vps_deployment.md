@@ -84,7 +84,27 @@ QDRANT_COLLECTION_SCHEMA_VERSION=v1
 QDRANT_COLLECTION_GENERATION=1
 QDRANT_VECTOR_DIMENSION=1024
 QDRANT_DISTANCE=Cosine
+
+# 以下仅在提供 Agent 对话（/agent/*）时需要；整段省略则只有 /agent/* 返回 503，检索照常。
+# 注意这是生成式模型，和上面的 OLLAMA_* Embedding 是两套配置，即使指向同一台 Ollama。
+LLM_PROVIDER=openai_compatible
+LLM_BASE_URL=https://<llm-gateway>/v1
+LLM_API_KEY=<llm-secret>
+LLM_MODEL=<上游真实存在的模型名>
+LLM_FALLBACK_MODEL=<降级模型名，可与上面相同>
+LLM_TEMPERATURE=0.0
+LLM_REQUEST_TIMEOUT_SECONDS=60
+# 留空则沿用 openai SDK 默认的 User-Agent，部分中转站会按它把请求拦成 403
+# （错误码 llm_request_blocked）。默认值 agent-lab 已经能过；换中转站后若首次提问就报
+# llm_request_blocked，先试着改这一项，不要先怀疑 LLM_API_KEY。
+LLM_USER_AGENT=agent-lab
+
+# 追踪默认关闭。设成 true 意味着提问内容和检索到的新闻正文会离开本机、发往境外云服务。
+LANGSMITH_TRACING=false
 ```
+
+不要在这里写 `LLM_CHECKPOINT_POOL_SIZE`：该字段声明为 `strict=True`，而 `EnvironmentFile` 注入的
+一律是字符串，配上去会让服务启动即 `ValidationError`。要改连接池大小就改 `config/llm.py` 的默认值。
 
 `AUTH_ADMIN_EMAIL` 与 `AUTH_ADMIN_PASSWORD` 必须同时存在。密码长度必须为 12–128 个
 字符，且不能与邮箱相同；上面的尖括号只是占位符，部署前必须替换，不能原样使用。
@@ -121,6 +141,25 @@ sudo systemd-run --wait --pipe --collect \
 
 应用当前认证 migration head 为 `b7e1a4c9d203`。migration 成功后再启动/重启服务；若
 迁移失败，保留旧进程并修复数据库，不要让半迁移状态的应用接收流量。
+
+要提供 Agent 对话（`/agent/*`）则在同一个发布步骤里追加一次建表，同样在重启服务之前完成。
+它幂等，可以每次发布都跑：
+
+```bash
+sudo systemd-run --wait --pipe --collect \
+  --unit=agent-lab-init-checkpointer \
+  --property=User=newsrag \
+  --property=WorkingDirectory=/opt/agent-lab/backend \
+  --property=EnvironmentFile=/etc/agent-lab/backend.env \
+  /opt/agent-lab/backend/.venv/bin/agent-lab init-checkpointer
+```
+
+这四张 `checkpoint*` 表不由 Alembic 管（见 backend `README.md` 的「Alembic」一节），所以
+`alembic upgrade head` 不会创建它们。漏跑这一步不会在启动时报错：连接池能正常打开，建连成功，
+表缺失要到第一次读写会话历史才暴露——表现是服务正常启动、检索正常、健康检查通过，但每一次提问
+都失败。而且它落不到 `agent_checkpointer_unavailable` 那条规则上（那条只对应连不上数据库），
+而是走 `Exception` 兜底变成 `agent_internal_error` 500，日志里只有异常类型。所以看到「一提问就
+500」先确认这一步跑过没有。
 
 ## 5. systemd 服务
 

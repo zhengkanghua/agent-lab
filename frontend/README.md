@@ -1,10 +1,14 @@
 # Signal Desk 前端
 
-Signal Desk 是新闻语义检索工作台的 Vue 3 前端。当前版本提供两个只读搜索模式：默认
+Signal Desk 是新闻语义检索工作台的 Vue 3 前端。检索页提供两个只读搜索模式：默认
 “按新闻”调用 `POST /document-search`，按每篇新闻最高 Qdrant Cosine score 展示结果组；
 “按片段”调用兼容的 `POST /vector-search`，逐条保留后端返回的原始 Chunk 顺序和重复
 新闻。用户点击“阅读全文”后才调用 `GET /documents/{document_id}` 读取 PostgreSQL 当前
-完整正文。它不调用生成式 LLM，也不提供 Pipeline 写入入口。
+完整正文。这两个模式本身不调用生成式 LLM：它们只返回检索到的原文片段。
+
+`/agent` 是另一条链路：超级用户在那里提问，由后端 Agent 自己决定检索哪些新闻、要不要读
+全文，再基于查到的内容作答，回答与工具调用轨迹以 SSE 流式到达。它同样只读——不写
+PostgreSQL 业务表、不写 Qdrant。前端不提供 Pipeline 写入入口。
 
 浏览器启动时通过 `GET /auth/me` 恢复 HttpOnly Cookie 会话；未登录时进入 `/login`。
 登录使用 `POST /auth/login` 的表单编码，前端不读取 Cookie，也不在 Local Storage 或
@@ -33,6 +37,28 @@ Session Storage 保存密码和 Token。退出调用 `POST /auth/logout` 撤销�
 - 桌面端使用右侧阅读面板，移动端使用全屏阅读层；支持 Esc、明确关闭按钮、焦点约束
   和关闭后的触发按钮焦点恢复。
 
+## Agent 对话页的数据边界
+
+- `/agent` 只对超级用户开放：路由 `meta.requiresSuperuser` 提前挡住，真正的安全边界仍是
+  后端 `/agent/*` 上的 `current_superuser` 依赖。普通账号手动访问会被送回检索页。
+- 流式接口用 `fetch` + `response.body.getReader()`，不用 `EventSource`。后者只能发 GET、
+  不能带请求体，提问和自定义提示词就得进 query string，会被网关日志和浏览器历史记下来。
+- 超时分两道：连接 30 秒、空闲 60 秒（后端心跳 15 秒，留四倍余量）。不复用 JSON 层的 45 秒
+  总时长上限——一次 Agent 运行可能要几分钟，用它会在模型还在写的时候掐断。
+- 调用方提前 `break` 时会 `reader.cancel()` 关掉连接，否则后端那次运行会继续跑、继续计费。
+- 回答、工具参数和工具返回内容全部走 Vue 文本插值，不用 `v-html`：这些文本里含模型输出和
+  RSS 抓来的外部内容。
+- 会话 id 由服务端在 `done` 事件里给出，前端不自己生成 UUID；“新会话”会同时丢掉它，否则
+  模型还看得见用户以为已经删掉的历史。
+- 自定义系统提示词只影响之后发出的轮次，不做任何持久化。
+- 取消一轮对话靠两道闸，`AbortController` 之外还有一个自增序号：事件已经拿在手里、`await`
+  还没恢复的那个窗口里 abort 拦不住任何东西，只有比对序号能阻止一次已取消的运行往界面写字。
+  取消后到达的 `done` 因此也不会写回会话 id。
+- 工具调用和工具结果按**工具名先来先配**：后端 `tool_result` 事件不带调用 id，同名工具在一轮里
+  并发两次时，只能假定结果按调用顺序返回。配错的表现是两条轨迹的参数与输出对调，不影响答案
+  正文。结果找不到对应调用时单独显示成一条轨迹——宁可显示一条来源不明的工具结果，也不要让
+  用户以为模型没查资料。
+
 ## 开发
 
 ```powershell
@@ -48,8 +74,11 @@ npm run dev
 
 后端新增或修改路由后，先重启 Uvicorn，再确认运行中的
 `http://127.0.0.1:8000/openapi.json` 已包含 `/auth/login`、`/auth/logout`、`/auth/me`、
-`/admin/users`、`/document-search`、`/vector-search` 和 `/documents/{document_id}`，然后
-进行真实联调。
+`/admin/users`、`/document-search`、`/vector-search`、`/documents/{document_id}`、
+`/agent/chat` 和 `/agent/default-prompt`，然后进行真实联调。
+
+SSE 只能在真实联调里验收：Vite 开发代理、生产 Nginx 和 CDN 都可能缓冲响应，把逐 token
+到达变成「一次性出现一整段」。界面上出字不等于流式生效，要看首个 token 与提交之间的间隔。
 Playwright route mock 只用于隔离验证前端状态，不能作为后端已经更新或部署成功的依据。
 
 ## 验证
@@ -74,9 +103,11 @@ npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated/o
 
 ## 目录边界
 
-- `src/api`：Cookie 登录、账号管理、HTTP 客户端、文档搜索/详情、错误归一化和生成类型；
+- `src/api`：Cookie 登录、账号管理、HTTP 客户端、文档搜索/详情、Agent SSE 流、错误归一化
+  和生成类型；
 - `src/features/auth`：当前用户会话恢复、登录、退出和过期状态；
 - `src/features/semantic-search`：文档/Chunk 搜索状态、全文 Query、展示模型和两类结果
   组件；
-- `src/pages`：登录、搜索与超级用户账号管理的路由级组合，不直接执行 `fetch`；
+- `src/features/agent-chat`：多轮对话状态、工具轨迹配对、错误文案表和对话组件；
+- `src/pages`：登录、检索、Agent 对话与超级用户账号管理的路由级组合，不直接执行 `fetch`；
 - `src/styles`：设计令牌（`tokens.css`）；全局 reset/base/components 分层写在 `src/style.css`。

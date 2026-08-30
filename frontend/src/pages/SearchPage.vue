@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { BookOpenText, LogOut, Search, ShieldCheck, UserRound, UsersRound } from '@lucide/vue'
+import { Bot, BookOpenText, LogOut, Search, ShieldCheck, UserRound, UsersRound } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 import { queryClient } from '../app/query-client'
 import { authSession } from '../features/auth/auth-session'
@@ -119,10 +119,20 @@ async function logout(): Promise<void> {
           <div class="mode-note">
             <span class="mode-dot" aria-hidden="true"></span>
             <span>{{ modeCopy.badge }}</span>
-            <span class="mode-detail">不生成答案</span>
+            <!-- 本页确实不生成答案：它只返回检索到的原文片段。要模型作答请走 /agent。 -->
+            <span class="mode-detail">本页只给原文</span>
           </div>
 
           <div class="account-control">
+            <RouterLink
+              v-if="authSession.user.value?.is_superuser"
+              class="admin-link"
+              :to="{ name: 'agent-chat' }"
+              aria-label="打开 Agent 对话"
+              title="Agent 对话"
+            >
+              <Bot :size="17" aria-hidden="true" />
+            </RouterLink>
             <RouterLink
               v-if="authSession.user.value?.is_superuser"
               class="admin-link"

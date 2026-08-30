@@ -16,6 +16,14 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      // 与后端一致地限超级用户：/agent/* 的路由级依赖是 current_superuser，
+      // 非超级用户进来只会看到 403。前端提前挡住，避免让用户走到一个必然失败的页面。
+      path: '/agent',
+      name: 'agent-chat',
+      component: () => import('../pages/AgentChatPage.vue'),
+      meta: { requiresAuth: true, requiresSuperuser: true },
+    },
+    {
       path: '/admin/users',
       name: 'user-admin',
       component: () => import('../pages/UserAdminPage.vue'),

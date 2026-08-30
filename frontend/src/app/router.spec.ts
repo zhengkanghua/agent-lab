@@ -49,6 +49,23 @@ describe('application router authentication guard', () => {
     expect(router.currentRoute.value.name).toBe('search')
   })
 
+  it('allows only superusers to enter the agent workspace', async () => {
+    auth.status.value = 'authenticated'
+    auth.user.value = { is_superuser: false }
+    const regularRouter = await freshRouter()
+
+    await regularRouter.push('/agent')
+    await regularRouter.isReady()
+    // 后端 /agent/* 挂的是 current_superuser，前端不挡住的话用户只会撞上 403。
+    expect(regularRouter.currentRoute.value.name).toBe('search')
+
+    auth.user.value = { is_superuser: true }
+    const superuserRouter = await freshRouter()
+    await superuserRouter.push('/agent')
+    await superuserRouter.isReady()
+    expect(superuserRouter.currentRoute.value.name).toBe('agent-chat')
+  })
+
   it('allows only superusers to enter account management', async () => {
     auth.status.value = 'authenticated'
     auth.user.value = { is_superuser: false }

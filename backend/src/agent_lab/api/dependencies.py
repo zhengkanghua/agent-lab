@@ -12,11 +12,24 @@ Ollama/Embedding 或 Qdrant I/O；取不到组件时抛出分类异常，由错�
 """
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from fastapi import Request
 
+from agent_lab.agent.errors import AgentRuntimeUnavailableError
 from agent_lab.pipeline.write_runtime import PipelineWriteRuntime
 from agent_lab.services.vector_search_service import VectorSearchService
+
+
+if TYPE_CHECKING:
+    # 只在类型检查时导入：运行时导入会成环。``agent.runtime`` 会拉进
+    # ``agent.middleware``，后者为了错误映射要 import ``api.error_contract``，而
+    # ``error_contract`` 又要 import 本模块的两个 *UnavailableError。
+    # 放进 TYPE_CHECKING 是因为这里真的只需要类型：本模块从 ``app.state`` 取现成对象，
+    # 从不构造 Runtime，也不 isinstance 它。
+    # ``AgentRuntimeUnavailableError`` 可以照常运行时导入——``agent.errors`` 是叶子模块，
+    # 一行 import 都没有。
+    from agent_lab.agent.runtime import AgentRuntime
 
 
 type PipelineWriteRuntimeFactory = Callable[[], PipelineWriteRuntime]
@@ -96,10 +109,42 @@ def get_pipeline_write_runtime_factory(
     return runtime_factory
 
 
+def get_agent_runtime(request: Request) -> "AgentRuntime":
+    """从应用 lifespan 状态取出共享的 Agent Runtime（FastAPI 依赖注入函数）。
+
+    与 ``get_vector_search_service`` 的区别是这里返回 Runtime 整体、不下钻到某个字段：
+    Agent 接口既要用 ``runtime.graph`` 发起运行，也可能要用同一个 Runtime 上的其他组件，
+    而 Runtime 本身已经是不可变的组合对象，交出去不会被改坏。
+
+    为什么 Agent 是进程级而不是每请求新建：编译 LangGraph 图、建模型客户端和
+    checkpointer 连接池都有固定开销，每请求重建会把它乘上并发数。请求间的差异（自定义
+    提示词）走 ``AgentContext``，不需要重新编译，见 ``agent.context``。
+
+    Args:
+        request: 当前 HTTP 请求，用于访问所属应用的 ``state``。
+
+    Returns:
+        lifespan 启动时装配、由并发请求共享的 ``AgentRuntime``。
+
+    Raises:
+        AgentRuntimeUnavailableError: 应用未经 lifespan 启动，或 Agent 装配失败（例如
+            缺少模型凭据）；错误契约层会把它映射成稳定的 503。
+
+    Notes:
+        只读取进程内对象，不构造 Runtime，也不执行模型、Qdrant 或 PostgreSQL I/O。
+    """
+
+    runtime = getattr(request.app.state, "agent_runtime", None)
+    if runtime is None:
+        raise AgentRuntimeUnavailableError("Agent 运行时不可用。")
+    return runtime
+
+
 __all__ = [
     "PipelineWriteRuntimeFactory",
     "PipelineWriteRuntimeUnavailableError",
     "VectorSearchRuntimeUnavailableError",
+    "get_agent_runtime",
     "get_pipeline_write_runtime_factory",
     "get_vector_search_service",
 ]

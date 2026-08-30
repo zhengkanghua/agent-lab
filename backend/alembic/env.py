@@ -7,6 +7,12 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context
+
+# LangGraph checkpointer 的四张表不在 Base.metadata 里，autogenerate 会把它们当成
+# 「库里多出来的表」并生成 op.drop_table()——那会在下一次迁移时删掉全部会话历史。
+# include_object 负责把它们排除在比较之外，理由见
+# docs/adr/0004-checkpointer-tables-outside-alembic.md。
+from agent_lab.agent.checkpointer import include_object
 from agent_lab.config.settings import get_settings
 from agent_lab.db.base import Base
 from agent_lab import models  # noqa: F401
@@ -24,6 +30,7 @@ settings = get_settings()
 
 # models 的导入会注册全部 ORM 表，Base.metadata 随后提供给 autogenerate 比较。
 target_metadata = Base.metadata
+
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
@@ -49,6 +56,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -61,6 +69,7 @@ def do_run_migrations(connection: Connection) -> None:
         target_metadata=target_metadata,
         compare_type=True,
         compare_server_default=True,
+        include_object=include_object,
     )
 
     with context.begin_transaction():

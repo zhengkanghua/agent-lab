@@ -21,10 +21,16 @@
 | 读取单篇文档 | `/`（结果内展开） | `GET /documents/{document_id}` | `api/documents.py` → `repositories/document_repository.py`；前端 `api/documents.ts`、`features/semantic-search/composables/useDocumentReader.ts` | `tests/test_documents_api.py`、`src/api/documents.spec.ts` |
 | 用户管理（增删改、改密、踢会话） | `/admin/users` | `GET /admin/users`、`POST /admin/users`、`PATCH /admin/users/{user_id}`、`POST /admin/users/{user_id}/password`、`DELETE /admin/users/{user_id}/sessions` | `api/user_admin.py` → `services/user_admin_service.py`；前端 `api/user-admin.ts`、`pages/UserAdminPage.vue` | `tests/test_user_admin.py`、`src/api/user-admin.spec.ts`、`src/pages/UserAdminPage.spec.ts` |
 | 手工触发同步加索引 | 无页面 | `POST /pipeline/run-once` | `api/pipeline.py` → `services/news_pipeline_execution_service.py` | `tests/test_pipeline_api.py`、`tests/test_news_pipeline_execution.py` |
+| Agent 对话（模型自己调检索工具再作答，SSE 流式） | `/agent` | `POST /agent/chat` | `api/agent_chat.py` → `agent/runtime.py`、`agent/streaming.py`、`agent/tools/`；前端 `api/agent-chat.ts`、`features/agent-chat/`、`pages/AgentChatPage.vue` | `tests/test_agent_chat_api.py`、`tests/test_agent_streaming.py`、`tests/test_agent_tools.py`、`tests/test_agent_middleware.py`、`src/api/agent-chat.spec.ts`、`src/features/agent-chat/tests/`、`src/pages/AgentChatPage.spec.ts` |
+| 读取 Agent 默认系统提示词 | `/agent`（提示词编辑器内） | `GET /agent/default-prompt` | `api/agent_chat.py` → `agent/prompts.py`；前端 `features/agent-chat/composables/useAgentDefaultPrompt.ts` | `tests/test_agent_chat_api.py`、`src/features/agent-chat/tests/useAgentDefaultPrompt.spec.ts` |
 | 健康检查 | 无 | `GET /health` | `api/health.py` | `tests/test_error_contract.py` |
 
-`/vector-search`、`/document-search`、`/documents` 要求登录；`/pipeline`、`/admin/users` 要求超级用户。
-挂载点和依赖在 `backend/src/agent_lab/main.py` 的 `include_router` 处。
+`/vector-search`、`/document-search`、`/documents` 要求登录；`/pipeline`、`/admin/users`、`/agent`
+要求超级用户。挂载点和依赖在 `backend/src/agent_lab/main.py` 的 `include_router` 处。
+
+Agent 那两行的能力边界见 [`adr/0003-agent-v1-is-read-only.md`](adr/0003-agent-v1-is-read-only.md)：
+它只有两个只读工具，不写业务表也不写 Qdrant。会话历史落在 checkpointer 自己的四张表里，
+不由 Alembic 管（[`adr/0004`](adr/0004-checkpointer-tables-outside-alembic.md)）。
 
 用户管理这一行前后端两列写的都是 `/admin/users`，不是抄错：前端页面路由和后端 API 前缀刚好同名，
 浏览器实际请求 `/api/admin/users`。后端路由的 `tags=["user-admin"]` 只是 OpenAPI 分组标签，不是路径。
@@ -37,6 +43,7 @@
 | `sync-news` | 从 FreshRSS 拉新闻进库 | `cli.py` → `services/freshrss_import_service.py`、`ingestion/` | `tests/test_cli.py`、`tests/test_freshrss_incremental_sync.py` |
 | `index-pending` | 给待处理文档补向量索引 | `cli.py` → `services/document_indexing_service.py`、`pipeline/`、`qdrant/` | `tests/test_cli.py`、`tests/test_document_indexing_service.py` |
 | `run-once` | 同步加索引跑一轮 | `cli.py` → `services/news_pipeline_execution_service.py` | `tests/test_cli.py`、`tests/test_news_pipeline_execution.py` |
+| `init-checkpointer` | 建 Agent 会话历史表（部署一次，幂等） | `cli.py` → `agent/checkpointer.py` | `tests/test_agent_checkpointer.py` |
 
 入口在 `backend/src/agent_lab/cli.py` 的 `build_parser`，参数以 `--help` 为准。
 
@@ -47,6 +54,7 @@
 | 模块 | 位置 | 说明 |
 | --- | --- | --- |
 | 配置 | `backend/src/agent_lab/config/` | 各外部依赖一个 settings 文件 |
-| 运行时装配 | `backend/src/agent_lab/runtime.py`、`qdrant/runtime.py`、`pipeline/write_runtime.py` | 进程级资源的构造与复用 |
-| 错误文案收敛 | `frontend/src/api/error-copy.ts` | 后端错误码到中文提示的唯一映射点 |
+| 运行时装配 | `backend/src/agent_lab/runtime.py`、`qdrant/runtime.py`、`pipeline/write_runtime.py`、`agent/runtime.py` | 进程级资源的构造与复用 |
+| 错误契约 | `backend/src/agent_lab/api/error_contract.py` | 异常到 `code`/`status`/`retryable` 的映射规则，检索与 Agent 各一张表 |
+| 错误文案收敛 | `frontend/src/api/error-copy.ts` | 查表机制；文案表在各领域的 `model/*-error.ts` 里 |
 | OpenAPI 类型 | `frontend/src/api/generated/openapi.ts` | 由后端 `/openapi.json` 生成，命令见 `frontend/README.md` |

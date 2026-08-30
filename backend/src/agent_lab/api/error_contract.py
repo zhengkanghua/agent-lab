@@ -23,13 +23,37 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal, cast
 
+import httpx
 from fastapi import Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from langchain_core.exceptions import OutputParserException
+from ollama import RequestError as OllamaRequestError
+from ollama import ResponseError as OllamaResponseError
+from openai import (
+    APIConnectionError,
+    APIError,
+    APIResponseValidationError,
+    APIStatusError,
+    APITimeoutError,
+    AuthenticationError,
+    BadRequestError,
+    InternalServerError,
+    NotFoundError,
+    OpenAIError,
+    PermissionDeniedError,
+    RateLimitError,
+    UnprocessableEntityError,
+)
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
+from agent_lab.agent.errors import (
+    AgentCheckpointerUnavailableError,
+    AgentRuntimeUnavailableError,
+    ModelResponseInvalidError,
+)
 from agent_lab.api.dependencies import (
     PipelineWriteRuntimeUnavailableError,
     VectorSearchRuntimeUnavailableError,
@@ -404,6 +428,186 @@ USER_ADMIN_ERROR_RULES: tuple[ErrorContractRule, ...] = (
 )
 
 
+AgentChatErrorCode = Literal[
+    "agent_runtime_unavailable",
+    "agent_checkpointer_unavailable",
+    "agent_internal_error",
+    "llm_authentication_failed",
+    "llm_request_blocked",
+    "llm_timeout",
+    "llm_rate_limited",
+    "llm_unavailable",
+    "llm_model_not_found",
+    "llm_request_rejected",
+    "llm_response_invalid",
+    "llm_service_error",
+]
+
+
+# Agent 对话链路的错误表。
+#
+# 这张表和其他几张有一个结构性差异：它直接映射 ``openai``、``httpx`` 和 ``ollama`` 的
+# 原始异常类型，没有先包成本项目自己的异常。其他链路（Embedding、Qdrant、FreshRSS）都是
+# 在边界处 ``_raise_mapped_error`` 包一层再映射，那样更好——但这里做不到：模型调用发生在
+# LangGraph 内部，我们不持有那个调用点，异常是从 ``graph.astream`` 冒出来的，没有可插入
+# 包装的位置。所以「翻译」只能在这张表里做一次。
+#
+# 顺序要点（都是 isinstance 匹配，子类必须在基类之前）：
+# - APITimeoutError ⊂ APIConnectionError，超时必须排在连接失败之前，否则超时会被当成
+#   连接失败、retryable 语义还对但 code 会错；
+# - AuthenticationError / PermissionDeniedError / RateLimitError / NotFoundError /
+#   BadRequestError / InternalServerError 都 ⊂ APIStatusError，全部排在它之前；
+#   AuthenticationError 与 PermissionDeniedError 互为兄弟类（401 与 403），彼此顺序无关；
+# - APIStatusError 与 APIConnectionError 都 ⊂ APIError，APIError 作为兜底排最后。
+#
+# 已知的精度损失（有意接受）：``ollama.ResponseError`` 只能整体归到 llm_service_error。
+# 区分它的 401/404 需要读 ``exc.status_code``，而本模块的第一条约束是只读异常类型；
+# Embedding 链路能区分是因为它在自己的边界里读了 status_code 再包成不同类型，我们没有
+# 那个边界。代价是 Ollama provider 下认证失败和模型不存在都报同一个 code。
+AGENT_CHAT_ERROR_RULES: tuple[ErrorContractRule, ...] = (
+    ErrorContractRule(
+        exceptions=(AgentRuntimeUnavailableError,),
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="agent_runtime_unavailable",
+        detail="Agent 运行时不可用。",
+        retryable=False,
+    ),
+    ErrorContractRule(
+        exceptions=(AgentCheckpointerUnavailableError,),
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="agent_checkpointer_unavailable",
+        detail="会话记忆存储当前不可用。",
+        retryable=True,
+    ),
+    ErrorContractRule(
+        exceptions=(AuthenticationError,),
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        code="llm_authentication_failed",
+        detail="大模型服务认证失败。",
+        retryable=False,
+    ),
+    # 403 单独一条而不是和 401 合并：合并过的版本把「中转站按 User-Agent 拦掉了这个客户端」
+    # 报成「认证失败」，排查因此从换 Key 开始，而 Key 一直是好的。两者都不可重试、都是 502，
+    # 但要查的地方完全不同，所以分开给码和文案。
+    ErrorContractRule(
+        exceptions=(PermissionDeniedError,),
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        code="llm_request_blocked",
+        detail="大模型服务拒绝了本次请求（凭据可能有效，但请求被判定为不允许）。",
+        retryable=False,
+    ),
+    ErrorContractRule(
+        exceptions=(APITimeoutError, httpx.TimeoutException),
+        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+        code="llm_timeout",
+        detail="大模型服务请求超时。",
+        retryable=True,
+    ),
+    ErrorContractRule(
+        exceptions=(RateLimitError,),
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="llm_rate_limited",
+        detail="大模型服务达到调用频率上限。",
+        retryable=True,
+    ),
+    ErrorContractRule(
+        exceptions=(NotFoundError,),
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="llm_model_not_found",
+        detail="配置的大模型不可用。",
+        retryable=False,
+    ),
+    ErrorContractRule(
+        exceptions=(BadRequestError, UnprocessableEntityError),
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        code="llm_request_rejected",
+        detail="大模型服务拒绝了本次请求。",
+        retryable=False,
+    ),
+    ErrorContractRule(
+        exceptions=(
+            APIConnectionError,
+            httpx.ConnectError,
+            httpx.NetworkError,
+            ConnectionError,
+        ),
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="llm_unavailable",
+        detail="大模型服务当前不可用。",
+        retryable=True,
+    ),
+    ErrorContractRule(
+        exceptions=(
+            ModelResponseInvalidError,
+            APIResponseValidationError,
+            OutputParserException,
+        ),
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        code="llm_response_invalid",
+        detail="大模型返回的内容无法使用。",
+        retryable=False,
+    ),
+    ErrorContractRule(
+        exceptions=(
+            InternalServerError,
+            APIStatusError,
+            APIError,
+            OpenAIError,
+            OllamaResponseError,
+            OllamaRequestError,
+        ),
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        code="llm_service_error",
+        detail="大模型服务调用失败。",
+        retryable=True,
+    ),
+    # 本表自带的兜底行。这是对「全项目只有 UNCLASSIFIED_ERROR_RULE 一条兜底」的一处
+    # 有意例外，理由是这条链路的异常集合是开放的：搜索链路能不写兜底，是因为 endpoint
+    # 显式声明了 catch 哪几个基类、表覆盖了它们；而模型调用发生在 LangGraph 内部，中间
+    # 还夹着工具、checkpointer 和用户自定义提示词，能冒出什么异常我们无法穷举。
+    # 不写这一行的话未知异常会落到 pipeline_internal_error——那是「手动流水线」的契约
+    # code，出现在 Agent 的 SSE 流里会让前端按错误的语义去查文案表。
+    ErrorContractRule(
+        exceptions=(Exception,),
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        code="agent_internal_error",
+        detail="Agent 执行失败。",
+        retryable=False,
+    ),
+)
+
+
+# Agent 工具链路的错误表。它和上面四张表有一处本质区别：命中结果不会变成 HTTP 响应，
+# 而是被 ToolErrorMiddleware 写成一句 ToolMessage 交回模型，所以这里只用到 detail
+# （安全中文）和 code（写日志）两个字段，status_code 不参与对外语义，取与同类失败
+# 一致的值只为让「同一个 code 对应同一句 detail」这条约束继续成立。
+# 第一版工具全是只读的（见 docs/adr/0003-agent-v1-is-read-only.md），失败模式与只读
+# 搜索链路同构，因此直接复用 VECTOR_SEARCH_ERROR_RULES，只补一条数据库失败——
+# read_document 走 PostgreSQL，不经过 Embedding 和 Qdrant。
+# retryable 在这条链路上同样不直接用：要不要换个检索词重试由模型自己决定，我们只把
+# 「失败了、原因是这一类」如实告诉它。
+AGENT_TOOL_ERROR_RULES: tuple[ErrorContractRule, ...] = (
+    *VECTOR_SEARCH_ERROR_RULES,
+    ErrorContractRule(
+        exceptions=(SQLAlchemyError,),
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="agent_tool_database_unavailable",
+        detail="新闻数据库当前不可用。",
+        retryable=True,
+    ),
+    # 兜底行，理由同 AGENT_CHAT_ERROR_RULES：工具体内可能抛出我们没预料到的异常，
+    # 而这句文案是要交给模型看的，落到 pipeline_internal_error 的「服务内部执行失败」
+    # 会让模型以为是它自己的调用方式有问题。
+    ErrorContractRule(
+        exceptions=(Exception,),
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        code="agent_tool_failed",
+        detail="工具执行时发生未预期的错误。",
+        retryable=False,
+    ),
+)
+
+
 # 两条搜索路由共用的「已分类上游失败」捕获元组。放在错误表旁边是为了让「catch 什么」
 # 和「映射成什么」一起演进：这三个基类都在 VECTOR_SEARCH_ERROR_RULES 里有对应规则，
 # 所以捕获到的异常一定能查到表，不会掉进 500 兜底。
@@ -497,6 +701,33 @@ def build_vector_search_error_response(error: BaseException) -> JSONResponse:
     return JSONResponse(
         status_code=rule.status_code,
         content=payload.model_dump(mode="json"),
+    )
+
+
+def build_agent_chat_error_response(error: BaseException) -> JSONResponse:
+    """把「流还没开始就失败」的 Agent 异常映射成稳定的 JSON 错误响应。
+
+    只服务于流开始之前的那一小段：取依赖、拿 Runtime。一旦第一帧 SSE 发出，响应头就已经
+    走了，状态码再也改不了，之后的失败只能作为 ``error`` 事件送达（见
+    ``schemas.agent_chat.AgentErrorEvent`` 的说明）。两条路径共用
+    ``AGENT_CHAT_ERROR_RULES``，所以同一种失败在两处拿到的是同一个 ``code``。
+
+    Args:
+        error: 已分类的 Agent 层异常；只读其类型。
+
+    Returns:
+        含稳定 ``code/detail/retryable`` 的 JSON 响应。
+
+    Notes:
+        纯内存查表，不读异常文本，不执行任何 I/O。
+    """
+
+    rule = resolve_error_contract(error, AGENT_CHAT_ERROR_RULES)
+    return build_error_response(
+        rule.status_code,
+        rule.code,
+        rule.detail,
+        retryable=rule.retryable,
     )
 
 
@@ -594,16 +825,20 @@ class SanitizedValidationRoute(APIRoute):
 
 
 __all__ = [
+    "AGENT_CHAT_ERROR_RULES",
+    "AGENT_TOOL_ERROR_RULES",
     "INVALID_REQUEST_RULE",
     "PIPELINE_ERROR_RULES",
     "SEARCH_UPSTREAM_EXCEPTIONS",
     "UNCLASSIFIED_ERROR_RULE",
     "USER_ADMIN_ERROR_RULES",
     "VECTOR_SEARCH_ERROR_RULES",
+    "AgentChatErrorCode",
     "ErrorContractRule",
     "SanitizedValidationRoute",
     "VectorSearchErrorCode",
     "VectorSearchErrorResponse",
+    "build_agent_chat_error_response",
     "build_error_response",
     "build_pipeline_error_response",
     "build_user_admin_error_response",

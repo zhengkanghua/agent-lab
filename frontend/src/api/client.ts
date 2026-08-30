@@ -59,6 +59,54 @@ export function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError'
 }
 
+/**
+ * 拼出接口的完整 URL。
+ *
+ * 导出而不是留成模块私有：SSE 流式接口不能走 requestApi（它会 `await response.text()`
+ * 把整条流读完才返回），但必须和其余接口用同一个 base 前缀，否则改 VITE_API_BASE_URL
+ * 时会漏掉流式那一条。
+ */
+export function resolveApiUrl(path: string): string {
+  return `${apiBaseUrl}${path}`
+}
+
+/**
+ * 把一个非 2xx 响应翻译成 ApiError，并在 401 时通知应用。
+ *
+ * `body` 由调用方读取后传入：流式接口在这一步之后还要继续读 body 作为流，所以不能由
+ * 本函数代读。code 的兜底顺序与 status 分支和 JSON 接口完全一致——两条路径共用这段，
+ * 才能保证同一个后端错误在检索页和对话页拿到同一个 code。
+ */
+export function toApiError(
+  response: Response,
+  body: unknown,
+  options: RequestOptions = {},
+): ApiError {
+  if (response.status === 401 && options.notifyUnauthorized !== false) {
+    unauthorizedHandler?.()
+  }
+  const errorBody = isRecord(body) ? (body as ApiErrorBody) : null
+  return new ApiError({
+    message:
+      typeof errorBody?.detail === 'string'
+        ? errorBody.detail
+        : 'The search service rejected the request.',
+    status: response.status,
+    code:
+      typeof errorBody?.code === 'string'
+        ? errorBody.code
+        : response.status === 422
+          ? 'validation_error'
+          : response.status === 401
+            ? 'authentication_required'
+            : response.status === 403
+              ? 'permission_denied'
+              : 'unknown_error',
+    retryable:
+      typeof errorBody?.retryable === 'boolean' ? errorBody.retryable : response.status >= 500,
+  })
+}
+
 export async function requestJson<T>(
   path: string,
   init: RequestInit,
@@ -111,7 +159,7 @@ async function requestApi(
       if (typeof init.body === 'string' && !headers.has('Content-Type')) {
         headers.set('Content-Type', 'application/json')
       }
-      response = await fetch(`${apiBaseUrl}${path}`, {
+      response = await fetch(resolveApiUrl(path), {
         ...init,
         credentials: 'same-origin',
         headers,
@@ -140,29 +188,7 @@ async function requestApi(
     const body = await readJsonBody(response)
 
     if (!response.ok) {
-      if (response.status === 401 && options.notifyUnauthorized !== false) {
-        unauthorizedHandler?.()
-      }
-      const errorBody = isRecord(body) ? (body as ApiErrorBody) : null
-      throw new ApiError({
-        message:
-          typeof errorBody?.detail === 'string'
-            ? errorBody.detail
-            : 'The search service rejected the request.',
-        status: response.status,
-        code:
-          typeof errorBody?.code === 'string'
-            ? errorBody.code
-            : response.status === 422
-              ? 'validation_error'
-              : response.status === 401
-                ? 'authentication_required'
-                : response.status === 403
-                  ? 'permission_denied'
-                  : 'unknown_error',
-        retryable:
-          typeof errorBody?.retryable === 'boolean' ? errorBody.retryable : response.status >= 500,
-      })
+      throw toApiError(response, body, options)
     }
 
     return body
@@ -182,7 +208,13 @@ async function requestApi(
   }
 }
 
-async function readJsonBody(response: Response): Promise<unknown> {
+/**
+ * 读响应体并按 JSON 解析；空体返回 undefined。
+ *
+ * 失败响应解析不出 JSON 时返回 undefined 而不是抛错：那种情况下（例如反向代理返回的
+ * HTML 错误页）真正要告诉用户的是 HTTP 状态码，解析异常本身没有信息量。
+ */
+export async function readJsonBody(response: Response): Promise<unknown> {
   const text = await response.text()
   if (!text) {
     return undefined
