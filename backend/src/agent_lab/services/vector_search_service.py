@@ -125,8 +125,10 @@ class VectorSearchService:
             不自动创建 Collection、不切换 Alias、不修改 processing_status。
         """
 
+        # 1、把问题文本变成向量，顺便验掉坏数据（维度、NaN、全零）。
         validated_vector = await self._embed_and_validate_query(request.query)
-        # 拿向量去 Qdrant current Alias 查询，保持 Qdrant 的 score 顺序返回
+        # 2、拿向量去 Qdrant current Alias 查 Chunk，保持 Qdrant 的 score 顺序返回，
+        #    不聚合、不重排——那是 search_documents 的活。
         return await self._vector_search.search(
             validated_vector,
             top_k=request.top_k,
@@ -160,7 +162,10 @@ class VectorSearchService:
             必须由调用方稍后请求 ``GET /documents/{document_id}`` 才访问 PostgreSQL。
         """
 
+        # 1、与 search 完全相同的第一步：query 向量化并校验。
         validated_vector = await self._embed_and_validate_query(request.query)
+        # 2、换成 grouped query：Qdrant 按 document_id 分组，每篇只出一组，
+        #    组内保留 matches_per_document 条最相关的 Chunk。
         groups = await self._vector_search.search_groups(
             validated_vector,
             document_limit=request.document_limit,
@@ -168,16 +173,33 @@ class VectorSearchService:
             score_threshold=request.score_threshold,
             filters=request.filters,
         )
+        # 3、把基础设施对象搬成对外 DTO，只搬字段，不再校验。
         return [self._map_document_group(group) for group in groups]
 
     async def _embed_and_validate_query(self, query: str) -> list[float]:
-        """
-        复用 query Embedding 与 VectorIndexSpec 校验，避免多个搜索用例分叉。
-        调用 Ollama 把用户的问题(query)文本变成向量（一串 1024个浮点数），并对向量做合法性检查。
+        """把 query 文本变成一个可以直接交给 Qdrant 的合法向量。
+
+        两个搜索用例（``search`` 和 ``search_documents``）的第一步完全一样，抽在这里是
+        为了让「先 embed 再校验」这个顺序只存在一份，不会哪天在一个用例里漏掉校验。
+
+        Args:
+            query: 用户输入的原始问题文本。
+
+        Returns:
+            维度与索引规格一致、数值合法的 ``list[float]``。
+
+        Raises:
+            QueryVectorValidationError: 向量不符合当前索引规格。
+            OllamaEmbeddingError: 调用 Ollama 失败。
+
+        Notes:
+            这里是全局唯一的 query Embedding 入口，一次 Ollama 网络 I/O。原文不写日志、
+            不落外部存储。
         """
 
-        # 这里是唯一的 query Embedding 入口；调用方不会把原文写入日志或外部存储。
+        # 1、调 Ollama 把问题文本变成向量（默认 1024 维的一串浮点数）。
         query_vector = await self._embedding_provider.embed_query(query)
+        # 2、先验再用：坏向量拦在 Qdrant 调用之前，省一次查询也让报错更准。
         return self._validate_query_vector(query_vector)
 
     @staticmethod
@@ -190,7 +212,9 @@ class VectorSearchService:
         直接取 ``matches[0]`` 当 best match，并用它的文档级字段代表整篇文档。
         """
 
+        # 1、取组内第一条当代表：它的文档级字段（标题、来源、发布时间）代表整篇。
         first = group.matches[0]
+        # 2、组内每条 Chunk 搬成对外的 match。
         matches = [
             DocumentSearchMatch(
                 chunk_id=match.chunk_id,
@@ -201,6 +225,8 @@ class VectorSearchService:
             )
             for match in group.matches
         ]
+        # 3、best_match 是最高分那条，其余进 additional_matches。matches 已按 score
+        #    降序（search_groups 保证），所以取第 0 条即可，不用再排。
         return DocumentSearchResult(
             document_id=group.document_id,
             content_hash=first.content_hash,
@@ -233,15 +259,19 @@ class VectorSearchService:
             QueryVectorValidationError: 类型、维度、数值有限性或 L2 范数不合法。
         """
 
+        # 1、必须是数字序列。字符串和 bytes 也是 Sequence，但逐位取出来是字符，
+        #    所以要单独排除。
         if not isinstance(vector, Sequence) or isinstance(vector, (str, bytes)):
             raise QueryVectorValidationError(
                 "查询嵌入响应必须是数值向量序列。"
             )
+        # 2、维度必须和索引规格一致，否则等于拿 A 模型的向量搜 B 模型的索引。
         if len(vector) != self._spec.dimension:
             raise QueryVectorValidationError(
                 f"查询向量维度不匹配：期望 {self._spec.dimension}，"
                 f"实际 {len(vector)}。"
             )
+        # 3、逐位检查并转 float。bool 是 int 的子类，会被 Real 放过去，所以先排掉。
         normalized: list[float] = []
         for index, value in enumerate(vector):
             if isinstance(value, bool) or not isinstance(value, Real):
@@ -254,6 +284,8 @@ class VectorSearchService:
                     f"查询向量第 {index} 位不是有限值。"
                 )
             normalized.append(number)
+        # 4、L2 范数不能为零：全零向量和任何向量的余弦相似度都没有意义，
+        #    放过去只会搜出一堆随机结果。
         l2_norm = math.hypot(*normalized)
         if l2_norm == 0.0:
             raise QueryVectorValidationError("查询向量的 L2 范数为零。")

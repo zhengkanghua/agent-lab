@@ -53,6 +53,7 @@ class SourceRepository:
             RuntimeError: 冲突分支未返回记录且无法查询到现有行时抛出。
         """
 
+        # 1、备好要写的值。id 先生成一个，冲突时这个值会被丢掉，不会占用。
         values = {
             "id": uuid4(),
             "provider": source.provider,
@@ -63,11 +64,14 @@ class SourceRepository:
         }
         insert_statement = insert(SourceRecord).values(**values)
         excluded = insert_statement.excluded
+        # 2、定义「什么算真的变了」。用 is_distinct_from 而不是 !=：NULL != NULL 在 SQL 里
+        #    是 NULL（不成立），会把「原来没有 home_url、现在还是没有」误判成有变化。
         has_changes = or_(
             SourceRecord.name.is_distinct_from(excluded.name),
             SourceRecord.feed_url.is_distinct_from(excluded.feed_url),
             SourceRecord.home_url.is_distinct_from(excluded.home_url),
         )
+        # 3、一条语句解决插入和更新：冲突时只在真的有变化时才 UPDATE。
         upsert_statement = (
             insert_statement.on_conflict_do_update(
                 constraint="uq_sources_provider_external_id",
@@ -87,15 +91,16 @@ class SourceRepository:
         )
 
         record = (await self._session.scalars(upsert_statement)).one_or_none()
+        # 4、有返回行 = 真的插了或改了。来源的展示名称会进 Qdrant Payload，所以它一变，
+        #    名下所有文档的 Payload 就旧了，必须重新排队索引。新来源名下还没有文档，
+        #    这一步影响 0 行。Feed/home URL 变化也一起触发这次保守重索引：来源配置极少
+        #    变动，第一版宁可多索引一次，也不引入「取旧值比对」那类数据库技巧。
         if record is not None:
-            # 返回行意味着实际 INSERT 或 UPDATE；新来源尚无文档，更新为 0。已有来源
-            # 的展示名称会进入 Qdrant Payload，因此其关联文档必须递增 revision。
-            # Feed/home URL 变化也会触发这次保守重索引，来源配置变化非常少，第一版
-            # 优先保证 Payload 不陈旧，避免引入额外“旧值返回”数据库技巧。
             await self._mark_documents_for_reindex(record.id)
             return record
 
-        # ON CONFLICT 的 WHERE 在“内容完全相同”时不执行 UPDATE，因此再查询现有行。
+        # 5、没有返回行 = 记录已存在且内容完全一样（上面那个 WHERE 让 UPDATE 没执行）。
+        #    这是幂等路径：不改 updated_at、不重新索引，只要把现有行查出来还给调用方。
         existing_statement = select(SourceRecord).where(
             SourceRecord.provider == source.provider,
             SourceRecord.external_id == source.external_id,
@@ -163,10 +168,13 @@ class SourceRepository:
             不修改 ``updated_at``，避免把运行时同步进度误当作来源展示字段变化。
         """
 
+        # 1、规范化新游标。走一遍 int() 再转回字符串，是为了把 "007" 和 "7" 统一成同一个
+        #    写法，否则下面那个相等比较会把它们当成两个不同的游标。
         normalized = new_checkpoint.strip()
         if not normalized or not normalized.isascii() or not normalized.isdecimal():
             raise ValueError("同步检查点必须是十进制字符串")
         normalized = str(int(normalized))
+        # 2、旧游标同样规范化，两边写法一致才能比。
         if expected_checkpoint is not None:
             expected = expected_checkpoint.strip()
             if not expected.isascii() or not expected.isdecimal():
@@ -175,13 +183,16 @@ class SourceRepository:
         else:
             expected = None
 
+        # 3、游标只能往前。往回走意味着已经处理过的新闻会被重新抓一遍。
         if expected is not None and int(normalized) < int(expected):
             raise ValueError("同步检查点不能回退")
 
-        # 相同游标无需写入时间；这也让重复执行保持完全幂等。
+        # 4、完全没动就直接返回，连时间戳也不写——重复执行保持完全幂等。
         if expected == normalized:
             return True
 
+        # 5、条件 UPDATE：只在游标仍是我们读到的那个值时才写。这样两个并发同步进程里，
+        #    慢的那个会更新 0 行、返回 False，不会把快的那个推进的游标压回去。
         statement = (
             update(SourceRecord)
             .where(

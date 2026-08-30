@@ -54,13 +54,17 @@ def to_psycopg_conninfo(database_url: str) -> str:
         个解析器才能保证「能连业务库」和「能连会话记忆」不会因为解析差异而分家。
     """
 
+    # 1、用 SQLAlchemy 的解析器把 URL 拆成各字段（业务连接池用的也是它）。
     url = make_url(database_url)
-    # query 里可能有 sslmode 这类 libpq 参数，吃掉它们会让生产静默降级成非加密连接。
-    # 同名参数取最后一个值：libpq 连接串里一个 key 只能有一个值。
+    # 2、把 URL 的 query 参数原样带上。里面可能有 sslmode 这类 libpq 参数，吃掉它们会让
+    #    生产静默降级成非加密连接。同名参数取最后一个值：libpq 连接串里一个 key 只能有
+    #    一个值。
     options: dict[str, str] = {
         key: value[-1] if isinstance(value, tuple) else value
         for key, value in url.query.items()
     }
+    # 3、拼成 key=value 形式。这种格式没有百分号转义规则，值按字面传递，密码里的 % 才
+    #    不会被当成转义序列。
     return make_conninfo(
         "",
         host=url.host,

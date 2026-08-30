@@ -124,11 +124,12 @@ def _tool_events(update: dict[str, Any]) -> list[AgentChatEvent]:
     """
 
     events: list[AgentChatEvent] = []
+    # 1、只看模型节点和工具节点的更新，其余节点（如中间件内部状态）与工具轨迹无关。
     for node, payload in update.items():
         if node not in {_MODEL_NODE, _TOOLS_NODE} or not isinstance(payload, dict):
             continue
         for message in payload.get("messages") or ():
-            # 模型节点：AIMessage 带 tool_calls 表示它决定要调工具。
+            # 2、模型节点：AIMessage 带 tool_calls 表示它决定要调工具。
             for tool_call in getattr(message, "tool_calls", None) or ():
                 events.append(
                     AgentToolCallEvent(
@@ -136,8 +137,8 @@ def _tool_events(update: dict[str, Any]) -> list[AgentChatEvent]:
                         arguments=dict(tool_call.get("args") or {}),
                     )
                 )
-            # 工具节点：ToolMessage 是执行结果。status == "error" 是
-            # ToolErrorMiddleware 兜底后打的标记，此时 content 已是安全文案。
+            # 3、工具节点：ToolMessage 是执行结果。status == "error" 是
+            #    ToolErrorMiddleware 兜底后打的标记，此时 content 已是安全文案。
             if isinstance(message, ToolMessage):
                 events.append(
                     AgentToolResultEvent(
@@ -179,24 +180,29 @@ async def stream_agent_events(
         新闻正文，异常文本可能把它们带进日志。
     """
 
+    # 1、准备两样东西：config 里的 thread_id 是 checkpointer 定位历史的钥匙，
+    #    client 为 None 表示这次不上报追踪。
     config = {"configurable": {"thread_id": str(thread_id)}}
     client = _build_tracing_client(langsmith_settings)
     try:
-        # tracing_context 是「本次运行范围」的开关：它不写 os.environ，所以并发请求
-        # 之间不会互相污染，也不需要在进程启动时决定好。
+        # 2、开一个「只管本次运行」的追踪范围。tracing_context 不写 os.environ，
+        #    所以并发请求之间不会互相污染，也不需要在进程启动时就决定好。
         with tracing_context(
             enabled=client is not None,
             project_name=langsmith_settings.project,
             client=client,
         ):
+            # 3、跑图，同时订阅两种流。这里只传用户这一条新消息——历史由 checkpointer
+            #    按 config 里的 thread_id 自己接在前面，不用我们拼。
             async for stream_mode, chunk in graph.astream(
                 {"messages": [{"role": "user", "content": message}]},
                 config=config,
                 context=context,
                 stream_mode=["updates", "messages"],
             ):
+                # 4、messages 流 → 打字机效果。给的是 (消息增量, metadata) 二元组，
+                #    只有模型节点产的文本才是用户要看的字，工具节点的要滤掉。
                 if stream_mode == "messages":
-                    # messages 模式给的是 (消息增量, metadata) 二元组。
                     part, metadata = chunk
                     if (
                         isinstance(part, AIMessage)
@@ -205,10 +211,14 @@ async def stream_agent_events(
                         token = _token_event(part)
                         if token is not None:
                             yield token
+                # 5、updates 流 → 工具轨迹。工具调用和工具结果只在这个流里出现，
+                #    messages 流里没有。
                 elif stream_mode == "updates":
                     for event in _tool_events(chunk):
                         yield event
     except Exception as exc:
+        # 6、失败翻成一个 error 事件送出去，不往上抛。第一个 token 发走时响应头就定了，
+        #    这之后改不了 HTTP 状态码，只能把失败当成流里的一条事件。
         rule = resolve_error_contract(exc, AGENT_CHAT_ERROR_RULES)
         logger.error(
             "Agent 运行失败 thread_id=%s error_type=%s code=%s",
@@ -222,6 +232,7 @@ async def stream_agent_events(
             retryable=rule.retryable,
         )
         return
+    # 7、正常收尾。done 带上 thread_id，前端拿它接着发下一轮。
     yield AgentDoneEvent(thread_id=thread_id)
 
 

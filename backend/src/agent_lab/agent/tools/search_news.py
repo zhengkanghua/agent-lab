@@ -73,25 +73,27 @@ def build_search_news_tool(service: VectorSearchService) -> BaseTool:
 
     @tool("search_news", args_schema=SearchNewsArguments)
     async def search_news(query: str, document_limit: int = SEARCH_TOOL_MAX_DOCUMENTS) -> str:
-        """按语义检索已入库的新闻，返回若干篇的元数据和最相关片段。
+        """按语义检索已入库的新闻，返回若干篇的标题、来源、发布时间和最相关片段。
 
-        Args:
-            query: 检索文本。
-            document_limit: 最多返回几篇新闻。
+        用户问「有没有」「最近怎么说」「什么情况」这类需要查资料的问题时，先用它。
+        一篇新闻的完整正文不在结果里，片段不够时再用 read_document 按 document_id 取。
 
-        Returns:
-            排好版的检索结果文本；没有命中时返回明确的空结果说明，不返回空字符串——
-            空字符串会让模型以为工具坏了，进而重试或编造。
-
-        Raises:
-            OllamaEmbeddingError: query Embedding 失败（子类区分认证、超时、连接、模型缺失）。
-            QueryVectorValidationError: Embedding 返回的向量不符合当前索引规格。
-            QdrantVectorSearchError: Qdrant 查询失败。
-
-        Notes:
-            纯读取：一次 query Embedding 加一次 Qdrant 查询，不写 PostgreSQL 或 Qdrant。
-            异常一律向上抛，交给中间件重试与脱敏。
+        检索不到时会返回一句明确的说明，不是空结果，此时可以换个说法再检索一次，或者
+        直接告诉用户语料库里没有这个主题。
         """
+
+        # 上面那份 docstring 会原样进模型上下文，所以维护者要看的东西写在这里：
+        #
+        # Args   —— 两个参数的填写说明在 SearchNewsArguments 的 Field description 里，
+        #           它们同样进模型上下文，在 docstring 里再写一遍是重复。
+        # Returns—— _format_results 的返回值。没有命中时刻意返回一句说明而不是空字符串：
+        #           空字符串会让模型以为工具坏了，进而重试或编造。
+        # Raises —— query Embedding 失败（OllamaEmbeddingError，子类区分认证、超时、
+        #           连接、模型缺失）、向量不符合当前索引规格（QueryVectorValidationError）、
+        #           Qdrant 查询失败（QdrantVectorSearchError）。一律向上抛，交给
+        #           ToolRetryMiddleware 重试、ToolErrorMiddleware 脱敏；这几个类名不能
+        #           写进 docstring，否则会随工具描述进模型上下文，绕过 sanitize_tool_error。
+        # I/O    —— 纯读取：一次 query Embedding 加一次 Qdrant 查询，不写 PostgreSQL 或 Qdrant。
 
         request = DocumentSearchRequest(
             query=query,

@@ -5,6 +5,16 @@
 
 本包内所有工具都是只读的，见 ``docs/adr/0003-agent-v1-is-read-only.md``。本模块只组装对象，
 不执行检索、不建立数据库连接。
+
+**本包内 ``@tool`` 装饰的函数，docstring 是写给模型的**：LangChain 把整份 docstring 原样
+当作工具描述送进模型上下文，所以那里只写模型需要判断「这个工具是什么、什么时候用」的内容，
+连「什么时候该用它」也写在这里而不是系统提示词里——工具的用法跟着工具走，加工具才不用回头
+改提示词。Args/Returns/Raises 和「异常交给中间件」这类维护者信息改用 ``#`` 写在函数体开头，
+``Raises:`` 尤其不能留在 docstring 里：异常类名会随工具描述进模型上下文，绕过
+``sanitize_tool_error`` 的脱敏。
+
+这条只限被装饰的那个内层函数。模块 docstring、参数类 docstring 和外层 ``build_*_tool``
+的 docstring 都不进模型上下文（参数类的类 docstring 实测不出现在 payload 里），照平时写。
 """
 
 from langchain_core.tools import BaseTool

@@ -58,23 +58,27 @@ def build_read_document_tool(session_factory: SessionFactory) -> BaseTool:
 
     @tool("read_document", args_schema=ReadDocumentArguments)
     async def read_document(document_id: UUID) -> str:
-        """读取一篇新闻的完整正文，用于检索片段不足以回答时补充上下文。
+        """按 document_id 读取一篇新闻的完整正文。
 
-        Args:
-            document_id: 来自 search_news 结果的新闻 UUID。
+        只在 search_news 返回的片段不足以回答、确实需要看上下文时才用；不要对检索结果里
+        的每一篇都调用它。
 
-        Returns:
-            带元数据和正文的文本；文档不存在时返回明确说明而不是抛异常——「查不到这一篇」
-            是正常的业务结果，模型应当据此改换思路（比如重新检索），而不是被中间件重试
-            三次再收到一句系统故障。
-
-        Raises:
-            SQLAlchemyError: 数据库不可用或查询失败。这类是真故障，向上抛给中间件。
-
-        Notes:
-            纯读取：一次 eager-load source 的查询，不写库、不重新切分正文、不查 Qdrant。
-            正文超过上限时截断，不会把整篇塞进模型上下文。
+        正文过长时会被截断并标注，看到截断标注就说明你只读到了前半部分，不要据此断言
+        「文中没有提到」。document_id 查不到时会返回一句明确的说明，此时应当确认 id 是否
+        来自 search_news 的结果，或者换个检索词重新检索。
         """
+
+        # 上面那份 docstring 会原样进模型上下文，所以维护者要看的东西写在这里：
+        #
+        # Args   —— document_id 的说明在 ReadDocumentArguments 的 Field description 里，
+        #           它同样进模型上下文，在 docstring 里再写一遍是重复。
+        # Returns—— _format_document 的返回值。文档不存在时返回说明而不是抛异常：
+        #           「查不到这一篇」是正常业务结果，模型应当据此改换思路（比如重新检索），
+        #           而不是被中间件重试三次再收到一句系统故障。
+        # Raises —— SQLAlchemyError（数据库不可用或查询失败）。这类是真故障，向上抛给
+        #           中间件；类名不能写进 docstring，否则会随工具描述进模型上下文，
+        #           绕过 sanitize_tool_error 的脱敏。
+        # I/O    —— 纯读取：一次 eager-load source 的查询，不写库、不重新切分正文、不查 Qdrant。
 
         async with session_factory() as session:
             repository = DocumentRepository(session)

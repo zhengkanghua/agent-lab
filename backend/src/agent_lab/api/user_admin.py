@@ -49,6 +49,8 @@ def get_user_admin_service(
 ) -> UserAdminService:
     """用当前请求数据库 Session 构造账号管理 Service。"""
 
+    # 每个请求一个新 Service。它没有状态，贵的东西是 Session，而 Session 本来就按请求走
+    # ``get_db_session``；Service 跟着 Session 的生命周期，事务边界才不会跨请求串起来。
     return UserAdminService(session)
 
 
@@ -63,6 +65,10 @@ async def list_users(
 ) -> list[UserAdminResponse] | JSONResponse:
     """返回不含密码和 Token 的账号列表。"""
 
+    # 五条路由的形状一样：调 Service，把两类失败翻成同构 JSON，成功的结果过一遍
+    # response schema。model_validate 在这里不只是转换——UserAdminResponse 没有
+    # hashed_password 字段，走一遍它就等于确保密码 Hash 不会被顺出去。
+    # 只有这条不会抛领域错误：列表查询没有「目标不存在」之类的前提。
     try:
         users = await service.list_users()
     except SQLAlchemyError as error:
@@ -187,6 +193,8 @@ def _domain_error(error: UserAdminDomainError) -> JSONResponse:
         与其他错误路径同构的 ``code/detail/retryable`` JSON 响应；未知 code 归为 409。
     """
 
+    # 兜底给 409 而不是 500：能走到这里的都是 Service 主动抛的预期失败，含义是「当前状态
+    # 不允许这么改」，漏了映射也该按冲突回。新增 code 时记得往这张表里加一行。
     status_code = {
         "user_not_found": status.HTTP_404_NOT_FOUND,
         "invalid_password": status.HTTP_422_UNPROCESSABLE_CONTENT,

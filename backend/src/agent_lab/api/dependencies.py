@@ -65,6 +65,8 @@ def get_vector_search_service(request: Request) -> VectorSearchService:
         本依赖只读取进程内对象，不执行 PostgreSQL、Ollama/Embedding 或 Qdrant I/O。
     """
 
+    # 两级 getattr 各挡一种情况：没跑 lifespan 时 state 上根本没有这个属性，跑了但装配
+    # 失败时属性在、service 是 None。都归到同一个 503，调用方不需要区分。
     runtime = getattr(request.app.state, "vector_search_runtime", None)
     service = getattr(runtime, "service", None)
     if service is None:
@@ -102,6 +104,8 @@ def get_pipeline_write_runtime_factory(
         "pipeline_write_runtime_factory",
         None,
     )
+    # 用 callable 而不是 ``is not None``：state 是个可以随便塞东西的命名空间，塞进来的
+    # 要是个非函数值，等调用方 ``factory()`` 时才炸就说不清是谁的问题了。
     if not callable(runtime_factory):
         raise PipelineWriteRuntimeUnavailableError(
             "流水线写入运行时工厂不可用。"

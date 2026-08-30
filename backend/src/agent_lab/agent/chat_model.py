@@ -65,16 +65,18 @@ def _build_openai_compatible_model(settings: LlmSettings, model: str) -> BaseCha
         ``api_key`` 的明文在这里读取一次并交给客户端，不写日志、不进异常消息。
     """
 
-    # 在这里 import 而不是模块顶部：langchain_openai 会连带 import openai SDK，
-    # 只用 Ollama 分支的部署没必要为此付启动开销。
+    # 1、在函数里 import 而不是模块顶部：langchain_openai 会连带 import openai SDK，
+    #    只用 Ollama 分支的部署没必要为此付启动开销。
     from langchain_openai import ChatOpenAI
 
+    # 2、凭据必须非空。空 Key 放过去的话，失败会推迟到第一次调用时以 401 出现。
     secret = settings.api_key.get_secret_value().strip()
     if not secret:
         raise LlmConfigurationError(
             "provider 为 openai_compatible 时必须提供 LLM_API_KEY。"
         )
 
+    # 3、组装客户端。
     return ChatOpenAI(
         model=model,
         base_url=str(settings.base_url),
@@ -107,11 +109,14 @@ def _build_ollama_model(settings: LlmSettings, model: str) -> BaseChatModel:
 
     from langchain_ollama import ChatOllama
 
+    # 1、Ollama 原生 API 不要求凭据，但反向代理可能要，所以 Key 有值就带成 Bearer 头，
+    #    为空就不带——不像 OpenAI 分支那样报错。
     secret = settings.api_key.get_secret_value().strip()
     headers = _build_user_agent_headers(settings) or {}
     if secret:
         headers["Authorization"] = f"Bearer {secret}"
 
+    # 2、组装客户端。headers 为空时不传这个键，让 SDK 用自己的默认值。
     return ChatOllama(
         model=model,
         base_url=str(settings.base_url),

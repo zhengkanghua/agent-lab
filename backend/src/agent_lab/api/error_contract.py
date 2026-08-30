@@ -813,6 +813,8 @@ class SanitizedValidationRoute(APIRoute):
         async def sanitized_route_handler(request: Request) -> Response:
             try:
                 return await original_route_handler(request)
+            # 故意不写 ``as error``：拿不到那个对象，就没人会顺手把它 log 出来或塞进
+            # 响应。它的 ``input`` 字段装的是原始请求体，明文密码就在里面。
             except RequestValidationError:
                 return build_error_response(
                     INVALID_REQUEST_RULE.status_code,

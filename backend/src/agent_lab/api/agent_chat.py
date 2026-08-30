@@ -114,6 +114,8 @@ async def _stream_with_heartbeat(
         ``stream_agent_events`` 已经把它们转成 ``error`` 事件了。
     """
 
+    # 1、拿到事件流，并手工取它的迭代器。手工取是因为下面要「等一下、没等到就干点别的、
+    #    再回来接着等同一个事件」，普通 async for 做不到这件事。
     events = stream_agent_events(
         runtime.graph,
         message=message,
@@ -125,18 +127,21 @@ async def _stream_with_heartbeat(
     pending: asyncio.Task[Any] | None = None
     try:
         while True:
+            # 2、还没有在等的事件，就发起一次「取下一个事件」。
             if pending is None:
                 pending = asyncio.ensure_future(iterator.__anext__())
-            # 用 wait 而不是 wait_for：wait 超时后**不取消**任务，所以下一轮还能接着等
-            # 同一次 __anext__。wait_for 会把它取消掉，等于每发一次心跳就丢一个正在
-            # 生成的事件。
+            # 3、最多等一个心跳间隔。用 wait 而不是 wait_for：wait 超时后**不取消**任务，
+            #    所以下一轮还能接着等同一次 __anext__。wait_for 会把它取消掉，等于每发
+            #    一次心跳就丢一个正在生成的事件。
             done, _ = await asyncio.wait(
                 {pending},
                 timeout=SSE_HEARTBEAT_INTERVAL_SECONDS,
             )
+            # 4、超时没等到 → 发一帧心跳占住连接，回去接着等那个还没完成的任务。
             if not done:
                 yield _SSE_HEARTBEAT
                 continue
+            # 5、等到了 → 取结果。StopAsyncIteration 表示流正常结束。
             finished, pending = pending, None
             try:
                 event = finished.result()
@@ -144,9 +149,9 @@ async def _stream_with_heartbeat(
                 return
             yield _encode(event)
     finally:
-        # 客户端中途断开时，ASGI 服务器会 aclose 本生成器，控制流从上面某个 yield 直接
-        # 跳到这里。此时那次 __anext__ 可能还在等模型响应，不收拾就会变成一个没人接收
-        # 结果的悬空任务，模型连接也不释放。
+        # 6、收尾，正常结束和客户端中途断开都会走到这里。断开时 ASGI 服务器会 aclose
+        #    本生成器，控制流从上面某个 yield 直接跳过来；此时那次 __anext__ 可能还在等
+        #    模型响应，不收拾就会变成一个没人接收结果的悬空任务，模型连接也不释放。
         if pending is not None:
             pending.cancel()
             # 必须等它真的结束再关：__anext__ 还在跑的时候 aclose() 会直接 RuntimeError。
@@ -203,13 +208,17 @@ async def agent_chat(
         原因见上面 description。
     """
 
+    # 1、定会话 id：前端带了就接着聊，没带就服务端新开一个。
     thread_id = chat_request.thread_id or uuid4()
+    # 2、把自定义提示词装进本次运行的上下文；为 None 时中间件会用默认那份。
     context = AgentContext(system_prompt=chat_request.system_prompt)
+    # 3、只记 id 和「有没有自定义提示词」，不记提问原文——日志里不该有用户输入。
     logger.info(
         "Agent 对话开始 thread_id=%s custom_prompt=%s",
         thread_id,
         chat_request.system_prompt is not None,
     )
+    # 4、交出流式响应。注意此刻流还没开始跑，第一次迭代发生在 ASGI 服务器读生成器时。
     return ServerSentEventResponse(
         _stream_with_heartbeat(
             runtime,
