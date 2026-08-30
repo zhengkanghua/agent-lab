@@ -36,6 +36,8 @@ def get_document_repository(
     response_model=DocumentDetailResponse,
     status_code=status.HTTP_200_OK,
     summary="读取一篇新闻的完整正文",
+    # 显式写 description，下面那份 docstring 就留给维护者，不进 OpenAPI。
+    description="按 document_id 读取一篇新闻的完整纯文本正文及其元数据。",
     responses={
         status.HTTP_404_NOT_FOUND: {
             "description": "文档不存在或关联来源缺失。",
@@ -67,23 +69,28 @@ async def get_document(
         Qdrant Chunk，也不会把 ORM 对象直接交给 FastAPI 序列化。
     """
 
+    # 1、一次查询把 source 一起 eager-load 出来。下面要用 source.name，分两次查会多一趟
+    #    往返，而且 Session 在响应组装时可能已经关了。
     try:
         record = await repository.get_with_source(document_id)
     except SQLAlchemyError as exc:
+        # 只记异常类名，不记 str(exc)——里面可能有连接串或 SQL。
         logger.error("文档读取失败 error_type=%s", type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="文档服务不可用。",
         ) from exc
 
-    # source_id 是非空外键，但历史数据或人工修复可能留下 relationship 缺失；
-    # 对外统一按“文档不可用”处理，不暴露数据库结构细节。
+    # 2、source_id 是非空外键，但历史数据或人工修复可能留下 relationship 缺失；
+    #    对外统一按「文档不可用」处理，不暴露数据库结构细节。
     if record is None or record.source is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="文档不存在。",
         )
 
+    # 3、逐字段手搭 DTO，不用 model_validate(record)：只有列在这里的字段才会出去，
+    #    以后往表里加列不会自动泄漏。校验失败按 502——请求没问题，是库里的数据不合契约。
     try:
         return DocumentDetailResponse(
             document_id=record.id,

@@ -67,26 +67,7 @@ export interface paths {
         };
         /**
          * 检查服务和 PostgreSQL 是否可用
-         * @description 执行最小 SQL（SELECT 1）验证数据库连接和查询能力。
-         *
-         *     两个 FastAPI 语法点：
-         *     - ``Depends(get_db_session)``：告诉 FastAPI 调用 get_db_session 来获得 Session，
-         *       请求结束还会自动帮我们关闭它；
-         *     - ``Annotated[X, Depends(...)]``：既让 FastAPI 认识依赖，又保留 X 类型信息，
-         *       编辑器补全和静态检查都能看到真实类型。
-         *
-         *     为什么用 ``SELECT 1`` 而不是查业务表：它不依赖任何表存在，空数据库也能通过，
-         *     只验证「连接建立 + 能执行 SQL」这两件事；任何业务表结构变化都不会误伤健康检查。
-         *
-         *     Args:
-         *         session: FastAPI 为当前请求注入的异步数据库 Session。
-         *         settings: FastAPI 注入的应用配置，提供健康检查超时等参数。
-         *
-         *     Returns:
-         *         应用和 PostgreSQL 都可用时返回状态均为 ``ok`` 的响应模型。
-         *
-         *     Raises:
-         *         HTTPException: 数据库连接、查询失败或超过健康检查总超时时返回 503。
+         * @description 应用可用且能对 PostgreSQL 执行一次 SQL 时返回 ok，否则返回 503。
          */
         get: operations["health_health_get"];
         put?: never;
@@ -108,29 +89,7 @@ export interface paths {
         put?: never;
         /**
          * 按语义相似度搜索新闻 Chunk
-         * @description 执行一次只读搜索：query 向量化 → Qdrant current Alias 查最相似的新闻 Chunk。
-         *
-         *     搜索链路：
-         *     1. service.search() 先把 query 交给 Ollama 的 bge-m3 模型转成 1024 维向量；
-         *     2. 再用向量查 Qdrant 的 current Alias——一个不存数据的「指针」，指向真正保存
-         *        数据的物理 Collection（news_chunks_langchain_v1_001），部署时统一切换。
-         *
-         *     Args:
-         *         search_request: HTTP JSON body 解析出的 query、Top-K、可选 threshold 和 filters。
-         *         service: lifespan 共享的应用层 Search Service，由 FastAPI dependency 注入。
-         *
-         *     Returns:
-         *         成功时返回保持 Qdrant score 顺序的 Chunk 结果数组；已分类的上游失败返回稳定
-         *         ``VectorSearchErrorResponse`` JSON，不回显请求文本或第三方异常内容。
-         *
-         *     Raises:
-         *         Exception: 未知编程错误或未分类异常原样传播，由 FastAPI 作为 500 处理；接口
-         *             不用空结果掩盖异常。
-         *
-         *     Notes:
-         *         本方法不执行 PostgreSQL I/O。Service 会执行一次 Ollama query Embedding 和一次
-         *         Qdrant current Alias 只读查询；不执行 upsert/delete/lifecycle/状态写入或自动重试。
-         *         Runtime 缺失由依赖在进入本方法前抛出，两条搜索路由共用应用级 handler 的 503。
+         * @description 执行一次只读语义搜索，返回按相似度排序的新闻 Chunk。需要整篇正文时另行请求 GET /documents/{document_id}。
          */
         post: operations["vector_search_vector_search_post"];
         delete?: never;
@@ -168,22 +127,7 @@ export interface paths {
         };
         /**
          * 读取一篇新闻的完整正文
-         * @description 从 PostgreSQL 读取一篇新闻完整纯文本及必要元数据。
-         *
-         *     Args:
-         *         document_id: 路径中的 PostgreSQL ``documents.id`` UUID。
-         *         repository: 当前请求独占的异步文档 Repository。
-         *
-         *     Returns:
-         *         包含当前正文 hash、revision 和 ``content_text`` 的安全详情 DTO。
-         *
-         *     Raises:
-         *         HTTPException: 文档或关联 source 不存在时返回脱敏 404；数据库失败返回 503；
-         *             数据库记录违反公开契约时返回 502。
-         *
-         *     Notes:
-         *         只执行一次 eager-load source 的 PostgreSQL 查询；不会重新切分正文或查询
-         *         Qdrant Chunk，也不会把 ORM 对象直接交给 FastAPI 序列化。
+         * @description 按 document_id 读取一篇新闻的完整纯文本正文及其元数据。
          */
         get: operations["get_document_documents__document_id__get"];
         put?: never;

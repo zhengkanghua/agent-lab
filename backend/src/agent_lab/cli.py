@@ -71,7 +71,22 @@ def _bounded_integer(
     minimum: int,
     maximum: int,
 ) -> Callable[[str], int]:
-    """创建带清晰 argparse 错误的有界整数解析器。"""
+    """创建带清晰 argparse 错误的有界整数解析器。
+
+    做成闭包工厂是因为 argparse 的 ``type=`` 只接受「单参数 callable」，没法把上下界
+    传进去。闭包把 name/minimum/maximum 记住，交给 argparse 的就只剩一个 ``parse``。
+
+    抛 ``ArgumentTypeError`` 而不是 ``ValueError``：前者会被 argparse 接住，变成
+    「usage: ... error: ...」加退出码 2；后者会一路冒到 ``main`` 变成堆栈。
+
+    Args:
+        name: 出错信息里显示的参数名。
+        minimum: 允许的最小值（含）。
+        maximum: 允许的最大值（含）。
+
+    Returns:
+        可直接交给 ``add_argument(type=...)`` 的解析函数。
+    """
 
     def parse(value: str) -> int:
         try:
@@ -274,11 +289,16 @@ async def _create_user(args: argparse.Namespace) -> CommandOutcome:
         Ollama 或 Qdrant。明文密码只保存在当前函数局部变量中，不进入参数或日志。
     """
 
+    # 1、隐藏输入读两遍。用 compare_digest 而不是 ==：它是定时比较，不会因为
+    #    「前几个字符就不一样」而提前返回。这里的两个值都来自本机终端、泄漏面很小，
+    #    用它主要是别在代码里留下「明文密码用 == 比」的示范。
     password = getpass("Password: ")
     confirmation = getpass("Confirm password: ")
     if not compare_digest(password, confirmation):
         raise PasswordConfirmationError()
 
+    # 2、走 UserManager 而不是直接插表：密码强度校验和 Hash 都在它里面，绕过去就等于
+    #    CLI 建的号和接口建的号规则不一样。
     async with async_session_factory() as session:
         user_database = SQLAlchemyUserDatabase(session, UserRecord)
         manager = UserManager(user_database)
@@ -292,6 +312,8 @@ async def _create_user(args: argparse.Namespace) -> CommandOutcome:
             )
         )
 
+    # 3、只回 id/邮箱/管理员标记。密码 Hash 不进 payload——这份 payload 会被 print 到
+    #    stdout，可能进 Scheduler 日志。
     return CommandOutcome(
         payload={
             "command": args.command,
@@ -344,24 +366,48 @@ async def _execute_index_batch(
     executor: NewsPipelineExecutionService,
     args: argparse.Namespace,
 ) -> PendingIndexExecutionResult:
-    """组装写入 Runtime，显式准备 Alias 并确保任何路径都关闭 client。"""
+    """组装写入 Runtime，显式准备 Alias 并确保任何路径都关闭 client。
 
+    Args:
+        executor: 持有 Session 工厂的批次执行 Service。
+        args: 提供 ``batch_size`` 与 ``stale_after_minutes`` 的已解析参数。
+
+    Returns:
+        本批次的候选、成功、跳过和失败统计。
+
+    Raises:
+        Exception: Qdrant lifecycle、Embedding 或 PostgreSQL 的批次级失败。
+
+    Notes:
+        执行 Qdrant 写入（Collection/Alias 准备加 Point 写入）、Ollama Embedding 和
+        PostgreSQL 读写。无论成败都会关闭 Qdrant client。
+    """
+
+    # 1、每次调用建一个新 Runtime。它持有 Qdrant client 和 Embedding client，是「这一批
+    #    专用」的资源，用完就关，不做进程级复用。
     runtime = DocumentIndexingRuntime.build(
         get_qdrant_settings(),
         get_ollama_embedding_settings(),
     )
     operation_error: BaseException | None = None
     try:
+        # 2、先 ensure_ready 再索引：Collection 和 current Alias 必须在写 Point 之前就位。
         await runtime.ensure_ready()
         return await executor.index_pending(
             runtime.service,
             batch_size=args.batch_size,
             stale_after=timedelta(minutes=args.stale_after_minutes),
         )
+    # 3、把主异常记下来再原样抛出。记它只为了给下面的 finally 一个判断依据：
+    #    「主流程是成功的还是失败的」。用 BaseException 是为了连 CancelledError 也算上。
     except BaseException as exc:
         operation_error = exc
         raise
     finally:
+        # 4、关闭一定要执行，但关闭本身也可能失败，于是分两种情况：
+        #    主流程成功 → 关闭失败就是唯一的失败，正常抛出去。
+        #    主流程已经失败 → 关闭失败挂成 note 附在主异常上。直接 raise 会把主异常
+        #    顶掉，那才是真正要查的那个。
         try:
             await runtime.close()
         except Exception as close_error:
@@ -377,7 +423,18 @@ def _index_outcome(
     command: str,
     result: PendingIndexExecutionResult,
 ) -> CommandOutcome:
-    """把索引结果转换成不含单篇异常文本的稳定命令摘要。"""
+    """把索引结果转换成不含单篇异常文本的稳定命令摘要。
+
+    ``failures`` 里每项只放 document_id 和异常类名，不放 ``str(exc)``——那里面可能有
+    Qdrant 返回的原始报文或文档正文片段。
+
+    Args:
+        command: 当前 CLI 子命令名称。
+        result: Execution Service 返回的批次统计。
+
+    Returns:
+        全部成功时退出码为零；有单篇失败时为一，但成功的那些已经写进 Qdrant 不会回滚。
+    """
 
     failed_count = result.failed_count
     return CommandOutcome(
@@ -438,7 +495,22 @@ def _sync_outcome(
 
 
 async def _run_with_cleanup(args: argparse.Namespace) -> CommandOutcome:
-    """执行命令并在结束时释放全局 SQLAlchemy Engine 连接池。"""
+    """执行命令并在结束时释放全局 SQLAlchemy Engine 连接池。
+
+    为什么必须显式 dispose：``engine`` 是模块级全局对象，进程退出时不保证连接池里的
+    连接被优雅归还。CLI 是一次性进程，跑完就走，留着的连接会在 PostgreSQL 侧挂一会儿。
+
+    ``add_note`` 那套和 ``_execute_index_batch`` 的 finally 是同一个模式，理由见那里。
+
+    Args:
+        args: 已解析的 CLI 参数。
+
+    Returns:
+        ``dispatch_command`` 的原样结果。
+
+    Raises:
+        Exception: 命令自身的失败原样传播；连接池释放失败只在命令成功时才抛。
+    """
 
     operation_error: BaseException | None = None
     try:
@@ -473,21 +545,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         类型，不输出可能包含凭据、密码或远程正文的异常文本。
     """
 
+    # 1、先解析参数。参数不合法时 argparse 自己打 usage 并退出（码 2），下面的代码不会跑到。
     parser = build_parser()
     args = parser.parse_args(argv)
+    # 2、日志根级别压到 WARNING，只把本项目提到 INFO。httpx 等第三方库的 INFO 可能包含
+    #    完整请求 URL，没有必要进入 Scheduler 输出，即使当前 URL 不含认证 header。
     logging.basicConfig(
         level=logging.WARNING,
         format="%(levelname)s %(name)s %(message)s",
     )
-    # 只提升本项目日志；httpx 等第三方库的 INFO 可能包含完整请求 URL，没有必要进入
-    # Scheduler 输出，即使当前 URL 不含认证 header。
     logging.getLogger("agent_lab").setLevel(logging.INFO)
-    # Windows 上用 Selector 事件循环（Psycopg 异步驱动要求），其余平台用默认 asyncio 实现
+    # 3、Windows 上用 Selector 事件循环（Psycopg 异步驱动要求），其余平台用默认 asyncio 实现
     loop_factory = asyncio.SelectorEventLoop if sys.platform == "win32" else None
+    # 4、同步入口在这里跨进异步世界：整个命令跑在这一个 asyncio.run 里面。
     try:
         outcome = asyncio.run(_run_with_cleanup(args), loop_factory=loop_factory)
     except Exception as exc:
-        # 命令级异常：只输出异常类型（不带异常文本，避免泄露凭据/远程正文）
+        # 5、命令级异常：只输出异常类型，不带异常文本——文本里可能有连接串、凭据或远程
+        #    正文。写 stderr、退出码 1，让 Scheduler 能和正常输出分开。
         error_payload = {
             "command": args.command,
             "ok": False,
@@ -495,6 +570,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
         print(json.dumps(error_payload, ensure_ascii=False, sort_keys=True), file=sys.stderr)
         return 1
+    # 6、成功路径：payload 打到 stdout。sort_keys 让字段顺序稳定，方便 diff 两次运行的输出。
     print(json.dumps(outcome.payload, ensure_ascii=False, sort_keys=True))
     return outcome.exit_code
 

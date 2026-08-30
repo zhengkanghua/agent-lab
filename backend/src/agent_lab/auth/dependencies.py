@@ -30,7 +30,12 @@ from agent_lab.models.user import AccessTokenRecord, UserRecord
 async def get_user_database(
     session: AsyncSession = Depends(get_db_session),
 ) -> AsyncIterator[SQLAlchemyUserDatabase[UserRecord, UUID]]:
-    """为一次请求提供用户表适配器，不主动提交认证之外的业务事务。"""
+    """为一次请求提供用户表适配器，不主动提交认证之外的业务事务。
+
+    用 ``yield`` 而不是 ``return``：FastAPI 对生成器依赖会在响应发完之后才继续执行
+    yield 之后的部分，这样 ``get_db_session`` 的 Session 在整个请求期间都活着。改成
+    ``return`` 的话依赖链一返回 Session 就可能被回收，认证查询会拿到已关闭的 Session。
+    """
 
     yield SQLAlchemyUserDatabase(session, UserRecord)
 
@@ -53,6 +58,13 @@ async def get_user_manager(
     yield UserManager(user_database)
 
 
+# 下面这些是进程级的：Cookie 参数在进程启动时定死，不随请求变。所以在模块级读一次配置
+# 就够了，不用做成依赖。
+#
+# 三个 Cookie 参数是安全边界，不是风格选择：
+# httponly=True —— JavaScript 读不到这个 Cookie，XSS 偷不走会话。
+# secure —— 生产必须开（只走 HTTPS）；本地 http 开发要关，所以做成配置项。
+# samesite —— 挡跨站请求自动带上 Cookie，也就是 CSRF。
 _auth_settings = get_auth_settings()
 
 cookie_transport = CookieTransport(
@@ -71,7 +83,15 @@ def get_database_strategy(
         get_access_token_database
     ),
 ) -> DatabaseStrategy[UserRecord, UUID, AccessTokenRecord]:
-    """创建绑定当前请求数据库 Session 的可撤销 Token 策略。"""
+    """创建绑定当前请求数据库 Session 的可撤销 Token 策略。
+
+    「可撤销」是选 DatabaseStrategy 而不是 JWT 的原因：Token 是一串随机值，本体存在
+    PostgreSQL 里，删掉那行会话立刻失效。JWT 自带签名和过期时间、服务端不留记录，
+    想让它提前失效就得再建一张黑名单表——那还不如一开始就把 Token 存库。
+    账号管理里的「撤销全部会话」和降权时踢人下线，靠的都是这个。
+
+    这个必须每请求新建（不像上面的 Cookie 参数）：它绑着本次请求的 Session。
+    """
 
     return DatabaseStrategy(
         token_database,
@@ -90,5 +110,10 @@ fastapi_users = FastAPIUsers[UserRecord, UUID](
     [cookie_auth_backend],
 )
 
+# 全项目的两道门，路由用 ``Depends(current_active_user)`` 挂上即生效。
+# 没通过的请求在进入 endpoint 之前就被拦掉，所以 endpoint 里拿到的 user 一定是有效的。
+#
+# 两个都带 active=True：被禁用的账号即使手上还有没过期的 Cookie 也进不来。
+# 漏掉 active 的话，「禁用账号」就只能等 Token 自然过期才生效。
 current_active_user = fastapi_users.current_user(active=True)
 current_superuser = fastapi_users.current_user(active=True, superuser=True)

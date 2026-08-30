@@ -24,8 +24,10 @@
 - SQLAlchemy 列的 `comment=`：进数据库 DDL。
 - Pydantic Field 的 `description`：进 `/openapi.json`，前端 `openapi-typescript` 拿它
   生成类型；用在 Tool 的 `args_schema` 上时还会进模型上下文。
-- FastAPI 路由 handler 的 docstring：FastAPI 拿它当接口 `description`，同样进
-  `/openapi.json` 和前端生成的类型。所以路由 handler 写一句话说明这个接口做什么就够了，
-  别按 `Args/Returns/Raises` 展开。
+- FastAPI 路由 handler 的 docstring：FastAPI 拿它当接口 `description`，进
+  `/openapi.json` 和前端生成的类型。这里有个逃生口：装饰器上显式写 `description=`
+  时那份优先，docstring 就完全不进 OpenAPI（`description or cleandoc(__doc__)`）。
+  所以路由 handler 想写长 docstring 是可以的，前提是装饰器里给了 `description=`；
+  没给就只写一句话，别按 `Args/Returns/Raises` 展开。项目里几条路由都是前一种做法。
 - LangChain `@tool` 装饰的函数的 docstring：整份原样送进模型上下文（默认
   `parse_docstring=False`），内部异常类名之类的东西会跟着泄漏出去。

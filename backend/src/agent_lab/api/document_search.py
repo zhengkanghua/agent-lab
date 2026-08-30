@@ -62,9 +62,26 @@ async def document_search(
 ) -> list[DocumentSearchResult] | JSONResponse:
     """执行 query Embedding → Qdrant grouped query，并返回文档级结果。
 
+    这份 docstring 是给维护者看的，不会进 OpenAPI：装饰器上显式写了 ``description=``，
+    FastAPI 优先用那一份（``description or cleandoc(__doc__)``）。
+
+    和 ``POST /vector-search`` 的区别只在 Service 那一层：那条按 Chunk 返回，这条让
+    Qdrant 按 document_id 分组，同一篇新闻的多个片段收拢成一条结果。分组在 Qdrant 侧做，
+    不是查回来再在 Python 里去重。
+
     捕获范围与 ``POST /vector-search`` 完全一致（同一个 ``SEARCH_UPSTREAM_EXCEPTIONS``
     元组和同一张错误表）；Runtime 缺失由依赖在进入本方法前抛出，两条路由共用应用级
     handler 的同一个 503 响应。
+
+    Args:
+        search_request: 解析后的 query、document_limit 和 matches_per_document。
+        service: lifespan 共享的只读检索 Service。
+
+    Returns:
+        文档级结果数组；已分类的上游失败返回脱敏错误 JSON。
+
+    Notes:
+        不访问 PostgreSQL。Service 会做一次 Ollama Embedding 加一次 Qdrant 只读查询。
     """
 
     try:

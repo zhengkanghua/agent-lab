@@ -38,6 +38,11 @@ router = APIRouter(tags=["vector-search"])
     response_model=list[VectorSearchResult],
     status_code=status.HTTP_200_OK,
     summary="按语义相似度搜索新闻 Chunk",
+    # 显式写 description，下面那份 docstring 就留给维护者，不进 OpenAPI。
+    description=(
+        "执行一次只读语义搜索，返回按相似度排序的新闻 Chunk。需要整篇正文时另行请求 "
+        "GET /documents/{document_id}。"
+    ),
     responses={
         status.HTTP_502_BAD_GATEWAY: {
             "model": VectorSearchErrorResponse,

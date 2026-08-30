@@ -36,6 +36,9 @@ class HealthResponse(BaseModel):
     "/health",
     response_model=HealthResponse,
     summary="检查服务和 PostgreSQL 是否可用",
+    # 显式写 description，下面那份 docstring 就不会进 OpenAPI 和前端生成的类型了。
+    # 它里面有 Raises 和 FastAPI 语法笔记，都是只该给维护者看的东西。
+    description="应用可用且能对 PostgreSQL 执行一次 SQL 时返回 ok，否则返回 503。",
 )
 async def health(
     session: Annotated[AsyncSession, Depends(get_db_session)],
