@@ -1,6 +1,6 @@
 import { computed, onScopeDispose, ref, watch } from 'vue'
-import { streamAgentChat, type AgentChatEvent } from '../../../api/agent-chat'
-import { ApiError, isAbortError } from '../../../api/client'
+import { streamAgentChat, type AgentChatEvent } from '@/api/agent-chat'
+import { ApiError, isAbortError } from '@/api/client'
 import { presentAgentError } from '../model/agent-error'
 import {
   MAX_MESSAGE_CHARACTERS,

@@ -21,9 +21,16 @@ function mountComposer(overrides: Partial<ComposerProps> = {}) {
   })
 }
 
+/* 系统提示词从 <details> 改成齿轮浮层（Q8）后，浮层内容只在展开时存在于 DOM 里。
+   下面这些用例先点齿轮，再取里面的控件。 */
+async function openPromptPanel(wrapper: ReturnType<typeof mountComposer>) {
+  await wrapper.get('.prompt-trigger button').trigger('click')
+  return wrapper
+}
+
 describe('AgentComposer', () => {
-  it('两个输入框的上界与校验常量同源', () => {
-    const wrapper = mountComposer()
+  it('两个输入框的上界与校验常量同源', async () => {
+    const wrapper = await openPromptPanel(mountComposer())
 
     // 否则会出现「能打进去但一提交就报错」。
     expect(wrapper.get('.message-input').attributes('maxlength')).toBe(
@@ -99,21 +106,21 @@ describe('AgentComposer', () => {
   })
 
   it('填入默认提示词把服务端那份写回上层', async () => {
-    const wrapper = mountComposer()
+    const wrapper = await openPromptPanel(mountComposer())
 
     await wrapper.get('.prompt-actions button').trigger('click')
 
     expect(wrapper.emitted('update:systemPrompt')?.[0]).toEqual(['你是新闻检索助手。'])
   })
 
-  it('默认提示词没取到时按钮禁用', () => {
-    const wrapper = mountComposer({ defaultPrompt: null })
+  it('默认提示词没取到时按钮禁用', async () => {
+    const wrapper = await openPromptPanel(mountComposer({ defaultPrompt: null }))
 
     expect(wrapper.get('.prompt-actions button').attributes('disabled')).toBeDefined()
   })
 
   it('清空按钮把提示词置空，空的时候自身禁用', async () => {
-    const wrapper = mountComposer({ systemPrompt: '你是财经记者。' })
+    const wrapper = await openPromptPanel(mountComposer({ systemPrompt: '你是财经记者。' }))
     const clearButton = wrapper.findAll('.prompt-actions button')[1]
 
     await clearButton?.trigger('click')
@@ -123,12 +130,31 @@ describe('AgentComposer', () => {
     expect(wrapper.findAll('.prompt-actions button')[1]?.attributes('disabled')).toBeDefined()
   })
 
-  it('提示词是否覆盖只看去掉空白后的内容', async () => {
+  it('齿轮的角标与无障碍名都只看去掉空白后的内容', async () => {
+    /* 浮层收起后，齿轮上的角标是唯一能看出「提示词被改过」的地方，所以判断口径
+       必须和原来 <details> 摘要里那个「已覆盖 / 用默认」一致：纯空白算没改。 */
     const wrapper = mountComposer({ systemPrompt: '   ' })
-    expect(wrapper.get('.prompt-options summary').text()).toContain('用默认')
+    const trigger = () => wrapper.get('.prompt-trigger button')
+
+    expect(wrapper.find('.prompt-badge').exists()).toBe(false)
+    expect(trigger().attributes('aria-label')).toBe('自定义系统提示词')
 
     await wrapper.setProps({ systemPrompt: '你是财经记者。' })
-    expect(wrapper.get('.prompt-options summary').text()).toContain('已覆盖')
+
+    expect(wrapper.find('.prompt-badge').exists()).toBe(true)
+    expect(trigger().attributes('aria-label')).toBe('自定义系统提示词（已覆盖）')
+  })
+
+  it('齿轮能开合浮层，关上后面板从 DOM 里撤掉', async () => {
+    const wrapper = mountComposer()
+
+    expect(wrapper.find('.prompt-panel').exists()).toBe(false)
+
+    await wrapper.get('.prompt-trigger button').trigger('click')
+    expect(wrapper.find('.prompt-panel').exists()).toBe(true)
+
+    await wrapper.get('.prompt-trigger button').trigger('click')
+    expect(wrapper.find('.prompt-panel').exists()).toBe(false)
   })
 
   it('校验错误挂到输入框的 aria-describedby 上', async () => {

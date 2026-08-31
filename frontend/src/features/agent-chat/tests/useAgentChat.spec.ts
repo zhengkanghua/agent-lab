@@ -1,8 +1,8 @@
 import { defineComponent, h, nextTick } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
-import type { AgentChatEvent, StreamAgentChatOptions } from '../../../api/agent-chat'
-import { ApiError } from '../../../api/client'
+import type { AgentChatEvent, StreamAgentChatOptions } from '@/api/agent-chat'
+import { ApiError } from '@/api/client'
 import { useAgentChat, type AgentChatStream } from '../composables/useAgentChat'
 
 const THREAD_ID = '30000000-0000-4000-8000-000000000001'

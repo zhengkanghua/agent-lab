@@ -1,6 +1,6 @@
 import { onScopeDispose, ref } from 'vue'
-import { fetchAgentDefaultPrompt } from '../../../api/agent-chat'
-import { isAbortError } from '../../../api/client'
+import { fetchAgentDefaultPrompt } from '@/api/agent-chat'
+import { isAbortError } from '@/api/client'
 
 /**
  * 取一次默认系统提示词，用于把自定义提示词输入框预填成可编辑的起点。

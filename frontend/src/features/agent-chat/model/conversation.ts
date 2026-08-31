@@ -1,4 +1,4 @@
-import type { AgentToolCallEvent, AgentToolResultEvent } from '../../../api/agent-chat'
+import type { AgentToolCallEvent, AgentToolResultEvent } from '@/api/agent-chat'
 import type { AgentErrorPresentation } from './agent-error'
 
 /**

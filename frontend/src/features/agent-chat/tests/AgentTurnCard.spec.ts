@@ -16,33 +16,43 @@ describe('AgentTurnCard', () => {
     const wrapper = mountCard()
 
     expect(wrapper.get('.thinking').text()).toContain('正在思考')
-    expect(wrapper.find('.answer-text').exists()).toBe(false)
+    expect(wrapper.find('.answer-body').exists()).toBe(false)
   })
 
   it('有回答后换成正文，并在流式期间带上流式标记', () => {
     const wrapper = mountCard({ answer: '预计维持不变。' })
 
     expect(wrapper.find('.thinking').exists()).toBe(false)
-    expect(wrapper.get('.answer-text').classes()).toContain('is-streaming')
+    expect(wrapper.get('.answer-body').classes()).toContain('is-streaming')
   })
 
   it('结束后去掉流式标记', () => {
     const wrapper = mountCard({ answer: '预计维持不变。', status: 'done' })
 
-    expect(wrapper.get('.answer-text').classes()).not.toContain('is-streaming')
+    expect(wrapper.get('.answer-body').classes()).not.toContain('is-streaming')
   })
 
-  it('提问与回答都按纯文本渲染', () => {
+  it('提问按纯文本渲染，回答按 Markdown 渲染', () => {
     const wrapper = mountCard({
-      question: '<script>alert(1)</script>',
-      answer: '<b>粗体</b>',
+      question: '**不是粗体**',
+      answer: '**是粗体**',
       status: 'done',
     })
 
-    // 提问是用户原文、回答是模型输出，两者都可能带 HTML 片段，注入会变成 XSS。
-    expect(wrapper.get('.question-text').text()).toBe('<script>alert(1)</script>')
-    expect(wrapper.get('.answer-text').text()).toBe('<b>粗体</b>')
-    expect(wrapper.find('.answer-text b').exists()).toBe(false)
+    /* 两侧口径不同，这是有意的：提问是用户原文，他打的星号就是星号；
+       回答是模型输出，Markdown 是它的表达方式。
+       回答那侧的注入面由 MarkdownAnswer.spec.ts 单独盯（不装 rehype-raw + 开 sanitize）。 */
+    expect(wrapper.get('.question-text').text()).toBe('**不是粗体**')
+    expect(wrapper.find('.question-text strong').exists()).toBe(false)
+    expect(wrapper.get('.answer-body strong').text()).toBe('是粗体')
+  })
+
+  it('回答里的裸 HTML 不进 DOM', () => {
+    const wrapper = mountCard({ answer: '<img src=x onerror="alert(1)">', status: 'done' })
+
+    // 走 Markdown 之后这条尤其要守住：整页只有这一处不是纯文本插值。
+    expect(wrapper.find('.answer-body img').exists()).toBe(false)
+    expect(wrapper.html()).not.toContain('onerror')
   })
 
   it('取消的一轮标出已停止', () => {
@@ -111,6 +121,6 @@ describe('AgentTurnCard', () => {
     })
 
     const html = wrapper.html()
-    expect(html.indexOf('trace-list')).toBeLessThan(html.indexOf('answer-text'))
+    expect(html.indexOf('trace-block')).toBeLessThan(html.indexOf('answer-body'))
   })
 })

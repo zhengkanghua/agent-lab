@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { CircleAlert, RotateCcw, Sparkles, UserRound } from '@lucide/vue'
+import BaseButton from '@/shared/ui/BaseButton.vue'
 import type { AgentTurn } from '../model/conversation'
 import AgentToolTraceList from './AgentToolTraceList.vue'
+import MarkdownAnswer from './MarkdownAnswer.vue'
 
 const props = defineProps<{ turn: AgentTurn; canRetry: boolean }>()
 
@@ -33,13 +35,17 @@ const isThinking = computed(() => isStreaming.value && props.turn.answer.length 
           <span v-if="turn.status === 'cancelled'" class="turn-state">已停止</span>
         </p>
 
-        <AgentToolTraceList :traces="turn.traces" />
+        <AgentToolTraceList :traces="turn.traces" :streaming="isStreaming" />
 
         <p v-if="isThinking" class="thinking" aria-live="polite">正在思考…</p>
-        <!-- 同样走文本插值：模型输出里可能带 Markdown 或 HTML 片段，当纯文本渲染。 -->
-        <p v-else-if="turn.answer" class="answer-text" :class="{ 'is-streaming': isStreaming }">
-          {{ turn.answer }}
-        </p>
+        <!-- 答案正文是本页唯一按 Markdown 渲染的地方。安全配置的理由写在 MarkdownAnswer 里，
+             一句话是：没装 rehype-raw + 开了 sanitize，裸 HTML 与 javascript: 链接都进不来。 -->
+        <MarkdownAnswer
+          v-else-if="turn.answer"
+          class="answer-body"
+          :markdown="turn.answer"
+          :streaming="isStreaming"
+        />
 
         <div v-if="turn.error" class="turn-error" role="alert">
           <p class="error-title">
@@ -47,15 +53,16 @@ const isThinking = computed(() => isStreaming.value && props.turn.answer.length 
             {{ turn.error.title }}
           </p>
           <p class="error-description">{{ turn.error.description }}</p>
-          <button
+          <BaseButton
             v-if="turn.error.retryable && canRetry"
-            type="button"
             class="retry-button"
+            variant="outline"
+            size="sm"
             @click="emit('retry')"
           >
-            <RotateCcw :size="15" aria-hidden="true" />
+            <template #icon><RotateCcw :size="15" aria-hidden="true" /></template>
             重发这一轮
-          </button>
+          </BaseButton>
         </div>
       </div>
     </div>
@@ -67,13 +74,13 @@ const isThinking = computed(() => isStreaming.value && props.turn.answer.length 
   display: grid;
   gap: 14px;
   padding: 18px 19px;
-  border: 1px solid var(--paper-300);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--paper-50);
+  background: var(--surface-raised);
 }
 
 .turn.is-error {
-  border-color: var(--danger-100);
+  border-color: var(--danger-soft);
 }
 
 .bubble {
@@ -89,12 +96,15 @@ const isThinking = computed(() => isStreaming.value && props.turn.answer.length 
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  color: var(--paper-50);
-  background: var(--source-500);
+  color: var(--text-secondary);
+  background: var(--surface-sunken);
 }
 
+/* 提问用中性底、回答用强调底：两个头像原来是青红对撞，红收窄到报错之后，
+   靠「谁是中性、谁被强调」区分，强调色留给 Agent 这一侧。 */
 .answer .role-icon {
-  background: var(--signal-500);
+  color: var(--text-on-accent);
+  background: var(--accent);
 }
 
 .bubble-body {
@@ -106,92 +116,58 @@ const isThinking = computed(() => isStreaming.value && props.turn.answer.length 
   align-items: center;
   gap: 8px;
   margin-bottom: 6px;
-  color: var(--ink-500);
+  color: var(--text-muted);
   font-size: 0.7rem;
   font-weight: 720;
 }
 
 .turn-state {
-  color: var(--warning-600);
+  color: var(--warning);
   font-weight: 650;
 }
 
-.question-text,
-.answer-text {
-  color: var(--ink-950);
+/* 提问保持 pre-wrap 的纯文本：它是用户原文，换行按他敲的来。
+   答案正文的排版与流式光标都归 MarkdownAnswer，这里不再有 .answer-text。 */
+.question-text {
+  color: var(--text-secondary);
   font-size: 0.92rem;
   line-height: 1.75;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.question-text {
-  color: var(--ink-800);
-}
-
-/* 流式期间在末尾加一个光标块，让「还在写」这件事不依赖别处的加载指示。 */
-.answer-text.is-streaming::after {
-  content: '';
-  display: inline-block;
-  width: 2px;
-  height: 1em;
-  margin-left: 3px;
-  background: var(--signal-500);
-  vertical-align: text-bottom;
-  animation: caret-blink 1s step-end infinite;
-}
-
 .thinking {
-  color: var(--ink-500);
+  color: var(--text-muted);
   font-size: 0.85rem;
 }
 
 .turn-error {
   margin-top: 12px;
   padding: 12px 13px;
-  border: 1px solid var(--danger-100);
+  border: 1px solid var(--danger-soft);
   border-radius: var(--radius-sm);
-  background: #fdf6f5;
+  background: var(--danger-soft);
 }
 
 .error-title {
   display: flex;
   align-items: center;
   gap: 7px;
-  color: var(--danger-600);
+  color: var(--danger);
   font-size: 0.82rem;
   font-weight: 720;
 }
 
 .error-description {
   margin-top: 5px;
-  color: var(--ink-700);
+  color: var(--text-secondary);
   font-size: 0.78rem;
   line-height: 1.6;
 }
 
+/* 描边、字号、悬停填实都归 BaseButton 的 outline 变体——第二步就是从这个类
+   与 .reader-retry 归并出那个变体的，只是当时漏了这个调用方。留下的只有外边距。 */
 .retry-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
   margin-top: 11px;
-  padding: 8px 13px;
-  border: 1px solid var(--paper-300);
-  border-radius: var(--radius-sm);
-  color: var(--ink-800);
-  background: var(--paper-50);
-  font-size: 0.76rem;
-  font-weight: 700;
-}
-
-.retry-button:hover {
-  border-color: var(--signal-600);
-  color: var(--signal-600);
-}
-
-@keyframes caret-blink {
-  50% {
-    opacity: 0;
-  }
 }
 </style>

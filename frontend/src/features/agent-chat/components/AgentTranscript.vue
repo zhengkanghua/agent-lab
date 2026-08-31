@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { MessagesSquare, ShieldCheck } from '@lucide/vue'
+import { ArrowUpRight } from '@lucide/vue'
 import type { AgentTurn } from '../model/conversation'
 import AgentTurnCard from './AgentTurnCard.vue'
 
@@ -24,31 +24,23 @@ function isLast(index: number): boolean {
   <section class="transcript" aria-labelledby="transcript-title" :aria-busy="streaming">
     <h2 id="transcript-title" class="sr-only">对话记录</h2>
 
+    <!-- 空态只有一句标题 + 建议卡（Q9）。原来那个圆形图标是装饰性品牌元素，撤掉了：
+         老板明确说暂时没有品牌。说明性长段落压成一句——「它会自己检索」这件事，
+         点一张建议卡看它真的去查，比读一段字有说服力。
+         「回答可能有误、请核对原文」那条挪到输入区下方的细则行：它对每一轮都成立，
+         只挂在空态等于答案出现后就不再提醒。 -->
     <div v-if="turns.length === 0" class="empty-state">
-      <span class="empty-icon" aria-hidden="true"><MessagesSquare :size="22" /></span>
-      <h3>让 Agent 去查，再让它作答</h3>
-      <p>
-        它会自己决定要不要检索新闻库、要不要读全文，过程中的每次工具调用都会显示在回答上方。
-        它只读数据，不会修改任何新闻或索引。
-      </p>
+      <h3>今天想查什么？</h3>
+      <p class="empty-lead">Agent 会自己决定检索哪些新闻、要不要读全文，然后基于查到的内容作答。</p>
 
-      <div class="example-list">
-        <p class="example-label">可以先试这些：</p>
-        <button
-          v-for="example in examples"
-          :key="example"
-          type="button"
-          class="example-button"
-          @click="emit('choose-example', example)"
-        >
-          {{ example }}
-        </button>
-      </div>
-
-      <p class="empty-note">
-        <ShieldCheck :size="15" aria-hidden="true" />
-        回答由模型生成，可能有误；请按它给出的来源核对原文。
-      </p>
+      <ul class="example-list">
+        <li v-for="example in examples" :key="example">
+          <button type="button" class="example-button" @click="emit('choose-example', example)">
+            <span>{{ example }}</span>
+            <ArrowUpRight :size="15" aria-hidden="true" />
+          </button>
+        </li>
+      </ul>
     </div>
 
     <div v-else class="turn-list">
@@ -78,94 +70,92 @@ function isLast(index: number): boolean {
   gap: 16px;
 }
 
+/* 空态不再是一张虚线卡片：单列布局里它就是这一列的全部内容，再画个框等于给
+   整页描边。改成无框，靠垂直居中把它托在输入区上方。 */
 .empty-state {
-  padding: 40px 30px 34px;
-  border: 1px dashed var(--paper-300);
-  border-radius: var(--radius-md);
-  background: var(--paper-50);
-  text-align: center;
-}
-
-.empty-icon {
-  display: grid;
-  place-items: center;
-  width: 46px;
-  height: 46px;
-  margin: 0 auto 16px;
-  border-radius: 50%;
-  color: var(--signal-600);
-  background: var(--source-100);
+  padding: 8px 2px 0;
 }
 
 .empty-state h3 {
-  color: var(--ink-950);
-  font-family: var(--display-font);
-  font-size: 1.2rem;
-  font-weight: 760;
+  color: var(--text-primary);
+  font-size: 1.72rem;
+  font-weight: 780;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
 }
 
-.empty-state > p {
-  max-width: 46ch;
-  margin: 11px auto 0;
-  color: var(--ink-700);
-  font-size: 0.86rem;
-  line-height: 1.72;
+.empty-lead {
+  max-width: 44ch;
+  margin-top: 12px;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.7;
 }
 
+/* 建议卡改成整行式列表：三条文案长度不一，胶囊排布会在第二行留一个孤儿。
+   整行还给了每条更大的点击区。 */
 .example-list {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  margin-top: 22px;
-}
-
-.example-label {
-  width: 100%;
-  color: var(--ink-500);
-  font-size: 0.72rem;
-  font-weight: 700;
+  display: grid;
+  gap: 8px;
+  margin-top: 26px;
+  padding: 0;
+  list-style: none;
 }
 
 .example-button {
-  padding: 9px 14px;
-  border: 1px solid var(--paper-300);
-  border-radius: 999px;
-  color: var(--ink-800);
-  background: var(--paper-50);
-  font-size: 0.78rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 15px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  font-size: 0.88rem;
+  text-align: left;
   transition:
     border-color 150ms ease,
     color 150ms ease,
-    background-color 150ms ease;
+    background-color 150ms ease,
+    transform 150ms ease;
 }
 
 .example-button:hover {
-  border-color: var(--signal-600);
-  color: var(--signal-600);
-  background: var(--paper-100);
+  border-color: var(--accent);
+  color: var(--accent);
+  transform: translateY(-1px);
 }
 
-.empty-note {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 26px;
-  padding-top: 17px;
-  border-top: 1px solid var(--paper-200);
-  color: var(--ink-500);
-  font-size: 0.72rem;
-}
-
-.empty-note svg {
+.example-button svg {
   flex: 0 0 auto;
-  color: var(--source-600);
+  color: var(--text-muted);
+  transition: color 150ms ease;
+}
+
+.example-button:hover svg {
+  color: var(--accent);
 }
 
 @media (max-width: 560px) {
-  .empty-state {
-    padding: 30px 18px 26px;
+  .empty-state h3 {
+    font-size: 1.5rem;
+  }
+
+  .example-list {
+    margin-top: 20px;
+  }
+
+  .example-button {
+    padding: 12px 13px;
+    font-size: 0.84rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .example-button:hover {
+    transform: none;
   }
 }
 </style>

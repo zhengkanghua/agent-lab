@@ -1,8 +1,8 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { ref } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AgentChatEvent, StreamAgentChatOptions } from '../api/agent-chat'
+import type { AgentChatEvent, StreamAgentChatOptions } from '@/api/agent-chat'
 
 const api = vi.hoisted(() => ({
   streamAgentChat: vi.fn(),
@@ -63,6 +63,12 @@ async function mountPage() {
   return { wrapper, router }
 }
 
+/* 系统提示词从输入框下的 <details> 改成了底部齿轮浮层（Q8），面板只在展开时进 DOM。
+   要碰 .prompt-input / .prompt-actions 的用例先过这里。 */
+async function openPromptPanel(wrapper: VueWrapper): Promise<void> {
+  await wrapper.get('.prompt-trigger button').trigger('click')
+}
+
 describe('AgentChatPage', () => {
   beforeEach(() => {
     api.streamAgentChat.mockReset()
@@ -76,12 +82,13 @@ describe('AgentChatPage', () => {
   })
 
   afterEach(() => {
-    document.body.innerHTML = ''
+    document.body.replaceChildren()
     vi.unstubAllGlobals()
   })
 
   it('进入页面时取默认提示词，让「填入默认提示词」可用', async () => {
     const { wrapper } = await mountPage()
+    await openPromptPanel(wrapper)
 
     expect(api.fetchAgentDefaultPrompt).toHaveBeenCalledOnce()
     expect(wrapper.get('.prompt-actions button').attributes('disabled')).toBeUndefined()
@@ -91,6 +98,7 @@ describe('AgentChatPage', () => {
   it('默认提示词取不到时仍能进页面提问', async () => {
     api.fetchAgentDefaultPrompt.mockRejectedValue(new Error('boom'))
     const { wrapper } = await mountPage()
+    await openPromptPanel(wrapper)
 
     // 不传 system_prompt 时后端用同一份默认值，所以这次失败不该阻断对话。
     expect(wrapper.get('.prompt-actions button').attributes('disabled')).toBeDefined()
@@ -116,7 +124,8 @@ describe('AgentChatPage', () => {
     await flushPromises()
 
     expect(wrapper.get('.question-text').text()).toBe('央行利率')
-    expect(wrapper.get('.answer-text').text()).toBe('央行维持利率不变。')
+    // 答案正文改由 MarkdownAnswer 渲染，容器类名跟着换成 .answer-body。
+    expect(wrapper.get('.answer-body').text()).toBe('央行维持利率不变。')
     expect(wrapper.find('.empty-state').exists()).toBe(false)
     wrapper.unmount()
   })
@@ -146,6 +155,8 @@ describe('AgentChatPage', () => {
     await wrapper.get('.agent-form').trigger('submit')
     await flushPromises()
 
+    /* 轨迹现在整块折叠（Q10），落定后是收起状态。收起的 <details> 里子节点仍在 DOM 中，
+       所以下面这两条读得到内容，读到的是「渲染对了」而不是「展开着」。 */
     expect(wrapper.get('.trace-list').text()).toContain('检索新闻')
     expect(wrapper.get('.trace-arguments').text()).toBe('query=利率')
     wrapper.unmount()
@@ -215,6 +226,7 @@ describe('AgentChatPage', () => {
 
   it('自定义系统提示词随下一轮发出', async () => {
     const { wrapper } = await mountPage()
+    await openPromptPanel(wrapper)
 
     await wrapper.get('.prompt-input').setValue('你是财经记者。')
     await wrapper.get('.message-input').setValue('问题')
@@ -241,7 +253,7 @@ describe('AgentChatPage', () => {
     await wrapper.get('.agent-form').trigger('submit')
     await flushPromises()
 
-    await wrapper.get('.logout-button').trigger('click')
+    await wrapper.get('button[aria-label="退出登录"]').trigger('click')
     await flushPromises()
 
     // 留着在途的流会在退出后继续读一条已经没有权限的连接。
@@ -257,7 +269,7 @@ describe('AgentChatPage', () => {
     session.logout.mockRejectedValue(new Error('boom'))
     const { wrapper, router } = await mountPage()
 
-    await wrapper.get('.logout-button').trigger('click')
+    await wrapper.get('button[aria-label="退出登录"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.get('.logout-error').text()).toBe('退出失败')
@@ -270,6 +282,26 @@ describe('AgentChatPage', () => {
 
     expect(wrapper.get('.mode-note').text()).toContain('模型生成答案')
     expect(wrapper.get('.mode-note').text()).toContain('只读检索')
+    wrapper.unmount()
+  })
+
+  it('输入区下方常驻「可能有误」与「只读」的细则，且每一轮都在', async () => {
+    /* 这两句原来一句挂在空态、一句挂在页脚。空态那句在第一轮答案出现后就消失，
+       而「回答可能有误」对每一轮都成立；页脚在这一页已经撤掉（底部固定输入区之下
+       再放页脚，用户要多滚一屏才看得到）。所以合并到输入区下面的细则行，
+       并且这条用例特意在提问之后断言它还在。 */
+    const { wrapper } = await mountPage()
+    const note = () => wrapper.get('.dock-note').text()
+
+    expect(note()).toContain('可能有误')
+    expect(note()).toContain('只读数据')
+    expect(wrapper.find('.site-footer').exists()).toBe(false)
+
+    await wrapper.get('.message-input').setValue('央行利率')
+    await wrapper.get('.agent-form').trigger('submit')
+    await flushPromises()
+
+    expect(note()).toContain('可能有误')
     wrapper.unmount()
   })
 })

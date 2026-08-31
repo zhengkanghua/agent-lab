@@ -14,11 +14,16 @@ function doneTurn(question: string): AgentTurn {
 }
 
 describe('AgentTranscript', () => {
-  it('空态说明它只读数据，并提示回答可能有误', () => {
+  it('空态是一句标题加建议卡，没有品牌装饰', () => {
     const wrapper = mountTranscript()
 
-    expect(wrapper.get('.empty-state').text()).toContain('只读数据')
-    expect(wrapper.get('.empty-note').text()).toContain('可能有误')
+    /* Q9：空态只有一句标题 + 建议卡，不放品牌元素。原来那个圆形图标是装饰性品牌位，
+       撤掉了。「回答可能有误、只读数据」两条挪到了输入区下方的细则行——它们对每一轮
+       都成立，只挂在空态等于答案出现后就不再提醒。那两条现在由
+       AgentChatPage.spec.ts 盯。 */
+    expect(wrapper.get('.empty-state h3').text()).toBe('今天想查什么？')
+    expect(wrapper.findAll('.example-button')).toHaveLength(EXAMPLES.length)
+    expect(wrapper.find('.empty-icon').exists()).toBe(false)
   })
 
   it('点示例问题把原文交给上层', async () => {

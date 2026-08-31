@@ -6,7 +6,7 @@ const api = vi.hoisted(() => ({ fetchAgentDefaultPrompt: vi.fn() }))
 
 vi.mock('../../../api/agent-chat', () => api)
 
-import { ApiError } from '../../../api/client'
+import { ApiError } from '@/api/client'
 import { useAgentDefaultPrompt } from '../composables/useAgentDefaultPrompt'
 
 /** 仍然挂载组件而不是裸调 composable：onScopeDispose 的取消语义需要真实的 effect scope。 */

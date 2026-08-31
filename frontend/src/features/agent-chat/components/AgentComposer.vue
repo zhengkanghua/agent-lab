@@ -1,7 +1,17 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { LoaderCircle, MessageSquarePlus, Send, Settings2, Square } from '@lucide/vue'
+import { computed, ref } from 'vue'
+import { MessageSquarePlus, Send, Settings2, Square } from '@lucide/vue'
+import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
+import BasePopover from '@/shared/ui/BasePopover.vue'
 import { MAX_MESSAGE_CHARACTERS, MAX_SYSTEM_PROMPT_CHARACTERS } from '../model/agent-validation'
+
+/* 贴在页面底部的输入区。
+ *
+ * 形态是一个圆角框：上面是文本域，下面一行控件。它不再是侧栏里的一张卡片，
+ * 所以标题「向 Agent 提问」和可见的字段标签都撤掉了——底部就一个输入框，
+ * 再给它加标题是重复。字段标签改成 sr-only 保留给读屏。
+ */
 
 const props = defineProps<{
   modelValue: string
@@ -22,6 +32,8 @@ const emit = defineEmits<{
   'new-conversation': []
 }>()
 
+const promptOpen = ref(false)
+
 const draft = computed({
   get: () => props.modelValue,
   set: (value: string) => emit('update:modelValue', value),
@@ -37,6 +49,8 @@ const counterTone = computed(() => {
   if (props.remainingCharacters < 200) return 'is-near'
   return ''
 })
+
+const promptOverridden = computed(() => props.systemPrompt.trim().length > 0)
 
 /**
  * Enter 发送、Shift+Enter 换行。
@@ -56,95 +70,123 @@ function useDefaultPrompt(): void {
 </script>
 
 <template>
-  <section class="agent-composer" aria-labelledby="agent-composer-title">
-    <div class="composer-heading">
-      <p>对话输入</p>
-      <h2 id="agent-composer-title">向 Agent 提问</h2>
-    </div>
-
+  <section class="agent-composer" aria-label="向 Agent 提问">
     <form class="agent-form" :aria-busy="streaming" @submit.prevent="emit('submit')">
-      <label class="field-label" for="agent-message">这一轮的问题</label>
+      <label class="sr-only" for="agent-message">这一轮的问题</label>
       <textarea
         id="agent-message"
         v-model="draft"
         class="message-input"
         name="message"
-        rows="5"
+        rows="2"
         :maxlength="MAX_MESSAGE_CHARACTERS"
-        placeholder="例如：最近有哪些关于利率的报道？请给出来源。"
+        placeholder="问点什么，Agent 会自己去查。Enter 发送，Shift + Enter 换行"
         :aria-invalid="Boolean(inputError)"
         :aria-describedby="inputError ? 'agent-message-error' : 'agent-message-count'"
         @keydown.enter="onEnter"
       ></textarea>
 
-      <div class="input-meta">
-        <span class="hint">Enter 发送，Shift + Enter 换行</span>
-        <span id="agent-message-count" class="character-count" :class="counterTone">
-          还可输入 {{ remainingCharacters.toLocaleString('zh-CN') }} 个字符
-        </span>
-      </div>
+      <div class="composer-bar">
+        <div class="bar-left">
+          <!-- 系统提示词从 <details> 改成齿轮浮层（Q8）：它是这一档的次要设置，
+               摊开在输入框下面会把主操作挤下去。 -->
+          <BasePopover v-model:open="promptOpen" label="自定义系统提示词" placement="top-start">
+            <template #trigger="{ toggle, attrs }">
+              <!-- 角标是齿轮的兄弟而不是子节点：BaseIconButton 没有 position，
+                   放进去会定位到更外层的 .base-popover 上，跑到整个浮层的角上。
+                   包一层 relative 的 span，定位职责留在本组件里，不去改共享组件。 -->
+              <span class="prompt-trigger">
+                <BaseIconButton
+                  v-bind="attrs"
+                  :label="promptOverridden ? '自定义系统提示词（已覆盖）' : '自定义系统提示词'"
+                  size="md"
+                  @click="toggle"
+                >
+                  <Settings2 :size="17" aria-hidden="true" />
+                </BaseIconButton>
+                <!-- 已覆盖时点一个角标：浮层收起后，这是唯一能看出「提示词被改过」的地方。 -->
+                <span v-if="promptOverridden" class="prompt-badge" aria-hidden="true"></span>
+              </span>
+            </template>
 
-      <details class="prompt-options">
-        <summary>
-          <span class="control-label">
-            <Settings2 :size="16" aria-hidden="true" />
-            自定义系统提示词
-          </span>
-          <b>{{ systemPrompt.trim() ? '已覆盖' : '用默认' }}</b>
-        </summary>
-        <p class="prompt-note">
-          留空表示使用服务端内置的默认提示词。只影响之后发出的轮次，不会被保存。
-        </p>
-        <textarea
-          id="agent-system-prompt"
-          v-model="promptDraft"
-          class="prompt-input"
-          name="system_prompt"
-          rows="6"
-          :maxlength="MAX_SYSTEM_PROMPT_CHARACTERS"
-          aria-label="自定义系统提示词"
-          placeholder="留空即使用默认提示词"
-        ></textarea>
-        <div class="prompt-actions">
-          <button
-            type="button"
-            class="text-button"
-            :disabled="defaultPrompt === null"
-            @click="useDefaultPrompt"
+            <div class="prompt-panel">
+              <p class="prompt-title">自定义系统提示词</p>
+              <p class="prompt-note">
+                留空表示使用服务端内置的默认提示词。只影响之后发出的轮次，不会被保存。
+              </p>
+              <textarea
+                id="agent-system-prompt"
+                v-model="promptDraft"
+                class="prompt-input"
+                name="system_prompt"
+                rows="6"
+                :maxlength="MAX_SYSTEM_PROMPT_CHARACTERS"
+                aria-label="自定义系统提示词"
+                placeholder="留空即使用默认提示词"
+              ></textarea>
+              <div class="prompt-actions">
+                <BaseButton
+                  variant="ghost"
+                  size="xs"
+                  :disabled="defaultPrompt === null"
+                  @click="useDefaultPrompt"
+                >
+                  填入默认提示词
+                </BaseButton>
+                <BaseButton
+                  variant="ghost"
+                  size="xs"
+                  :disabled="!systemPrompt"
+                  @click="emit('update:systemPrompt', '')"
+                >
+                  清空
+                </BaseButton>
+              </div>
+            </div>
+          </BasePopover>
+
+          <BaseButton
+            v-if="hasHistory"
+            class="secondary-button"
+            variant="ghost"
+            size="sm"
+            :disabled="streaming"
+            @click="emit('new-conversation')"
           >
-            填入默认提示词
-          </button>
-          <button
-            type="button"
-            class="text-button"
-            :disabled="!systemPrompt"
-            @click="emit('update:systemPrompt', '')"
-          >
-            清空
-          </button>
+            <template #icon><MessageSquarePlus :size="16" aria-hidden="true" /></template>
+            新会话
+          </BaseButton>
         </div>
-      </details>
 
-      <div class="composer-actions">
-        <button
-          v-if="hasHistory"
-          type="button"
-          class="secondary-button"
-          :disabled="streaming"
-          @click="emit('new-conversation')"
-        >
-          <MessageSquarePlus :size="17" aria-hidden="true" />
-          <span>新会话</span>
-        </button>
-        <button v-if="streaming" type="button" class="stop-button" @click="emit('cancel')">
-          <Square :size="16" aria-hidden="true" />
-          <span>停止生成</span>
-        </button>
-        <button v-else class="send-button" type="submit" :disabled="!canSend">
-          <LoaderCircle v-if="streaming" class="spin" :size="18" aria-hidden="true" />
-          <Send v-else :size="17" stroke-width="2.3" aria-hidden="true" />
-          <span>发送</span>
-        </button>
+        <div class="bar-right">
+          <span id="agent-message-count" class="character-count" :class="counterTone">
+            还可输入 {{ remainingCharacters.toLocaleString('zh-CN') }} 个字符
+          </span>
+
+          <BaseButton
+            v-if="streaming"
+            class="stop-button"
+            variant="danger"
+            size="sm"
+            @click="emit('cancel')"
+          >
+            <template #icon><Square :size="15" aria-hidden="true" /></template>
+            停止生成
+          </BaseButton>
+          <!-- 这个分支是 v-if="streaming" 的 v-else，streaming 恒为假，
+               所以不需要转圈：流式中显示的是上面那个停止键。 -->
+          <BaseButton
+            v-else
+            class="send-button"
+            variant="primary"
+            size="sm"
+            type="submit"
+            :disabled="!canSend"
+          >
+            <template #icon><Send :size="16" stroke-width="2.3" aria-hidden="true" /></template>
+            发送
+          </BaseButton>
+        </div>
       </div>
     </form>
 
@@ -156,256 +198,168 @@ function useDefaultPrompt(): void {
 
 <style scoped>
 .agent-composer {
-  padding: 22px;
-  border: 1px solid var(--paper-300);
-  border-radius: var(--radius-md);
-  background: var(--paper-50);
+  padding: 10px 11px 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
   box-shadow: var(--shadow-soft);
+  transition: border-color 150ms ease;
 }
 
-.composer-heading {
-  margin-bottom: 18px;
-}
-
-.composer-heading p {
-  color: var(--signal-600);
-  font-size: 0.72rem;
-  font-weight: 760;
-}
-
-.composer-heading h2 {
-  margin-top: 4px;
-  color: var(--ink-950);
-  font-family: var(--display-font);
-  font-size: 1.28rem;
-  font-weight: 760;
-  line-height: 1.3;
+/* 焦点环画在外框上而不是文本域上：视觉上这一整块是一个输入控件。
+   文本域自身的焦点样式随之去掉，否则会出现两层环。 */
+.agent-composer:focus-within {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 4px var(--accent-soft),
+    var(--shadow-soft);
 }
 
 .agent-form {
   display: grid;
 }
 
-.field-label {
-  margin-bottom: 7px;
-  color: var(--ink-800);
-  font-size: 0.8rem;
-  font-weight: 700;
+.message-input {
+  display: block;
+  width: 100%;
+  max-height: 40vh;
+  /* 竖向可拉，但不给横向：横向拉宽会把底部控件行挤出圆角框。 */
+  resize: vertical;
+  min-height: 62px;
+  padding: 6px 7px;
+  border: 0;
+  outline: none;
+  color: var(--text-primary);
+  background: none;
+  font-size: 0.95rem;
+  line-height: 1.65;
 }
 
-.message-input,
+.message-input::placeholder {
+  color: var(--text-muted);
+}
+
+.composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.bar-left,
+.bar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.prompt-trigger {
+  position: relative;
+  display: inline-flex;
+}
+
+/* 角标不拦指针事件：它压在齿轮的右上角，能点中的话那一小块就点不开浮层了。 */
+.prompt-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.character-count {
+  color: var(--text-muted);
+  font-family: var(--mono-font);
+  font-size: 0.67rem;
+  white-space: nowrap;
+}
+
+/* 只有临近与超出上界时才需要被看见，那两档自带语气色。默认那档是纯参考信息，
+   --text-muted 在这个字号上对比度不足，所以平时不显示，聚焦时才出现。 */
+.agent-composer:not(:focus-within) .character-count {
+  visibility: hidden;
+}
+
+.character-count.is-near {
+  color: var(--warning);
+  visibility: visible;
+}
+
+.character-count.is-over {
+  color: var(--danger);
+  visibility: visible;
+}
+
+.prompt-panel {
+  width: min(420px, calc(100vw - 60px));
+}
+
+.prompt-title {
+  color: var(--text-primary);
+  font-size: 0.84rem;
+  font-weight: 760;
+}
+
+.prompt-note {
+  margin-top: 5px;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  line-height: 1.55;
+}
+
 .prompt-input {
   display: block;
   width: 100%;
   resize: vertical;
-  padding: 14px 15px;
-  border: 1px solid var(--paper-300);
-  border-radius: var(--radius-sm);
-  outline: none;
-  color: var(--ink-950);
-  background: #fbfcfb;
-  font-size: 0.94rem;
-  line-height: 1.65;
-  transition:
-    border-color 150ms ease,
-    box-shadow 150ms ease,
-    background-color 150ms ease;
-}
-
-.message-input {
-  min-height: 132px;
-}
-
-.prompt-input {
   min-height: 150px;
   margin-top: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  outline: none;
+  color: var(--text-primary);
+  background: var(--surface-base);
   font-family: var(--mono-font);
   font-size: 0.78rem;
   line-height: 1.6;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
 }
 
-.message-input::placeholder,
 .prompt-input::placeholder {
-  color: var(--ink-500);
+  color: var(--text-muted);
 }
 
-.message-input:hover,
-.prompt-input:hover {
-  border-color: #bac4c0;
-}
-
-.message-input:focus,
 .prompt-input:focus {
-  border-color: var(--source-500);
-  background: var(--paper-50);
-  box-shadow: 0 0 0 4px var(--source-100);
-}
-
-.input-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 30px;
-  padding-top: 7px;
-}
-
-.hint {
-  color: var(--ink-500);
-  font-size: 0.68rem;
-}
-
-.character-count {
-  color: var(--ink-500);
-  font-family: var(--mono-font);
-  font-size: 0.67rem;
-}
-
-.character-count.is-near {
-  color: var(--warning-600);
-}
-
-.character-count.is-over {
-  color: var(--danger-600);
-}
-
-.prompt-options {
-  margin-top: 6px;
-  padding-bottom: 12px;
-  border-top: 1px solid var(--paper-200);
-  border-bottom: 1px solid var(--paper-200);
-  color: var(--ink-700);
-  font-size: 0.8rem;
-}
-
-.prompt-options summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 44px;
-  cursor: pointer;
-  list-style-position: outside;
-}
-
-.prompt-options summary b {
-  color: var(--ink-800);
-  font-size: 0.75rem;
-}
-
-.control-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.control-label svg {
-  color: var(--source-600);
-}
-
-.prompt-note {
-  color: var(--ink-500);
-  font-size: 0.72rem;
-  line-height: 1.55;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .prompt-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 14px;
+  gap: 10px;
   margin-top: 9px;
 }
 
-.text-button {
-  border: 0;
-  color: var(--signal-600);
-  background: transparent;
-  font-size: 0.74rem;
-  font-weight: 700;
-}
-
-.text-button:disabled {
-  color: var(--ink-500);
-  opacity: 0.6;
-}
-
-.composer-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 16px;
-}
-
-.secondary-button,
-.send-button,
-.stop-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  height: 44px;
-  padding: 0 16px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  font-weight: 760;
-  transition:
-    background-color 150ms ease,
-    color 150ms ease,
-    transform 150ms ease;
-}
-
-.secondary-button {
-  color: var(--ink-700);
-  background: var(--paper-200);
-}
-
-.secondary-button:hover:not(:disabled) {
-  color: var(--ink-950);
-  background: var(--paper-300);
-}
-
-.secondary-button:disabled {
-  opacity: 0.55;
-}
-
-.send-button {
-  flex: 1;
-  color: var(--paper-50);
-  background: var(--signal-500);
-}
-
-.send-button:hover:not(:disabled) {
-  background: var(--signal-600);
-  transform: translateY(-1px);
-}
-
-.send-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.72;
-}
-
-.stop-button {
-  flex: 1;
-  color: var(--danger-600);
-  background: var(--danger-100);
-}
-
 .field-error {
-  margin-top: 12px;
-  color: var(--danger-600);
-  font-size: 0.8rem;
+  padding: 7px 7px 2px;
+  color: var(--danger);
+  font-size: 0.78rem;
   font-weight: 650;
 }
 
-/* .spin 见 styles/components/motion.css。 */
-
-@media (max-width: 420px) {
-  .agent-composer {
-    padding: 18px 15px;
-  }
-
-  .composer-actions {
-    flex-wrap: wrap;
+@media (max-width: 520px) {
+  /* 窄屏把字数计数撤掉：它和发送键抢同一行，而上界是 4000 字，
+     手机上打到临近值的可能极低。临近/超出两档仍然由语气色显示。 */
+  .character-count:not(.is-near):not(.is-over) {
+    display: none;
   }
 }
 </style>
