@@ -157,26 +157,59 @@ def test_a_failed_tool_is_marked_and_the_run_still_finishes() -> None:
     assert isinstance(events[-1], AgentDoneEvent)
 
 
-def test_a_model_failure_ends_with_an_error_event_not_an_exception() -> None:
-    """模型故障以 error 事件结束，不向调用方抛异常。
+def _blocked_error() -> openai.PermissionDeniedError:
+    """构造一个不带 HTTP 响应体的上游 403。"""
 
-    原因是 HTTP 响应头在第一个 token 发出时就已经送出，之后改不了状态码。所以流一旦开始，
-    失败只能作为事件送达——抛异常的结果是连接被硬断，前端只能看到「网络错误」。
-    """
+    error = openai.PermissionDeniedError.__new__(openai.PermissionDeniedError)
+    error.args = ("Your request was blocked.",)
+    return error
 
-    model = FailingChatModel(error=openai.APITimeoutError(request=None))  # type: ignore[arg-type]
-    events = collect(build_offline_graph(model))
 
-    assert isinstance(events[-1], AgentErrorEvent)
-    assert events[-1].code == "llm_timeout"
-    assert events[-1].retryable is True
+# 模型侧每一类故障对应的错误码。合成一条参数化用例是因为它们结构相同（喂一个永远失败的
+# 模型、断言最后一个事件的 code 和 retryable），而每一行钉的东西各不相同：
+#
+# - ``llm_timeout``：最常见的可重试故障。
+# - ``llm_request_blocked``：上游 403 必须和认证失败分开报。这两个码合并过一次，代价是真
+#   事故里排查方向被带偏——中转站按 User-Agent 拦掉了 openai SDK 的默认标识，报出来却是
+#   「认证失败」，于是先去查 Key，而 Key 一直是好的。两者都不可重试、都是 502，但要动的
+#   东西一个是凭据、一个是客户端身份。
+# - ``agent_internal_error``：没被分类的异常必须落到 Agent 自己的兜底码。错误契约表的通用
+#   兜底是 ``pipeline_internal_error``，那是手动流水线的契约值；它漏到 Agent 接口上，前端
+#   会按它去查文案，查不到就把原始枚举名显示给用户。
+#
+# 共同的前提：故障一律以 error **事件**送达，不向调用方抛异常。因为 HTTP 响应头在第一个
+# token 发出时就已经送出、之后改不了状态码，抛异常的结果是连接被硬断，前端只看到「网络
+# 错误」。所以每条都断言最后一个事件是 AgentErrorEvent，而不是断言抛了什么。
+@pytest.mark.parametrize(
+    ("error", "code", "retryable"),
+    [
+        (openai.APITimeoutError(request=None), "llm_timeout", True),  # type: ignore[arg-type]
+        (_blocked_error(), "llm_request_blocked", False),
+        (ValueError("某个没预料到的问题"), "agent_internal_error", False),
+    ],
+)
+def test_a_model_failure_becomes_a_classified_error_event(
+    error: BaseException,
+    code: str,
+    retryable: bool,
+) -> None:
+    """模型故障以按类型分类的 error 事件结束，且它是流里唯一的事件。"""
+
+    events = collect(build_offline_graph(FailingChatModel(error=error)))
+
+    # 只有一个事件：故障发生在任何 token 之前，所以流里不该有别的东西。
+    assert len(events) == 1
+    assert isinstance(events[0], AgentErrorEvent)
+    assert events[0].code == code
+    assert events[0].retryable is retryable
 
 
 def test_no_error_event_leaks_the_original_exception_text() -> None:
     """错误事件的文案必须来自错误契约表，不能带上游原文。
 
     上游异常文本可能含中转站地址、API Key 片段或模型返回的原始正文。这条断言钉住
-    「只用契约里的固定文案」。
+    「只用契约里的固定文案」。单独留一条而不并进上面的参数化：它断言的不是「码对不对」，
+    而是「序列化后的整个信封里不含某段敏感文本」，断言对象完全不同。
     """
 
     model = FailingChatModel(error=openai.AuthenticationError.__new__(openai.AuthenticationError))
@@ -186,40 +219,6 @@ def test_no_error_event_leaks_the_original_exception_text() -> None:
     payload = AgentChatEventEnvelope(root=events[-1]).model_dump_json()
     assert "sk-secret123" not in payload
     assert "Incorrect API key" not in payload
-
-
-def test_a_403_block_is_not_reported_as_an_authentication_failure() -> None:
-    """上游 403 要报 ``llm_request_blocked``，不能报认证失败。
-
-    这两个码合并过一次，代价是真事故里排查方向被带偏：中转站按 User-Agent 拦掉了
-    openai SDK 的默认标识，报出来却是「认证失败」，于是先去查 Key，而 Key 一直是好的。
-    401 和 403 都不可重试、都是 502，但要动的东西一个是凭据一个是客户端身份，必须分开。
-    """
-
-    model = FailingChatModel(
-        error=openai.PermissionDeniedError.__new__(openai.PermissionDeniedError)
-    )
-    model.error.args = ("Your request was blocked.",)
-    events = collect(build_offline_graph(model))
-
-    assert isinstance(events[-1], AgentErrorEvent)
-    assert events[-1].code == "llm_request_blocked"
-    assert events[-1].retryable is False
-
-
-def test_an_unclassified_failure_maps_to_the_agent_catch_all() -> None:
-    """没被分类的异常落到 Agent 自己的兜底码，而不是流水线的兜底码。
-
-    这条防的是一个具体的串线：错误契约表的通用兜底 code 是 ``pipeline_internal_error``，
-    那是手动流水线的契约值。它漏到 Agent 接口上，前端会按它去查文案，查不到就显示原始
-    枚举名给用户看。
-    """
-
-    model = FailingChatModel(error=ValueError("某个没预料到的问题"))
-    events = collect(build_offline_graph(model))
-
-    assert isinstance(events[-1], AgentErrorEvent)
-    assert events[-1].code == "agent_internal_error"
 
 
 def test_every_event_serializes_through_the_discriminated_union() -> None:

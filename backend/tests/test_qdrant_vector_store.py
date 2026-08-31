@@ -148,11 +148,27 @@ def test_qdrant_settings_parse_environment_and_hide_secret(
     assert secret not in str(settings)
 
 
-def test_qdrant_client_repr_does_not_leak_secret() -> None:
+# base_url 到实际请求地址的映射，外加「密钥不进 repr」。两条 URL 形状合成一条：它们的
+# 结构相同（建客户端、断言 rest_uri、finally 关闭），分开写只是重复那段 try/finally。
+# 带端口和路径前缀那条是必须留的：走反向代理时端口和前缀都不能被客户端悄悄吃掉。
+@pytest.mark.parametrize(
+    ("base_url", "expected_rest_uri"),
+    [
+        ("https://qdrant.example.test", "https://qdrant.example.test/"),
+        (
+            "https://qdrant.example.test:7443/prefix",
+            "https://qdrant.example.test:7443/prefix",
+        ),
+    ],
+)
+def test_qdrant_client_builds_request_uri_without_leaking_secret(
+    base_url: str,
+    expected_rest_uri: str,
+) -> None:
     secret = "never-repr-qdrant-secret"
     settings = QdrantSettings(
         _env_file=None,
-        base_url="https://qdrant.example.test",
+        base_url=base_url,
         api_key=SecretStr(secret),
     )
     client = build_qdrant_client(settings)
@@ -162,25 +178,7 @@ def test_qdrant_client_repr_does_not_leak_secret() -> None:
             assert secret not in repr(client)
             assert client._init_options["check_compatibility"] is False  # noqa: SLF001
             assert client._init_options["port"] is None  # noqa: SLF001
-            assert client._client.rest_uri == "https://qdrant.example.test/"  # noqa: SLF001
-        finally:
-            await client.close()
-
-    run(close_client())
-
-
-def test_qdrant_client_preserves_explicit_reverse_proxy_port() -> None:
-    settings = QdrantSettings(
-        _env_file=None,
-        base_url="https://qdrant.example.test:7443/prefix",
-    )
-    client = build_qdrant_client(settings)
-
-    async def close_client() -> None:
-        try:
-            assert client._client.rest_uri == (  # noqa: SLF001
-                "https://qdrant.example.test:7443/prefix"
-            )
+            assert client._client.rest_uri == expected_rest_uri  # noqa: SLF001
         finally:
             await client.close()
 
@@ -278,17 +276,18 @@ def test_payload_mapper_omits_missing_optional_news_time() -> None:
     assert "source_updated_at" not in payload
 
 
-def test_payload_mapper_rejects_missing_required_field() -> None:
-    chunk = build_chunk()
-    chunk.metadata.pop("content_hash")
-
-    with pytest.raises(QdrantPayloadError, match="content_hash"):
-        QdrantPayloadMapper(spec()).build(chunk)
+# 用来表示「把这个字段整个删掉」，区别于「字段在但值不合法」。
+REMOVE_FIELD = object()
 
 
+# metadata 能坏的两类形状：必填字段缺失，和字段值不合法。合成一条是因为断言相同（构造
+# payload 时抛 QdrantPayloadError 且消息点出是哪个字段），分开写只是重复同一个 with 块。
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
+        # 必填字段缺失。
+        ("content_hash", REMOVE_FIELD, "content_hash"),
+        # 字段在但值不合法。
         ("document_id", "not-a-uuid", "UUID"),
         ("content_hash", "short", "SHA-256"),
         ("chunk_count", 0, "chunk_count"),
@@ -296,13 +295,16 @@ def test_payload_mapper_rejects_missing_required_field() -> None:
         ("published_at", "2026-08-13T01:02:03", "时区"),
     ],
 )
-def test_payload_mapper_rejects_invalid_structured_fields(
+def test_payload_mapper_rejects_missing_or_invalid_fields(
     field: str,
     value: object,
     message: str,
 ) -> None:
     chunk = build_chunk()
-    chunk.metadata[field] = value
+    if value is REMOVE_FIELD:
+        chunk.metadata.pop(field)
+    else:
+        chunk.metadata[field] = value
 
     with pytest.raises(QdrantPayloadError, match=message):
         QdrantPayloadMapper(spec()).build(chunk)

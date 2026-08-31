@@ -215,19 +215,26 @@ def test_request_rejects_empty_query(value: str) -> None:
         assert value not in str(exc_info.value)
 
 
-@pytest.mark.parametrize("top_k", [0, MAX_TOP_K + 1])
-def test_request_rejects_invalid_top_k(top_k: int) -> None:
-    with pytest.raises(ValidationError):
-        VectorSearchRequest(query="查询", top_k=top_k)
-
-
+# top_k 与 score_threshold 的非法取值。两个字段合成一条：断言完全相同（构造即抛
+# ValidationError），分开写只是重复同一个 with 块。
+# score_threshold 那几个值各有针对：±1.1 越界；nan/inf 非有限；True 是 bool（Python 里
+# bool 是 int 的子类，不挡住的话 True 会被当成 1 收下）；"0.8" 是字符串，不能靠隐式转换。
 @pytest.mark.parametrize(
-    "threshold",
-    [-1.1, 1.1, float("nan"), float("inf"), True, "0.8"],
+    ("field", "value"),
+    [
+        ("top_k", 0),
+        ("top_k", MAX_TOP_K + 1),
+        ("score_threshold", -1.1),
+        ("score_threshold", 1.1),
+        ("score_threshold", float("nan")),
+        ("score_threshold", float("inf")),
+        ("score_threshold", True),
+        ("score_threshold", "0.8"),
+    ],
 )
-def test_request_rejects_invalid_cosine_score_threshold(threshold: object) -> None:
+def test_request_rejects_invalid_numeric_fields(field: str, value: object) -> None:
     with pytest.raises(ValidationError):
-        VectorSearchRequest(query="查询", score_threshold=threshold)
+        VectorSearchRequest(query="查询", **{field: value})  # type: ignore[arg-type]
 
 
 def test_filters_reject_naive_datetime_and_reversed_range() -> None:

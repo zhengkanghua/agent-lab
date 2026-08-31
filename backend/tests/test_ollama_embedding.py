@@ -1,7 +1,6 @@
 """Ollama Embedding 配置、批处理、响应校验和错误映射的离线测试。"""
 
 import asyncio
-import math
 from collections.abc import Sequence
 from typing import Any
 
@@ -138,24 +137,25 @@ def test_settings_reject_invalid_values(
     assert field in str(exc_info.value)
 
 
-def test_secret_does_not_leak_from_repr_or_headers_for_empty_key() -> None:
+def test_secret_never_appears_in_any_representation_but_does_reach_the_header() -> None:
+    """密钥不出现在配置、Provider 或底层客户端的任何字符串形式里，但必须真进请求头。
+
+    两件事必须一起断言：只断言「不泄漏」的话，把密钥彻底丢掉也能通过，而那会让所有请求
+    静默变成未认证。空密钥则要给出空 headers，不能发一个 ``Bearer `` 空值出去。
+    """
+
     secret = "private-test-key"
     config = settings(api_key=secret)
+    provider = OllamaEmbeddingProvider(settings(api_key=secret))
 
     assert secret not in repr(config)
     assert secret not in str(config)
+    assert secret not in repr(provider)
+    assert secret not in repr(provider._embeddings)  # noqa: SLF001
     assert build_ollama_headers(SecretStr("")) == {}
     assert build_ollama_headers(config.api_key) == {
         "Authorization": f"Bearer {secret}"
     }
-
-
-def test_official_embedding_client_repr_does_not_leak_secret() -> None:
-    secret = "never-repr-this-key"
-    provider = OllamaEmbeddingProvider(settings(api_key=secret))
-
-    assert secret not in repr(provider)
-    assert secret not in repr(provider._embeddings)  # noqa: SLF001
 
 
 def test_embed_query_returns_valid_vector() -> None:
@@ -232,65 +232,43 @@ def test_batch_size_splits_calls_and_merges_in_input_order() -> None:
     ]
 
 
-def test_rejects_vector_count_mismatch() -> None:
-    fake = FakeEmbeddings(document_responses=[[[1.0]]])
-    provider = OllamaEmbeddingProvider(settings(), embeddings=fake)  # type: ignore[arg-type]
-
-    with pytest.raises(EmbeddingResponseError, match="数量"):
-        run(provider.embed_documents(["甲", "乙"]))
-
-
-def test_rejects_empty_vector() -> None:
-    fake = FakeEmbeddings(document_responses=[[[]]])
-    provider = OllamaEmbeddingProvider(settings(), embeddings=fake)  # type: ignore[arg-type]
-
-    with pytest.raises(EmbeddingResponseError, match="空嵌入向量"):
-        run(provider.embed_documents(["甲"]))
-
-
-def test_rejects_zero_norm_vector_for_cosine_space() -> None:
-    fake = FakeEmbeddings(document_responses=[[[0.0, 0.0]]])
-    provider = OllamaEmbeddingProvider(settings(), embeddings=fake)  # type: ignore[arg-type]
-
-    with pytest.raises(EmbeddingResponseError, match="零范数"):
-        run(provider.embed_documents(["甲"]))
-
-
+# 一次远程响应能坏的所有形状，逐个钉住对应的中文报错关键词。合成一条参数化用例是因为
+# 它们的结构完全相同（喂一份坏响应、断言 EmbeddingResponseError 里的关键词），逐个写成
+# 独立函数只是把同一段代码抄六遍；参数化后每种坏法仍是独立的一个用例，失败时也仍能一眼
+# 看出坏在哪一种上。
 @pytest.mark.parametrize(
-    ("value", "message"),
+    ("responses", "batch_size", "texts", "message"),
     [
-        ("not-a-number", "非数值"),
-        (float("nan"), "非有限"),
-        (float("inf"), "非有限"),
-        (float("-inf"), "非有限"),
+        # 返回的向量条数与送进去的文本数不符。
+        ([[[1.0]]], 16, ["甲", "乙"], "数量"),
+        # 空向量。
+        ([[[]]], 16, ["甲"], "空嵌入向量"),
+        # 全零向量：Cosine 空间里算不出方向，必须拒。
+        ([[[0.0, 0.0]]], 16, ["甲"], "零范数"),
+        # 非数值与非有限值。
+        ([[["not-a-number"]]], 16, ["甲"], "非数值"),
+        ([[[float("nan")]]], 16, ["甲"], "非有限"),
+        ([[[float("inf")]]], 16, ["甲"], "非有限"),
+        ([[[float("-inf")]]], 16, ["甲"], "非有限"),
+        # 同一批次内维度不一致。
+        ([[[1.0, 2.0], [3.0]]], 16, ["甲", "乙"], "同一批次"),
+        # 跨批次维度不一致（batch_size=1 强制切成两批）。
+        ([[[1.0, 2.0]], [[3.0, 4.0, 5.0]]], 1, ["甲", "乙"], "不同批次"),
     ],
 )
-def test_rejects_invalid_vector_values(value: object, message: str) -> None:
-    fake = FakeEmbeddings(document_responses=[[[value]]])
-    provider = OllamaEmbeddingProvider(settings(), embeddings=fake)  # type: ignore[arg-type]
+def test_rejects_malformed_embedding_response(
+    responses: list[Any],
+    batch_size: int,
+    texts: list[str],
+    message: str,
+) -> None:
+    fake = FakeEmbeddings(document_responses=responses)
+    provider = OllamaEmbeddingProvider(
+        settings(batch_size=batch_size), embeddings=fake  # type: ignore[arg-type]
+    )
 
     with pytest.raises(EmbeddingResponseError, match=message):
-        run(provider.embed_documents(["甲"]))
-
-
-def test_rejects_inconsistent_dimensions_within_batch() -> None:
-    fake = FakeEmbeddings(document_responses=[[[1.0, 2.0], [3.0]]])
-    provider = OllamaEmbeddingProvider(settings(), embeddings=fake)  # type: ignore[arg-type]
-
-    with pytest.raises(EmbeddingResponseError, match="同一批次"):
-        run(provider.embed_documents(["甲", "乙"]))
-
-
-def test_rejects_inconsistent_dimensions_across_batches() -> None:
-    fake = FakeEmbeddings(
-        document_responses=[[[1.0, 2.0]], [[3.0, 4.0, 5.0]]]
-    )
-    provider = OllamaEmbeddingProvider(
-        settings(batch_size=1), embeddings=fake  # type: ignore[arg-type]
-    )
-
-    with pytest.raises(EmbeddingResponseError, match="不同批次"):
-        run(provider.embed_documents(["甲", "乙"]))
+        run(provider.embed_documents(texts))
 
 
 def test_provider_rejects_dimension_change_across_calls() -> None:
@@ -370,15 +348,6 @@ def test_embed_chunks_requires_id_before_remote_call() -> None:
         run(provider.embed_chunks([Document(page_content="正文")]))
 
     assert fake.document_calls == []
-
-
-def test_valid_vectors_are_finite() -> None:
-    fake = FakeEmbeddings(document_responses=[[[1, 2.5, -3]]])
-    provider = OllamaEmbeddingProvider(settings(), embeddings=fake)  # type: ignore[arg-type]
-
-    vector = run(provider.embed_documents(["正文"]))[0]
-
-    assert all(math.isfinite(value) for value in vector)
 
 
 def test_close_does_not_take_ownership_of_injected_embeddings() -> None:

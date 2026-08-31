@@ -127,6 +127,7 @@ def build_agent_middleware(
     *,
     fallback_model: BaseChatModel,
     summarization_model: BaseChatModel,
+    retry_initial_delay: float = RETRY_INITIAL_DELAY_SECONDS,
 ) -> list[AgentMiddleware]:
     """按 ADR 0005 固定的顺序组装中间件流水线。
 
@@ -134,6 +135,10 @@ def build_agent_middleware(
         fallback_model: 主模型重试耗尽后降级使用的客户端。
         summarization_model: 压缩历史消息时使用的客户端；通常与主模型同配置，单独传入
             是为了让测试能只替换其中一个。
+        retry_initial_delay: 重试的首次退避秒数，默认取 ``RETRY_INITIAL_DELAY_SECONDS``。
+            留这个口子只为让测试传 0：退避是真的 ``sleep``，而验证「重试了几次、顺序对不对」
+            根本不需要等——按默认值跑，一条「主备模型都失败」的用例要白等 6 秒。生产不要传，
+            默认值才是安全的那个。
 
     Returns:
         可直接交给 ``create_agent(middleware=...)`` 的列表，顺序即语义。
@@ -153,7 +158,7 @@ def build_agent_middleware(
         # 3、模型调用重试。on_failure="error" 才能在重试耗尽时把异常交给外层降级。
         ModelRetryMiddleware(
             max_retries=MODEL_RETRY_MAX,
-            initial_delay=RETRY_INITIAL_DELAY_SECONDS,
+            initial_delay=retry_initial_delay,
             on_failure="error",
         ),
         # 4、历史过长时压缩成摘要。按消息条数触发而非 token：token 计数依赖分词器，
@@ -183,7 +188,7 @@ def build_agent_middleware(
         #    ToolMessage，这里永远收不到异常、重试成为死代码。见 ADR 0005。
         ToolRetryMiddleware(
             max_retries=TOOL_RETRY_MAX,
-            initial_delay=RETRY_INITIAL_DELAY_SECONDS,
+            initial_delay=retry_initial_delay,
             on_failure="error",
         ),
     ]

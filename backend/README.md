@@ -243,6 +243,13 @@ Invoke-RestMethod -Method Post `
 uv run pytest -q
 ```
 
+写 HTTP 测试时用 ``tests/app_helpers.py`` 的 ``create_offline_app`` 建应用，别直接调
+``create_app``：后者每个工厂参数都有生产默认值，漏掉一个，lifespan 就会拿真实的那个去连真实
+服务。这已经发生过一次——``agent_runtime_factory`` 被 5 个文件集体漏掉，每次进 lifespan 白等
+30 秒连接池超时，而 lifespan 那个 ``except Exception`` 把失败咽掉了，所以测试照常通过、没人
+发现。想验证离线，把 ``DATABASE_URL`` 临时指到 ``192.0.2.1`` 这类不可达地址再跑一遍，耗时不变
+才算真离线。
+
 只有 3 个测试受环境变量门控，默认跳过。仅在明确允许访问当前 ``.env`` 指向的服务时启用；
 它们只发送短小、无敏感信息的中文文本，不打印密钥或完整向量。
 

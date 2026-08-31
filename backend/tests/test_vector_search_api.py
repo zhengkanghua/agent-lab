@@ -15,7 +15,6 @@ import pytest
 from fastapi import FastAPI
 
 from agent_lab.api.error_contract import VectorSearchErrorResponse
-from agent_lab.main import create_app
 from agent_lab.pipeline.ollama_embedding_provider import (
     EmbeddingResponseError,
     OllamaAuthenticationError,
@@ -42,7 +41,8 @@ from agent_lab.schemas.vector_search import (
 from agent_lab.services.vector_search_service import (
     QueryVectorValidationError,
 )
-from tests.auth_helpers import allow_reader, skip_environment_admin_sync
+from tests.app_helpers import create_offline_app
+from tests.auth_helpers import allow_reader
 
 
 def run(coroutine: Any) -> Any:
@@ -119,12 +119,7 @@ def app_for(service: FakeSearchService) -> tuple[FastAPI, FakeRuntime]:
     """创建注入 fake Runtime 的 FastAPI 应用。"""
 
     runtime = FakeRuntime(service)
-    app = allow_reader(
-        create_app(  # type: ignore[arg-type]
-            runtime_factory=lambda: runtime,
-            environment_admin_sync=skip_environment_admin_sync,
-        )
-    )
+    app = allow_reader(create_offline_app(runtime_factory=lambda: runtime))
     return app, runtime
 
 
@@ -232,29 +227,6 @@ def test_request_validation_returns_422_without_sensitive_query(
     assert service.requests == []
 
 
-def test_missing_lifespan_runtime_returns_503_without_external_io() -> None:
-    service = FakeSearchService()
-    app, _runtime = app_for(service)
-    # 不进入 lifespan，模拟进程启动失败或依赖被错误调用的边界；ASGITransport 本身
-    # 不会自动管理 lifespan，因此这里不会构造 Runtime 或访问任一外部服务。
-    response = run(
-        request_without_lifespan(
-            app,
-            "POST",
-            "/vector-search",
-            json={"query": "安全测试"},
-        )
-    )
-
-    assert response.status_code == 503
-    assert response.json() == {
-        "code": "search_runtime_unavailable",
-        "detail": "向量检索运行时不可用。",
-        "retryable": False,
-    }
-    assert service.requests == []
-
-
 async def request_without_lifespan(
     app: FastAPI,
     method: str,
@@ -353,7 +325,11 @@ def test_openapi_exposes_search_route_and_error_schemas() -> None:
 
 
 def test_missing_lifespan_runtime_is_the_same_503_for_both_search_routes() -> None:
-    """Chunk 级与文档级搜索共用同一条 Runtime 缺失响应，不再各自处理一遍。"""
+    """Chunk 级与文档级搜索共用同一条 Runtime 缺失响应，不再各自处理一遍。
+
+    不进入 lifespan，模拟进程启动失败或依赖被错误调用的边界；ASGITransport 本身不会
+    自动管理 lifespan，因此这里不会构造 Runtime 或访问任一外部服务。
+    """
 
     service = FakeSearchService()
     app, _runtime = app_for(service)
@@ -376,24 +352,10 @@ def test_missing_lifespan_runtime_is_the_same_503_for_both_search_routes() -> No
     )
 
     assert chunk_response.status_code == document_response.status_code == 503
+    assert chunk_response.json() == {
+        "code": "search_runtime_unavailable",
+        "detail": "向量检索运行时不可用。",
+        "retryable": False,
+    }
     assert chunk_response.json() == document_response.json()
     assert service.requests == []
-
-
-def test_error_details_are_chinese_and_exclude_upstream_text() -> None:
-    """同一份错误契约不再中英混杂；detail 只用预写中文常量。"""
-
-    service = FakeSearchService(error=OllamaTimeoutError("upstream trace"))
-    app, _runtime = app_for(service)
-
-    response = run(
-        request(app, "POST", "/vector-search", json={"query": "安全短 query"})
-    )
-
-    assert response.status_code == 504
-    assert response.json() == {
-        "code": "embedding_timeout",
-        "detail": "Embedding 服务请求超时。",
-        "retryable": True,
-    }
-    assert "upstream trace" not in response.text

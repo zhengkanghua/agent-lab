@@ -179,6 +179,7 @@ def build_offline_graph(
     tools: Sequence[BaseTool] = (),
     *,
     fallback_model: BaseChatModel | None = None,
+    retry_initial_delay: float = 0.0,
 ) -> Any:
     """用真实中间件流水线装配一个不联网的图。
 
@@ -189,6 +190,10 @@ def build_offline_graph(
         model: 主模型（假的）。
         tools: 要挂上的工具。
         fallback_model: 备用模型；省略时复用主模型。
+        retry_initial_delay: 重试退避秒数，默认 ``0.0``——测试不需要真的等。生产默认是
+            1 秒且指数翻倍，按那个值跑，「主备模型都失败」一条用例就要白等 6 秒纯 sleep，
+            而这些用例断言的是「重试了几次、顺序对不对」，跟等多久无关。要专门验证退避
+            时长的话显式传一个非零值。
 
     Returns:
         已编译的图，会话历史存在 ``InMemorySaver`` 里。
@@ -204,6 +209,7 @@ def build_offline_graph(
         middleware=build_agent_middleware(
             fallback_model=fallback_model or model,
             summarization_model=model,
+            retry_initial_delay=retry_initial_delay,
         ),
         context_schema=AgentContext,
         checkpointer=InMemorySaver(),

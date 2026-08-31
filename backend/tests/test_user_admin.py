@@ -11,7 +11,6 @@ import pytest
 
 from agent_lab.api.user_admin import get_user_admin_service
 from agent_lab.auth.dependencies import current_superuser
-from agent_lab.main import create_app
 from agent_lab.models.user import UserRecord
 from agent_lab.schemas.user_admin import (
     UserAdminCreateRequest,
@@ -23,7 +22,8 @@ from agent_lab.services.user_admin_service import (
     UserAdminDomainError,
     UserAdminService,
 )
-from tests.auth_helpers import authenticated_superuser, skip_environment_admin_sync
+from tests.app_helpers import create_offline_app
+from tests.auth_helpers import authenticated_superuser
 
 
 def run(coroutine: Any) -> Any:
@@ -111,10 +111,7 @@ class FakeAdminService:
 def build_app(service: FakeAdminService, *, authenticated: bool) -> Any:
     """创建使用 fake Runtime 和 fake 管理 Service 的测试应用。"""
 
-    app = create_app(
-        runtime_factory=FakeRuntime,
-        environment_admin_sync=skip_environment_admin_sync,
-    )
+    app = create_offline_app(runtime_factory=FakeRuntime)
     app.dependency_overrides[get_user_admin_service] = lambda: service
     if authenticated:
         app.dependency_overrides[current_superuser] = authenticated_superuser

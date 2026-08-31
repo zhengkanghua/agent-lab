@@ -23,7 +23,6 @@ from agent_lab.ingestion.freshrss_client import (
     FreshRSSConnectionError,
     FreshRSSTimeoutError,
 )
-from agent_lab.main import create_app
 from agent_lab.pipeline.ollama_embedding_provider import OllamaTimeoutError
 from agent_lab.pipeline.write_runtime import (
     PipelineRunOnceExecutionResult,
@@ -36,7 +35,8 @@ from agent_lab.services.news_pipeline_execution_service import (
     NewsSyncExecutionResult,
     PendingIndexExecutionResult,
 )
-from tests.auth_helpers import allow_superuser, skip_environment_admin_sync
+from tests.app_helpers import create_offline_app
+from tests.auth_helpers import allow_superuser
 
 
 def run(coroutine: Any) -> Any:
@@ -71,9 +71,15 @@ def execution_result(
 
 
 class FakeSearchRuntime:
-    """只支持 lifespan close；任何写入属性访问都会暴露边界错误。"""
+    """只支持 lifespan close 和 Agent 装配读取的 service；任何写入属性访问都会暴露边界错误。
+
+    ``service`` 必须存在：lifespan 会把它取出来传给 ``agent_runtime_factory``。缺了它，
+    这一步会抛 ``AttributeError`` 并被 lifespan 的 ``except Exception`` 咽掉——本文件的
+    用例照样通过，但「启动装配」这段实际上从没被执行过。
+    """
 
     def __init__(self) -> None:
+        self.service = object()
         self.closed = False
 
     async def close(self) -> None:
@@ -117,10 +123,9 @@ def app_for(
 
     search_runtime = FakeSearchRuntime()
     app = allow_superuser(
-        create_app(
-            runtime_factory=lambda: search_runtime,  # type: ignore[arg-type]
+        create_offline_app(
+            runtime_factory=lambda: search_runtime,
             pipeline_runtime_factory=runtime_factory,
-            environment_admin_sync=skip_environment_admin_sync,
         )
     )
     return app, search_runtime

@@ -14,8 +14,8 @@ from fastapi import FastAPI
 from sqlalchemy.exc import SQLAlchemyError
 
 from agent_lab.api.documents import get_document_repository
-from agent_lab.main import create_app
-from tests.auth_helpers import allow_reader, skip_environment_admin_sync
+from tests.app_helpers import create_offline_app
+from tests.auth_helpers import allow_reader
 
 
 def run(coroutine: Any) -> Any:
@@ -77,12 +77,7 @@ class FakeRepository:
 def build_app(repository: FakeRepository) -> FastAPI:
     """创建带 Repository override 的测试应用。"""
 
-    app = allow_reader(
-        create_app(  # type: ignore[arg-type]
-            runtime_factory=FakeRuntime,
-            environment_admin_sync=skip_environment_admin_sync,
-        )
-    )
+    app = allow_reader(create_offline_app(runtime_factory=FakeRuntime))
     app.dependency_overrides[get_document_repository] = lambda: repository
     return app
 

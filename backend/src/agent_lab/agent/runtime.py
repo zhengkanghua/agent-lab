@@ -26,6 +26,7 @@ from agent_lab.agent.chat_model import build_chat_model
 from agent_lab.agent.checkpointer import to_psycopg_conninfo
 from agent_lab.agent.context import AgentContext
 from agent_lab.agent.errors import AgentCheckpointerUnavailableError
+from agent_lab.agent.limits import RETRY_INITIAL_DELAY_SECONDS
 from agent_lab.agent.middleware import build_agent_middleware
 from agent_lab.agent.tools import build_agent_tools
 from agent_lab.config.llm import LlmSettings
@@ -65,6 +66,7 @@ class AgentRuntime:
         database_url: str,
         checkpointer: BaseCheckpointSaver | None = None,
         model: BaseChatModel | None = None,
+        retry_initial_delay: float = RETRY_INITIAL_DELAY_SECONDS,
     ) -> "AgentRuntime":
         """组装模型、工具、中间件和 checkpointer，编译出可共享的图。
 
@@ -79,6 +81,8 @@ class AgentRuntime:
             checkpointer: 可选的会话历史存储；离线测试注入 ``InMemorySaver``，省略时按
                 ``database_url`` 建 PostgreSQL 连接池。
             model: 可选的主模型客户端；离线测试注入 fake，省略时按配置构造。
+            retry_initial_delay: 重试首次退避秒数，透传给中间件；只为让测试传 0 免掉真
+                ``sleep``，生产不要传。
 
         Returns:
             尚未建连的 Runtime；必须再 ``await open()`` 才能处理请求。
@@ -157,6 +161,7 @@ class AgentRuntime:
             middleware=build_agent_middleware(
                 fallback_model=fallback_model,
                 summarization_model=primary_model,
+                retry_initial_delay=retry_initial_delay,
             ),
             context_schema=AgentContext,
             checkpointer=checkpointer,

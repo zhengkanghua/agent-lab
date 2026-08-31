@@ -28,11 +28,8 @@ from tests.agent_helpers import (
     ScriptedChatModel,
     StreamingChatModel,
 )
-from tests.auth_helpers import (
-    allow_reader,
-    allow_superuser,
-    skip_environment_admin_sync,
-)
+from tests.app_helpers import create_offline_app
+from tests.auth_helpers import allow_reader, allow_superuser
 
 
 def run(coroutine: Any) -> Any:
@@ -104,6 +101,8 @@ def app_for(
             database_url="postgresql+psycopg://unused/unused",
             checkpointer=InMemorySaver(),
             model=model,
+            # 退避是真 sleep，HTTP 层测的是 SSE 帧格式和状态码，不需要等。
+            retry_initial_delay=0.0,
         )
 
     grant = allow_superuser if superuser else allow_reader
@@ -114,17 +113,6 @@ def app_for(
         )
     )
     return app, search_runtime
-
-
-def create_offline_app(**kwargs: Any) -> FastAPI:
-    """按离线参数创建应用，集中收拢 ``type: ignore``。"""
-
-    from agent_lab.main import create_app
-
-    return create_app(  # type: ignore[arg-type]
-        environment_admin_sync=skip_environment_admin_sync,
-        **kwargs,
-    )
 
 
 async def send(

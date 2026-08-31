@@ -30,10 +30,7 @@ from agent_lab.agent.limits import (
 from agent_lab.agent.middleware import build_agent_middleware, select_system_prompt
 from agent_lab.agent.prompts import DEFAULT_SYSTEM_PROMPT
 from agent_lab.agent.streaming import stream_agent_events
-from agent_lab.schemas.agent_chat import (
-    AgentErrorEvent,
-    AgentToolResultEvent,
-)
+from agent_lab.schemas.agent_chat import AgentToolResultEvent
 from tests.agent_helpers import (
     OFFLINE_LANGSMITH_SETTINGS,
     CountingTool,
@@ -185,29 +182,6 @@ def test_model_failure_is_retried_then_falls_back() -> None:
     assert [type(event).__name__ for event in events][-1] == "AgentDoneEvent"
 
 
-def test_model_failure_surviving_fallback_becomes_a_classified_error_event() -> None:
-    """主备模型都失败时，返回按类型分类的错误事件，而不是抛异常。
-
-    流一旦开始就没法再改 HTTP 状态码，所以失败只能作为事件送达。这里同时断言 code 是
-    Agent 链路自己的值，不是 ``pipeline_internal_error``——那是手动流水线的契约。
-    """
-
-    error = openai.APITimeoutError(request=httpx.Request("POST", "http://llm"))
-    graph = build_offline_graph(
-        FailingChatModel(error=error),
-        [],
-        fallback_model=FailingChatModel(error=error),
-    )
-
-    events = run(collect(graph))
-
-    assert len(events) == 1
-    event = events[0]
-    assert isinstance(event, AgentErrorEvent)
-    assert event.code == "llm_timeout"
-    assert event.retryable is True
-
-
 def test_tool_call_limit_stops_further_tool_use() -> None:
     """工具调用次数到顶后不再执行工具，但模型仍可作答。
 
@@ -250,42 +224,37 @@ def test_model_call_limit_ends_the_run() -> None:
     assert [type(event).__name__ for event in events][-1] == "AgentDoneEvent"
 
 
-def test_default_prompt_is_used_when_context_gives_none() -> None:
-    """上下文没给自定义提示词时回落到内置默认提示词。"""
+# 提示词选择的全部输入形状。合成一条是因为它们都是「喂一个 context、断言选出哪份提示词」
+# 的纯函数调用，逐个写成独立函数只是重复同一行断言。
+#
+# 各条的意义：
+# - ``AgentContext()``：没给自定义值时回落到默认提示词。
+# - 给了自定义值：按它走。这条是「进程级共享一个图」能成立的前提——提示词是每次运行读的，
+#   不是编译期定死的，否则换提示词就得重新编译。
+# - 空白值（空串、空格、换行制表符）：等同于「没给」。真用一份空提示词会让模型失去角色
+#   约束和「必须引用 document_id」的要求，比回落到默认值糟得多。请求层已经把空白规整成
+#   ``None``，这里是第二道防线。
+# - ``None``：完全没有 context 也不能抛异常。``create_agent`` 允许不传 context 调用，那时
+#   ``runtime.context`` 就是 ``None``。这条路径 HTTP 层走不到，但图是公共对象，CLI 或测试
+#   可能直接调它。
+@pytest.mark.parametrize(
+    ("context", "expected"),
+    [
+        (AgentContext(), DEFAULT_SYSTEM_PROMPT),
+        (AgentContext(system_prompt="你只说是或不是。"), "你只说是或不是。"),
+        (AgentContext(system_prompt=""), DEFAULT_SYSTEM_PROMPT),
+        (AgentContext(system_prompt="   "), DEFAULT_SYSTEM_PROMPT),
+        (AgentContext(system_prompt="\n\t"), DEFAULT_SYSTEM_PROMPT),
+        (None, DEFAULT_SYSTEM_PROMPT),
+    ],
+)
+def test_prompt_selection_covers_every_context_shape(
+    context: AgentContext | None,
+    expected: str,
+) -> None:
+    """按上下文选出正确的那份系统提示词。"""
 
-    assert select_system_prompt(AgentContext()) == DEFAULT_SYSTEM_PROMPT
-
-
-def test_custom_prompt_from_context_overrides_the_default() -> None:
-    """上下文给了自定义提示词时按它走，且不需要重新编译图。
-
-    这条是「进程级共享一个 agent」能成立的前提：提示词是每次运行读的，不是编译期定的。
-    """
-
-    assert select_system_prompt(AgentContext(system_prompt="你只说是或不是。")) == (
-        "你只说是或不是。"
-    )
-
-
-@pytest.mark.parametrize("blank", ["", "   ", "\n\t"])
-def test_blank_custom_prompt_falls_back_to_default(blank: str) -> None:
-    """空白自定义提示词等同于「没给」。
-
-    真用一份空提示词会让模型失去角色约束和「必须引用 document_id」的要求，那比回落到
-    默认值糟得多。请求层已经把空白规整成 ``None``，这里是第二道防线。
-    """
-
-    assert select_system_prompt(AgentContext(system_prompt=blank)) == DEFAULT_SYSTEM_PROMPT
-
-
-def test_prompt_selection_tolerates_a_missing_context() -> None:
-    """完全没有上下文时也要给出默认提示词，不能抛异常。
-
-    ``create_agent`` 允许不传 context 调用；那种情况下 ``runtime.context`` 是 ``None``。
-    这条路径在 HTTP 层不会走到，但图是公共对象，CLI 或测试可能直接调它。
-    """
-
-    assert select_system_prompt(None) == DEFAULT_SYSTEM_PROMPT
+    assert select_system_prompt(context) == expected
 
 
 def test_custom_prompt_actually_reaches_the_model() -> None:

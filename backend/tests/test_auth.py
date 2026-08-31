@@ -16,10 +16,9 @@ from agent_lab.auth.dependencies import (
 )
 from agent_lab.auth.manager import UserManager
 from agent_lab.config.auth import AuthSettings
-from agent_lab.main import create_app
 from agent_lab.models.user import UserRecord
 from agent_lab.schemas.auth import AuthUserCreate
-from tests.auth_helpers import skip_environment_admin_sync
+from tests.app_helpers import create_offline_app
 
 
 def run(coroutine: Any) -> Any:
@@ -100,10 +99,7 @@ def auth_app(authenticated_user: UserRecord) -> tuple[Any, FakeDatabaseStrategy]
 
     strategy = FakeDatabaseStrategy(authenticated_user)
     manager = FakeUserManager(authenticated_user)
-    app = create_app(  # type: ignore[arg-type]
-        runtime_factory=FakeRuntime,
-        environment_admin_sync=skip_environment_admin_sync,
-    )
+    app = create_offline_app(runtime_factory=FakeRuntime)
     app.dependency_overrides[get_database_strategy] = lambda: strategy
     app.dependency_overrides[get_user_manager] = lambda: manager
     return app, strategy
@@ -305,7 +301,7 @@ def test_lifespan_synchronizes_environment_admin_before_search_runtime() -> None
         events.append("runtime")
         return OrderedRuntime()
 
-    app = create_app(  # type: ignore[arg-type]
+    app = create_offline_app(
         runtime_factory=build_runtime,
         environment_admin_sync=synchronize,
     )
