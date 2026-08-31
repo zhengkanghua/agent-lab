@@ -1,5 +1,5 @@
-import type { ApiError } from '../../../api/client'
-import { resolveErrorCopy, type ErrorCopy } from '../../../api/error-copy'
+import type { ApiError } from '@/api/client'
+import { resolveErrorCopy, type ErrorCopy } from '@/api/error-copy'
 
 export interface AgentErrorPresentation extends ErrorCopy {
   retryable: boolean
@@ -38,6 +38,13 @@ const CONFIGURATION_COPY: AgentErrorCopy = {
   title: 'Agent 尚未就绪',
   description: '服务端的模型配置需要维护，本轮提问没有执行完成。',
   retryable: false,
+}
+
+// 和 CONFIGURATION_COPY 的区别：那个是服务端还没配好，重试无用；这个是会话记忆的连接在
+// 中途断了，重发同一个问题通常就成功。所以不写 retryable，沿用后端给的 true。
+const MEMORY_CONNECTION_LOST_COPY: AgentErrorCopy = {
+  title: '会话记忆连接中断',
+  description: '本轮提问没有存进会话历史，重新发送一次即可。',
 }
 
 const REJECTED_COPY: AgentErrorCopy = {
@@ -84,6 +91,8 @@ const COPY_BY_CODE: Readonly<Partial<Record<string, AgentErrorCopy>>> = {
   llm_unavailable: UNAVAILABLE_COPY,
   llm_service_error: UNAVAILABLE_COPY,
   agent_tool_database_unavailable: UNAVAILABLE_COPY,
+
+  agent_checkpointer_connection_lost: MEMORY_CONNECTION_LOST_COPY,
 
   agent_runtime_unavailable: CONFIGURATION_COPY,
   agent_checkpointer_unavailable: CONFIGURATION_COPY,

@@ -161,6 +161,12 @@ sudo systemd-run --wait --pipe --collect \
 而是走 `Exception` 兜底变成 `agent_internal_error` 500，日志里只有异常类型。所以看到「一提问就
 500」先确认这一步跑过没有。
 
+注意和另一种长得很像的故障区分开：**每次**提问都失败且码是 `agent_internal_error` 500，是表没建；
+**空闲一段时间后**的头几次提问失败、码是 `agent_checkpointer_connection_lost` 503、日志里还有一行
+`discarding closed connection`，那是池里的连接被服务端掐掉了（`idle_session_timeout`、中间代理的
+空闲回收、PG 重启都会造成），重发即可，表是好的。两者都只影响提问、不影响检索，因为会话记忆走的是
+独立的 psycopg 池。
+
 ## 5. systemd 服务
 
 创建 `/etc/systemd/system/agent-lab.service`：

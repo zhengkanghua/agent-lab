@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ApiError } from '../../../api/client'
+import { ApiError } from '@/api/client'
 import { presentAgentError } from '../model/agent-error'
 
 function apiError(code: string, status = 0, retryable = false): ApiError {
@@ -25,6 +25,19 @@ describe('presentAgentError', () => {
   it('没有钉死重试语义的文案沿用后端给的值', () => {
     expect(presentAgentError(apiError('llm_response_invalid', 502, true)).retryable).toBe(true)
     expect(presentAgentError(apiError('llm_response_invalid', 502, false)).retryable).toBe(false)
+  })
+
+  it('会话记忆中途断连是可重试的，不能和「服务端没配好」共用文案', () => {
+    // 这两个码都来自 checkpointer，但要用户做的事相反：连接中断重发一次就好，
+    // 配置没做好重发一百次也一样。共用 CONFIGURATION_COPY 会把「重发即可」的故障
+    // 说成「等管理员」，用户于是不会去点重试。
+    const lost = presentAgentError(apiError('agent_checkpointer_connection_lost', 503, true))
+
+    expect(lost.title).toBe('会话记忆连接中断')
+    expect(lost.retryable).toBe(true)
+    expect(presentAgentError(apiError('agent_checkpointer_unavailable', 503, true)).retryable).toBe(
+      false,
+    )
   })
 
   it('code 优先于 status', () => {
