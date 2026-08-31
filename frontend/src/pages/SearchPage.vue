@@ -1,24 +1,19 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Bot, BookOpenText, LogOut, Search, ShieldCheck, UserRound, UsersRound } from '@lucide/vue'
-import { useRouter } from 'vue-router'
-import { queryClient } from '../app/query-client'
-import { authSession } from '../features/auth/auth-session'
-import DocumentReader from '../features/semantic-search/components/DocumentReader.vue'
-import SearchComposer from '../features/semantic-search/components/SearchComposer.vue'
-import SearchResults from '../features/semantic-search/components/SearchResults.vue'
-import { useChunkSearch } from '../features/semantic-search/composables/useChunkSearch'
-import { useDocumentReader } from '../features/semantic-search/composables/useDocumentReader'
-import { useSemanticSearch } from '../features/semantic-search/composables/useSemanticSearch'
-import type {
-  NewsReadableResult,
-  SearchMode,
-} from '../features/semantic-search/model/search-result'
+import { Bot, BookOpenText, Search, ShieldCheck, UsersRound } from '@lucide/vue'
+import AppShell from '@/layouts/AppShell.vue'
+import { authSession } from '@/features/auth/auth-session'
+import { useLogout } from '@/features/auth/useLogout'
+import DocumentReader from '@/features/semantic-search/components/DocumentReader.vue'
+import SearchComposer from '@/features/semantic-search/components/SearchComposer.vue'
+import SearchResults from '@/features/semantic-search/components/SearchResults.vue'
+import { useChunkSearch } from '@/features/semantic-search/composables/useChunkSearch'
+import { useDocumentReader } from '@/features/semantic-search/composables/useDocumentReader'
+import { useSemanticSearch } from '@/features/semantic-search/composables/useSemanticSearch'
+import type { NewsReadableResult, SearchMode } from '@/features/semantic-search/model/search-result'
 
 const mode = ref<SearchMode>('document')
-const router = useRouter()
-const loggingOut = ref(false)
-const logoutError = ref(false)
+const { loggingOut, logoutError, logout } = useLogout()
 const documentSearch = useSemanticSearch()
 const chunkSearch = useChunkSearch()
 const reader = useDocumentReader()
@@ -53,6 +48,15 @@ const modeCopy = computed(() =>
       },
 )
 
+// 两个入口都只给超管：Agent 会花掉模型额度，账号管理会改别人的权限。
+const navLinks = computed(() => {
+  const isSuperuser = authSession.user.value?.is_superuser === true
+  return [
+    { to: { name: 'agent-chat' }, label: 'Agent 对话', icon: Bot, visible: isSuperuser },
+    { to: { name: 'user-admin' }, label: '账号管理', icon: UsersRound, visible: isSuperuser },
+  ]
+})
+
 function switchMode(nextMode: SearchMode): void {
   if (mode.value === nextMode) return
   // 每个模式维护独立请求状态；切换时取消在途请求，避免隐藏响应在返回后变成陈旧结果。
@@ -81,86 +85,28 @@ async function chooseExample(value: string): Promise<void> {
 function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | null): void {
   void reader.open(result, trigger)
 }
-
-async function logout(): Promise<void> {
-  if (loggingOut.value) return
-
-  loggingOut.value = true
-  logoutError.value = false
-  try {
-    await authSession.logout()
-    queryClient.clear()
-    await router.replace({ name: 'login' })
-  } catch {
-    logoutError.value = true
-  } finally {
-    loggingOut.value = false
-  }
-}
 </script>
 
 <template>
-  <div class="app-shell">
-    <a class="skip-link" href="#search-workspace">跳到检索工作台</a>
-
-    <header class="topbar">
-      <div class="content-wrap topbar-inner">
-        <a class="brand-lockup" href="/" aria-label="Signal Desk 首页">
-          <span class="brand-mark" aria-hidden="true">
-            <Search :size="19" stroke-width="2.2" />
-          </span>
-          <span class="brand-copy">
-            <strong>Signal Desk</strong>
-            <small>新闻语义研究台</small>
-          </span>
-        </a>
-
-        <div class="topbar-actions">
-          <div class="mode-note">
-            <span class="mode-dot" aria-hidden="true"></span>
-            <span>{{ modeCopy.badge }}</span>
-            <!-- 本页确实不生成答案：它只返回检索到的原文片段。要模型作答请走 /agent。 -->
-            <span class="mode-detail">本页只给原文</span>
-          </div>
-
-          <div class="account-control">
-            <RouterLink
-              v-if="authSession.user.value?.is_superuser"
-              class="admin-link"
-              :to="{ name: 'agent-chat' }"
-              aria-label="打开 Agent 对话"
-              title="Agent 对话"
-            >
-              <Bot :size="17" aria-hidden="true" />
-            </RouterLink>
-            <RouterLink
-              v-if="authSession.user.value?.is_superuser"
-              class="admin-link"
-              :to="{ name: 'user-admin' }"
-              aria-label="管理平台账号"
-              title="账号管理"
-            >
-              <UsersRound :size="17" aria-hidden="true" />
-            </RouterLink>
-            <span v-if="authSession.user.value" class="account-identity">
-              <UserRound :size="16" aria-hidden="true" />
-              <span>{{ authSession.user.value.email }}</span>
-            </span>
-            <button
-              type="button"
-              class="logout-button"
-              :disabled="loggingOut"
-              aria-label="退出登录"
-              title="退出登录"
-              @click="logout"
-            >
-              <LogOut :size="17" aria-hidden="true" />
-            </button>
-            <span v-if="logoutError" class="logout-error" role="alert">退出失败</span>
-          </div>
-        </div>
-      </div>
-    </header>
+  <!-- mode-detail 写「本页只给原文」是认真的：本页不生成答案，只返回检索到的原文
+       片段。要模型作答请走 /agent。 -->
+  <AppShell
+    brand-title="Signal Desk"
+    brand-subtitle="新闻语义研究台"
+    brand-label="Signal Desk 首页"
+    brand-href="/"
+    main-id="search-workspace"
+    skip-label="跳到检索工作台"
+    :nav-links="navLinks"
+    :mode-label="modeCopy.badge"
+    mode-detail="本页只给原文"
+    footer-brand="Signal Desk"
+    footer-note="新闻分组 / 原始片段 · 原文可追溯 · 只读访问"
+    :logging-out="loggingOut"
+    :logout-error="logoutError"
+    @logout="logout"
+  >
+    <template #brand-icon><Search :size="19" stroke-width="2.2" /></template>
 
     <main id="search-workspace" class="content-wrap workspace">
       <aside class="search-pane" aria-labelledby="page-title">
@@ -224,149 +170,10 @@ async function logout(): Promise<void> {
       @closed="reader.restoreFocus"
       @retry="reader.retry"
     />
-
-    <footer class="site-footer">
-      <div class="content-wrap footer-inner">
-        <span>Signal Desk</span>
-        <span>新闻分组 / 原始片段 · 原文可追溯 · 只读访问</span>
-      </div>
-    </footer>
-  </div>
+  </AppShell>
 </template>
 
 <style scoped>
-.topbar {
-  position: sticky;
-  z-index: 10;
-  top: 0;
-  border-bottom: 1px solid var(--paper-300);
-  background: rgba(255, 255, 255, 0.96);
-  backdrop-filter: blur(12px);
-}
-
-/* .topbar-inner 见 styles/components/topbar.css。 */
-
-.brand-lockup {
-  display: inline-flex;
-  align-items: center;
-  gap: 11px;
-  color: inherit;
-  text-decoration: none;
-}
-
-/* .brand-mark、.brand-copy 见 styles/components/topbar.css。 */
-
-.brand-copy strong {
-  font-family: var(--display-font);
-  font-size: 1rem;
-  font-weight: 760;
-  letter-spacing: 0;
-  line-height: 1.2;
-}
-
-.brand-copy small {
-  color: var(--ink-700);
-  font-size: 0.72rem;
-  letter-spacing: 0;
-}
-
-.mode-note {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--ink-700);
-  font-size: 0.78rem;
-  white-space: nowrap;
-}
-
-.topbar-actions,
-.account-control,
-.account-identity {
-  display: inline-flex;
-  align-items: center;
-}
-
-.topbar-actions {
-  gap: 18px;
-}
-
-.account-control {
-  position: relative;
-  gap: 7px;
-  padding-left: 17px;
-  border-left: 1px solid var(--paper-300);
-}
-
-.account-identity {
-  max-width: 220px;
-  gap: 7px;
-  color: var(--ink-700);
-  font-size: 0.75rem;
-}
-
-.account-identity span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.account-identity svg {
-  flex: 0 0 auto;
-  color: var(--source-600);
-}
-
-.logout-button,
-.admin-link {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  color: var(--ink-700);
-  background: transparent;
-}
-
-.admin-link {
-  text-decoration: none;
-}
-
-.logout-button:hover:not(:disabled),
-.admin-link:hover {
-  border-color: var(--paper-300);
-  color: var(--signal-600);
-  background: var(--paper-100);
-}
-
-.logout-button:disabled {
-  cursor: wait;
-  opacity: 0.45;
-}
-
-.logout-error {
-  position: absolute;
-  top: calc(100% + 9px);
-  right: 0;
-  color: var(--danger-600);
-  font-size: 0.7rem;
-  white-space: nowrap;
-}
-
-.mode-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--source-500);
-  box-shadow: 0 0 0 4px var(--source-100);
-}
-
-.mode-detail {
-  padding-left: 8px;
-  border-left: 1px solid var(--paper-300);
-  color: var(--ink-500);
-}
-
 .workspace {
   display: grid;
   grid-template-columns: minmax(310px, 380px) minmax(0, 1fr);
@@ -388,7 +195,7 @@ async function logout(): Promise<void> {
 }
 
 .workspace-label {
-  color: var(--signal-600);
+  color: var(--text-secondary);
   font-size: 0.76rem;
   font-weight: 760;
 }
@@ -396,8 +203,7 @@ async function logout(): Promise<void> {
 .workspace-intro h1 {
   max-width: 380px;
   margin-top: 10px;
-  color: var(--ink-950);
-  font-family: var(--display-font);
+  color: var(--text-primary);
   font-size: 2.25rem;
   font-weight: 780;
   letter-spacing: 0;
@@ -411,7 +217,7 @@ async function logout(): Promise<void> {
 .workspace-intro > p:not(.workspace-label) {
   max-width: 36ch;
   margin-top: 16px;
-  color: var(--ink-700);
+  color: var(--text-secondary);
   font-size: 0.94rem;
   line-height: 1.72;
 }
@@ -421,43 +227,26 @@ async function logout(): Promise<void> {
   gap: 9px;
   margin-top: 23px;
   padding-top: 16px;
-  border-top: 1px solid var(--paper-300);
+  border-top: 1px solid var(--border-subtle);
 }
 
 .workspace-facts span {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: var(--ink-700);
+  color: var(--text-secondary);
   font-size: 0.78rem;
 }
 
 .workspace-facts svg {
-  color: var(--source-600);
+  color: var(--accent);
 }
 
 .results-pane {
   min-width: 0;
 }
 
-.site-footer {
-  border-top: 1px solid var(--paper-300);
-  background: var(--paper-50);
-}
-
-.footer-inner {
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 19px 0 22px;
-  color: var(--ink-500);
-  font-size: 0.72rem;
-}
-
-.footer-inner span:first-child {
-  color: var(--ink-800);
-  font-weight: 720;
-}
+/* 顶栏与页脚的样式随结构一起搬到 layouts/AppShell.vue。 */
 
 @media (max-width: 980px) {
   .workspace {
@@ -482,31 +271,6 @@ async function logout(): Promise<void> {
 }
 
 @media (max-width: 560px) {
-  .topbar-inner {
-    min-height: 62px;
-  }
-
-  .brand-copy small,
-  .mode-detail {
-    display: none;
-  }
-
-  .mode-note {
-    font-size: 0.72rem;
-  }
-
-  .topbar-actions {
-    gap: 8px;
-  }
-
-  .account-control {
-    padding-left: 8px;
-  }
-
-  .account-identity {
-    display: none;
-  }
-
   .workspace {
     gap: 29px;
     padding-top: 24px;
@@ -528,12 +292,6 @@ async function logout(): Promise<void> {
 
   .workspace-facts {
     grid-template-columns: 1fr;
-  }
-
-  .footer-inner {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 5px;
   }
 }
 </style>

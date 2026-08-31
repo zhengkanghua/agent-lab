@@ -2,8 +2,8 @@ import { defineComponent, h, nextTick } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError } from '../../../api/client'
-import { fetchDocument } from '../../../api/documents'
+import { ApiError } from '@/api/client'
+import { fetchDocument } from '@/api/documents'
 import { useDocumentReader } from '../composables/useDocumentReader'
 
 vi.mock('../../../api/documents', () => ({

@@ -1,7 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import SearchPage from '../../../pages/SearchPage.vue'
+import SearchPage from '@/pages/SearchPage.vue'
 
 const match = {
   chunk_id: '10000000-0000-4000-8000-000000000001',
@@ -53,7 +53,7 @@ const chunkResult = {
 
 describe('SearchPage search modes', () => {
   afterEach(() => {
-    document.body.innerHTML = ''
+    document.body.replaceChildren()
     vi.unstubAllGlobals()
   })
 

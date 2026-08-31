@@ -2,9 +2,12 @@
 import { computed, ref } from 'vue'
 import { Eye, EyeOff, LogIn, RefreshCw, ScanSearch, Search } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
-import { resolveErrorCopy } from '../api/error-copy'
-import { queryClient } from '../app/query-client'
-import { authSession } from '../features/auth/auth-session'
+import { resolveErrorCopy } from '@/api/error-copy'
+import { queryClient } from '@/app/query-client'
+import { authSession } from '@/features/auth/auth-session'
+import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseField from '@/shared/ui/BaseField.vue'
+import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -108,21 +111,24 @@ async function retrySessionCheck(): Promise<void> {
 
         <div v-if="sessionUnavailable" class="login-notice" role="status">
           <span>登录服务暂时不可用。</span>
-          <button
-            type="button"
-            :disabled="authSession.status.value === 'loading'"
+          <BaseButton
+            class="notice-retry"
+            variant="ghost"
+            size="xs"
+            :loading="authSession.status.value === 'loading'"
             @click="retrySessionCheck"
           >
-            <RefreshCw :size="15" aria-hidden="true" />
+            <template #icon><RefreshCw :size="15" aria-hidden="true" /></template>
             重新连接
-          </button>
+          </BaseButton>
         </div>
 
         <form class="login-form" novalidate @submit.prevent="submitLogin">
-          <label class="login-field">
-            <span>账号邮箱</span>
+          <BaseField v-slot="{ control }" label="账号邮箱">
             <input
+              v-bind="control"
               v-model="email"
+              class="login-input"
               name="username"
               type="email"
               autocomplete="username"
@@ -131,38 +137,43 @@ async function retrySessionCheck(): Promise<void> {
               autofocus
               placeholder="name@example.com"
             />
-          </label>
+          </BaseField>
 
-          <label class="login-field">
-            <span>密码</span>
+          <BaseField v-slot="{ control }" label="密码">
             <span class="password-control">
               <input
+                v-bind="control"
                 v-model="password"
+                class="login-input"
                 name="password"
                 :type="showPassword ? 'text' : 'password'"
                 autocomplete="current-password"
                 required
                 placeholder="输入密码"
               />
-              <button
-                type="button"
+              <BaseIconButton
                 class="password-toggle"
-                :aria-label="showPassword ? '隐藏密码' : '显示密码'"
-                :title="showPassword ? '隐藏密码' : '显示密码'"
+                :label="showPassword ? '隐藏密码' : '显示密码'"
                 @click="showPassword = !showPassword"
               >
                 <EyeOff v-if="showPassword" :size="18" aria-hidden="true" />
                 <Eye v-else :size="18" aria-hidden="true" />
-              </button>
+              </BaseIconButton>
             </span>
-          </label>
+          </BaseField>
 
           <p v-if="loginError" class="login-error" role="alert">{{ loginError }}</p>
 
-          <button class="login-submit" type="submit" :disabled="submitting || !email || !password">
-            <LogIn :size="18" aria-hidden="true" />
+          <BaseButton
+            variant="primary"
+            block
+            type="submit"
+            :loading="submitting"
+            :disabled="!email || !password"
+          >
+            <template #icon><LogIn :size="18" aria-hidden="true" /></template>
             {{ submitting ? '正在登录' : '登录' }}
-          </button>
+          </BaseButton>
         </form>
 
         <p class="account-note">账号由平台管理员创建和管理。</p>
@@ -174,7 +185,7 @@ async function retrySessionCheck(): Promise<void> {
 <style scoped>
 .login-shell {
   min-height: 100vh;
-  background: var(--paper-50);
+  background: var(--surface-raised);
 }
 
 /* .topbar-inner、.brand-mark、.brand-copy 见 styles/components/topbar.css。
@@ -186,8 +197,8 @@ async function retrySessionCheck(): Promise<void> {
 }
 
 .login-topbar {
-  border-bottom: 1px solid var(--paper-300);
-  background: var(--paper-50);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
 }
 
 .login-brand {
@@ -199,7 +210,6 @@ async function retrySessionCheck(): Promise<void> {
 }
 
 .login-brand strong {
-  font-family: var(--display-font);
   font-size: 1rem;
   font-weight: 760;
   letter-spacing: 0;
@@ -207,12 +217,12 @@ async function retrySessionCheck(): Promise<void> {
 }
 
 .login-brand small {
-  color: var(--ink-700);
+  color: var(--text-secondary);
   font-size: 0.72rem;
 }
 
 .access-label {
-  color: var(--ink-500);
+  color: var(--text-muted);
   font-family: var(--mono-font);
   font-size: 0.7rem;
 }
@@ -233,15 +243,14 @@ async function retrySessionCheck(): Promise<void> {
 
 .login-kicker,
 .tool-heading p {
-  color: var(--signal-600);
+  color: var(--text-secondary);
   font-size: 0.75rem;
   font-weight: 760;
 }
 
 .login-context h1 {
   margin-top: 10px;
-  color: var(--ink-950);
-  font-family: var(--display-font);
+  color: var(--text-primary);
   font-size: 2.65rem;
   font-weight: 780;
   letter-spacing: 0;
@@ -250,7 +259,7 @@ async function retrySessionCheck(): Promise<void> {
 
 .login-intro {
   margin-top: 17px;
-  color: var(--ink-700);
+  color: var(--text-secondary);
   font-size: 0.96rem;
 }
 
@@ -260,8 +269,8 @@ async function retrySessionCheck(): Promise<void> {
   height: 190px;
   margin-top: 52px;
   overflow: hidden;
-  border-top: 1px solid var(--paper-300);
-  border-bottom: 1px solid var(--paper-300);
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .register-heading {
@@ -269,11 +278,11 @@ async function retrySessionCheck(): Promise<void> {
   align-items: center;
   justify-content: space-between;
   padding: 20px 0 17px;
-  color: var(--source-600);
+  color: var(--accent);
 }
 
 .register-heading span {
-  color: var(--ink-500);
+  color: var(--text-muted);
   font-family: var(--mono-font);
   font-size: 0.65rem;
 }
@@ -286,7 +295,7 @@ async function retrySessionCheck(): Promise<void> {
 .register-line {
   display: block;
   height: 5px;
-  background: var(--paper-200);
+  background: var(--surface-sunken);
 }
 
 .register-line-long {
@@ -307,7 +316,7 @@ async function retrySessionCheck(): Promise<void> {
   bottom: 18px;
   left: 34%;
   width: 3px;
-  background: var(--signal-500);
+  background: var(--accent);
 }
 
 .register-locator::after {
@@ -316,21 +325,20 @@ async function retrySessionCheck(): Promise<void> {
   left: -5px;
   width: 13px;
   height: 13px;
-  border: 3px solid var(--paper-50);
+  border: 3px solid var(--surface-raised);
   border-radius: 50%;
-  background: var(--signal-500);
-  box-shadow: 0 0 0 1px var(--signal-500);
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
   content: '';
 }
 
 .login-tool {
   padding: 12px 0 12px 64px;
-  border-left: 1px solid var(--paper-300);
+  border-left: 1px solid var(--border-subtle);
 }
 
 .tool-heading h2 {
   margin-top: 7px;
-  font-family: var(--display-font);
   font-size: 1.55rem;
   font-weight: 760;
   letter-spacing: 0;
@@ -344,23 +352,17 @@ async function retrySessionCheck(): Promise<void> {
   gap: 16px;
   margin-top: 24px;
   padding: 12px 14px;
-  border: 1px solid var(--paper-300);
-  border-left: 3px solid var(--warning-600);
-  color: var(--ink-700);
-  background: var(--paper-100);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--warning);
+  color: var(--text-secondary);
+  background: var(--surface-base);
   font-size: 0.78rem;
 }
 
-.login-notice button {
-  display: inline-flex;
+/* ghost/xs 已经带了内联排布、6px 间距、零内边距与强调色。这里只补一条：
+   space-between 的行里默认可压缩，文字会被挤成两行。 */
+.notice-retry {
   flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-  border: 0;
-  color: var(--source-600);
-  background: transparent;
-  font-weight: 700;
 }
 
 .login-form {
@@ -369,27 +371,19 @@ async function retrySessionCheck(): Promise<void> {
   margin-top: 31px;
 }
 
-/* 本页控件尺寸与 UserAdminPage 的 .field-control / .icon-button / .primary-command
-   保持同一套刻度（输入框 42px、图标按钮 34px、标签 0.75rem、输入文字 0.84rem）。
-   两页类名不同、不共享 CSS，所以这里是刻意对齐而非继承，改动其中一页时另一页
-   不会跟着变。.password-toggle 的 34px 与输入框的 42px 是耦合的：上右各内缩 4px，
-   4 + 34 + 4 = 42 才能正好嵌在输入框里。 */
-.login-field {
-  display: grid;
-  gap: 7px;
-  color: var(--ink-800);
-  font-size: 0.75rem;
-  font-weight: 700;
-}
-
-.login-field input {
+/* 标签、错误、说明与 aria 接线都归 BaseField；提交与重连按钮归 BaseButton；
+   显示密码归 BaseIconButton。留在本页的只有输入框本身的样式——输入框还没抽成
+   基础组件，因为 type / inputmode / autocomplete 这些属性面差别太大。
+   .password-toggle 的 34px 与输入框的 42px 是耦合的：上右各内缩 4px，
+   4 + 34 + 4 = 42 才能正好嵌在输入框里，所以这里只调位置，不改尺寸。 */
+.login-input {
   width: 100%;
   height: 42px;
   padding: 0 12px;
-  border: 1px solid var(--paper-300);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  color: var(--ink-950);
-  background: var(--paper-50);
+  color: var(--text-primary);
+  background: var(--surface-raised);
   font-size: 0.84rem;
   font-weight: 450;
   outline: none;
@@ -398,13 +392,13 @@ async function retrySessionCheck(): Promise<void> {
     box-shadow 140ms ease;
 }
 
-.login-field input::placeholder {
-  color: var(--ink-500);
+.login-input::placeholder {
+  color: var(--text-muted);
 }
 
-.login-field input:focus {
-  border-color: var(--source-500);
-  box-shadow: 0 0 0 3px var(--source-100);
+.login-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .password-control {
@@ -412,7 +406,7 @@ async function retrySessionCheck(): Promise<void> {
   display: block;
 }
 
-.password-control input {
+.password-control .login-input {
   padding-right: 42px;
 }
 
@@ -420,65 +414,19 @@ async function retrySessionCheck(): Promise<void> {
   position: absolute;
   top: 4px;
   right: 4px;
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: var(--ink-500);
-  background: transparent;
-}
-
-.password-toggle:hover {
-  color: var(--ink-950);
-  background: var(--paper-100);
 }
 
 .login-error {
   padding: 11px 13px;
-  border-left: 3px solid var(--danger-600);
-  color: var(--danger-600);
-  background: var(--danger-100);
+  border-left: 3px solid var(--danger);
+  color: var(--danger);
+  background: var(--danger-soft);
   font-size: 0.8rem;
-}
-
-.login-submit {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  min-height: 42px;
-  gap: 9px;
-  padding: 0 18px;
-  border: 1px solid var(--ink-950);
-  border-radius: var(--radius-sm);
-  color: var(--paper-50);
-  background: var(--ink-950);
-  font-size: 0.81rem;
-  font-weight: 720;
-  transition:
-    background 140ms ease,
-    transform 140ms ease;
-}
-
-.login-submit:hover:not(:disabled) {
-  background: var(--source-600);
-}
-
-.login-submit:active:not(:disabled) {
-  transform: translateY(1px);
-}
-
-.login-submit:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
 }
 
 .account-note {
   margin-top: 22px;
-  color: var(--ink-500);
+  color: var(--text-muted);
   font-size: 0.72rem;
 }
 
@@ -502,7 +450,7 @@ async function retrySessionCheck(): Promise<void> {
   .login-tool {
     max-width: 560px;
     padding: 40px 0 0;
-    border-top: 1px solid var(--paper-300);
+    border-top: 1px solid var(--border-subtle);
     border-left: 0;
   }
 }

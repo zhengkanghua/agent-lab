@@ -1,16 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import {
-  AlertTriangle,
-  Clock3,
-  ExternalLink,
-  FileText,
-  LoaderCircle,
-  RotateCcw,
-  X,
-} from '@lucide/vue'
-import type { ApiError } from '../../../api/client'
-import { resolveErrorCopy, type ErrorCopy } from '../../../api/error-copy'
+import { AlertTriangle, Clock3, ExternalLink, FileText, RotateCcw, X } from '@lucide/vue'
+import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
+import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
+import type { ApiError } from '@/api/client'
+import { resolveErrorCopy, type ErrorCopy } from '@/api/error-copy'
 import type { NewsDocumentDetail } from '../model/document-detail'
 import { formatPublishedAt, type NewsReadableResult } from '../model/search-result'
 
@@ -30,7 +25,7 @@ const emit = defineEmits<{
 }>()
 
 const panel = ref<HTMLElement | null>(null)
-const closeButton = ref<HTMLButtonElement | null>(null)
+const closeButton = ref<InstanceType<typeof BaseIconButton> | null>(null)
 let previousBodyOverflow = ''
 
 // 全文接口的失败按 HTTP 状态分类就够：它不像检索链路那样有一串上游 code，
@@ -130,16 +125,9 @@ function handleKeydown(event: KeyboardEvent): void {
               <FileText :size="15" aria-hidden="true" />
               <span>新闻全文</span>
             </div>
-            <button
-              ref="closeButton"
-              class="reader-close"
-              type="button"
-              aria-label="关闭全文"
-              title="关闭全文"
-              @click="emit('close')"
-            >
+            <BaseIconButton ref="closeButton" size="lg" label="关闭全文" @click="emit('close')">
               <X :size="20" aria-hidden="true" />
-            </button>
+            </BaseIconButton>
           </header>
 
           <div class="reader-scroll">
@@ -169,7 +157,7 @@ function handleKeydown(event: KeyboardEvent): void {
             </div>
 
             <div v-if="loading" class="reader-loading" aria-live="polite">
-              <LoaderCircle class="spin" :size="22" aria-hidden="true" />
+              <BaseSpinner :size="22" />
               <div>
                 <strong>正在读取全文</strong>
                 <span>从新闻资料库载入当前版本</span>
@@ -184,15 +172,16 @@ function handleKeydown(event: KeyboardEvent): void {
               <div>
                 <h3>{{ errorCopy.title }}</h3>
                 <p>{{ errorCopy.description }}</p>
-                <button
+                <BaseButton
                   v-if="error.retryable"
-                  type="button"
                   class="reader-retry"
+                  variant="outline"
+                  size="sm"
                   @click="emit('retry')"
                 >
-                  <RotateCcw :size="15" aria-hidden="true" />
+                  <template #icon><RotateCcw :size="15" aria-hidden="true" /></template>
                   重试全文
-                </button>
+                </BaseButton>
               </div>
             </div>
 
@@ -213,7 +202,7 @@ function handleKeydown(event: KeyboardEvent): void {
   inset: 0;
   display: flex;
   justify-content: flex-end;
-  background: rgba(24, 33, 31, 0.42);
+  background: var(--surface-overlay);
   backdrop-filter: blur(2px);
 }
 
@@ -226,9 +215,9 @@ function handleKeydown(event: KeyboardEvent): void {
   height: 100dvh;
   outline: 0;
   overflow: hidden;
-  color: var(--ink-950);
-  background: var(--paper-50);
-  box-shadow: -18px 0 48px rgba(24, 33, 31, 0.18);
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-drawer);
 }
 
 .reader-signal {
@@ -236,7 +225,7 @@ function handleKeydown(event: KeyboardEvent): void {
   z-index: 2;
   inset: 0 auto 0 0;
   width: 4px;
-  background: var(--signal-500);
+  background: var(--accent);
 }
 
 .reader-header {
@@ -245,32 +234,16 @@ function handleKeydown(event: KeyboardEvent): void {
   justify-content: space-between;
   min-height: 68px;
   padding: 0 22px 0 26px;
-  border-bottom: 1px solid var(--paper-300);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .reader-kicker {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: var(--signal-600);
+  color: var(--text-secondary);
   font-size: 0.74rem;
   font-weight: 760;
-}
-
-.reader-close {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: var(--ink-700);
-  background: transparent;
-}
-
-.reader-close:hover {
-  color: var(--ink-950);
-  background: var(--paper-200);
 }
 
 .reader-scroll {
@@ -281,7 +254,7 @@ function handleKeydown(event: KeyboardEvent): void {
 
 .reader-title-block {
   padding-bottom: 28px;
-  border-bottom: 1px solid var(--ink-950);
+  border-bottom: 1px solid var(--text-primary);
 }
 
 .reader-meta {
@@ -289,7 +262,7 @@ function handleKeydown(event: KeyboardEvent): void {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px 13px;
-  color: var(--ink-700);
+  color: var(--text-secondary);
   font-size: 0.74rem;
 }
 
@@ -304,16 +277,15 @@ function handleKeydown(event: KeyboardEvent): void {
   padding: 3px 7px;
   border-radius: 4px;
   overflow-wrap: anywhere;
-  color: var(--source-600);
-  background: var(--source-100);
+  color: var(--accent);
+  background: var(--accent-soft);
   font-weight: 740;
 }
 
 .reader-title-block h2 {
   margin-top: 14px;
   overflow-wrap: anywhere;
-  color: var(--ink-950);
-  font-family: var(--display-font);
+  color: var(--text-primary);
   font-size: 2rem;
   font-weight: 780;
   letter-spacing: 0;
@@ -326,7 +298,7 @@ function handleKeydown(event: KeyboardEvent): void {
   gap: 6px;
   min-height: 36px;
   margin-top: 15px;
-  color: var(--signal-600);
+  color: var(--text-secondary);
   font-size: 0.78rem;
   font-weight: 740;
   text-decoration: none;
@@ -343,16 +315,16 @@ function handleKeydown(event: KeyboardEvent): void {
   gap: 10px;
   margin-top: 24px;
   padding: 13px 14px;
-  border-left: 3px solid var(--warning-600);
-  color: var(--ink-800);
-  background: #fff8e8;
+  border-left: 3px solid var(--warning);
+  color: var(--text-secondary);
+  background: var(--warning-soft);
   font-size: 0.8rem;
   line-height: 1.55;
 }
 
 .version-warning svg {
   margin-top: 2px;
-  color: var(--warning-600);
+  color: var(--warning);
 }
 
 .reader-loading {
@@ -360,12 +332,12 @@ function handleKeydown(event: KeyboardEvent): void {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 8px 12px;
   padding-top: 38px;
-  color: var(--ink-700);
+  color: var(--text-secondary);
 }
 
 .reader-loading > svg {
   margin-top: 2px;
-  color: var(--source-600);
+  color: var(--accent);
 }
 
 .reader-loading div {
@@ -374,7 +346,7 @@ function handleKeydown(event: KeyboardEvent): void {
 }
 
 .reader-loading strong {
-  color: var(--ink-950);
+  color: var(--text-primary);
   font-size: 0.86rem;
 }
 
@@ -388,7 +360,12 @@ function handleKeydown(event: KeyboardEvent): void {
   height: 12px;
   margin-top: 8px;
   border-radius: 3px;
-  background: linear-gradient(90deg, var(--paper-200), #f8faf9, var(--paper-200));
+  background: linear-gradient(
+    90deg,
+    var(--surface-sunken),
+    var(--surface-raised),
+    var(--surface-sunken)
+  );
   background-size: 200% 100%;
   animation: shimmer 1.5s ease-in-out infinite;
 }
@@ -410,13 +387,12 @@ function handleKeydown(event: KeyboardEvent): void {
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  color: var(--danger-600);
-  background: var(--danger-100);
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 
 .reader-error h3 {
-  color: var(--ink-950);
-  font-family: var(--display-font);
+  color: var(--text-primary);
   font-size: 1.18rem;
   letter-spacing: 0;
 }
@@ -424,29 +400,14 @@ function handleKeydown(event: KeyboardEvent): void {
 .reader-error p {
   max-width: 48ch;
   margin-top: 5px;
-  color: var(--ink-700);
+  color: var(--text-secondary);
   font-size: 0.84rem;
   line-height: 1.65;
 }
 
+/* 描边、字号、高度都归 BaseButton 的 outline + sm。留在这里的只有与错误正文的间距。 */
 .reader-retry {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 38px;
   margin-top: 17px;
-  padding: 7px 12px;
-  border: 1px solid var(--signal-500);
-  border-radius: var(--radius-sm);
-  color: var(--signal-600);
-  background: var(--paper-50);
-  font-size: 0.78rem;
-  font-weight: 720;
-}
-
-.reader-retry:hover {
-  color: var(--paper-50);
-  background: var(--signal-600);
 }
 
 .reader-article {
@@ -456,13 +417,11 @@ function handleKeydown(event: KeyboardEvent): void {
 .reader-article p {
   max-width: 76ch;
   overflow-wrap: anywhere;
-  color: var(--ink-800);
+  color: var(--text-secondary);
   font-size: 1rem;
   line-height: 1.95;
   white-space: pre-wrap;
 }
-
-/* .spin 见 styles/components/motion.css。 */
 
 .reader-enter-active,
 .reader-leave-active {

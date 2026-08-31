@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ArrowUpRight, CircleAlert, LoaderCircle, RotateCcw, Search, SearchX } from '@lucide/vue'
-import type { ApiError } from '../../../api/client'
+import { ArrowUpRight, CircleAlert, RotateCcw, Search, SearchX } from '@lucide/vue'
+import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
+import type { ApiError } from '@/api/client'
 import type { SearchStatus } from '../model/search-validation'
 import { presentSearchError } from '../model/search-error'
 import type {
@@ -114,9 +116,7 @@ const isDocumentMode = computed(() => props.mode === 'document')
         </div>
         <span class="skeleton-score"></span>
       </div>
-      <p class="loading-caption">
-        <LoaderCircle class="spin" :size="15" aria-hidden="true" /> 正在联系语义检索服务
-      </p>
+      <p class="loading-caption"><BaseSpinner :size="15" /> 正在联系语义检索服务</p>
     </div>
 
     <div v-else-if="status === 'empty'" class="state-panel empty-state">
@@ -141,15 +141,16 @@ const isDocumentMode = computed(() => props.mode === 'document')
         <div>
           <h3>{{ errorPresentation.title }}</h3>
           <p>{{ errorPresentation.description }}</p>
-          <button
+          <BaseButton
             v-if="errorPresentation.retryable"
-            type="button"
             class="retry-button"
+            variant="outline"
+            size="sm"
             @click="emit('retry')"
           >
-            <RotateCcw :size="15" aria-hidden="true" />
+            <template #icon><RotateCcw :size="15" aria-hidden="true" /></template>
             再试一次
-          </button>
+          </BaseButton>
         </div>
       </div>
     </div>
@@ -193,7 +194,7 @@ const isDocumentMode = computed(() => props.mode === 'document')
   gap: 24px;
   min-height: 82px;
   padding: 5px 4px 16px;
-  border-bottom: 1px solid var(--ink-950);
+  border-bottom: 1px solid var(--text-primary);
 }
 
 .results-status {
@@ -201,7 +202,7 @@ const isDocumentMode = computed(() => props.mode === 'document')
 }
 
 .section-label {
-  color: var(--source-600);
+  color: var(--accent);
   font-size: 0.72rem;
   font-weight: 760;
   letter-spacing: 0;
@@ -209,8 +210,7 @@ const isDocumentMode = computed(() => props.mode === 'document')
 
 h2 {
   margin-top: 5px;
-  color: var(--ink-950);
-  font-family: var(--display-font);
+  color: var(--text-primary);
   font-size: 1.55rem;
   font-weight: 780;
   letter-spacing: 0;
@@ -221,7 +221,7 @@ h2 {
   max-width: 680px;
   margin-top: 6px;
   overflow-wrap: anywhere;
-  color: var(--ink-700);
+  color: var(--text-secondary);
   font-size: 0.78rem;
   line-height: 1.45;
 }
@@ -229,7 +229,7 @@ h2 {
 .score-note {
   flex: 0 0 auto;
   max-width: 240px;
-  color: var(--ink-500);
+  color: var(--text-muted);
   font-size: 0.7rem;
   text-align: right;
 }
@@ -243,7 +243,7 @@ h2 {
 .state-panel {
   min-height: 300px;
   padding: 38px 4px;
-  border-bottom: 1px solid var(--paper-300);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .state-copy {
@@ -259,18 +259,17 @@ h2 {
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  color: var(--source-600);
-  background: var(--source-100);
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .state-icon--error {
-  color: var(--danger-600);
-  background: var(--danger-100);
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 
 .state-panel h3 {
-  color: var(--ink-950);
-  font-family: var(--display-font);
+  color: var(--text-primary);
   font-size: 1.12rem;
   font-weight: 760;
   letter-spacing: 0;
@@ -278,7 +277,7 @@ h2 {
 
 .state-panel p {
   margin-top: 4px;
-  color: var(--ink-700);
+  color: var(--text-secondary);
   font-size: 0.84rem;
   line-height: 1.6;
 }
@@ -287,7 +286,7 @@ h2 {
   display: grid;
   max-width: 620px;
   margin-top: 26px;
-  border-top: 1px solid var(--paper-300);
+  border-top: 1px solid var(--border-subtle);
 }
 
 .example-list button {
@@ -298,8 +297,8 @@ h2 {
   min-height: 49px;
   padding: 8px 5px;
   border: 0;
-  border-bottom: 1px solid var(--paper-300);
-  color: var(--ink-800);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
   background: transparent;
   font-size: 0.82rem;
   text-align: left;
@@ -312,31 +311,13 @@ h2 {
 .example-list button:hover {
   padding-right: 10px;
   padding-left: 10px;
-  color: var(--signal-600);
-  background: var(--paper-50);
+  color: var(--accent);
+  background: var(--surface-raised);
 }
 
+/* 描边与尺寸归 BaseButton 的 outline + sm，这里只留与错误正文的间距。 */
 .retry-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 38px;
   margin-top: 16px;
-  padding: 7px 12px;
-  border: 1px solid var(--signal-500);
-  border-radius: var(--radius-sm);
-  color: var(--signal-600);
-  background: var(--paper-50);
-  font-size: 0.78rem;
-  font-weight: 720;
-  transition:
-    color 150ms ease,
-    background-color 150ms ease;
-}
-
-.retry-button:hover {
-  color: var(--paper-50);
-  background: var(--signal-600);
 }
 
 .skeleton-card {
@@ -345,9 +326,9 @@ h2 {
   gap: 18px;
   min-height: 226px;
   padding: 23px;
-  border: 1px solid var(--paper-300);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--paper-50);
+  background: var(--surface-raised);
 }
 
 .skeleton-locator,
@@ -355,7 +336,12 @@ h2 {
 .skeleton-line {
   display: block;
   border-radius: 3px;
-  background: linear-gradient(90deg, var(--paper-200), #f8faf9, var(--paper-200));
+  background: linear-gradient(
+    90deg,
+    var(--surface-sunken),
+    var(--surface-raised),
+    var(--surface-sunken)
+  );
   background-size: 200% 100%;
   animation: shimmer 1.5s ease-in-out infinite;
 }
@@ -401,11 +387,9 @@ h2 {
   align-items: center;
   gap: 7px;
   margin: 3px 0 0 61px;
-  color: var(--ink-500);
+  color: var(--text-muted);
   font-size: 0.7rem;
 }
-
-/* .spin 见 styles/components/motion.css。 */
 
 /* 原 @keyframes skeleton-shimmer 与 DocumentReader 的 shimmer 逐字节相同，
    已合并为 styles/components/motion.css 里的 shimmer。 */

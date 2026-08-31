@@ -1,5 +1,5 @@
-import type { DocumentSearchMatchDto, DocumentSearchResultDto } from '../../../api/document-search'
-import type { VectorSearchResultDto } from '../../../api/vector-search'
+import type { DocumentSearchMatchDto, DocumentSearchResultDto } from '@/api/document-search'
+import type { VectorSearchResultDto } from '@/api/vector-search'
 
 export type SearchMode = 'document' | 'chunk'
 

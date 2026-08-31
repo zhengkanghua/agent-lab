@@ -151,10 +151,10 @@ function requestFullText(event: MouseEvent): void {
   grid-template-columns: 50px minmax(0, 1fr);
   gap: 18px;
   padding: 22px 22px 20px 18px;
-  border: 1px solid var(--paper-300);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--paper-50);
-  box-shadow: 0 6px 20px rgba(24, 33, 31, 0.035);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
   transition:
     border-color 150ms ease,
     box-shadow 150ms ease,
@@ -162,7 +162,7 @@ function requestFullText(event: MouseEvent): void {
 }
 
 .result-card:hover {
-  border-color: #b8c3bf;
+  border-color: var(--border-strong);
   box-shadow: var(--shadow-soft);
   transform: translateY(-1px);
 }
@@ -174,7 +174,7 @@ function requestFullText(event: MouseEvent): void {
   align-self: stretch;
   min-height: 126px;
   padding: 2px 0;
-  color: var(--signal-600);
+  color: var(--text-secondary);
   font-family: var(--mono-font);
 }
 
@@ -185,7 +185,7 @@ function requestFullText(event: MouseEvent): void {
 
 /* 几何属性见 styles/components/result-card.css；这里只给文档的强调色。 */
 .locator-line {
-  background: linear-gradient(var(--signal-500), var(--paper-300));
+  background: linear-gradient(var(--accent), var(--border-subtle));
 }
 
 .document-locator > span:last-child {
@@ -195,13 +195,13 @@ function requestFullText(event: MouseEvent): void {
 }
 
 .document-locator small {
-  color: var(--ink-500);
+  color: var(--text-muted);
   font-family: var(--body-font);
   font-size: 0.62rem;
 }
 
 .document-locator b {
-  color: var(--ink-700);
+  color: var(--text-secondary);
   font-size: 0.67rem;
   font-weight: 650;
   white-space: nowrap;
@@ -224,7 +224,7 @@ function requestFullText(event: MouseEvent): void {
   flex-wrap: wrap;
   gap: 7px 10px;
   min-width: 0;
-  color: var(--ink-700);
+  color: var(--text-secondary);
   font-size: 0.73rem;
 }
 
@@ -232,14 +232,13 @@ function requestFullText(event: MouseEvent): void {
 
 /* 其余属性见 styles/components/result-card.css；这里只给文档的强调色。 */
 .score-block {
-  color: var(--signal-600);
+  color: var(--text-secondary);
 }
 
 .result-title {
   margin-top: 12px;
   overflow-wrap: anywhere;
-  color: var(--ink-950);
-  font-family: var(--display-font);
+  color: var(--text-primary);
   font-size: 1.28rem;
   font-weight: 780;
   letter-spacing: 0;
@@ -256,7 +255,7 @@ function requestFullText(event: MouseEvent): void {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  color: var(--ink-500);
+  color: var(--text-muted);
   font-family: var(--mono-font);
   font-size: 0.66rem;
 }
@@ -265,7 +264,7 @@ function requestFullText(event: MouseEvent): void {
 .related-matches p {
   max-width: 82ch;
   overflow-wrap: anywhere;
-  color: var(--ink-800);
+  color: var(--text-secondary);
   font-size: 0.92rem;
   line-height: 1.76;
   white-space: pre-line;
@@ -285,7 +284,7 @@ function requestFullText(event: MouseEvent): void {
 .text-button,
 .related-toggle {
   border: 0;
-  color: var(--signal-600);
+  color: var(--accent);
   background: transparent;
   font-size: 0.76rem;
   font-weight: 720;
@@ -317,8 +316,8 @@ function requestFullText(event: MouseEvent): void {
   min-height: 42px;
   margin-top: 13px;
   padding: 8px 0;
-  border-top: 1px solid var(--paper-300);
-  border-bottom: 1px solid var(--paper-300);
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
   text-align: left;
 }
 
@@ -336,7 +335,7 @@ function requestFullText(event: MouseEvent): void {
 
 .related-matches li {
   padding: 15px 0 16px;
-  border-bottom: 1px solid var(--paper-200);
+  border-bottom: 1px solid var(--surface-sunken);
 }
 
 .related-matches p {
@@ -346,7 +345,7 @@ function requestFullText(event: MouseEvent): void {
 
 .related-heading span:last-child {
   flex: 0 0 auto;
-  color: var(--signal-600);
+  color: var(--text-secondary);
 }
 
 /* .label-list 见 styles/components/result-card.css。 */
@@ -358,7 +357,7 @@ function requestFullText(event: MouseEvent): void {
   gap: 9px;
   margin-top: 17px;
   padding-top: 15px;
-  border-top: 1px solid var(--paper-200);
+  border-top: 1px solid var(--surface-sunken);
 }
 
 /* .read-button 见 styles/components/result-card.css；这里只留同组的链接样式。 */
@@ -369,18 +368,18 @@ function requestFullText(event: MouseEvent): void {
   gap: 7px;
   min-height: 38px;
   padding: 7px 12px;
-  border: 1px solid var(--paper-300);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  color: var(--ink-800);
-  background: var(--paper-50);
+  color: var(--text-secondary);
+  background: var(--surface-raised);
   font-size: 0.76rem;
   font-weight: 740;
   text-decoration: none;
 }
 
 .result-actions a:hover {
-  border-color: var(--source-500);
-  color: var(--source-600);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 @media (max-width: 680px) {

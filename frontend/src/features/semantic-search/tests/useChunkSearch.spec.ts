@@ -1,7 +1,7 @@
 import { defineComponent, h, nextTick } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { searchVector, type VectorSearchResultDto } from '../../../api/vector-search'
+import { searchVector, type VectorSearchResultDto } from '@/api/vector-search'
 import { useChunkSearch } from '../composables/useChunkSearch'
 
 vi.mock('../../../api/vector-search', () => ({

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError } from '../../api/client'
-import * as authApi from '../../api/auth'
+import { ApiError } from '@/api/client'
+import * as authApi from '@/api/auth'
 import { createAuthSession } from './auth-session'
 
 const currentUser = {

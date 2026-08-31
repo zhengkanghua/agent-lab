@@ -1,7 +1,7 @@
 import { computed, onScopeDispose, ref, shallowRef } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ApiError } from '../../../api/client'
-import { fetchDocument } from '../../../api/documents'
+import { ApiError } from '@/api/client'
+import { fetchDocument } from '@/api/documents'
 import { toNewsDocumentDetail } from '../model/document-detail'
 import type { NewsReadableResult } from '../model/search-result'
 

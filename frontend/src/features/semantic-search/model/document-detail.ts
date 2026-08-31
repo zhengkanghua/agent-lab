@@ -1,4 +1,4 @@
-import type { DocumentDetailDto } from '../../../api/documents'
+import type { DocumentDetailDto } from '@/api/documents'
 
 export interface NewsDocumentDetail {
   documentId: string

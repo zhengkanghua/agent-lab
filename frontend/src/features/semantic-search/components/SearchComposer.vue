@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { BookOpenText, Eraser, Layers3, ListFilter, LoaderCircle, Search } from '@lucide/vue'
+import { BookOpenText, Eraser, Layers3, ListFilter, Search } from '@lucide/vue'
+import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseDisclosure from '@/shared/ui/BaseDisclosure.vue'
+import BaseField from '@/shared/ui/BaseField.vue'
 import type { SearchMode } from '../model/search-result'
 import { MAX_QUERY_CHARACTERS } from '../model/search-validation'
 
@@ -88,24 +91,24 @@ const counterTone = computed(() => {
         }}
       </p>
 
-      <label class="field-label" for="search-query">研究内容</label>
-      <textarea
-        id="search-query"
-        v-model="query"
-        class="query-input"
-        name="query"
-        rows="6"
-        :maxlength="MAX_QUERY_CHARACTERS"
-        placeholder="例如：央行近期是否调整利率？"
-        :aria-invalid="Boolean(inputError)"
-        :aria-describedby="inputError ? 'query-error' : 'query-count'"
-      ></textarea>
-
-      <div class="query-meta">
-        <span id="query-count" class="character-count" :class="counterTone">
-          还可输入 {{ remainingCharacters.toLocaleString('zh-CN') }} 个字符
-        </span>
-      </div>
+      <BaseField id="search-query" label="研究内容" :error="inputError ?? undefined">
+        <template #default="{ control }">
+          <textarea
+            v-bind="control"
+            v-model="query"
+            class="query-input"
+            name="query"
+            rows="6"
+            :maxlength="MAX_QUERY_CHARACTERS"
+            placeholder="例如：央行近期是否调整利率？"
+          ></textarea>
+        </template>
+        <template #hint>
+          <span class="character-count" :class="counterTone">
+            还可输入 {{ remainingCharacters.toLocaleString('zh-CN') }} 个字符
+          </span>
+        </template>
+      </BaseField>
 
       <div class="composer-toolbar">
         <label class="result-limit-control">
@@ -131,14 +134,14 @@ const counterTone = computed(() => {
           </select>
         </label>
 
-        <details v-if="mode === 'document'" class="advanced-options">
-          <summary>
-            <span class="control-label">
-              <Layers3 :size="16" aria-hidden="true" />
-              每篇相关片段
-            </span>
-            <b>{{ matchesPerDocument }} 条</b>
-          </summary>
+        <BaseDisclosure
+          v-if="mode === 'document'"
+          class="advanced-options"
+          summary="每篇相关片段"
+          :meta="`${matchesPerDocument} 条`"
+          tone="plain"
+        >
+          <template #icon><Layers3 :size="16" aria-hidden="true" /></template>
           <label>
             <span>最多保留</span>
             <select v-model.number="matchesPerDocument" aria-label="每篇新闻最多显示的相关片段数">
@@ -147,42 +150,40 @@ const counterTone = computed(() => {
               <option :value="5">5 条</option>
             </select>
           </label>
-        </details>
+        </BaseDisclosure>
 
         <div class="composer-actions">
-          <button
+          <BaseButton
             v-if="query"
             class="clear-button"
-            type="button"
+            variant="secondary"
+            icon-only
             aria-label="清空检索内容"
             title="清空检索内容"
             @click="emit('clear')"
           >
             <Eraser :size="18" aria-hidden="true" />
-          </button>
-          <button class="search-button" type="submit" :disabled="loading">
-            <LoaderCircle v-if="loading" class="spin" :size="18" aria-hidden="true" />
-            <Search v-else :size="18" stroke-width="2.4" aria-hidden="true" />
+          </BaseButton>
+          <BaseButton variant="primary" block type="submit" :loading="loading">
+            <template #icon>
+              <Search :size="18" stroke-width="2.4" aria-hidden="true" />
+            </template>
             <span>
               {{ loading ? '正在搜索' : mode === 'document' ? '搜索新闻' : '搜索片段' }}
             </span>
-          </button>
+          </BaseButton>
         </div>
       </div>
     </form>
-
-    <p v-if="inputError" id="query-error" class="field-error" role="alert">
-      {{ inputError }}
-    </p>
   </section>
 </template>
 
 <style scoped>
 .composer {
   padding: 22px;
-  border: 1px solid var(--paper-300);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--paper-50);
+  background: var(--surface-raised);
   box-shadow: var(--shadow-soft);
 }
 
@@ -191,7 +192,7 @@ const counterTone = computed(() => {
 }
 
 .composer-heading p {
-  color: var(--signal-600);
+  color: var(--text-secondary);
   font-size: 0.72rem;
   font-weight: 760;
   letter-spacing: 0;
@@ -199,8 +200,7 @@ const counterTone = computed(() => {
 
 .composer-heading h2 {
   margin-top: 4px;
-  color: var(--ink-950);
-  font-family: var(--display-font);
+  color: var(--text-primary);
   font-size: 1.28rem;
   font-weight: 760;
   letter-spacing: 0;
@@ -216,9 +216,9 @@ const counterTone = computed(() => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 3px;
   padding: 3px;
-  border: 1px solid var(--paper-300);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  background: var(--paper-100);
+  background: var(--surface-base);
 }
 
 .mode-switch button {
@@ -229,7 +229,7 @@ const counterTone = computed(() => {
   min-height: 38px;
   border: 0;
   border-radius: 4px;
-  color: var(--ink-700);
+  color: var(--text-secondary);
   background: transparent;
   font-size: 0.78rem;
   font-weight: 720;
@@ -240,41 +240,36 @@ const counterTone = computed(() => {
 }
 
 .mode-switch button:hover {
-  color: var(--ink-950);
+  color: var(--text-primary);
 }
 
 .mode-switch button.is-active {
-  color: var(--signal-600);
-  background: var(--paper-50);
-  box-shadow: 0 1px 5px rgba(24, 33, 31, 0.09);
+  color: var(--accent);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
 }
 
 .mode-description {
   min-height: 35px;
   padding: 7px 2px 10px;
-  color: var(--ink-500);
+  color: var(--text-muted);
   font-size: 0.7rem;
   line-height: 1.45;
 }
 
-.field-label {
-  margin-bottom: 7px;
-  color: var(--ink-800);
-  font-size: 0.8rem;
-  font-weight: 700;
-}
-
+/* 标签、错误、说明位与 aria 接线归 BaseField。输入框本身留在这里：
+   它的高度、可拖拽调整、聚焦态都是本页专有的。 */
 .query-input {
   display: block;
   width: 100%;
   min-height: 164px;
   resize: vertical;
   padding: 14px 15px;
-  border: 1px solid var(--paper-300);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   outline: none;
-  color: var(--ink-950);
-  background: #fbfcfb;
+  color: var(--text-primary);
+  background: var(--surface-base);
   font-size: 0.94rem;
   line-height: 1.65;
   transition:
@@ -284,39 +279,36 @@ const counterTone = computed(() => {
 }
 
 .query-input::placeholder {
-  color: var(--ink-500);
+  color: var(--text-muted);
 }
 
 .query-input:hover {
-  border-color: #bac4c0;
+  border-color: var(--border-strong);
 }
 
 .query-input:focus {
-  border-color: var(--source-500);
-  background: var(--paper-50);
-  box-shadow: 0 0 0 4px var(--source-100);
+  border-color: var(--accent);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 4px var(--accent-soft);
 }
 
-.query-meta {
-  display: flex;
-  justify-content: flex-end;
-  min-height: 30px;
-  padding-top: 7px;
-}
-
+/* 字数落在 BaseField 的 hint 位（一个左对齐的 <p>），这里把它自己撑满再右对齐，
+   不去改 BaseField 的 .field-hint——那是别的字段也在用的公共样式。 */
 .character-count {
-  color: var(--ink-500);
+  display: block;
+  text-align: right;
+  color: var(--text-muted);
   font-family: var(--mono-font);
   font-size: 0.67rem;
   letter-spacing: 0;
 }
 
 .character-count.is-near {
-  color: var(--warning-600);
+  color: var(--warning);
 }
 
 .character-count.is-over {
-  color: var(--danger-600);
+  color: var(--danger);
 }
 
 .composer-toolbar {
@@ -324,7 +316,7 @@ const counterTone = computed(() => {
   gap: 13px;
   margin-top: 4px;
   padding-top: 16px;
-  border-top: 1px solid var(--paper-200);
+  border-top: 1px solid var(--surface-sunken);
 }
 
 .result-limit-control {
@@ -333,7 +325,7 @@ const counterTone = computed(() => {
   justify-content: space-between;
   gap: 12px;
   min-height: 42px;
-  color: var(--ink-700);
+  color: var(--text-secondary);
   font-size: 0.8rem;
 }
 
@@ -344,7 +336,7 @@ const counterTone = computed(() => {
 }
 
 .control-label svg {
-  color: var(--source-600);
+  color: var(--accent);
 }
 
 .result-limit-control select,
@@ -352,41 +344,33 @@ const counterTone = computed(() => {
   width: 92px;
   height: 38px;
   padding: 0 9px;
-  border: 1px solid var(--paper-300);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   outline: 0;
-  color: var(--ink-950);
-  background: var(--paper-50);
+  color: var(--text-primary);
+  background: var(--surface-raised);
   font-weight: 700;
 }
 
 .advanced-options {
-  border-top: 1px solid var(--paper-200);
-  border-bottom: 1px solid var(--paper-200);
-  color: var(--ink-700);
+  border-top: 1px solid var(--surface-sunken);
+  border-bottom: 1px solid var(--surface-sunken);
+  color: var(--text-secondary);
   font-size: 0.8rem;
 }
 
-.advanced-options summary,
+/* 摘要行的排布、箭头、meta 值都归 BaseDisclosure。这里只补一条本行专有的高度：
+   要和上面 .result-limit-control 的 44px 对齐，两行看起来才是一组。 */
+.advanced-options :deep(.disclosure-summary) {
+  min-height: 44px;
+}
+
 .advanced-options label {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   min-height: 44px;
-}
-
-.advanced-options summary {
-  cursor: pointer;
-  list-style-position: outside;
-}
-
-.advanced-options summary b {
-  color: var(--ink-800);
-  font-size: 0.75rem;
-}
-
-.advanced-options label {
   padding: 6px 0 12px 22px;
 }
 
@@ -396,60 +380,11 @@ const counterTone = computed(() => {
   gap: 8px;
 }
 
-/* 与 UserAdminPage 的 .icon-button 无关：那里是 34px 透明幽灵按钮，这里是 44px 实底
-   填充按钮，与同行的 .search-button 共享基础几何。曾同名但实现完全不同，已改名区分。 */
-.clear-button,
-.search-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 44px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  transition:
-    background-color 150ms ease,
-    color 150ms ease,
-    transform 150ms ease;
-}
-
+/* 两个按钮的几何、配色、悬停与加载态都归 BaseButton（清空 = secondary + icon-only，
+   搜索 = primary + block）。只剩清空按钮不参与伸缩这一条：它是固定宽的方块。 */
 .clear-button {
   flex: 0 0 44px;
-  color: var(--ink-700);
-  background: var(--paper-200);
 }
-
-.clear-button:hover {
-  color: var(--ink-950);
-  background: var(--paper-300);
-}
-
-.search-button {
-  flex: 1;
-  gap: 8px;
-  padding: 0 16px;
-  color: var(--paper-50);
-  background: var(--signal-500);
-  font-weight: 760;
-}
-
-.search-button:hover:not(:disabled) {
-  background: var(--signal-600);
-  transform: translateY(-1px);
-}
-
-.search-button:disabled {
-  cursor: wait;
-  opacity: 0.72;
-}
-
-.field-error {
-  margin-top: 12px;
-  color: var(--danger-600);
-  font-size: 0.8rem;
-  font-weight: 650;
-}
-
-/* .spin 见 styles/components/motion.css。 */
 
 @media (max-width: 980px) and (min-width: 641px) {
   .composer-toolbar {

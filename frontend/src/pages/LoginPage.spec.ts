@@ -2,7 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError } from '../api/client'
+import { ApiError } from '@/api/client'
 
 const mocks = vi.hoisted(() => ({
   login: vi.fn(),
@@ -36,7 +36,7 @@ describe('LoginPage', () => {
   afterEach(() => {
     mocks.login.mockReset()
     mocks.initialize.mockReset()
-    document.body.innerHTML = ''
+    document.body.replaceChildren()
   })
 
   it('logs in and returns to a safe in-app redirect', async () => {

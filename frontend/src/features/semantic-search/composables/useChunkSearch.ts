@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { searchVector } from '../../../api/vector-search'
+import { searchVector } from '@/api/vector-search'
 import { toNewsChunkResults, type NewsChunkResult } from '../model/search-result'
 import { DEFAULT_RESULT_LIMIT, normalizeResultLimit } from '../model/search-validation'
 import { useSearchRequest } from './useSearchRequest'

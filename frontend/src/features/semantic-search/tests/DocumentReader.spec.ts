@@ -1,6 +1,7 @@
+import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError } from '../../../api/client'
+import { ApiError } from '@/api/client'
 import DocumentReader from '../components/DocumentReader.vue'
 
 const result = {
@@ -39,7 +40,7 @@ const detail = {
 
 describe('DocumentReader', () => {
   afterEach(() => {
-    document.body.innerHTML = ''
+    document.body.replaceChildren()
     vi.restoreAllMocks()
   })
 
@@ -101,6 +102,30 @@ describe('DocumentReader', () => {
     retryButton?.click()
     expect(error.emitted('retry')).toHaveLength(1)
     error.unmount()
+  })
+
+  /* 收纳键换成 BaseIconButton 后，ref 拿到的是组件实例而不是 button 元素。
+     少了这条，聚焦悄悄失效也没人知道——而抽屉是模态的，焦点不进去键盘就出不来。 */
+  it('打开后把焦点交给收纳键', async () => {
+    const wrapper = mount(DocumentReader, {
+      attachTo: document.body,
+      props: {
+        open: false,
+        result,
+        detail,
+        loading: false,
+        error: null,
+        hashMismatch: false,
+      },
+    })
+
+    await wrapper.setProps({ open: true })
+    await nextTick()
+
+    const closeButton = document.body.querySelector('button[aria-label="关闭全文"]')
+    expect(closeButton).not.toBeNull()
+    expect(document.activeElement).toBe(closeButton)
+    wrapper.unmount()
   })
 
   it('explains a non-retryable 404 without offering a futile retry', () => {

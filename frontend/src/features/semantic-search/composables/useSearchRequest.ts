@@ -1,5 +1,5 @@
 import { computed, onScopeDispose, shallowRef, ref, watch } from 'vue'
-import { ApiError, isAbortError } from '../../../api/client'
+import { ApiError, isAbortError } from '@/api/client'
 import { MAX_QUERY_CHARACTERS, validateQuery, type SearchStatus } from '../model/search-validation'
 
 /**

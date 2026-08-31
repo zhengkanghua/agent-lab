@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { searchDocuments } from '../../../api/document-search'
+import { searchDocuments } from '@/api/document-search'
 import { toNewsDocumentResults, type NewsDocumentResult } from '../model/search-result'
 import {
   DEFAULT_MATCHES_PER_DOCUMENT,

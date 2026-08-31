@@ -3,7 +3,12 @@ import { describe, expect, it } from 'vitest'
 import SearchComposer from '../components/SearchComposer.vue'
 import { MAX_QUERY_CHARACTERS } from '../model/search-validation'
 
-function mountComposer(mode: 'document' | 'chunk' = 'document') {
+type ComposerProps = InstanceType<typeof SearchComposer>['$props']
+
+function mountComposer(
+  mode: 'document' | 'chunk' = 'document',
+  overrides: Partial<ComposerProps> = {},
+) {
   return mount(SearchComposer, {
     props: {
       mode,
@@ -14,6 +19,7 @@ function mountComposer(mode: 'document' | 'chunk' = 'document') {
       loading: false,
       inputError: null,
       remainingCharacters: 4088,
+      ...overrides,
     },
   })
 }
@@ -52,5 +58,40 @@ describe('SearchComposer', () => {
     ])
     expect(wrapper.find('.advanced-options').exists()).toBe(false)
     expect(wrapper.text()).toContain('搜索片段')
+  })
+
+  /* 以下三条守的是接入 shared/ui 之后的接线。它们原来是手写的，
+     漏了不报错、界面也照常，只有读屏用户会听不到。 */
+
+  it('常态下字数说明被输入框的 aria-describedby 指到', () => {
+    const wrapper = mountComposer()
+    const hint = wrapper.get('.character-count')
+
+    expect(hint.text()).toContain('4,088')
+    expect(wrapper.get('.query-input').attributes('aria-describedby')).toBe(
+      wrapper.get('.field-hint').attributes('id'),
+    )
+  })
+
+  it('有输入错误时标 aria-invalid，指向改成错误文字', () => {
+    const wrapper = mountComposer('document', { inputError: '请输入检索内容' })
+    const textarea = wrapper.get('.query-input')
+    const error = wrapper.get('.field-error')
+
+    expect(error.text()).toBe('请输入检索内容')
+    expect(error.attributes('role')).toBe('alert')
+    expect(textarea.attributes('aria-invalid')).toBe('true')
+    expect(textarea.attributes('aria-describedby')).toBe(error.attributes('id'))
+    // 错误态下说明位让给错误，字数不再同时被指向。
+    expect(wrapper.find('.field-hint').exists()).toBe(false)
+  })
+
+  it('搜索中禁用提交并标 aria-busy', () => {
+    const wrapper = mountComposer('document', { loading: true })
+    const submit = wrapper.get<HTMLButtonElement>('button[type="submit"]')
+
+    expect(submit.element.disabled).toBe(true)
+    expect(submit.attributes('aria-busy')).toBe('true')
+    expect(wrapper.text()).toContain('正在搜索')
   })
 })

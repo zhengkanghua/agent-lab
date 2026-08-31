@@ -1,5 +1,5 @@
-import type { ApiError } from '../../../api/client'
-import { resolveErrorCopy, type ErrorCopy } from '../../../api/error-copy'
+import type { ApiError } from '@/api/client'
+import { resolveErrorCopy, type ErrorCopy } from '@/api/error-copy'
 
 export interface SearchErrorPresentation extends ErrorCopy {
   retryable: boolean

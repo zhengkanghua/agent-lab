@@ -1,11 +1,11 @@
 import { readonly, ref, type Ref } from 'vue'
-import { ApiError } from '../../api/client'
+import { ApiError } from '@/api/client'
 import {
   fetchCurrentUser,
   loginWithPassword,
   logoutCurrentUser,
   type AuthUserDto,
-} from '../../api/auth'
+} from '@/api/auth'
 
 export type AuthSessionStatus = 'unknown' | 'loading' | 'authenticated' | 'anonymous' | 'error'
 

@@ -1,8 +1,8 @@
 import { defineComponent, h, nextTick } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError } from '../../../api/client'
-import { searchDocuments } from '../../../api/document-search'
+import { ApiError } from '@/api/client'
+import { searchDocuments } from '@/api/document-search'
 import { useSemanticSearch } from '../composables/useSemanticSearch'
 
 vi.mock('../../../api/document-search', () => ({
