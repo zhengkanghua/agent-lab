@@ -83,14 +83,95 @@ describe('styles/components/*.css', () => {
   )
 })
 
+/* 颜色 token 的分层守护，见 docs/adr/0007-two-layer-color-tokens.md。
+ *
+ * 靠人自觉守不住：迁移时全仓有 23 处裸色值，每一处单看都「只是这一个地方」。
+ * 深色模式的代价全在这里——漏一处裸色值，深色模式下它就是一块打不掉的浅斑。
+ */
+const TOKENS_CSS = 'styles/tokens.css'
+/** 原始色阶的前缀。只允许 tokens.css 自己引用。 */
+const RAW_SCALE = /var\(\s*--(?:neutral|teal|brick|amber)-\d+\s*\)/g
+/** 裸色值：十六进制、rgb()/rgba()、hsl()/hsla()、CSS 具名颜色。 */
+const BARE_COLOR =
+  /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(|:\s*(?:white|black|red|green|blue|gray|grey|silver|orange|yellow|purple|pink|brown|navy|teal|olive|maroon|lime|aqua|fuchsia)\s*[;!]/g
+
+/** 只取 .vue 的 <style> 块内容：script 与 template 里的颜色字面量不在本轮范围。 */
+function styleBlocks(source: string): string {
+  return [...source.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)]
+    .map((match) => match[1])
+    .join('\n')
+}
+
+describe('颜色 token 分层', () => {
+  const styledFiles: [string, string][] = [
+    ...listVueFiles(SRC)
+      .map((path) => path.slice(SRC.length + 1).replace(/\\/g, '/'))
+      .map((relative): [string, string] => [relative, styleBlocks(read(relative))]),
+    ...['style.css', ...sharedFiles.map((name) => `styles/components/${name}`)].map(
+      (relative): [string, string] => [relative, read(relative)],
+    ),
+  ]
+
+  it('取到了待查文件', () => {
+    expect(styledFiles.length).toBeGreaterThanOrEqual(15)
+    expect(styledFiles.map(([relative]) => relative)).toContain('pages/UserAdminPage.vue')
+  })
+
+  it.each(styledFiles)('%s 不写裸色值', (_relative, css) => {
+    expect(stripComments(css).match(BARE_COLOR) ?? []).toEqual([])
+  })
+
+  it.each(styledFiles)('%s 不直接引原始色阶', (_relative, css) => {
+    expect(stripComments(css).match(RAW_SCALE) ?? []).toEqual([])
+  })
+
+  /* 不是设计 token、由组件自己声明并沿 DOM 往下传的自定义属性。
+     它们的值是布局量测结果（顶栏多高、表格分几列），放进 tokens.css 就得把断点也搬过去，
+     那会让同一件事有两个来源。两个都用来让「必须对齐的两处」共用一份数字：顶栏高度给
+     正文算视口余量，列宽给表头与每一行对齐。下面那条用例盯住它们真的有声明，
+     所以这里放行不等于放松检查。 */
+  const PUBLISHED_BY_COMPONENTS: Readonly<Record<string, string>> = {
+    '--app-topbar-height': 'layouts/AppShell.vue',
+    '--user-row-columns': 'features/user-admin/components/UserDirectoryTable.vue',
+  }
+
+  it('引用到的 token 都在 tokens.css 里有定义', () => {
+    const tokensCss = stripComments(read(TOKENS_CSS))
+    const defined = new Set(
+      [...tokensCss.matchAll(/^\s+(--[\w-]+)\s*:/gm)].map((match) => match[1]),
+    )
+    expect(defined.size).toBeGreaterThanOrEqual(30)
+
+    const referenced = new Set(
+      styledFiles.flatMap(([, css]) =>
+        [...stripComments(css).matchAll(/var\(\s*(--[\w-]+)/g)].map((match) => match[1]),
+      ),
+    )
+    // 拼错的 token 名不报错、只是静默失效，浏览器里看不出来，只能在这里查。
+    expect(
+      [...referenced]
+        .filter((name) => !defined.has(name) && !(name in PUBLISHED_BY_COMPONENTS))
+        .sort(),
+    ).toEqual([])
+  })
+
+  it.each(Object.entries(PUBLISHED_BY_COMPONENTS))('%s 由 %s 真的声明了', (name, owner) => {
+    /* 上一条用例给这些名字开了口子，这条把口子收住：声明所在的文件写死在表里，
+         哪天 AppShell 不再发布它，引用方会拿到 var() 的兜底值静默偏移，只有这里能拦。 */
+    expect(stripComments(styleBlocks(read(owner)))).toMatch(new RegExp(`${name}\\s*:\\s*[^;]+;`))
+  })
+})
+
 /* 共享类在组件 scoped 块里的顶层重声明。
  *
  * 允许的重声明只有三处，每处都是「刻意留在本地的那一条声明」：
  * 两个卡片的强调色，和 UserAdminPage 刻意不同的 800ms 计时。
  * 其余共享类一旦在 scoped 顶层重新出现，就说明提取被回退了。
  */
+/* spin 曾有一条：UserAdminPage 用 800ms 覆盖共享的 900ms。收编转圈到 BaseSpinner 时
+   那处只剩刷新键一个使用者，计时也统一回 900ms，条目随之删除。
+   locator-line 与 score-block 仍然成立：它们属于检索结果卡片，本轮重构不动检索页骨架。 */
 const LOCAL_OVERRIDES: Record<string, string[]> = {
-  spin: ['pages/UserAdminPage.vue'],
   'locator-line': [
     'features/semantic-search/components/ChunkResultCard.vue',
     'features/semantic-search/components/SearchResultCard.vue',

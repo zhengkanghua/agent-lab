@@ -26,7 +26,8 @@ export interface ErrorCopy {
  * code 和 status，硬去分类只会给出误导性的文案。
  *
  * 共用的只有这套查表机制，文案表留在各自领域文件里：`features/semantic-search/model/search-error.ts`、
- * `DocumentReader.vue`、`UserAdminPage.vue`、`LoginPage.vue`。新增错误展示位置时加一张表传进来，
+ * `features/agent-chat/model/agent-error.ts`、`features/user-admin/model/admin-error.ts`、
+ * `DocumentReader.vue`、`LoginPage.vue`。新增错误展示位置时加一张表传进来，
  * 不要再手写 if-else 判定链——之前四处各写一套，依据还不一致（检索页混用 code 和 status、
  * 全文阅读只看 status、账号管理只看 code），新增错误码时容易只补其中一处。
  */

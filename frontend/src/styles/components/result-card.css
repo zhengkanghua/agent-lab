@@ -1,9 +1,10 @@
 /* 检索结果卡片：ChunkResultCard 与 SearchResultCard 共用的部分。
  *
- * 两个卡片的强调色不同（Chunk 用 --source-*，文档用 --signal-*）。因此
- * .locator-line 与 .score-block 只收录与配色无关的几何属性，那一条 background /
- * color 声明留在各组件 scoped 块里——比引入自定义属性转发更少机关，
- * 且各文件剩下的 CSS 恰好就是「它与另一个卡片的差别」。
+ * 两个卡片原本一青一红，靠强调色本身区分。红收窄到只报错之后两者都落到
+ * --accent，颜色不再是区分手段——现在靠填充轻重区分：实心填充是主操作
+ * （.read-button），浅底是标记（.source-name）。
+ * .locator-line 与 .score-block 仍只收录与配色无关的几何属性，那一条声明留在
+ * 各组件 scoped 块里，各文件剩下的 CSS 恰好就是「它与另一个卡片的差别」。
  *
  * .match-heading 与 .read-button 在原文件里和 .related-heading、.chunk-actions a、
  * .result-actions a 写在同一条分组选择器中；此处只提取重复的那一半，
@@ -16,8 +17,8 @@
     overflow: hidden;
     padding: 3px 7px;
     border-radius: 4px;
-    color: var(--source-600);
-    background: var(--source-100);
+    color: var(--accent-hover);
+    background: var(--accent-soft);
     font-weight: 740;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -26,7 +27,7 @@
   .author-line {
     max-width: 240px;
     overflow: hidden;
-    color: var(--ink-500);
+    color: var(--text-muted);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -51,7 +52,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 14px;
-    color: var(--ink-500);
+    color: var(--text-muted);
     font-family: var(--mono-font);
     font-size: 0.66rem;
   }
@@ -72,9 +73,9 @@
     min-width: 76px;
     min-height: 32px;
     padding: 5px 8px;
-    border: 1px solid var(--paper-300);
+    border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
-    background: var(--paper-100);
+    background: var(--surface-base);
     font-family: var(--mono-font);
     font-size: 0.8rem;
     font-weight: 700;
@@ -87,10 +88,10 @@
     gap: 7px;
     min-height: 38px;
     padding: 7px 12px;
-    border: 1px solid var(--signal-500);
+    border: 1px solid var(--accent);
     border-radius: var(--radius-sm);
-    color: var(--paper-50);
-    background: var(--signal-500);
+    color: var(--text-on-accent);
+    background: var(--accent);
     font-size: 0.76rem;
     font-weight: 740;
     text-decoration: none;
@@ -105,23 +106,23 @@
     gap: 4px;
     max-width: 100%;
     padding: 3px 7px;
-    border: 1px solid var(--paper-300);
+    border: 1px solid var(--border-subtle);
     border-radius: 4px;
     overflow-wrap: anywhere;
-    color: var(--ink-700);
-    background: var(--paper-100);
+    color: var(--text-secondary);
+    background: var(--surface-base);
     font-size: 0.68rem;
   }
 
-  /* 两卡片这里都用 --source-600，与各自主色调无关，保持原样不改成主色变量。 */
+  /* 两卡片这里同色，是「匹配位置」这个标题自身的颜色，与卡片强调色无关。 */
   .match-heading span:first-child {
-    color: var(--source-600);
+    color: var(--accent-hover);
     font-family: var(--body-font);
     font-weight: 760;
   }
 
   .read-button:hover {
-    background: var(--signal-600);
+    background: var(--accent-hover);
   }
 
   @media (max-width: 680px) {

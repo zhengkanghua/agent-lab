@@ -1,28 +1,101 @@
+/* 设计 token 分两层。
+ *
+ * 底层是色阶（--neutral-* / --teal-* / --brick-* / --amber-*），只在本文件里出现，
+ * 组件不引用。上层是语义 token（--surface-* / --text-* / --border-* / --accent-* 等），
+ * 组件只用这一层。
+ *
+ * 分层的理由是深色模式：单层写法把「浅色」焊进了名字里——旧的 --ink（墨=深）在深色
+ * 模式下要变成浅色，名字会撒谎，于是每个组件的 CSS 都得重读一遍才知道该换成哪个。
+ * 语义层的 --text-primary 在两套主题下都名副其实，切主题只改下面那一段映射，
+ * 组件 CSS 一行不动。详见 docs/adr/0007-semantic-tokens-and-ui-primitives.md。
+ */
+
 :root {
-  color-scheme: light;
-  --ink-950: #18211f;
-  --ink-800: #34413e;
-  --ink-700: #52605c;
-  --ink-500: #78847f;
-  --paper-50: #ffffff;
-  --paper-100: #f3f5f4;
-  --paper-200: #e8ecea;
-  --paper-300: #d3dad7;
-  --signal-600: #b63b2e;
-  --signal-500: #d24b3b;
-  --source-600: #25675e;
-  --source-500: #2f796e;
-  --source-100: #e3efec;
-  --warning-600: #85631f;
-  --danger-600: #a83232;
-  --danger-100: #fae6e4;
-  --shadow-soft: 0 14px 34px rgba(24, 33, 31, 0.07);
+  /* 1、中性色阶：石墨调，略带一点绿灰，接住原来纸墨配色的冷暖。 */
+  --neutral-50: #fbfbfa;
+  --neutral-100: #f4f5f5;
+  --neutral-200: #e9ebea;
+  --neutral-300: #d8dcdb;
+  --neutral-400: #b4bbb9;
+  --neutral-500: #7b8481;
+  --neutral-600: #5c6663;
+  --neutral-700: #4d5654;
+  --neutral-800: #2f3634;
+  --neutral-900: #1f2523;
+  --neutral-950: #14181a;
+
+  /* 2、强调色阶：深青。沿用原来「来源/检索」那支绿，升为主操作色。
+        -400 是给深色模式预留的提亮档，浅色模式下不用。 */
+  --teal-100: #e6f1ef;
+  --teal-400: #4fb3a3;
+  --teal-600: #0f6e63;
+  --teal-700: #0b574e;
+
+  /* 3、状态色阶：砖红只给错误，琥珀只给提醒。主操作已经是青色，红不再兼任。 */
+  --brick-100: #fae6e4;
+  --brick-600: #a83232;
+  --amber-100: #fdf3e3;
+  --amber-600: #9a6410;
+}
+
+:root {
+  /* 4、语义层——表面。 */
+  --surface-base: var(--neutral-100);
+  --surface-raised: #ffffff;
+  --surface-sunken: var(--neutral-200);
+  /* 次要按钮的悬停底：比 --surface-sunken 再深一档。少了它，静态与悬停会撞成同色。 */
+  --surface-sunken-hover: var(--neutral-300);
+  --surface-overlay: rgb(20 24 26 / 42%);
+  /* 顶栏毛玻璃底：半透明让下方内容透出，配合 backdrop-filter。 */
+  --surface-scrim: rgb(255 255 255 / 96%);
+  /* 与页面明暗相反的实底（跳转链接、标识块）。深色模式下这一对整体反转，
+     不能用 --surface-raised 顶替：那个跟着页面走，反转后就成了深底深字。 */
+  --surface-inverse: var(--neutral-900);
+
+  /* 5、语义层——文字。 */
+  --text-primary: var(--neutral-900);
+  --text-secondary: var(--neutral-700);
+  --text-muted: var(--neutral-500);
+  --text-on-accent: #ffffff;
+  --text-on-inverse: var(--neutral-50);
+
+  /* 6、语义层——描边。 */
+  --border-subtle: var(--neutral-300);
+  --border-strong: var(--neutral-400);
+
+  /* 7、语义层——强调与状态。 */
+  --accent: var(--teal-600);
+  --accent-hover: var(--teal-700);
+  --accent-soft: var(--teal-100);
+  --accent-ring: rgb(15 110 99 / 38%);
+  --danger: var(--brick-600);
+  --danger-soft: var(--brick-100);
+  --warning: var(--amber-600);
+  --warning-soft: var(--amber-100);
+
+  /* 8、阴影带颜色，所以留在语义层：深色模式里投影要换算法（提亮而非压暗）。 */
+  --shadow-soft: 0 14px 34px rgb(20 24 26 / 7%);
+  --shadow-card: 0 6px 20px rgb(20 24 26 / 3.5%);
+  --shadow-raised: 0 1px 5px rgb(20 24 26 / 9%);
+  --shadow-inset-chip: 0 1px 3px rgb(20 24 26 / 25%);
+  --shadow-drawer: -18px 0 48px rgb(20 24 26 / 18%);
+
+  /* 9、非颜色 token 不分层：它们没有主题维度，多一层只是多一次跳转。 */
   --radius-sm: 6px;
   --radius-md: 8px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
   --content-width: 1420px;
-  --display-font: 'Arial Narrow', 'Microsoft YaHei UI', 'Noto Sans SC', sans-serif;
+  /* 单列正文的阅读宽度。--content-width 是给检索页两栏结果用的，拿它排一列正文，
+     一行会有 140+ 字符，眼睛要来回扫。760px 在 0.92rem 下约 68 字符。 */
+  --reading-width: 760px;
   --body-font:
     system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', 'Microsoft YaHei',
     sans-serif;
   --mono-font: 'Cascadia Mono', 'SFMono-Regular', Consolas, monospace;
+
+  /* 10、告知浏览器当前主题，原生滚动条与表单控件按此渲染。漏了它，深色模式下
+        滚动条和 date/select 弹窗会仍然是白的。加深色模式时，重映射语义层的那个块里
+        要一并写 color-scheme: dark——它属于「这一层」，不是组件的事。 */
+  color-scheme: light;
 }

@@ -3,9 +3,9 @@
  * @keyframes 名字是全局的，不随 @layer 分层，因此定义在层外只保留一份，
  * 避免出现「哪一份定义胜出」的问题。
  *
- * .spin 收录 3 个组件共用的 900ms；UserAdminPage 用 800ms，那一条留在它的
- * scoped 块里覆盖（scoped 未分层，恒定胜出）。计时差异看着像手抄偏差，
- * 但统一它会改变渲染，不在「只做安全提取」范围内。
+ * .spin 现在只剩一个使用者：UserDirectoryTable 的刷新键——它转的是 RefreshCw 图标
+ * 本身，不是另外冒出一个转圈，所以没并进 BaseSpinner。其余转圈都走 BaseSpinner。
+ * 那边原本的 800ms 是手抄偏差，已随之统一到 900ms。
  *
  * shimmer 原本在 DocumentReader 叫 shimmer、在 SearchResults 叫 skeleton-shimmer，
  * 关键帧体与用法（1.5s ease-in-out infinite）逐字节相同，合并为一个名字。
@@ -30,5 +30,12 @@
 @layer components {
   .spin {
     animation: spin 900ms linear infinite;
+  }
+
+  /* 与 BaseSpinner 同一处置：不停掉——它在表达「还在跑」——只放慢到不刺眼。 */
+  @media (prefers-reduced-motion: reduce) {
+    .spin {
+      animation-duration: 2s;
+    }
   }
 }

@@ -5,6 +5,10 @@
     "types": ["vite/client"],
     "allowArbitraryExtensions": true,
 
+    /* 与 vite.config.ts 的 resolve.alias 对齐。两边缺一边，就会出现
+       「编辑器报解析失败但构建通过」或反过来的错位。 */
+    "paths": { "@/*": ["./src/*"] },
+
     /* Linting */
     "noUnusedLocals": true,
     "noUnusedParameters": true,
