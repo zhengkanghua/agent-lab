@@ -46,6 +46,7 @@ from openai import (
     RateLimitError,
     UnprocessableEntityError,
 )
+from psycopg import OperationalError as PsycopgOperationalError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -431,6 +432,7 @@ USER_ADMIN_ERROR_RULES: tuple[ErrorContractRule, ...] = (
 AgentChatErrorCode = Literal[
     "agent_runtime_unavailable",
     "agent_checkpointer_unavailable",
+    "agent_checkpointer_connection_lost",
     "agent_internal_error",
     "llm_authentication_failed",
     "llm_request_blocked",
@@ -477,6 +479,27 @@ AGENT_CHAT_ERROR_RULES: tuple[ErrorContractRule, ...] = (
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         code="agent_checkpointer_unavailable",
         detail="会话记忆存储当前不可用。",
+        retryable=True,
+    ),
+    # 会话记忆的连接在运行中途断了。和上一条的区别是「什么时候发现的」：上一条来自启动时
+    # 连接池打不开（AgentRuntime.open），是配置或数据库不在的信号，重启前重试没意义；这一条
+    # 是进程已经跑起来之后，池里某条连接被服务端掐掉（空闲回收、PG 重启、中间代理超时），
+    # 重发同一个问题就能成功，所以 retryable=True。
+    #
+    # 为什么只挂 OperationalError 而不是 psycopg.Error：ProgrammingError 也是 psycopg.Error
+    # 的子类，而「漏跑 init-checkpointer 导致表不存在」正是它——那个要留在兜底里报
+    # agent_internal_error，不能被说成「连接中断、稍后重试」，否则运维会一直重试一个永远
+    # 好不了的东西（见 docs/vps_deployment.md 第 4 节）。
+    #
+    # 注意这是**原生 psycopg** 的异常，不是 sqlalchemy.exc.OperationalError：checkpointer
+    # 按 ADR 0004 走独立的 psycopg 池，不经过 SQLAlchemy，所以 SQLAlchemyError 那几条规则
+    # 对它无效。它也不是内置 ConnectionError 的子类，指望 llm_unavailable 那条捞住它同样
+    # 不成立——两条路都试过才落到这里单开一条。
+    ErrorContractRule(
+        exceptions=(PsycopgOperationalError,),
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="agent_checkpointer_connection_lost",
+        detail="会话记忆存储的连接已中断。",
         retryable=True,
     ),
     ErrorContractRule(

@@ -405,6 +405,17 @@ error        已分类的失败
 后果不是报错而是 ``--autogenerate`` 生成 ``op.drop_table('checkpoints')``，下一次迁移删掉全部
 会话历史。
 
+它走的是独立的 psycopg 连接池（同上 ADR），因此业务侧 Engine 的 ``pool_pre_ping`` 保护不到它，
+必须自己配 ``check=AsyncConnectionPool.check_connection`` 做取连接前探活。少了它的表现值得记住，
+因为它不像故障、像抖动：psycopg_pool 的 ``check`` 默认 ``None``，取连接时完全不验活，于是被
+PostgreSQL 单方面掐掉的空闲连接（``idle_session_timeout``、中间代理的空闲回收、PG 重启）会被原样
+交给 checkpointer，第一条 SQL 抛 ``psycopg.OperationalError``，日志里是一行
+``discarding closed connection`` 加一条失败——而检索和文档接口全都正常，因为它们走 SQLAlchemy。
+更糟的是坏连接不会自己消失：``max_lifetime`` 和 ``max_idle`` 只在连接**归还**时检查，不巡检躺在
+池里的空闲连接，所以池里有几条死连接就要害几次提问失败才换干净。``min_size`` 也必须显式给（配置
+允许 ``max_size`` 填到 1，而默认 ``min_size`` 是 4，相撞时构造直接 ``ValueError``），顺带让池真的
+能收缩——两者相等时 ``_shrink_pool`` 的条件永远不成立。
+
 ## 集中的错误契约：api/error_contract.py
 
 搜索、文档搜索、手动流水线、账号管理和 Agent 五类路由共用一个错误契约层，映射收在有序的
@@ -450,6 +461,7 @@ USER_ADMIN_ERROR_RULES      build_user_admin_error_response()
 
 AGENT_CHAT_ERROR_RULES      build_agent_chat_error_response()
     agent_runtime_unavailable 503 / agent_checkpointer_unavailable 503 /
+    agent_checkpointer_connection_lost 503 /
     llm_authentication_failed 502 / llm_request_blocked 502 / llm_timeout 504 /
     llm_rate_limited 503 / llm_model_not_found 503 / llm_request_rejected 502 /
     llm_unavailable 503 / llm_response_invalid 502 / llm_service_error 502 /
@@ -478,6 +490,15 @@ INVALID_REQUEST_RULE        请求校验失败：invalid_request 422
 真实调用报出没见过的错误时，应当核对它落到的是具体规则还是兜底，落到兜底就说明该补规则。
 这也是为什么兜底码是 ``agent_internal_error`` 而不是复用检索链路的值：前端能按它查到文案，
 不会把枚举名显示给用户。
+
+``agent_checkpointer_unavailable`` 与 ``agent_checkpointer_connection_lost`` 同样是「状态码相同
+但要动的东西不同」，分法按**什么时候发现的**：前者来自启动时连接池打不开（``AgentRuntime.open``），
+是配置错或数据库不在，重启前重试无意义；后者是进程跑起来之后池里某条连接被服务端掐掉（空闲回收、
+PG 重启、中间代理超时），重发同一个问题就能成功。后者挂的是**原生** ``psycopg.OperationalError``——
+checkpointer 按 ADR 0004 走独立的 psycopg 池，不经过 SQLAlchemy，所以 ``SQLAlchemyError`` 那几条
+规则对它无效；它也不是内置 ``ConnectionError`` 的子类，``llm_unavailable`` 同样捞不住。规则只挂
+``OperationalError`` 而不是 ``psycopg.Error``：``ProgrammingError``（漏跑 ``init-checkpointer``
+导致表不存在）必须留在兜底里报 ``agent_internal_error``，那种故障重试永远好不了。
 
 ``llm_authentication_failed``（401）与 ``llm_request_blocked``（403）分成两条，是被一次真实
 排查逼出来的：两者曾合并在认证失败一条里，于是「中转站按 User-Agent 拦掉了 openai SDK 的默认

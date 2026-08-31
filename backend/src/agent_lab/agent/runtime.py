@@ -85,11 +85,18 @@ class AgentRuntime:
 
         Raises:
             LlmConfigurationError: provider 为 openai_compatible 但 API Key 为空。
+            RuntimeError: 走自建 checkpointer 分支但调用时没有运行中的事件循环——
+                ``AsyncPostgresSaver.__init__`` 会调 ``asyncio.get_running_loop()``。
+                生产路径天然满足（在 lifespan 里被 await），离线测试要注意包一层协程。
 
         Notes:
             本方法不执行数据库、Qdrant 或模型 I/O，也不建表——checkpointer 的四张表由
             ``cli.py init-checkpointer`` 显式创建，不在启动路径隐式改数据库结构
             （见 ADR 0004）。
+
+            自建的连接池带取连接前探活（``check_connection``）。这不是可选的调优项：
+            少了它，空闲期间被服务端掐掉的连接会被原样交出去，表现为「检索一切正常、
+            只有提问失败」，因为业务侧 Engine 有 ``pool_pre_ping``、这个池没有。
         """
 
         # 1、主模型与备用模型。备用模型只在主模型重试耗尽后才会被调用。
@@ -113,12 +120,30 @@ class AgentRuntime:
         if checkpointer is None:
             pool = AsyncConnectionPool(
                 conninfo=to_psycopg_conninfo(database_url),
+                # 必须显式给 1：psycopg_pool 的 min_size 默认是 4，而 max_size 允许配到
+                # 1（见 LlmSettings.checkpoint_pool_size 的 ge=1）。两者相撞时构造直接
+                # ValueError（"max_size must be greater or equal than min_size"），
+                # 表现是「配置文档说能填 1，填了服务起不来」。
+                # 顺带还解开了池的收缩能力：min_size == max_size 时 _shrink_pool 的
+                # 「已有连接数 > min_size」永远不成立，空闲连接会一直躺在池里不被回收。
+                min_size=1,
                 max_size=llm_settings.checkpoint_pool_size,
-                # 必须显式 False：默认 True 会在构造时就尝试建连，
-                # 而 build 的契约是「不执行 I/O」，且此时事件循环可能还没起来。
+                # 取连接前先探活，等价于业务侧 Engine 的 pool_pre_ping。
+                # 不配这个的后果很具体：psycopg_pool 的 check 默认 None，取连接时完全
+                # 不验活，于是被 PostgreSQL 单方面掐掉的空闲连接（idle_session_timeout、
+                # 中间代理的空闲回收、PG 重启都会造成）会被原样交给 checkpointer，第一条
+                # SQL 抛 psycopg.OperationalError。而且 max_lifetime/max_idle 只在连接
+                # **归还**时才检查、不巡检空闲连接，所以坏连接不会自己消失——每条都得先
+                # 害一次提问失败才会被换掉。
+                check=AsyncConnectionPool.check_connection,
+                # 必须显式 False：默认 True 会在构造时就尝试建连，而 build 的契约是
+                # 「不执行 I/O」——建连留给 open()，那里才有统一的失败包装
+                # （AgentCheckpointerUnavailableError）和「不把连接串写进日志」的处理。
                 open=False,
                 # checkpointer 自己拼 SQL 并按需 prepare，交给 psycopg 自动
                 # 事务包裹会多一层往返，官方推荐关掉。
+                # prepare_threshold=0 在这里还有第二个作用：探活换掉连接后不会撞上
+                # 「prepared statement 不存在」。
                 kwargs={"autocommit": True, "prepare_threshold": 0},
             )
             checkpointer = AsyncPostgresSaver(pool)
