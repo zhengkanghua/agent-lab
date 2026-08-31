@@ -93,7 +93,7 @@ describe('UserAdminPage', () => {
   })
 
   afterEach(() => {
-    document.body.innerHTML = ''
+    document.body.replaceChildren()
     vi.unstubAllGlobals()
   })
 
