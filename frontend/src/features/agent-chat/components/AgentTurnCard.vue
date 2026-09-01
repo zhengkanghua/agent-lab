@@ -169,7 +169,7 @@ const hasTracesOnly = computed(() => isUnanswered.value && props.turn.traces.len
 .trace-hint {
   display: block;
   margin-top: 4px;
-  color: var(--text-tertiary);
+  color: var(--text-muted);
   font-size: 0.8rem;
 }
 

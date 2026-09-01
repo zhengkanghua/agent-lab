@@ -157,7 +157,34 @@ ss -tlnp | grep :18000
 
 - `/` 指向 `<WEB_ROOT>`，并且**必须有 `try_files` 回落到
   `index.html`**。前端是 History 模式路由（`frontend/src/app/router.ts`），少了这条，
-  用户在 `/admin/users` 按 F5 刷新会 404 白屏。
+  用户在 `/admin/users` 按 F5 刷新会 404 白屏。就是这一句：
+
+  ```nginx
+  location / {
+      try_files $uri $uri/ /index.html;
+  }
+  ```
+
+  三件事按顺序说清楚，踩过一次就知道为什么要写下来：
+
+  1. **它必须排在 `/api/` 那条反代之后。** 反过来的话 API 请求会被这条先接住，
+     前端收到的是一坨 HTML 而不是 JSON，表现成「接口全挂但服务器日志一切正常」。
+  2. **1Panel 伪静态里那些预设一个都不要选。** `wordpress`、`laravel`、`thinkphp`、
+     `discuz` 这些是把 URL 重写到 `index.php` 的 PHP 方案，和本项目无关。列表里有
+     `vue` / `react` / `spa` / `history` 这类条目就选它，没有就选空白项把上面那句贴进去。
+  3. **可能和站点配置里已有的 `location /` 撞车。** 伪静态是被 `include` 进站点配置的，
+     两个 `location /` 同时存在时 OpenResty 起不来，`nginx -t` 会直接报 duplicate location。
+     撞了就别用伪静态框，改成直接编辑站点配置文件，把原有那个 `location /` 的内容换掉。
+
+  配完两处都要验：先 `nginx -t` 确认配置没坏再 reload，然后在浏览器里刷新
+  `/admin/users` 和一个真实的 `/agent/<会话id>`，两个都不 404 才算成。第二个不能省——
+  它那段路径是运行时产生的 UUID，能覆盖到「服务器上永远不存在对应文件」这种情况。
+
+  顺带记下两条已经评估并否决的替代方案，免得下次重新推导：**Hash 模式**（URL 变成
+  `/#/admin/users`，服务器只被要根路径）是用 URL 变丑换配置省事，且与
+  [ADR 0008](adr/0008-backend-in-image-frontend-as-static-files.md) 的既定前提冲突；
+  **构建时预渲染**要求为每个 URL 生成真实文件，而会话 id 构建时不可知，
+  `/agent/:threadId` 刷新照样 404，绕一圈还是要回来配这条。
 - `/api/` 反代到 `127.0.0.1:18000`，并**去掉 `/api` 前缀**（后端路由本身没有这个前缀）。
 - `/api/agent/chat` 是 SSE 长连接，读超时要放开（参考值 180s）。后端已自带
   `X-Accel-Buffering: no` 和心跳，不需要额外关缓冲，但读超时不能短于心跳间隔。

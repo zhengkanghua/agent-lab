@@ -23,20 +23,42 @@ vi.mock('../api/agent-threads', () => threadsApi)
 
 const session = vi.hoisted(() => ({ logout: vi.fn() }))
 
-vi.mock('../features/auth/auth-session', () => ({
-  authSession: {
-    status: ref('authenticated'),
-    user: ref({
-      id: '10000000-0000-4000-8000-000000000001',
-      email: 'admin@example.com',
-      is_active: true,
-      is_superuser: true,
-      is_verified: true,
-      is_environment_admin: true,
-    }),
-    logout: session.logout,
-  },
-}))
+/* 账号管理入口的可见性要按角色断言，所以 user 必须可改，不能像原来那样写死
+   is_superuser: true。ref 在 mock 工厂里建（`vi.hoisted` 跑在 import 之前，那时还没有 `ref`），
+   容器只持有它的引用，于是用例改的和页面读的是同一个 ref。
+   每个用例前 resetAuthUser() 复位成超管，避免顺序相关的假失败。 */
+const auth = vi.hoisted(() => ({ user: null as unknown as ReturnType<typeof ref> }))
+
+const SUPERUSER = {
+  id: '10000000-0000-4000-8000-000000000001',
+  email: 'admin@example.com',
+  is_active: true,
+  is_superuser: true,
+  is_verified: true,
+  is_environment_admin: true,
+}
+
+vi.mock('../features/auth/auth-session', () => {
+  auth.user = ref({
+    id: '10000000-0000-4000-8000-000000000001',
+    email: 'admin@example.com',
+    is_active: true,
+    is_superuser: true,
+    is_verified: true,
+    is_environment_admin: true,
+  })
+  return {
+    authSession: {
+      status: ref('authenticated'),
+      user: auth.user,
+      logout: session.logout,
+    },
+  }
+})
+
+function resetAuthUser(): void {
+  auth.user.value = { ...SUPERUSER }
+}
 
 import AgentChatPage from './AgentChatPage.vue'
 
@@ -60,6 +82,9 @@ function testRouter() {
       // 页面在服务端新建会话后会 replace 到这条路由。少了它，vue-router 抛「No match」，
       // 而那个异常发生在 watch 回调里，只表现成未处理的 rejection，不会让用例失败。
       { path: '/agent/:threadId', name: 'agent-thread', component: AgentChatPage },
+      // 顶栏的账号管理入口指向这条。少了它 RouterLink 解析不到目标，
+      // 本文件所有用例都会在挂载时炸掉，而不只是与入口相关的那两条。
+      { path: '/admin/users', name: 'user-admin', component: { template: '<div>admin</div>' } },
     ],
   })
 }
@@ -89,6 +114,7 @@ describe('AgentChatPage', () => {
     api.fetchAgentDefaultPrompt.mockResolvedValue('你是新闻检索助手。')
     session.logout.mockReset()
     session.logout.mockResolvedValue(undefined)
+    resetAuthUser()
     threadsApi.listAgentThreads.mockReset()
     threadsApi.listAgentThreads.mockResolvedValue({ items: [], total: 0 })
     threadsApi.getAgentThreadMessages.mockReset()
@@ -101,6 +127,30 @@ describe('AgentChatPage', () => {
   afterEach(() => {
     document.body.replaceChildren()
     vi.unstubAllGlobals()
+  })
+
+  /* 断言 aria-label 而不是图标组件：入口对用户和读屏的可见性由它决定，
+     换图标不该让这两条失败。 */
+  it('超管在本页顶栏能直接进账号管理，不必先退回检索页', async () => {
+    const { wrapper } = await mountPage()
+
+    const link = wrapper
+      .findAll('.topbar-nav-link')
+      .find((item) => item.attributes('aria-label') === '账号管理')
+
+    expect(link?.attributes('href')).toBe('/admin/users')
+    wrapper.unmount()
+  })
+
+  it('非超管在本页顶栏看不到账号管理入口', async () => {
+    auth.user.value = { ...SUPERUSER, is_superuser: false, is_environment_admin: false }
+    const { wrapper } = await mountPage()
+
+    const labels = wrapper.findAll('.topbar-nav-link').map((item) => item.attributes('aria-label'))
+
+    expect(labels).not.toContain('账号管理')
+    expect(labels).toContain('语义检索')
+    wrapper.unmount()
   })
 
   it('进入页面时取默认提示词，让「填入默认提示词」可用', async () => {
@@ -161,8 +211,19 @@ describe('AgentChatPage', () => {
 
   it('工具调用轨迹显示在回答上方', async () => {
     scripted([
-      { event: 'tool_call', tool: 'search_news', arguments: { query: '利率' } },
-      { event: 'tool_result', tool: 'search_news', content: '找到 2 篇。', failed: false },
+      {
+        event: 'tool_call',
+        tool_call_id: 'call-1',
+        tool: 'search_news',
+        arguments: { query: '利率' },
+      },
+      {
+        event: 'tool_result',
+        tool_call_id: 'call-1',
+        tool: 'search_news',
+        content: '找到 2 篇。',
+        failed: false,
+      },
       { event: 'token', text: '维持不变。' },
       { event: 'done', thread_id: THREAD_ID },
     ])
@@ -404,10 +465,7 @@ describe('AgentChatPage', () => {
       threadsApi.getAgentThreadMessages.mockResolvedValue(REPLAY)
       const { wrapper } = await mountThreadPage()
 
-      expect(threadsApi.getAgentThreadMessages).toHaveBeenCalledWith(
-        THREAD_ID,
-        expect.anything(),
-      )
+      expect(threadsApi.getAgentThreadMessages).toHaveBeenCalledWith(THREAD_ID, expect.anything())
       expect(wrapper.text()).toContain('之前问过的')
       expect(wrapper.text()).toContain('之前答过的')
       wrapper.unmount()
