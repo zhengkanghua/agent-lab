@@ -64,3 +64,14 @@ ACR 那一环太重，切回这套的成本不高。
 
 **前后端在同一个工作流里顺序部署，后端先。** 迁移失败则中止在后端那一步，前端仍是旧版本，
 不会出现「新前端调老后端」。反过来先传前端就做不到这一点。
+
+**ACR 个人版只认基本的 OCI manifest，所以工作流里关掉了 provenance / SBOM，缓存也不放 registry。**
+buildx 从 v0.10 起默认给镜像附加来源证明和物料清单，它们在 manifest 里用
+`application/vnd.oci.empty.v1+json` 占位；ACR 个人版不认识这个媒体类型，会在最后一步回
+`denied: unknown manifest class for application/vnd.oci.empty.v1+json`。这个坑的麻烦之处在于
+失败得很晚——所有层和镜像 manifest 都已经推成功，只有附加的证明 manifest 被拒，日志里前面全是
+正常的 `writing layer`，很容易当成网络或权限问题去查。所以
+`provenance: false` / `sbom: false` 是能不能推上去的问题，不是优化，别当成多余配置删掉。
+同理，构建缓存用 `type=gha` 而不是 `type=registry`：后者要往 registry 写
+`application/vnd.buildkit.cacheconfig.v0`，同一个 registry 已经拒了上面那个类型，没有理由赌它认这个。
+换成支持完整 OCI 规范的 registry（ACR 企业版、GHCR、Harbor）后这三项都可以放开。

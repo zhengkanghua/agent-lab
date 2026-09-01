@@ -36,7 +36,6 @@ env:
   # 改 registry 时两处必须同步改，清单见 docs/container_deployment.md 的「更换 registry」。
   ACR_REGISTRY: ${{ vars.ACR_REGISTRY }}
   BACKEND_IMAGE: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/${{ vars.ACR_REPOSITORY }}:backend-latest
-  BUILD_CACHE_IMAGE: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/${{ vars.ACR_REPOSITORY }}:buildcache
 
 jobs:
   deploy:
@@ -146,12 +145,33 @@ jobs:
           # 构建上下文是 backend/，不是仓库根：Dockerfile 里的 COPY 路径都相对它。
           context: backend
           push: true
-          # 这个值必须和 backend/docker-compose.yml 里 image: 的默认值完全一致，
+          # 这个值必须和服务器 .env 里的 BACKEND_IMAGE 完全一致，
           # 否则会出现「CI 推 A、服务器拉 B」——表现是部署全绿但代码没更新。
           tags: ${{ env.BACKEND_IMAGE }}
-          # 把构建缓存存在 registry 里，下次构建时依赖没变就不用重装 langchain 全家桶。
-          cache-from: type=registry,ref=${{ env.BUILD_CACHE_IMAGE }}
-          cache-to: type=registry,ref=${{ env.BUILD_CACHE_IMAGE }},mode=max
+
+          # 这两个必须关掉，不是优化而是能不能推上去的问题。
+          # buildx 从 v0.10 起默认给镜像附加 provenance / SBOM 证明，它们在 manifest 里用
+          # application/vnd.oci.empty.v1+json 这个媒体类型占位。阿里云 ACR 个人版不认识它，
+          # 会在最后一步拒收：`denied: unknown manifest class for
+          # application/vnd.oci.empty.v1+json`。
+          # 坑在于失败发生得很晚——所有层都已经推完，只有 manifest 被拒，日志里前面全是
+          # 正常的 writing layer，容易误以为是网络或权限问题。
+          provenance: false
+          sbom: false
+
+          # 缓存用 GitHub Actions 自带的，不用 registry：registry 缓存写的是
+          # application/vnd.buildkit.cacheconfig.v0 媒体类型，ACR 个人版同样可能不认
+          # （它已经拒了上面那个 OCI 类型）。type=gha 不依赖 registry 支持，
+          # 免费、每仓库 10GB 按 LRU 淘汰，对这个镜像够用。
+          # 作用是依赖没变时不用重装 langchain 全家桶，能省几分钟。
+          # url 和 token 由 build-push-action 自动注入，不用自己传。
+          cache-from: type=gha
+          # ignore-error=true 是有意的：缓存只是省时间，不该有权让部署失败。
+          # 默认值 false 会让缓存导出出错时整个构建失败，而它有两种现实的出错方式——
+          # Actions 缓存 API 被限流时导出会卡到 `maximum timeout reached`，
+          # 以及缓存服务 v1/v2 切换（buildkit 按 ACTIONS_CACHE_SERVICE_V2 决定用哪版）。
+          # 这两种情况下镜像本身是好的，没有理由不部署。
+          cache-to: type=gha,mode=max,ignore-error=true
 
       # ---------- 5. 部署后端 ----------
       # 在传前端之前做，是有意的：迁移失败就中止在这里，前端仍是旧版本，

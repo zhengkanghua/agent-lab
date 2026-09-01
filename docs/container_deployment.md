@@ -280,6 +280,16 @@ docker compose run --rm backend agent-lab init-checkpointer
 这是另一回事：池里的连接被服务端掐了（`idle_session_timeout`、中间代理回收、PG 重启都会
 造成），日志里会有 `discarding closed connection`。重发即可，表是好的。
 
+### 推镜像失败：`unknown manifest class for application/vnd.oci.empty.v1+json`
+
+ACR 个人版不认 buildx 默认附加的 provenance / SBOM 证明。工作流里已经用
+`provenance: false` / `sbom: false` 关掉了，**这两行不是优化，删掉就推不上去**。
+
+这个故障的表现容易误导：所有镜像层和镜像本身都推成功了，只有附加的证明 manifest 被拒，
+日志里前面全是正常的 `writing layer`，看起来像网络或权限问题。同理构建缓存用
+`type=gha` 而不是 `type=registry`。理由见
+[ADR 0008](adr/0008-backend-in-image-frontend-as-static-files.md) 最后一条。
+
 ### 部署成功但代码没更新
 
 检查工作流里 `docker compose pull` 是否执行成功。也可能是 `.env` 里的 `BACKEND_IMAGE`
