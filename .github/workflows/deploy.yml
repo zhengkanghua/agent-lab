@@ -75,8 +75,12 @@ jobs:
       # ---------- 1. 后端测试 ----------
       # 测试不连真实数据库和外部服务（fake Embeddings、内存 Qdrant、httpx ASGITransport），
       # 所以这里不需要起 PostgreSQL 服务容器。见 backend/README.md 的「测试」一节。
+      # 这个 action 从 v8 起不再发布浮动大版本 tag（v8/v9/v10 都不存在，只有 v10.0.1
+      # 这样的精确 tag），所以这里必须钉精确版本。写 @v10 会在 Set up job 阶段就失败：
+      # 「Unable to resolve action, unable to find version v10」。
+      # 升级时去 releases 页面取最新的精确 tag，不要照其他 action 的样子写大版本号。
       - name: 装 uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
