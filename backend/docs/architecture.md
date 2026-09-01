@@ -18,6 +18,9 @@ GET  /documents/{document_id}             按需读取 PostgreSQL 完整正文
 POST /pipeline/run-once                   手动、同步、有界的写入流水线（超级用户）
 POST /agent/chat                          Agent 对话，SSE 流式（超级用户）
 GET  /agent/default-prompt                默认系统提示词（超级用户）
+GET    /agent/threads                     列出自己的会话，分页（超级用户）
+GET    /agent/threads/{thread_id}/messages 回放一个会话的历史问答（超级用户）
+DELETE /agent/threads/{thread_id}         删除会话及其历史（超级用户）
 GET    /admin/users                       账号列表（超级用户）
 POST   /admin/users                       创建账号（超级用户）
 PATCH  /admin/users/{user_id}             改启用状态与超级用户位（超级用户）
@@ -392,12 +395,17 @@ token        文本增量。只承载最终回答，工具调用参数不走这�
 tool_call    模型决定调某个工具（让「正在查资料」可见）
 tool_result  工具返回；failed 为真时 content 是查表得到的安全文案，不是异常文本
 done         运行正常结束，并告知 thread_id（新建会话时前端要拿它发起下一轮）
-error        已分类的失败
+error        已分类的失败，同样带 thread_id（理由见下）
 ```
 
 失败为什么走事件而不是状态码：响应头在第一个 token 发出时就已发送，之后改不了状态码。所以流
 开始之前的失败走 HTTP 状态码，开始之后只能走 ``error`` 事件——两条路径共用同一张规则表，同一种
 失败在两处拿到同一个 ``code``。
+
+``error`` 和 ``done`` 一样带 ``thread_id``，因为归属行在流开始之前就已写入（ADR 0010）：失败的
+那一轮在服务端已经是一个存在的会话。不带的话前端无从知道它，用户点「重发」时请求里没有
+``thread_id``，服务端只能当成新会话再建一行——同一次提问在会话列表里占两条，都是「有提问、
+没答案」，重试几次就多几条。上游限流是最常撞见的失败，所以这条路径不是边角情况。
 
 会话历史由 ``langgraph-checkpoint-postgres`` 存在四张 ``checkpoint*`` 表里，**不由 Alembic 管**
 （ADR 0004）。建表是一次性运维步骤：``agent-lab init-checkpointer``。表名只写在
@@ -649,6 +657,7 @@ sources          Feed、机构或其他文档来源，以及来源级 sync_check
 documents        清洗正文、来源关联、当前处理状态，以及 Qdrant 索引 revision/成功快照
 users            内部登录邮箱、Argon2 密码 Hash、启用/超级用户状态和唯一环境托管标记
 access_tokens    浏览器登录产生的可撤销随机 Token、创建时间和所属用户
+agent_threads    Agent 会话的账号归属、标题与最后活跃时间；不含任何消息内容
 alembic_version  由 Alembic 维护当前迁移版本
 
 以下四张由 langgraph-checkpoint-postgres 自建自迁移，Alembic 既不生成也不删除（ADR 0004）：
@@ -659,10 +668,25 @@ checkpoints、checkpoint_blobs、checkpoint_writes、checkpoint_migrations
 图片 URL 使用 PostgreSQL ``text[]``。所有时间使用带时区 ``datetime``，数据库连接会话
 固定为 UTC。仍未新增 Chunk、Embedding 或 pipeline_runs 表。
 
-四张 ``checkpoint*`` 表是 Agent 会话历史，也是 Agent 链路唯一的写入。它们**没有**外键指向
-``users``，v1 也不做会话列表和会话清理。会话的访问控制到此为止：``thread_id`` 缺省时由服务端用
-``uuid4()`` 生成并通过 ``done`` 事件告知，但 ``AgentChatRequest.thread_id`` 允许客户端填，
-checkpointer 也只按 id 取历史、不校验归属——所以拿到 id 就等于拿到那次会话，这是一个凭据而不是
-一次授权检查。v1 能接受是因为 ``/agent/*`` 只对超级用户开放，且随机 UUID 猜不出来；一旦把
-``/agent`` 放给普通用户，就必须先补一张 ``thread_id → user_id`` 的归属表并在入口校验，光靠
-「id 由服务端生成」挡不住一个知道别人 id 的调用方。
+Agent 的会话数据分在两处，边界是「内容 / 归属」：四张 ``checkpoint*`` 表存消息内容，
+``agent_threads`` 存「这个会话属于谁」。前者由第三方库管、不由 Alembic 管；后者是普通业务表，
+有指向 ``users`` 的外键（``ON DELETE CASCADE``）和 ``(user_id, last_active_at DESC)`` 索引。
+分开的理由见 [ADR 0009](../../docs/adr/0009-agent-thread-ownership-in-own-table.md)。
+
+**归属校验是访问控制，不是凭据检查。** 每条 ``/agent/*`` 路由先经
+``AgentThreadService`` 确认目标会话属于当前账号，不属于就 404；``WHERE user_id`` 只写在那一个
+Service 里。``AgentChatRequest.thread_id`` 仍允许客户端填，但填别人的会拿到 404 而不是别人的历史。
+「不存在」与「不属于你」刻意返回同一个 code：区分开就等于给出一个枚举有效 id 的预言机。
+
+这一层不依赖「``/agent/*`` 只对超级用户开放」。那条权限将来放宽时，归属校验仍然成立——它是
+按账号判断的，不是按角色。
+
+``POST /agent/chat`` 的校验必须在**流开始之前**完成：响应头一旦发出，失败就只能是一个 SSE
+``error`` 事件，拿不到 HTTP 状态码了。它也不能用请求级数据库 Session，否则一条业务连接会被整段
+对话占住，几个并发就把连接池占空，而症状出现在检索页
+（[ADR 0010](../../docs/adr/0010-sse-routes-use-short-lived-db-sessions.md)）。
+
+归属记录在流开始前就写好，所以首轮失败会留下「有会话、没消息」的行；回放接口对它返回空轮次，
+前端显示成一个可以接着聊的空会话。删除会话要动两个存储，跨两个连接池没有共同事务，顺序固定为
+「先清历史、后删归属记录」：中途失败留下的是可自愈的「历史没了、归属还在」，反过来会留下查不到
+也删不掉的孤儿。孤儿由 ``agent-lab prune-orphan-threads`` 回收，默认只预演。

@@ -17,7 +17,9 @@ from typing import TYPE_CHECKING
 from fastapi import Request
 
 from agent_lab.agent.errors import AgentRuntimeUnavailableError
+from agent_lab.db.session import async_session_factory
 from agent_lab.pipeline.write_runtime import PipelineWriteRuntime
+from agent_lab.services.agent_thread_service import AgentThreadService
 from agent_lab.services.vector_search_service import VectorSearchService
 
 
@@ -144,11 +146,34 @@ def get_agent_runtime(request: Request) -> "AgentRuntime":
     return runtime
 
 
+def get_agent_thread_service() -> AgentThreadService:
+    """构造会话归属 Service（FastAPI 依赖注入函数）。
+
+    与本模块其他依赖不同，它不从 ``app.state`` 取现成对象，而是每次现造一个：Service 自己无状态，
+    真正贵的是数据库连接，而连接归它内部按需开关。
+
+    **为什么传的是 session 工厂而不是 session**：主要调用方 ``POST /agent/chat`` 返回流式响应，
+    ``Depends(get_db_session)`` 要等流关闭才归还连接，一次对话几分钟就是几分钟——几个并发能把业务
+    连接池占空，而故障表现是检索页报数据库不可用，看起来跟 Agent 无关。详见
+    docs/adr/0010-sse-routes-use-short-lived-db-sessions.md。
+
+    Returns:
+        持有进程级 session 工厂的 ``AgentThreadService``。
+
+    Notes:
+        只构造对象，不建连、不查库。离线测试整体覆盖本依赖（照 ``get_user_admin_service`` 的做法），
+        因此不会真去连 PostgreSQL。
+    """
+
+    return AgentThreadService(async_session_factory)
+
+
 __all__ = [
     "PipelineWriteRuntimeFactory",
     "PipelineWriteRuntimeUnavailableError",
     "VectorSearchRuntimeUnavailableError",
     "get_agent_runtime",
+    "get_agent_thread_service",
     "get_pipeline_write_runtime_factory",
     "get_vector_search_service",
 ]

@@ -1,6 +1,6 @@
 """为既有 HTTP 行为测试提供显式、无数据库 I/O 的认证依赖覆盖。"""
 
-from uuid import uuid4
+from uuid import UUID
 
 from fastapi import FastAPI
 
@@ -21,11 +21,18 @@ async def skip_environment_admin_sync() -> EnvironmentAdminSyncResult:
     )
 
 
+# 两个角色各固定一个 id。**不能用 uuid4() 每次现生成**：这两个函数是按请求调用的依赖覆盖，
+# 现生成意味着同一个测试里前后两个请求会拿到不同账号，于是任何跨请求的归属断言（第一个请求建会话、
+# 第二个请求列出它）都会假失败，而且失败原因看起来像「归属校验坏了」。
+SUPERUSER_ID = UUID("00000000-0000-4000-8000-000000000001")
+READER_ID = UUID("00000000-0000-4000-8000-000000000002")
+
+
 def _test_user(*, superuser: bool) -> UserRecord:
     """构造不持久化的启用测试用户。"""
 
     return UserRecord(
-        id=uuid4(),
+        id=SUPERUSER_ID if superuser else READER_ID,
         email="operator@example.com" if superuser else "reader@example.com",
         hashed_password="not-used-by-dependency-overrides",
         is_active=True,

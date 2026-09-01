@@ -41,9 +41,22 @@ class ModelResponseInvalidError(AgentError):
     """
 
 
+class AgentThreadNotFoundError(AgentError):
+    """请求的会话不存在，或者存在但不属于当前账号。
+
+    两种情况刻意共用一个异常、映射成同一个 404：分开报会给猜 id 的人一个预言机——403 等于确认
+    「这个 id 存在」，404 等于确认「不存在」，两者一比就能枚举出哪些会话是别人的。合并之后
+    响应不泄露存在性，而对合法用户来说「不存在或已被删除」也是准确的描述。
+
+    抛出点在 ``services.agent_thread_service``，即会话归属校验处；``/agent/chat`` 在流开始之前
+    校验，所以它能变成正常的 HTTP 404，而不是流里的一个 error 事件。
+    """
+
+
 __all__ = [
     "AgentCheckpointerUnavailableError",
     "AgentError",
     "AgentRuntimeUnavailableError",
+    "AgentThreadNotFoundError",
     "ModelResponseInvalidError",
 ]

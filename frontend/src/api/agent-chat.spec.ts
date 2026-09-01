@@ -129,12 +129,19 @@ describe('streamAgentChat', () => {
   it('把 error 事件当作正常事件产出，而不是抛异常', async () => {
     const events = await collect([
       frame({ event: 'token', text: '半句' }),
-      frame({ event: 'error', code: 'llm_timeout', detail: '模型超时。', retryable: true }),
+      frame({
+        event: 'error',
+        thread_id: THREAD_ID,
+        code: 'llm_timeout',
+        detail: '模型超时。',
+        retryable: true,
+      }),
     ])
 
     // 流已经开始就改不了 HTTP 状态码，所以失败只能作为事件送达。
     expect(events.at(-1)).toEqual({
       event: 'error',
+      thread_id: THREAD_ID,
       code: 'llm_timeout',
       detail: '模型超时。',
       retryable: true,
@@ -160,7 +167,22 @@ describe('streamAgentChat', () => {
     { name: '未知事件类型', payload: { event: 'thinking', text: 'x' } },
     { name: 'token 缺 text', payload: { event: 'token' } },
     { name: 'done 的 thread_id 不是 UUID', payload: { event: 'done', thread_id: 'not-a-uuid' } },
-    { name: 'error 缺 retryable', payload: { event: 'error', code: 'x', detail: 'y' } },
+    // 这条带上 thread_id 是有意的：不带的话它会因为缺 thread_id 被拒，名字说的
+    // 「缺 retryable」就没被验到。
+    {
+      name: 'error 缺 retryable',
+      payload: { event: 'error', thread_id: THREAD_ID, code: 'x', detail: 'y' },
+    },
+    // 失败那一轮同样属于一个已存在的会话，所以 error 也必须带 thread_id——前端靠它
+    // 把重试发回同一个会话，而不是另开一个。
+    {
+      name: 'error 缺 thread_id',
+      payload: { event: 'error', code: 'x', detail: 'y', retryable: true },
+    },
+    {
+      name: 'error 的 thread_id 不是 UUID',
+      payload: { event: 'error', thread_id: 'not-a-uuid', code: 'x', detail: 'y', retryable: true },
+    },
     { name: 'tool_result 缺 content', payload: { event: 'tool_result', tool: 'search_news' } },
   ])('拒绝契约漂移：$name', async ({ payload }) => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([frame(payload)])))

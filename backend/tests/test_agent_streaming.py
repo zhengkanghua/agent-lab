@@ -271,6 +271,40 @@ def test_the_done_event_carries_the_thread_id() -> None:
     assert events[-1].thread_id == thread_id
 
 
+def test_the_error_event_also_carries_the_thread_id() -> None:
+    """error 事件同样要带 thread_id。
+
+    **这条防的是列表里冒出重复会话。** 归属行在流开始之前就写好了，所以失败的这一轮也已经
+    属于一个存在的会话。error 事件不带 id 的话前端无从知道它，用户点「重发这一轮」时请求里
+    没有 thread_id，服务端只能当成新会话再建一行——于是列表里多一条「有提问、没答案」，
+    重试几次就多几条，而它们指的都是同一次提问。
+
+    上游限流是最常撞见的失败（真机第一次提问就撞上了），所以这条路径不是边角情况。
+    """
+
+    thread_id = uuid4()
+    graph = build_offline_graph(
+        FailingChatModel(error=openai.APITimeoutError(request=None)),  # type: ignore[arg-type]
+    )
+
+    async def drain() -> list[Any]:
+        return [
+            event
+            async for event in stream_agent_events(
+                graph,
+                message="你好",
+                thread_id=thread_id,
+                context=AgentContext(),
+                langsmith_settings=OFFLINE_LANGSMITH_SETTINGS,
+            )
+        ]
+
+    events = run(drain())
+
+    assert isinstance(events[-1], AgentErrorEvent)
+    assert events[-1].thread_id == thread_id
+
+
 def test_the_same_thread_id_continues_the_earlier_conversation() -> None:
     """同一个 thread_id 的第二轮必须能看到第一轮的消息。
 

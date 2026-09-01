@@ -21,6 +21,8 @@ from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 
 from agent_lab.agent.checkpointer import (
     CHECKPOINTER_TABLE_NAMES,
+    delete_checkpointer_threads,
+    list_checkpointer_thread_ids,
     setup_checkpointer_tables,
 )
 from agent_lab.auth.manager import UserManager
@@ -42,6 +44,7 @@ from agent_lab.pipeline.limits import (
 )
 from agent_lab.qdrant.runtime import DocumentIndexingRuntime
 from agent_lab.schemas.auth import AuthUserCreate
+from agent_lab.services.agent_thread_service import AgentThreadService
 from agent_lab.services.freshrss_import_service import FreshRSSImportService
 from agent_lab.services.news_pipeline_execution_service import (
     NewsPipelineExecutionService,
@@ -157,6 +160,18 @@ def build_parser() -> argparse.ArgumentParser:
         "init-checkpointer",
         help="创建或升级 Agent 会话历史所需的 LangGraph checkpointer 表。",
     )
+
+    prune_parser = subparsers.add_parser(
+        "prune-orphan-threads",
+        help="清理没有归属记录的 Agent 会话历史；默认只预演，加 --yes 才真删。",
+    )
+    prune_parser.add_argument(
+        "--yes",
+        action="store_true",
+        # 默认预演是有意的：这个命令删的是用户的对话历史，且不可恢复。让「看一眼」成为默认
+        # 动作、「真删」成为显式选择。
+        help="确认执行删除；省略时只列出将被删除的会话数量，不做任何修改。",
+    )
     return parser
 
 
@@ -225,6 +240,9 @@ async def dispatch_command(args: argparse.Namespace) -> CommandOutcome:
 
     if args.command == "init-checkpointer":
         return await _init_checkpointer(args)
+
+    if args.command == "prune-orphan-threads":
+        return await _prune_orphan_threads(args)
 
     executor = NewsPipelineExecutionService(async_session_factory)
     # 命令分派：sync-news 只同步；index-pending 只索引；run-once 两步都做
@@ -357,6 +375,73 @@ async def _init_checkpointer(args: argparse.Namespace) -> CommandOutcome:
             "command": args.command,
             "ok": True,
             "checkpointer_tables": sorted(CHECKPOINTER_TABLE_NAMES),
+        },
+        exit_code=0,
+    )
+
+
+async def _prune_orphan_threads(args: argparse.Namespace) -> CommandOutcome:
+    """清理 checkpointer 里没有归属记录的会话历史。
+
+    Args:
+        args: 用到 ``command`` 与 ``yes``；``yes`` 为假时只预演不删。
+
+    Returns:
+        孤儿会话数量与本次实际删除数量，退出码 0。
+
+    Raises:
+        Exception: 无法连接 PostgreSQL、checkpointer 表不存在、或删除失败时传播；
+            最外层只按异常类型报告。
+
+    Notes:
+        「孤儿」的定义是：checkpointer 里存有历史，但 ``agent_threads`` 里查不到归属记录。
+        这类数据的来源有三种——归属功能上线之前产生的历史、迁移被回滚过、以及删除会话时
+        「清历史成功、删归属记录失败」留下的残余。它们在网页上既列不出来也删不掉。
+
+        **默认只预演。** 加 ``--yes`` 才真删，且删除不可恢复。
+
+        为什么不在 Alembic 迁移里做这件事：迁移文件按约定是「写下来就不再变」的历史记录，
+        而这里要调第三方库的删除逻辑，那段逻辑自己带版本管理——回滚到某个旧迁移时它的行为
+        已经不是当初那个了。理由同 ADR 0004 拒绝「在迁移里建 checkpointer 表」。
+
+        顺序上它必须在 ``alembic upgrade head`` 之后跑：``agent_threads`` 还不存在的话，
+        全部会话都会被判成孤儿。
+    """
+
+    database_url = str(get_settings().database_url)
+
+    # 1、先读业务表的归属记录，再读 checkpointer。顺序无所谓正确性，但先读业务表更快失败——
+    #    表不存在时立刻报错，而不是先花时间遍历完所有 checkpoint。
+    threads = AgentThreadService(async_session_factory)
+    owned = await threads.list_known_thread_ids()
+    # 两侧都转成字符串再比：业务表存的是 UUID 对象，checkpointer 存的是字符串。万一库里被手工
+    # 塞进过非 UUID 的 thread_id，按字符串比会把它算成孤儿并清掉，这也正是想要的结果——
+    # 若先 UUID() 解析，那种值会让整个命令抛异常。
+    known = {str(thread_id) for thread_id in owned}
+    stored = await list_checkpointer_thread_ids(database_url)
+    orphans = sorted(stored - known)
+
+    # 2、预演模式只报数，不动数据。
+    if not args.yes:
+        return CommandOutcome(
+            payload={
+                "command": args.command,
+                "ok": True,
+                "dry_run": True,
+                "orphan_threads": len(orphans),
+                "deleted_threads": 0,
+            },
+            exit_code=0,
+        )
+
+    deleted = await delete_checkpointer_threads(database_url, orphans)
+    return CommandOutcome(
+        payload={
+            "command": args.command,
+            "ok": True,
+            "dry_run": False,
+            "orphan_threads": len(orphans),
+            "deleted_threads": deleted,
         },
         exit_code=0,
     )

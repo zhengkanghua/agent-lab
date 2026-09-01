@@ -100,3 +100,56 @@ export function settlePendingTraces(turn: AgentTurn, note: string): void {
     }
   }
 }
+
+/**
+ * 把回放接口返回的历史轮次转成界面用的轮次。
+ *
+ * 全部标成 `done`：它们是既成事实，没有「正在进行」的可能。历史里没有存下当时的失败原因，
+ * 所以也不给 error——编一个出来会让用户以为那一轮报过某个具体错误。answer 为空串的轮次
+ * 保持空串，由 `AgentTurnCard` 显示一句中性说明。
+ *
+ * 只有调用没有结果的工具轨迹（那一轮在工具返回前就断了）用 `pendingNote` 收尾，否则
+ * `AgentToolTraceList` 会按 content 为 null 一直转圈，让人以为现在还在查。
+ */
+export function turnsFromReplay(
+  replayTurns: readonly ReplayTurnInput[],
+  pendingNote: string,
+): AgentTurn[] {
+  return replayTurns.map((replayTurn) => {
+    const turn: AgentTurn = {
+      id: nextLocalId('turn'),
+      question: replayTurn.question,
+      answer: replayTurn.answer,
+      traces: (replayTurn.traces ?? []).map((trace) => ({
+        id: nextLocalId('trace'),
+        tool: trace.tool,
+        arguments: trace.arguments ?? {},
+        content: trace.content ?? null,
+        failed: trace.failed ?? false,
+      })),
+      error: null,
+      status: 'done',
+    }
+    settlePendingTraces(turn, pendingNote)
+    return turn
+  })
+}
+
+/**
+ * 回放输入的结构约束。
+ *
+ * 刻意只写用到的字段、不直接引用生成的 DTO 类型：这样这个纯函数不依赖 OpenAPI 生成物，
+ * 测试可以用手写字面量调用它，而后端往响应里加字段也不会波及这里。
+ */
+export interface ReplayTurnInput {
+  question: string
+  answer: string
+  traces?: readonly ReplayTraceInput[] | null
+}
+
+export interface ReplayTraceInput {
+  tool: string
+  arguments?: Record<string, unknown> | null
+  content?: string | null
+  failed?: boolean | null
+}

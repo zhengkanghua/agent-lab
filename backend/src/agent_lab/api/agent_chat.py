@@ -18,7 +18,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from typing import Annotated, Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import StreamingResponse
@@ -28,8 +28,11 @@ from agent_lab.agent.limits import SSE_HEARTBEAT_INTERVAL_SECONDS
 from agent_lab.agent.prompts import DEFAULT_SYSTEM_PROMPT
 from agent_lab.agent.runtime import AgentRuntime
 from agent_lab.agent.streaming import stream_agent_events
-from agent_lab.api.dependencies import get_agent_runtime
+from agent_lab.api.dependencies import get_agent_runtime, get_agent_thread_service
+from agent_lab.auth.dependencies import current_superuser
 from agent_lab.config.llm import LangSmithSettings, get_langsmith_settings
+from agent_lab.models.user import UserRecord
+from agent_lab.services.agent_thread_service import AgentThreadService
 from agent_lab.schemas.agent_chat import (
     AgentChatEvent,
     AgentChatEventEnvelope,
@@ -186,30 +189,46 @@ async def agent_chat(
     chat_request: AgentChatRequest,
     runtime: Annotated[AgentRuntime, Depends(get_agent_runtime)],
     langsmith_settings: Annotated[LangSmithSettings, Depends(get_langsmith_settings)],
+    user: Annotated[UserRecord, Depends(current_superuser)],
+    threads: Annotated[AgentThreadService, Depends(get_agent_thread_service)],
 ) -> ServerSentEventResponse:
     """启动一次 Agent 运行并以 SSE 返回全过程。
 
-    ``thread_id`` 缺省时由服务端生成，而不是让前端自己造一个：前端生成意味着它可以填任意
-    UUID，而 checkpointer 只按 id 取历史、不校验归属——那等于任何人猜到 id 就能读到别人的
-    会话。服务端生成的新 id 通过 ``done`` 事件返回。
+    ``thread_id`` 带上就接着聊，但**必须是自己的会话**：checkpointer 只按 id 取历史、不校验归属，
+    所以归属由 ``AgentThreadService`` 在这里挡住。缺省时由服务端生成新 id 并落一行归属记录，
+    新 id 通过 ``done`` 事件返回。
+
+    权限门在 ``main.py`` 的 ``include_router`` 上已经挂了一道，这里再声明一次 ``current_superuser``
+    不是重复：那道只做「拦住没权限的人」，这里要的是**当前账号对象**本身，用来判定会话归属。
 
     Args:
         chat_request: 提问、可选会话 id 和可选自定义系统提示词。
         runtime: 进程级 Agent Runtime，由 lifespan 装配。
         langsmith_settings: 追踪配置，进程级缓存。
+        user: 当前登录账号，用于会话归属。
+        threads: 会话归属与列表 Service。
 
     Returns:
         ``text/event-stream`` 流式响应。返回它时流还没开始跑——第一次迭代发生在 ASGI
         服务器读生成器的时候，所以此刻抛出的异常还能变成正常的 HTTP 错误码。
 
+    Raises:
+        AgentThreadNotFoundError: ``thread_id`` 不存在或不属于当前账号；映射成 404。
+            **它必须在流开始之前抛出**，那时候还改得动 HTTP 状态码。
+
     Notes:
-        本接口会执行模型 HTTP 调用、Qdrant 查询、PostgreSQL 读取和会话历史读写，但不写
-        任何业务数据（见 ADR 0003）。已分类的失败以 ``error`` 事件送达而非 HTTP 错误码，
-        原因见上面 description。
+        本接口会执行模型 HTTP 调用、Qdrant 查询、PostgreSQL 读取和会话历史读写。业务数据方面
+        只写 ``agent_threads``（归属与活跃时间），不写新闻和索引（见 ADR 0003）。已分类的失败
+        以 ``error`` 事件送达而非 HTTP 错误码，原因见上面 description。
     """
 
-    # 1、定会话 id：前端带了就接着聊，没带就服务端新开一个。
-    thread_id = chat_request.thread_id or uuid4()
+    # 1、定会话 id 并确认归属。这一步刻意在返回流式响应**之前**完成：它内部开一个短事务、
+    #    提交后立刻归还连接，所以长对话不会占着业务连接池不放（见 ADR 0010）。
+    thread_id = await threads.ensure_thread(
+        user_id=user.id,
+        thread_id=chat_request.thread_id,
+        first_message=chat_request.message,
+    )
     # 2、把自定义提示词装进本次运行的上下文；为 None 时中间件会用默认那份。
     context = AgentContext(system_prompt=chat_request.system_prompt)
     # 3、只记 id 和「有没有自定义提示词」，不记提问原文——日志里不该有用户输入。

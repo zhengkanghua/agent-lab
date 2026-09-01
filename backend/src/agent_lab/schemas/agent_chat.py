@@ -27,8 +27,11 @@ class AgentChatRequest(BaseModel):
     """一次 Agent 对话提问。
 
     ``thread_id`` 是「会话」的标识：带上同一个值就接着上次聊，历史由 checkpointer 按它
-    存取；省略则由服务端新建一个并在 ``done`` 事件里告知，这样前端不必自己生成 UUID，
-    也不会因为伪造一个 id 而读到别人的会话。
+    存取；省略则由服务端新建一个并在 ``done`` 事件里告知，这样前端不必自己生成 UUID。
+
+    伪造一个 id 读不到别人的会话，但**挡住它的不是这个 schema**：checkpointer 只按 id 取历史、
+    不校验归属，所以归属由 ``services.agent_thread_service`` 在流开始前判定，不属于当前账号一律
+    404。这里只负责「格式得是个 UUID」。
     """
 
     message: str = Field(
@@ -42,7 +45,8 @@ class AgentChatRequest(BaseModel):
     thread_id: UUID | None = Field(
         default=None,
         description=(
-            "要接着聊的会话 id；省略表示新建会话，新 id 通过 done 事件返回。"
+            "要接着聊的会话 id，必须是当前账号自己的会话，否则返回 404；"
+            "省略表示新建会话，新 id 通过 done 事件返回。"
         ),
     )
     system_prompt: str | None = Field(
@@ -172,13 +176,50 @@ class AgentErrorEvent(BaseModel):
 
     为什么错误走事件而不是 HTTP 状态码：响应头在第一个 token 发出时就已经发送，之后
     没法再改状态码。所以流一旦开始，所有失败都只能作为事件送达。
+
+    它和 ``AgentDoneEvent`` 一样带 ``thread_id``，理由见该字段的说明——**失败的那一轮
+    也已经有会话行了**。
     """
 
     event: Literal["error"] = "error"
+    thread_id: UUID = Field(
+        description=(
+            "本次运行所属会话的 id。失败也带它，因为归属行在流开始之前就已写入："
+            "前端据此把重试发到同一个会话，而不是另开一个。"
+        ),
+    )
     code: str = Field(description="稳定机器错误码，前端据此选择提示文案。")
     detail: str = Field(description="安全中文概述，不含异常文本或上游细节。")
     retryable: bool = Field(
         description="是否「不改提问、稍后重试可能成功」；认证与配置类错误为 False。",
+    )
+
+    model_config = ConfigDict(frozen=True)
+
+
+class AgentChatErrorResponse(BaseModel):
+    """Agent 链路以 HTTP 状态码返回失败时的响应体（固定三字段）。
+
+    用在会话记录那几条普通 JSON 路由上，以及 ``/agent/chat`` 在**流开始之前**就失败的情况
+    （权限、会话归属、Runtime 不可用）。流一旦开始，失败只能作为 ``AgentErrorEvent`` 送达——
+    响应头已经发出去了，改不了状态码。
+
+    与 ``AgentErrorEvent`` 三个字段同名同义，前端因此可以对两条路径复用同一套错误文案映射
+    （``frontend/src/features/agent-chat/model/agent-error.ts``），不必分别写一份。
+
+    ``code`` 声明成 ``str`` 而不是 ``AgentChatErrorCode`` 那个 Literal，与紧邻的
+    ``AgentErrorEvent`` 保持一致：那个 Literal 定义在 ``api.error_contract`` 里，而本模块位于它
+    下面一层（``error_contract`` 反过来 import 本模块），引它会成环。前端的文案表本来就是按
+    字符串查、查不到走兜底，收窄成 Literal 拿不到额外保障。
+    """
+
+    code: str = Field(description="稳定机器错误码，前端据此选择提示文案。")
+    detail: str = Field(
+        min_length=1,
+        description="安全中文概述，不含异常文本、连接串或第三方原始响应。",
+    )
+    retryable: bool = Field(
+        description="是否「不改请求、稍后重试可能成功」；权限与归属类错误为 False。",
     )
 
     model_config = ConfigDict(frozen=True)
@@ -222,6 +263,7 @@ class AgentDefaultPromptResponse(BaseModel):
 
 
 __all__ = [
+    "AgentChatErrorResponse",
     "AgentChatEvent",
     "AgentChatEventEnvelope",
     "AgentChatRequest",

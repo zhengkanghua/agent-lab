@@ -23,14 +23,19 @@
 | 手工触发同步加索引 | 无页面 | `POST /pipeline/run-once` | `api/pipeline.py` → `services/news_pipeline_execution_service.py` | `tests/test_pipeline_api.py`、`tests/test_news_pipeline_execution.py` |
 | Agent 对话（模型自己调检索工具再作答，SSE 流式） | `/agent` | `POST /agent/chat` | `api/agent_chat.py` → `agent/runtime.py`、`agent/streaming.py`、`agent/tools/`；前端 `api/agent-chat.ts`、`features/agent-chat/`、`pages/AgentChatPage.vue` | `tests/test_agent_chat_api.py`、`tests/test_agent_streaming.py`、`tests/test_agent_tools.py`、`tests/test_agent_middleware.py`、`src/api/agent-chat.spec.ts`、`src/features/agent-chat/tests/`、`src/pages/AgentChatPage.spec.ts` |
 | 读取 Agent 默认系统提示词 | `/agent`（提示词编辑器内） | `GET /agent/default-prompt` | `api/agent_chat.py` → `agent/prompts.py`；前端 `features/agent-chat/composables/useAgentDefaultPrompt.ts` | `tests/test_agent_chat_api.py`、`src/features/agent-chat/tests/useAgentDefaultPrompt.spec.ts` |
+| 会话记录（列出自己的会话、点进去看历史并接着聊、删除） | `/agent`（侧栏）、`/agent/:threadId` | `GET /agent/threads`、`GET /agent/threads/{thread_id}/messages`、`DELETE /agent/threads/{thread_id}` | `api/agent_threads.py` → `services/agent_thread_service.py`、`agent/replay.py`、`models/agent_thread.py`；前端 `api/agent-threads.ts`、`features/agent-chat/composables/useThreadList.ts`、`components/ThreadSidebar.vue` | `tests/test_agent_threads_api.py`、`tests/test_agent_thread_service.py`、`tests/test_agent_replay.py`、`tests/test_agent_thread_ownership_integration.py`（真库，默认跳过）、`src/api/agent-threads.spec.ts`、`src/features/agent-chat/tests/useThreadList.spec.ts` |
 | 健康检查 | 无 | `GET /health` | `api/health.py` | `tests/test_error_contract.py` |
 
 `/vector-search`、`/document-search`、`/documents` 要求登录；`/pipeline`、`/admin/users`、`/agent`
 要求超级用户。挂载点和依赖在 `backend/src/agent_lab/main.py` 的 `include_router` 处。
 
-Agent 那两行的能力边界见 [`adr/0003-agent-v1-is-read-only.md`](adr/0003-agent-v1-is-read-only.md)：
+Agent 那几行的能力边界见 [`adr/0003-agent-v1-is-read-only.md`](adr/0003-agent-v1-is-read-only.md)：
 它只有两个只读工具，不写业务表也不写 Qdrant。会话历史落在 checkpointer 自己的四张表里，
-不由 Alembic 管（[`adr/0004`](adr/0004-checkpointer-tables-outside-alembic.md)）。
+不由 Alembic 管（[`adr/0004`](adr/0004-checkpointer-tables-outside-alembic.md)）；**谁拥有哪个会话**
+另记在 Alembic 管的 `agent_threads` 表里（[`adr/0009`](adr/0009-agent-thread-ownership-in-own-table.md)）。
+每条 `/agent/*` 路由都先确认会话归属，不属于当前账号就 404——和「不存在」返回同一个码，
+避免拿状态码差异枚举会话 id。`POST /agent/chat` 是流式的，所以它的归属校验必须在流开始之前
+完成，且不使用请求级数据库 Session（[`adr/0010`](adr/0010-sse-routes-use-short-lived-db-sessions.md)）。
 
 用户管理这一行前后端两列写的都是 `/admin/users`，不是抄错：前端页面路由和后端 API 前缀刚好同名，
 浏览器实际请求 `/api/admin/users`。后端路由的 `tags=["user-admin"]` 只是 OpenAPI 分组标签，不是路径。
@@ -44,6 +49,7 @@ Agent 那两行的能力边界见 [`adr/0003-agent-v1-is-read-only.md`](adr/0003
 | `index-pending` | 给待处理文档补向量索引 | `cli.py` → `services/document_indexing_service.py`、`pipeline/`、`qdrant/` | `tests/test_cli.py`、`tests/test_document_indexing_service.py` |
 | `run-once` | 同步加索引跑一轮 | `cli.py` → `services/news_pipeline_execution_service.py` | `tests/test_cli.py`、`tests/test_news_pipeline_execution.py` |
 | `init-checkpointer` | 建 Agent 会话历史表（部署一次，幂等） | `cli.py` → `agent/checkpointer.py` | `tests/test_agent_checkpointer.py` |
+| `prune-orphan-threads` | 清掉没有归属记录的会话历史（**默认只预演**，加 `--yes` 才删，不可恢复） | `cli.py` → `agent/checkpointer.py`、`services/agent_thread_service.py` | `tests/test_cli.py` |
 
 入口在 `backend/src/agent_lab/cli.py` 的 `build_parser`，参数以 `--help` 为准。
 

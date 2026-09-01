@@ -14,6 +14,17 @@ const isStreaming = computed(() => props.turn.status === 'streaming')
 
 /** 还没有任何 token、也还没报错时显示占位提示，避免出现一张空白答案卡。 */
 const isThinking = computed(() => isStreaming.value && props.turn.answer.length === 0)
+
+/**
+ * 这一轮结束了，但既没有回答也没有错误可显示。
+ *
+ * 两个来源：回放历史里首轮就失败的会话（checkpointer 只存下了提问），以及流刚开始就被停掉的
+ * 那一轮。少了这句说明，卡片上「Agent」标题下面是一片空白，看起来像界面坏了。不说成「出错了」
+ * ——历史里没有存下当时的原因，说具体错误会误导排查。
+ */
+const isUnanswered = computed(
+  () => !isStreaming.value && props.turn.answer.length === 0 && props.turn.error === null,
+)
 </script>
 
 <template>
@@ -46,6 +57,7 @@ const isThinking = computed(() => isStreaming.value && props.turn.answer.length 
           :markdown="turn.answer"
           :streaming="isStreaming"
         />
+        <p v-else-if="isUnanswered" class="unanswered">这一轮没有留下回答。</p>
 
         <div v-if="turn.error" class="turn-error" role="alert">
           <p class="error-title">
@@ -139,6 +151,13 @@ const isThinking = computed(() => isStreaming.value && props.turn.answer.length 
 .thinking {
   color: var(--text-muted);
   font-size: 0.85rem;
+}
+
+/* 与 .thinking 同一档视觉重量：两者都是「这里本该有内容」的中性说明，不该比真实回答更显眼。 */
+.unanswered {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-style: italic;
 }
 
 .turn-error {

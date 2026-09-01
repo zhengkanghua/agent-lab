@@ -72,6 +72,23 @@ const PERMISSION_COPY: AgentErrorCopy = {
   retryable: false,
 }
 
+// 后端把「不存在」和「不属于你」合并成同一个 404，为的是不让人靠状态码差异枚举会话 id。
+// 文案也得跟着合并：写「这不是你的会话」等于把后端刻意藏起来的信息又说了出去，而且当会话真的
+// 只是被自己在另一个标签页删掉时，那句话还是错的。所以只说「打不开了」，并给出下一步动作。
+const THREAD_NOT_FOUND_COPY: AgentErrorCopy = {
+  title: '会话不存在或已被删除',
+  description: '这个会话已经打不开了，可以回到会话列表另选一个，或者直接新建对话。',
+  retryable: false,
+}
+
+// 与 UNAVAILABLE_COPY 的区别：那个是模型服务连不上，这个是存会话列表的业务库连不上。
+// 分开写是因为用户能做的事不同——模型不可用时历史还看得见，这个则是列表和历史都读不出来。
+const THREAD_STORE_UNAVAILABLE_COPY: AgentErrorCopy = {
+  title: '会话记录暂时读不出来',
+  description: '会话列表的存储当前不可用，稍后重试即可；已经开始的对话不受影响。',
+  retryable: true,
+}
+
 const FALLBACK_COPY: AgentErrorCopy = {
   title: '本轮对话未完成',
   description: '发生了未分类的服务错误，请稍后重试。',
@@ -106,6 +123,9 @@ const COPY_BY_CODE: Readonly<Partial<Record<string, AgentErrorCopy>>> = {
   response_invalid: RESPONSE_INVALID_COPY,
 
   permission_denied: PERMISSION_COPY,
+
+  agent_thread_not_found: THREAD_NOT_FOUND_COPY,
+  agent_thread_database_unavailable: THREAD_STORE_UNAVAILABLE_COPY,
 
   agent_internal_error: FALLBACK_COPY,
   agent_tool_failed: FALLBACK_COPY,

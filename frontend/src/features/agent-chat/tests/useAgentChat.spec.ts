@@ -3,23 +3,63 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentChatEvent, StreamAgentChatOptions } from '@/api/agent-chat'
 import { ApiError } from '@/api/client'
-import { useAgentChat, type AgentChatStream } from '../composables/useAgentChat'
+import {
+  useAgentChat,
+  type AgentChatStream,
+  type AgentThreadLoader,
+} from '../composables/useAgentChat'
 
 const THREAD_ID = '30000000-0000-4000-8000-000000000001'
 const OTHER_THREAD_ID = '30000000-0000-4000-8000-000000000002'
 
 /** 仍然挂载组件而不是裸调 composable：onScopeDispose 的取消语义需要真实的 effect scope。 */
-function mountHarness(stream: AgentChatStream) {
+function mountHarness(stream: AgentChatStream, loader?: AgentThreadLoader) {
   let composable: ReturnType<typeof useAgentChat> | undefined
   const Harness = defineComponent({
     setup() {
-      composable = useAgentChat(stream)
+      composable = loader ? useAgentChat(stream, loader) : useAgentChat(stream)
       return () => h('div')
     },
   })
   const wrapper = mount(Harness)
   if (!composable) throw new Error('Test harness did not initialize composable')
   return { wrapper, chat: composable }
+}
+
+/** 回放接口的解析结果。挂起的 Promise 用它做 resolve 的参数类型。 */
+type ReplayResult = Awaited<ReturnType<AgentThreadLoader>>
+
+/** 一个按脚本回放的假历史读取器，记下收到的会话 id。 */
+function scriptedLoader(
+  ...results: unknown[]
+): AgentThreadLoader & { calls: string[] } {
+  const calls: string[] = []
+  let index = 0
+  const loader = async (threadId: string) => {
+    calls.push(threadId)
+    const result = results[index++]
+    if (result instanceof Error) throw result
+    return result
+  }
+  return Object.assign(loader as AgentThreadLoader, { calls })
+}
+
+/**
+ * 造一份回放响应。
+ *
+ * 参数刻意比 DTO 松（traces 可省、条目结构不写全），因为这些用例要验证的正是「后端少给字段时
+ * 前端怎么办」。返回处收一次 cast，把松散的字面量交给按 DTO 定型的读取器。
+ */
+function replay(
+  turns: Array<{ question: string; answer: string; traces?: unknown[] }>,
+  extra: { summarized?: boolean; summary?: string | null } = {},
+): ReplayResult {
+  return {
+    thread_id: THREAD_ID,
+    turns,
+    summarized: extra.summarized ?? false,
+    summary: extra.summary ?? null,
+  } as ReplayResult
 }
 
 /** 一条按脚本产出的假流，同时记下每次调用的参数。 */
@@ -187,7 +227,13 @@ describe('useAgentChat', () => {
     const { wrapper, chat } = mountHarness(
       scriptedStream([
         { event: 'token', text: '正在看…' },
-        { event: 'error', code: 'llm_timeout', detail: '模型超时。', retryable: true },
+        {
+          event: 'error',
+          thread_id: THREAD_ID,
+          code: 'llm_timeout',
+          detail: '模型超时。',
+          retryable: true,
+        },
       ]),
     )
     chat.draft.value = '问题'
@@ -209,7 +255,13 @@ describe('useAgentChat', () => {
     const { wrapper, chat } = mountHarness(
       scriptedStream([
         { event: 'tool_call', tool: 'search_news', arguments: { query: '利率' } },
-        { event: 'error', code: 'llm_unavailable', detail: '模型不可用。', retryable: true },
+        {
+          event: 'error',
+          thread_id: THREAD_ID,
+          code: 'llm_unavailable',
+          detail: '模型不可用。',
+          retryable: true,
+        },
       ]),
     )
     chat.draft.value = '问题'
@@ -336,7 +388,15 @@ describe('useAgentChat', () => {
 
   it('重发用最后一轮的提问再问一次，历史里保留失败那轮', async () => {
     const stream = scriptedStream(
-      [{ event: 'error', code: 'llm_timeout', detail: '超时。', retryable: true }],
+      [
+        {
+          event: 'error',
+          thread_id: THREAD_ID,
+          code: 'llm_timeout',
+          detail: '超时。',
+          retryable: true,
+        },
+      ],
       [
         { event: 'token', text: '这次成了' },
         { event: 'done', thread_id: THREAD_ID },
@@ -353,6 +413,45 @@ describe('useAgentChat', () => {
     expect(stream.calls.map((call) => call.message)).toEqual(['会超时的问题', '会超时的问题'])
     expect(chat.turns.value).toHaveLength(2)
     expect(chat.turns.value[1]?.answer).toBe('这次成了')
+    wrapper.unmount()
+  })
+
+  it('失败那一轮就认下 thread_id，重发落在同一个会话里', async () => {
+    /*
+     * 这条防的是列表里冒出重复会话。
+     *
+     * 归属行在流开始之前就写好了，所以失败的这一轮也已经属于一个存在的会话。如果前端只在
+     * done 里认 thread_id，那第一轮失败后 threadId 仍是 null，重发的请求不带 id，服务端只能
+     * 当成新会话再建一行——同一次提问在列表里占两条，都是「有提问、没答案」。
+     *
+     * 断言第二次调用带上了 id，而不只是断言 threadId 有值：前者才是「重发落在同一个会话」。
+     */
+    const stream = scriptedStream(
+      [
+        {
+          event: 'error',
+          thread_id: THREAD_ID,
+          code: 'llm_rate_limited',
+          detail: '上游限流。',
+          retryable: true,
+        },
+      ],
+      [{ event: 'done', thread_id: THREAD_ID }],
+    )
+    const { wrapper, chat } = mountHarness(stream)
+    chat.draft.value = '会被限流的问题'
+
+    await chat.send()
+    await flushPromises()
+
+    // 第一次是新会话，所以请求里没有 id；失败后前端应当已经认下服务端给的那个。
+    expect(stream.calls[0]?.threadId).toBeFalsy()
+    expect(chat.threadId.value).toBe(THREAD_ID)
+
+    await chat.retry()
+    await flushPromises()
+
+    expect(stream.calls[1]?.threadId).toBe(THREAD_ID)
     wrapper.unmount()
   })
 
@@ -425,5 +524,199 @@ describe('useAgentChat', () => {
 
     release?.()
     await running
+  })
+
+  describe('loadThread', () => {
+    it('把历史灌进界面，并把 threadId 指向它，之后就能接着聊', async () => {
+      const stream = scriptedStream([{ event: 'done', thread_id: THREAD_ID }])
+      const loader = scriptedLoader(
+        replay([
+          { question: '央行降息了吗', answer: '降了 25 个基点。' },
+          { question: '什么时候', answer: '上周四。' },
+        ]),
+      )
+      const { wrapper, chat } = mountHarness(stream, loader)
+
+      await chat.loadThread(THREAD_ID)
+
+      expect(chat.turns.value.map((turn) => turn.question)).toEqual(['央行降息了吗', '什么时候'])
+      expect(chat.threadId.value).toBe(THREAD_ID)
+
+      // 关键的接续断言：下一轮必须带上这个 id，否则「点进历史接着聊」实际是开了个新会话。
+      chat.draft.value = '还有别的吗'
+      await chat.send()
+      expect(stream.calls[0]?.threadId).toBe(THREAD_ID)
+      wrapper.unmount()
+    })
+
+    it('回放出来的轮次一律是 done，不带 error', async () => {
+      // 历史里没存当时的失败原因，编一个会让人以为那一轮报过某个具体错误。
+      const loader = scriptedLoader(replay([{ question: '问', answer: '答' }]))
+      const { wrapper, chat } = mountHarness(scriptedStream(), loader)
+
+      await chat.loadThread(THREAD_ID)
+
+      expect(chat.turns.value[0]?.status).toBe('done')
+      expect(chat.turns.value[0]?.error).toBeNull()
+      wrapper.unmount()
+    })
+
+    it('历史被压缩过时把这件事标出来', async () => {
+      const loader = scriptedLoader(
+        replay([{ question: '问', answer: '答' }], {
+          summarized: true,
+          summary: 'Here is a summary…',
+        }),
+      )
+      const { wrapper, chat } = mountHarness(scriptedStream(), loader)
+
+      await chat.loadThread(THREAD_ID)
+
+      expect(chat.isHistoryTruncated.value).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('打不开时不设 threadId，用户下一轮是新会话而不是被拒', async () => {
+      // 设上 threadId 的话，用户在一个打不开的会话里发问，后端按归属拒掉，
+      // 界面上却像是模型出错——错误指向完全错误的方向。
+      const loader = scriptedLoader(
+        new ApiError({ message: '没有', code: 'agent_thread_not_found', status: 404 }),
+      )
+      const stream = scriptedStream([{ event: 'done', thread_id: OTHER_THREAD_ID }])
+      const { wrapper, chat } = mountHarness(stream, loader)
+
+      await chat.loadThread(THREAD_ID)
+
+      expect(chat.threadId.value).toBeNull()
+      expect(chat.threadError.value?.title).toBe('会话不存在或已被删除')
+      expect(chat.turns.value).toEqual([])
+
+      chat.draft.value = '新问题'
+      await chat.send()
+      expect(stream.calls[0]?.threadId).toBeNull()
+      wrapper.unmount()
+    })
+
+    it('切会话时先清掉上一个会话的界面，不残留旧轮次', async () => {
+      const loader = scriptedLoader(
+        replay([{ question: '旧会话的问题', answer: '旧答案' }]),
+        replay([{ question: '新会话的问题', answer: '新答案' }]),
+      )
+      const { wrapper, chat } = mountHarness(scriptedStream(), loader)
+      await chat.loadThread(THREAD_ID)
+
+      await chat.loadThread(OTHER_THREAD_ID)
+
+      expect(chat.turns.value.map((turn) => turn.question)).toEqual(['新会话的问题'])
+      wrapper.unmount()
+    })
+
+    it('连点两个会话时后发的赢，先发的响应不覆盖界面', async () => {
+      let resolveStale: ((value: ReplayResult) => void) | undefined
+      let call = 0
+      const loader = (async (threadId: string) => {
+        call += 1
+        if (call === 1) {
+          return new Promise<ReplayResult>((resolve) => {
+            resolveStale = resolve
+          })
+        }
+        return replay([{ question: `来自 ${threadId}`, answer: '答' }])
+      }) as AgentThreadLoader
+      const { wrapper, chat } = mountHarness(scriptedStream(), loader)
+
+      const stale = chat.loadThread(THREAD_ID)
+      const fresh = chat.loadThread(OTHER_THREAD_ID)
+      resolveStale?.(replay([{ question: '陈旧的问题', answer: '陈旧的答案' }]))
+      await Promise.all([stale, fresh])
+
+      expect(chat.turns.value.map((turn) => turn.question)).toEqual([`来自 ${OTHER_THREAD_ID}`])
+      expect(chat.threadId.value).toBe(OTHER_THREAD_ID)
+      wrapper.unmount()
+    })
+
+    it('读历史期间不许发送，避免悄悄开一个新会话', async () => {
+      let release: ((value: ReplayResult) => void) | undefined
+      const loader = (async () =>
+        new Promise<ReplayResult>((resolve) => {
+          release = resolve
+        })) as AgentThreadLoader
+      const stream = scriptedStream([{ event: 'done', thread_id: OTHER_THREAD_ID }])
+      const { wrapper, chat } = mountHarness(stream, loader)
+
+      const loading = chat.loadThread(THREAD_ID)
+      await nextTick()
+      chat.draft.value = '趁机发一条'
+
+      expect(chat.isLoadingThread.value).toBe(true)
+      expect(chat.canSend.value).toBe(false)
+      await chat.send()
+      expect(stream.calls).toEqual([])
+
+      release?.(replay([]))
+      await loading
+      wrapper.unmount()
+    })
+
+    it('切会话会掐掉在途的那一轮，旧会话的 token 不写进新会话', async () => {
+      const aborted = vi.fn()
+      let release: (() => void) | undefined
+      const stream = async function* (options: StreamAgentChatOptions) {
+        options.signal?.addEventListener('abort', aborted)
+        yield { event: 'token', text: '旧会话还在写' } as AgentChatEvent
+        await new Promise<void>((resolve) => (release = resolve))
+      } as AgentChatStream
+      const loader = scriptedLoader(replay([{ question: '新会话', answer: '新答案' }]))
+      const { wrapper, chat } = mountHarness(stream, loader)
+
+      chat.draft.value = '旧会话的问题'
+      const running = chat.send()
+      await flushPromises()
+
+      await chat.loadThread(THREAD_ID)
+
+      expect(aborted).toHaveBeenCalledOnce()
+      expect(chat.turns.value.map((turn) => turn.question)).toEqual(['新会话'])
+
+      release?.()
+      await running
+      // 在途那一轮结束后也不该再往界面上写字。
+      expect(chat.turns.value.map((turn) => turn.question)).toEqual(['新会话'])
+      wrapper.unmount()
+    })
+
+    it('历史里没有结果的工具轨迹收成一句说明，不一直转圈', async () => {
+      const loader = scriptedLoader(
+        replay([
+          {
+            question: '查一下',
+            answer: '',
+            traces: [{ tool: 'search_news', arguments: { query: '利率' }, content: null }],
+          },
+        ]),
+      )
+      const { wrapper, chat } = mountHarness(scriptedStream(), loader)
+
+      await chat.loadThread(THREAD_ID)
+
+      const trace = chat.turns.value[0]?.traces[0]
+      expect(trace?.content).toBe('这次工具调用没有结果记录，当时的对话中断了。')
+      expect(trace?.failed).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('开新对话会清掉回放留下的错误与压缩标记', async () => {
+      const loader = scriptedLoader(
+        new ApiError({ message: '没有', code: 'agent_thread_not_found', status: 404 }),
+      )
+      const { wrapper, chat } = mountHarness(scriptedStream(), loader)
+      await chat.loadThread(THREAD_ID)
+
+      chat.startNewConversation()
+
+      expect(chat.threadError.value).toBeNull()
+      expect(chat.isHistoryTruncated.value).toBe(false)
+      wrapper.unmount()
+    })
   })
 })

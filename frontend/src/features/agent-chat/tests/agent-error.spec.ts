@@ -64,4 +64,26 @@ describe('presentAgentError', () => {
     expect(presentAgentError(apiError('request_timeout', 0, true)).title).toBe('模型响应超时')
     expect(presentAgentError(apiError('network_error', 0, true)).title).toBe('模型服务暂时不可用')
   })
+
+  it('会话打不开时的文案不透露它是否存在，也不说「这是别人的」', () => {
+    // 后端把「不存在」和「不属于你」合并成同一个 404，就是为了不让人靠差异枚举会话 id。
+    // 文案里写「这是别人的会话」等于把后端刻意藏起来的信息又说出去；而当会话其实是被自己
+    // 在另一个标签页删掉时，那句话还是错的。
+    const copy = presentAgentError(apiError('agent_thread_not_found', 404, false))
+
+    expect(copy.title).toBe('会话不存在或已被删除')
+    expect(copy.retryable).toBe(false)
+    for (const forbidden of ['别人', '他人', '无权', '权限']) {
+      expect(`${copy.title}${copy.description}`).not.toContain(forbidden)
+    }
+  })
+
+  it('会话记录存储不可用是可重试的，且与模型不可用分开表述', () => {
+    const copy = presentAgentError(apiError('agent_thread_database_unavailable', 503, true))
+
+    expect(copy.title).toBe('会话记录暂时读不出来')
+    expect(copy.retryable).toBe(true)
+    // 与模型不可用区分：用户能做的事不同，混成一句会让人以为模型也挂了。
+    expect(copy.title).not.toBe(presentAgentError(apiError('llm_unavailable', 503, true)).title)
+  })
 })

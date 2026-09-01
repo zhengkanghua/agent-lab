@@ -28,8 +28,9 @@ Agent 把上面的检索能力当工具用，由生成式 LLM 组织答案。它
 
 ```text
 PostgreSQL   业务事实、账号与登录 Token。独立 Database news_vector_lc，
-             migration head b7e1a4c9d203。必须先执行 alembic upgrade head。
-             Agent 会话历史也在这里，但那四张表不由 Alembic 管（见下面「Alembic」）。
+             migration head c3f8a1b6e492。必须先执行 alembic upgrade head。
+             Agent 会话的归属与列表元信息在 agent_threads 表（由 Alembic 管）；
+             会话历史内容在 checkpointer 自己的四张表，不由 Alembic 管（见下面「Alembic」）。
 FreshRSS     唯一的新闻来源。动态网页回源和站点 CSS selector 由它负责，
              Python Pipeline 里不能加站点判断。
 Ollama       bge-m3:567m，1024 维。query 与 document 使用同一模型，
@@ -51,11 +52,14 @@ langgraph-checkpoint-postgres 3.1.2、langsmith 0.10.18。这里的版本号都�
 ## 启动前置条件
 
 ```text
-1. alembic upgrade head 已完成          （启动不执行 migration）
+1. alembic upgrade head 已完成          （启动不执行 migration；agent_threads 表由它建）
 2. Qdrant current Alias 已存在          （搜索不会 ensure_ready）
 3. .env 配置合法                         （启动即读，非法配置直接失败）
 4. agent-lab init-checkpointer 已完成    （仅用 /agent/* 时需要；启动不建表）
 ```
+
+第 1 步不到位时 ``/agent/*`` 会返回 503（``agent_thread_database_unavailable``）而不是崩溃：
+归属记录读不出来就不让对话开始，避免在没有归属的情况下写下一段谁都管不了的历史。
 
 应用启动**只**访问 PostgreSQL 同步环境托管管理员，不探测 FreshRSS、Ollama 或 Qdrant，
 也不创建 Collection 或 Alias。真正的 Embedding 与 current Alias query 只在收到请求时
@@ -137,7 +141,7 @@ http://127.0.0.1:8000/health
 
 ## 手动写入命令
 
-五个 CLI 子命令（``agent-lab``）都是显式、一次性、有界的：
+六个 CLI 子命令（``agent-lab``）都是显式、一次性、有界的：
 
 ```powershell
 # 交互式创建内部登录账号；密码在终端隐藏输入，不进命令历史
@@ -155,9 +159,19 @@ uv run agent-lab run-once --limit-per-source 2 --batch-size 20
 
 # 建 Agent 会话历史的四张 checkpoint* 表（数据库结构写入，幂等，不动业务表和 Qdrant）
 uv run agent-lab init-checkpointer
+
+# 清掉没有归属记录的会话历史。默认只报数不删，看清数字再加 --yes
+uv run agent-lab prune-orphan-threads
+uv run agent-lab prune-orphan-threads --yes
 ```
 
-``init-checkpointer`` 是唯一一个写数据库**结构**的子命令，其余四个写的是业务数据。它单独成
+``prune-orphan-threads`` 是唯一一个会**不可恢复地删除用户数据**的子命令，所以默认是预演：
+不加 ``--yes`` 只报告有多少孤儿会话、一条都不删。它必须在 ``alembic upgrade head`` 之后跑——
+``agent_threads`` 表还不存在时，**所有**会话都会被判成孤儿。「孤儿」指 checkpointer 里有历史、
+业务表里没有归属记录的会话，来源有三种：归属功能上线之前留下的历史、迁移被回滚过、
+以及删除会话时「清历史成功、删归属记录失败」的残余。它们在网页上既列不出来也删不掉。
+
+``init-checkpointer`` 是唯一一个写数据库**结构**的子命令，其余几个写的是业务数据。它单独成
 命令而不是放进启动路径，是因为建表属于运维动作：应用进程平时不该带着 DDL 权限跑，而且
 LangGraph 升级表结构时，自动执行会让重启静默改库（[ADR 0004
 checkpointer-tables-outside-alembic](../docs/adr/0004-checkpointer-tables-outside-alembic.md)）。
@@ -327,15 +341,20 @@ uv run alembic upgrade head
 自动生成的迁移必须人工审查。表清单见
 [`docs/architecture.md`](docs/architecture.md) 的「数据库表」。
 
-四张 ``checkpoint*`` 表（Agent 会话历史）**不在 Alembic 管辖范围内**：它们由
+Agent 的会话数据分两处，别搞混：``agent_threads``（谁拥有哪个会话、标题、最后活跃时间）
+**由 Alembic 管**，是普通业务表；会话的消息内容在 checkpointer 的四张表里，不由 Alembic 管。
+分开的理由见 [ADR 0009](../docs/adr/0009-agent-thread-ownership-in-own-table.md)。回滚建
+``agent_threads`` 的那个迁移会让每个会话变成孤儿——历史还在，但谁都读不到也删不掉。
+
+四张 ``checkpoint*`` 表（Agent 会话历史内容）**不在 Alembic 管辖范围内**：它们由
 langgraph-checkpoint-postgres 自建自迁移，只能通过 ``agent-lab init-checkpointer`` 创建
 （[ADR 0004](../docs/adr/0004-checkpointer-tables-outside-alembic.md)）。它们不在
 ``Base.metadata`` 里，所以 autogenerate 本会把它们当
 成「库里多出来的表」而生成 ``op.drop_table('checkpoints')``——``alembic/env.py`` 用
 ``agent.checkpointer.include_object`` 把这四个表名排除在比较之外，挡住了这件事。这道排除的
-单元测试是离线的（直接调 ``include_object``）；**它还没在「库里真有这四张表」的情况下跑过一次
-``alembic check``**，第一次执行 ``init-checkpointer`` 之后应当补验一次：``alembic check`` 应当
-报告无差异，而不是提示有多余的表。新增
+单元测试是离线的（直接调 ``include_object``），另外已在「库里真有这四张表」的情况下跑过一次
+``alembic check``，结果是无差异。改动这块之后值得再跑一次：它应当报告无差异，而不是提示有
+多余的表。新增
 checkpointer 表时必须同步 ``CHECKPOINTER_TABLE_NAMES``，漏改就会在下一次 autogenerate 里
 出现一条删表语句。它按表名精确匹配、不按 ``checkpoint`` 前缀匹配，所以将来叫
 ``checkpoint_review`` 之类的业务表不会被顺手排掉。
@@ -349,6 +368,12 @@ checkpointer 表时必须同步 ``CHECKPOINTER_TABLE_NAMES``，漏改就会在�
 数据库迁移不能放进每个 FastAPI Worker 的启动流程：部署时先由单独步骤执行
 ``alembic upgrade head``，成功后再启动应用。要提供 Agent 对话则在同一阶段追加一次
 ``agent-lab init-checkpointer``（幂等，可重复执行），同样在启动应用之前完成。
+
+从「会话归属功能之前」的版本升上来时，库里可能已经存有一批没有归属记录的会话历史。它们不影响
+新会话，但会一直占着 checkpointer 的四张表，而且任何账号都读不到也删不掉。升级后先跑一次
+``agent-lab prune-orphan-threads``（预演）看数字，确认数量合理再加 ``--yes``。这一步是可选的，
+不做只是留着一批用不到的数据；**做错的代价更大**：在 ``alembic upgrade head`` 之前跑它会把
+所有会话都判成孤儿。
 
 用 Agent 对话还要额外注意两点。一是 ``/agent/chat`` 是 SSE 长连接，网关的响应缓冲和读超时
 必须放开，否则事件会被攒着直到超时——表现是页面一直转圈然后报错，而后端日志里这一轮是成功

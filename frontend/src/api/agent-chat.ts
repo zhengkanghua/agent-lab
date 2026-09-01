@@ -241,7 +241,10 @@ function isAgentChatEvent(value: unknown): value is AgentChatEvent {
     case 'done':
       return isUuid(value.thread_id)
     case 'error':
+      // thread_id 和 done 一样是必需的：失败的那一轮也已经有会话行，前端要靠它把重试
+      // 发回同一个会话。
       return (
+        isUuid(value.thread_id) &&
         hasText(value.code) &&
         typeof value.detail === 'string' &&
         typeof value.retryable === 'boolean'

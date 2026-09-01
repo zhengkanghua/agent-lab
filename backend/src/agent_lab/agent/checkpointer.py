@@ -12,6 +12,8 @@
 本模块只做建表这一件写操作，且只在显式命令里被调用；不读写业务表、不碰 Qdrant。
 """
 
+from collections.abc import Iterable
+
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg import AsyncConnection
 from psycopg.conninfo import make_conninfo
@@ -109,6 +111,82 @@ def include_object(
     return not (type_ == "table" and name in CHECKPOINTER_TABLE_NAMES)
 
 
+async def list_checkpointer_thread_ids(database_url: str) -> set[str]:
+    """列出 checkpointer 里存有历史的全部会话 id。
+
+    Args:
+        database_url: SQLAlchemy 风格的数据库 URL；内部会转成 psycopg 连接串。
+
+    Returns:
+        字符串形式的 thread_id 集合。库里没有会话历史时返回空集合。
+
+    Raises:
+        Exception: 无法连接 PostgreSQL、或那四张表还不存在（没跑过 ``init-checkpointer``）时
+            传播。调用方只按异常类型报告——连接串里有数据库密码。
+
+    Notes:
+        只读，不删不改。
+
+        用 ``alist(None)`` 而不是 ``SELECT DISTINCT thread_id FROM checkpoints``：后者要求我们
+        知道那张表的表名和列名，而结构的定义权在 ``langgraph-checkpoint-postgres`` 手里
+        （见 ADR 0004 与 0009）。``alist`` 是它的公开 API，传 ``None`` 表示不按会话过滤、
+        遍历全部 checkpoint。
+
+        代价是它逐条返回 checkpoint 而不是逐个会话——一次两轮对话大约产生 21 行，所以行数是
+        会话数的十几倍。这里只服务运维命令，不在请求路径上；真到了慢得难受的规模，
+        再改成带 ``limit`` 分批。
+    """
+
+    thread_ids: set[str] = set()
+    async with await AsyncConnection.connect(
+        to_psycopg_conninfo(database_url),
+        autocommit=True,
+    ) as connection:
+        saver = AsyncPostgresSaver(connection)
+        async for checkpoint in saver.alist(None):
+            thread_id = checkpoint.config.get("configurable", {}).get("thread_id")
+            if thread_id:
+                thread_ids.add(str(thread_id))
+    return thread_ids
+
+
+async def delete_checkpointer_threads(
+    database_url: str,
+    thread_ids: Iterable[str],
+) -> int:
+    """删除指定会话在 checkpointer 里的全部历史。
+
+    Args:
+        database_url: SQLAlchemy 风格的数据库 URL。
+        thread_ids: 要清理的 thread_id，字符串形式。
+
+    Returns:
+        实际执行了删除的会话个数。
+
+    Raises:
+        Exception: 无法连接 PostgreSQL 或删除失败时传播。
+
+    Notes:
+        这是**数据写入**，且不可恢复：会删掉那些会话的全部消息历史。它不碰业务表——
+        归属记录由 ``AgentThreadService`` 负责，两者的先后顺序由调用方决定。
+
+        用 checkpointer 的 ``adelete_thread`` 而不是手写 DELETE：那四张表之间的外键和写入表
+        （``checkpoint_writes`` / ``checkpoint_blobs``）都归它管，手写很容易漏掉一张，
+        留下删不干净的残余。
+    """
+
+    deleted = 0
+    async with await AsyncConnection.connect(
+        to_psycopg_conninfo(database_url),
+        autocommit=True,
+    ) as connection:
+        saver = AsyncPostgresSaver(connection)
+        for thread_id in thread_ids:
+            await saver.adelete_thread(thread_id)
+            deleted += 1
+    return deleted
+
+
 async def setup_checkpointer_tables(database_url: str) -> None:
     """创建或升级 checkpointer 的四张表。
 
@@ -137,7 +215,9 @@ async def setup_checkpointer_tables(database_url: str) -> None:
 
 __all__ = [
     "CHECKPOINTER_TABLE_NAMES",
+    "delete_checkpointer_threads",
     "include_object",
+    "list_checkpointer_thread_ids",
     "setup_checkpointer_tables",
     "to_psycopg_conninfo",
 ]

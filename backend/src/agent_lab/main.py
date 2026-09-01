@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 from agent_lab.agent.errors import AgentError
 from agent_lab.agent.runtime import AgentRuntime
 from agent_lab.api.agent_chat import router as agent_chat_router
+from agent_lab.api.agent_threads import router as agent_threads_router
 from agent_lab.api.auth import router as auth_router
 from agent_lab.api.health import router as health_router
 from agent_lab.api.document_search import router as document_search_router
@@ -435,6 +436,12 @@ def create_app(
     # 等于让调用方直接改模型行为。v1 先按「内部工具」定级，放宽是以后的事、收紧很难。
     application.include_router(
         agent_chat_router,
+        dependencies=[Depends(current_superuser)],
+    )
+    # 会话记录与对话同一道门。放宽权限那天两者要一起放：会话列表泄露的是标题（也就是用户
+    # 问过什么），和对话内容同级敏感。
+    application.include_router(
+        agent_threads_router,
         dependencies=[Depends(current_superuser)],
     )
     return application

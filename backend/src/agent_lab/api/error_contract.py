@@ -53,6 +53,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from agent_lab.agent.errors import (
     AgentCheckpointerUnavailableError,
     AgentRuntimeUnavailableError,
+    AgentThreadNotFoundError,
     ModelResponseInvalidError,
 )
 from agent_lab.api.dependencies import (
@@ -433,6 +434,8 @@ AgentChatErrorCode = Literal[
     "agent_runtime_unavailable",
     "agent_checkpointer_unavailable",
     "agent_checkpointer_connection_lost",
+    "agent_thread_not_found",
+    "agent_thread_database_unavailable",
     "agent_internal_error",
     "llm_authentication_failed",
     "llm_request_blocked",
@@ -500,6 +503,33 @@ AGENT_CHAT_ERROR_RULES: tuple[ErrorContractRule, ...] = (
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         code="agent_checkpointer_connection_lost",
         detail="会话记忆存储的连接已中断。",
+        retryable=True,
+    ),
+    # 会话归属校验失败：id 不存在，或存在但属于别的账号。两种情况共用一个 404，理由见
+    # ``AgentThreadNotFoundError`` 的 docstring（区分开会泄露 id 是否存在）。
+    #
+    # 它排在这张表里而不是单开一张：``/agent/chat`` 在流开始前就要校验归属，所以这个 code
+    # 会从对话链路上冒出来，不是只有会话增删查路由才用得到。
+    ErrorContractRule(
+        exceptions=(AgentThreadNotFoundError,),
+        status_code=status.HTTP_404_NOT_FOUND,
+        code="agent_thread_not_found",
+        detail="会话不存在或已被删除。",
+        retryable=False,
+    ),
+    # 业务库（SQLAlchemy 这一侧）不可用。必须有这条：``/agent/chat`` 从「会话归属」这个功能开始
+    # 会读写 ``agent_threads``，而本表原有的数据库规则挂的是 ``PsycopgOperationalError``——那是
+    # checkpointer 走的独立 psycopg 池（见 ADR 0004），管不到 SQLAlchemy 抛出的异常。少了这条，
+    # 业务库故障会落进 ``agent_internal_error`` 兜底，前端只能显示「未分类的服务错误」，
+    # 而这其实是一个明确可重试的故障。
+    #
+    # detail 与 ``user_admin_database_unavailable`` 刻意不同句：两个 code 说同一句话会让
+    # 「同 code 同 detail」那条测试约束失去区分意义，也让日志里分不清是哪条链路。
+    ErrorContractRule(
+        exceptions=(SQLAlchemyError,),
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="agent_thread_database_unavailable",
+        detail="会话记录存储当前不可用。",
         retryable=True,
     ),
     ErrorContractRule(

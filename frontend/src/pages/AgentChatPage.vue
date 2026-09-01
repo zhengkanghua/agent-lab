@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { Bot, Search, ShieldCheck } from '@lucide/vue'
+import { useRoute, useRouter } from 'vue-router'
+import { Bot, History, Search, ShieldCheck } from '@lucide/vue'
 import AppShell from '@/layouts/AppShell.vue'
 import { useLogout } from '@/features/auth/useLogout'
 import AgentComposer from '@/features/agent-chat/components/AgentComposer.vue'
 import AgentTranscript from '@/features/agent-chat/components/AgentTranscript.vue'
+import ThreadSidebar from '@/features/agent-chat/components/ThreadSidebar.vue'
 import { useAgentChat } from '@/features/agent-chat/composables/useAgentChat'
 import { useAgentDefaultPrompt } from '@/features/agent-chat/composables/useAgentDefaultPrompt'
+import { useThreadList } from '@/features/agent-chat/composables/useThreadList'
+import type { AgentThreadSummaryDto } from '@/api/agent-threads'
 
 const EXAMPLES = [
   '最近有哪些关于利率的报道？',
@@ -14,8 +18,21 @@ const EXAMPLES = [
   '关于新能源汽车，各家来源的说法有分歧吗？',
 ] as const
 
+const route = useRoute()
+const router = useRouter()
+
 const chat = useAgentChat()
 const { defaultPrompt, load: loadDefaultPrompt } = useAgentDefaultPrompt()
+
+const threadList = useThreadList({
+  activeThreadId: () => chat.threadId.value,
+  // 删掉的正是当前打开的那个：清空界面并回到 /agent。留在 /agent/:id 上会让刷新页面时
+  // 又去读一个已经不存在的会话，得到一条本可避免的错误。
+  onActiveThreadDeleted: () => {
+    chat.startNewConversation()
+    void router.replace({ name: 'agent-chat' })
+  },
+})
 
 // beforeLogout 里掐掉在途的流：留着它会在退出后继续读一条已经没有权限的连接。
 const { loggingOut, logoutError, logout } = useLogout({ beforeLogout: chat.cancel })
@@ -26,9 +43,87 @@ const hasHistory = computed(() => chat.turns.value.length > 0)
 
 const navLinks = [{ to: { name: 'search' }, label: '语义检索', icon: Search }]
 
+/** 路由参数里的会话 id。`/agent` 上没有这个参数，值为 null。 */
+const routeThreadId = computed(() => {
+  const value = route.params.threadId
+  const id = Array.isArray(value) ? value[0] : value
+  return id ? String(id) : null
+})
+
 onMounted(() => {
   void loadDefaultPrompt()
+  void threadList.load()
 })
+
+/*
+ * 路由参数是唯一的真相来源：URL 变了就按它切会话，包括前进后退。
+ *
+ * 用 immediate 覆盖首次进入，所以直接访问 /agent/<id> 也会载入历史，不必在 onMounted 里
+ * 再写一遍同样的逻辑。
+ *
+ * 守卫 `id === chat.threadId` 是必须的：`send()` 新建会话拿到 id 后会 replace 路由，
+ * 那次 replace 会触发本 watch；不守卫的话它会立刻去回放这个刚建出来的会话，把刚刚流式
+ * 生成的那一轮覆盖成从服务端读回来的版本——看起来像界面闪一下重画，实际是多余的一次请求。
+ */
+watch(
+  routeThreadId,
+  (id) => {
+    if (id === null) {
+      // 从某个会话回到 /agent（点「新对话」或后退）时清空，否则旧会话的历史留在界面上，
+      // 而 threadId 已经没了，下一轮会开一个新会话。
+      if (chat.threadId.value !== null) chat.startNewConversation()
+      return
+    }
+    if (id === chat.threadId.value) return
+    void chat.loadThread(id)
+  },
+  { immediate: true },
+)
+
+/*
+ * 服务端新建会话后把 URL 补上，并把新会话并进列表。
+ *
+ * 用 replace 而不是 push：这一步是「补全当前所在位置的地址」，不是一次导航。push 会让
+ * 后退键先回到 /agent（同一段对话、但地址上没有 id），点两次才真正离开。
+ */
+watch(
+  () => chat.threadId.value,
+  (id, previous) => {
+    if (id === null || id === previous) return
+    if (routeThreadId.value === id) return
+    void router.replace({ name: 'agent-thread', params: { threadId: id } })
+    threadList.acceptCreatedThread(createdSummary(id))
+  },
+)
+
+/**
+ * 为刚建出来的会话造一条列表项。
+ *
+ * 标题按后端同一条规则取首条提问的前 60 字。这是一份乐观副本，下一次 `load()` 会被服务端
+ * 的真实数据替换掉；这么做是为了让新会话立刻出现在列表里，而不是等一次整页请求。
+ * 截断长度与后端 `MAX_THREAD_TITLE_CHARS` 一致，改一边就要改另一边。
+ */
+function createdSummary(threadId: string): AgentThreadSummaryDto {
+  const now = new Date().toISOString()
+  const firstQuestion = chat.turns.value[0]?.question ?? ''
+  return {
+    thread_id: threadId,
+    title: firstQuestion.split(/\s+/).join(' ').slice(0, 60) || '未命名会话',
+    created_at: now,
+    last_active_at: now,
+  }
+}
+
+/** 点列表里的一项：只改 URL，载入由上面那个 watch 统一负责。 */
+function openThread(threadId: string): void {
+  if (threadId === chat.threadId.value) return
+  void router.push({ name: 'agent-thread', params: { threadId } })
+}
+
+function startNewConversation(): void {
+  chat.startNewConversation()
+  if (routeThreadId.value !== null) void router.push({ name: 'agent-chat' })
+}
 
 // 有新一轮时把视口带到底部。只在轮数变化时滚动，不跟着每个 token 滚——逐 token 滚动会
 // 抢走用户往上翻看历史的操作。
@@ -68,10 +163,47 @@ async function chooseExample(value: string): Promise<void> {
     <template #brand-icon><Bot :size="19" stroke-width="2.2" /></template>
 
     <main id="agent-workspace" class="workspace">
+      <ThreadSidebar
+        class="thread-rail"
+        :threads="threadList.threads.value"
+        :total="threadList.total.value"
+        :active-thread-id="chat.threadId.value"
+        :list-state="threadList.listState.value"
+        :list-error="threadList.listError.value"
+        :has-more="threadList.hasMore.value"
+        :has-previous="threadList.hasPrevious.value"
+        :is-empty="threadList.isEmpty.value"
+        :deleting-thread-ids="threadList.deletingThreadIds.value"
+        @open="openThread"
+        @remove="threadList.remove"
+        @reload="threadList.load"
+        @next-page="threadList.nextPage"
+        @previous-page="threadList.previousPage"
+        @new-conversation="startNewConversation"
+      />
+
       <div class="chat-column">
         <!-- 空态时这一格靠 justify-content 把内容压到底部，紧贴输入区；
              有历史时它从顶部开始正常流动。切换在 .is-empty 上。 -->
         <div class="transcript-region" :class="{ 'is-empty': !hasHistory }">
+          <p v-if="chat.isLoadingThread.value" class="thread-state" aria-live="polite">
+            正在读取这个会话的历史…
+          </p>
+
+          <!-- 打不开某个会话时说明情况并给出下一步。不跳回 /agent：那样地址悄悄变了，
+               用户不知道自己点的那个会话到底怎么了。 -->
+          <div v-else-if="chat.threadError.value" class="thread-error" role="alert">
+            <p class="thread-error-title">{{ chat.threadError.value.title }}</p>
+            <p class="thread-error-description">{{ chat.threadError.value.description }}</p>
+          </div>
+
+          <!-- 历史被压缩过就如实说明。不说的话用户会以为看到的是全部记录，而模型实际上
+               只记得一段摘要——两边对不上时，他会以为模型在胡说。 -->
+          <p v-if="chat.isHistoryTruncated.value" class="history-note">
+            <History :size="14" aria-hidden="true" />
+            较早的对话已被压缩成摘要，这里只显示保留下来的轮次。
+          </p>
+
           <AgentTranscript
             :turns="chat.turns.value"
             :streaming="chat.isStreaming.value"
@@ -96,7 +228,7 @@ async function chooseExample(value: string): Promise<void> {
             @update:system-prompt="chat.systemPrompt.value = $event"
             @submit="chat.send"
             @cancel="chat.cancel"
-            @new-conversation="chat.startNewConversation"
+            @new-conversation="startNewConversation"
           />
           <p class="dock-note">
             <ShieldCheck :size="14" aria-hidden="true" />
@@ -109,10 +241,17 @@ async function chooseExample(value: string): Promise<void> {
 </template>
 
 <style scoped>
-/* 单列居中（Q1/Q2）。原来是「左侧 sticky 输入栏 + 右侧记录」的两栏，
-   现在整页一条阅读列，输入区贴底。 */
+/* 会话导轨 + 居中阅读列。阅读列的宽度与居中位置保持原样（Q1/Q2 定的单列阅读），
+   导轨挂在它左边而不是挤占它：正文宽度是排版决定，不该因为多了个列表就变窄。 */
 
 .workspace {
+  display: grid;
+  /* 左轨定宽、右侧 1fr，然后整体在页面里居中。用 grid 而不是 flex：
+     导轨要能 sticky 在自己那一列里，flex 子项拉伸后 sticky 的参照高度会变成整列。 */
+  grid-template-columns: 244px minmax(0, 1fr);
+  gap: 20px;
+  width: min(calc(100% - 40px), var(--content-width));
+  margin: 0 auto;
   /* 正好占满视口减顶栏：多了会凭空多出一条滚动，少了输入区浮在半空。
      --app-topbar-height 由 AppShell 提供，两个 compact 断点会改写它。 */
   min-height: calc(100vh - var(--app-topbar-height, 69px));
@@ -121,14 +260,67 @@ async function chooseExample(value: string): Promise<void> {
   min-height: calc(100dvh - var(--app-topbar-height, 69px));
 }
 
+.thread-rail {
+  margin-top: 26px;
+  /* 与 .transcript-region 的 padding-top 对齐，让列表首项和第一轮问答齐头。 */
+}
+
 .chat-column {
   display: flex;
   flex-direction: column;
   /* 阅读列比检索页窄得多：--content-width 是 1420px，那是给两栏结果用的。
      单列正文超过 ~76ch 眼睛就要来回扫，这里按 --reading-width 收窄。 */
-  width: min(calc(100% - 40px), var(--reading-width));
+  width: min(100%, var(--reading-width));
   min-height: inherit;
+  /* 在自己那一格里居中，而不是靠外层：外层已经被导轨占掉一列了。 */
   margin: 0 auto;
+}
+
+.thread-state {
+  padding: 6px 2px 12px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.thread-error {
+  margin-bottom: 14px;
+  padding: 12px 13px;
+  border: 1px solid var(--danger-soft);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+}
+
+.thread-error-title {
+  color: var(--danger);
+  font-size: 0.85rem;
+  font-weight: 720;
+}
+
+.thread-error-description {
+  margin-top: 5px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+/* 压缩说明用中性色，不用警告色：这不是故障，是正常的上下文管理。
+   用警告色会让人以为出了问题。 */
+.history-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 14px;
+  padding: 8px 11px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: var(--surface-sunken);
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
+.history-note svg {
+  flex: 0 0 auto;
 }
 
 /* flex: 1 是为了空态那条 justify-content: flex-end 能生效——不占满剩余高度，
@@ -181,8 +373,21 @@ async function chooseExample(value: string): Promise<void> {
   color: var(--accent);
 }
 
+/* 窄屏收成一列：导轨排到对话上方。放在下面会让人以为它是页脚的一部分，
+   而它是导航——第一屏就该看得见。 */
+@media (max-width: 900px) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .thread-rail {
+    margin-top: 18px;
+  }
+}
+
 @media (max-width: 560px) {
-  .chat-column {
+  .workspace {
     width: calc(100% - 24px);
   }
 

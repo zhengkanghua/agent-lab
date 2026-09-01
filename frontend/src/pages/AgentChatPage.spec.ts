@@ -11,6 +11,16 @@ const api = vi.hoisted(() => ({
 
 vi.mock('../api/agent-chat', () => api)
 
+// 会话列表也要打桩：不打的话页面挂载时会真去 fetch，jsdom 里表现成一堆未处理的 rejection，
+// 而且列表永远停在错误态——本文件那些与列表无关的断言会在一个「侧栏报错」的界面上跑。
+const threadsApi = vi.hoisted(() => ({
+  listAgentThreads: vi.fn(),
+  getAgentThreadMessages: vi.fn(),
+  deleteAgentThread: vi.fn(),
+}))
+
+vi.mock('../api/agent-threads', () => threadsApi)
+
 const session = vi.hoisted(() => ({ logout: vi.fn() }))
 
 vi.mock('../features/auth/auth-session', () => ({
@@ -47,6 +57,9 @@ function testRouter() {
       { path: '/', name: 'search', component: { template: '<div>search</div>' } },
       { path: '/login', name: 'login', component: { template: '<div>login</div>' } },
       { path: '/agent', name: 'agent-chat', component: AgentChatPage },
+      // 页面在服务端新建会话后会 replace 到这条路由。少了它，vue-router 抛「No match」，
+      // 而那个异常发生在 watch 回调里，只表现成未处理的 rejection，不会让用例失败。
+      { path: '/agent/:threadId', name: 'agent-thread', component: AgentChatPage },
     ],
   })
 }
@@ -76,6 +89,10 @@ describe('AgentChatPage', () => {
     api.fetchAgentDefaultPrompt.mockResolvedValue('你是新闻检索助手。')
     session.logout.mockReset()
     session.logout.mockResolvedValue(undefined)
+    threadsApi.listAgentThreads.mockReset()
+    threadsApi.listAgentThreads.mockResolvedValue({ items: [], total: 0 })
+    threadsApi.getAgentThreadMessages.mockReset()
+    threadsApi.deleteAgentThread.mockReset()
     scripted([{ event: 'done', thread_id: THREAD_ID }])
     // jsdom 没有实现 scrollIntoView。
     Element.prototype.scrollIntoView = vi.fn()
@@ -202,7 +219,15 @@ describe('AgentChatPage', () => {
 
   it('错误事件给出重发按钮，点了再问一次', async () => {
     scripted(
-      [{ event: 'error', code: 'llm_timeout', detail: '超时。', retryable: true }],
+      [
+        {
+          event: 'error',
+          thread_id: THREAD_ID,
+          code: 'llm_timeout',
+          detail: '超时。',
+          retryable: true,
+        },
+      ],
       [
         { event: 'token', text: '这次成了' },
         { event: 'done', thread_id: THREAD_ID },
@@ -221,6 +246,35 @@ describe('AgentChatPage', () => {
 
     expect(api.streamAgentChat.mock.calls[1]?.[0]).toMatchObject({ message: '会超时的问题' })
     expect(wrapper.findAll('.turn')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
+  it('首轮失败也把会话并进侧栏，不用等刷新页面', async () => {
+    /*
+     * 归属行在流开始之前就写好了，所以失败的这一轮在服务端已经是一个会话。侧栏是在挂载时
+     * 取的列表（那时还是空的），如果前端不认 error 里的 thread_id，用户就要刷新页面才能
+     * 看见自己刚发出的这一段——而上游限流是最常撞见的失败，不是边角情况。
+     */
+    scripted([
+      {
+        event: 'error',
+        thread_id: THREAD_ID,
+        code: 'llm_rate_limited',
+        detail: '上游限流。',
+        retryable: true,
+      },
+    ])
+    const { wrapper } = await mountPage()
+
+    expect(wrapper.get('.thread-rail').text()).toContain('还没有会话')
+
+    await wrapper.get('.message-input').setValue('会被限流的问题')
+    await wrapper.get('.agent-form').trigger('submit')
+    await flushPromises()
+
+    const rail = wrapper.get('.thread-rail')
+    expect(rail.text()).not.toContain('还没有会话')
+    expect(rail.text()).toContain('会被限流的问题')
     wrapper.unmount()
   })
 
@@ -303,5 +357,227 @@ describe('AgentChatPage', () => {
 
     expect(note()).toContain('可能有误')
     wrapper.unmount()
+  })
+
+  describe('会话记录', () => {
+    const REPLAY = {
+      thread_id: THREAD_ID,
+      turns: [{ question: '之前问过的', answer: '之前答过的' }],
+      summarized: false,
+      summary: null,
+    }
+
+    /** 直接从一条会话深链进入，模拟刷新或点开分享链接。 */
+    async function mountThreadPage(threadId = THREAD_ID) {
+      const router = testRouter()
+      await router.push(`/agent/${threadId}`)
+      await router.isReady()
+      const wrapper = mount(AgentChatPage, {
+        attachTo: document.body,
+        global: { plugins: [router] },
+      })
+      await flushPromises()
+      return { wrapper, router }
+    }
+
+    it('挂载时就读会话列表，侧栏立刻有内容', async () => {
+      threadsApi.listAgentThreads.mockResolvedValue({
+        items: [
+          {
+            thread_id: THREAD_ID,
+            title: '央行降息了吗',
+            created_at: '2026-08-18T00:00:00Z',
+            last_active_at: '2026-08-18T00:00:00Z',
+          },
+        ],
+        total: 1,
+      })
+      const { wrapper } = await mountPage()
+
+      expect(threadsApi.listAgentThreads).toHaveBeenCalledOnce()
+      expect(wrapper.get('.thread-item .title').text()).toBe('央行降息了吗')
+      wrapper.unmount()
+    })
+
+    it('直接访问 /agent/:id 就载入那个会话的历史', async () => {
+      // 刷新页面后还在同一个会话里，是这条路由存在的全部理由。
+      threadsApi.getAgentThreadMessages.mockResolvedValue(REPLAY)
+      const { wrapper } = await mountThreadPage()
+
+      expect(threadsApi.getAgentThreadMessages).toHaveBeenCalledWith(
+        THREAD_ID,
+        expect.anything(),
+      )
+      expect(wrapper.text()).toContain('之前问过的')
+      expect(wrapper.text()).toContain('之前答过的')
+      wrapper.unmount()
+    })
+
+    it('点侧栏里的会话会改地址，并载入它的历史', async () => {
+      threadsApi.listAgentThreads.mockResolvedValue({
+        items: [
+          {
+            thread_id: THREAD_ID,
+            title: '央行降息了吗',
+            created_at: '2026-08-18T00:00:00Z',
+            last_active_at: '2026-08-18T00:00:00Z',
+          },
+        ],
+        total: 1,
+      })
+      threadsApi.getAgentThreadMessages.mockResolvedValue(REPLAY)
+      const { wrapper, router } = await mountPage()
+
+      await wrapper.get('.thread-item .open-button').trigger('click')
+      await flushPromises()
+
+      expect(router.currentRoute.value.name).toBe('agent-thread')
+      expect(router.currentRoute.value.params.threadId).toBe(THREAD_ID)
+      expect(wrapper.text()).toContain('之前问过的')
+      wrapper.unmount()
+    })
+
+    it('新建会话后地址补上 id，用的是 replace 不是 push', async () => {
+      // push 会让后退键先回到 /agent（同一段对话、地址上没有 id），要点两次才真正离开。
+      // 断言直接看调用了哪个方法：createMemoryHistory 不碰 window.history，
+      // 所以数 window.history.length 是个永远成立的空断言。
+      const router = testRouter()
+      await router.push('/agent')
+      await router.isReady()
+      const replace = vi.spyOn(router, 'replace')
+      const push = vi.spyOn(router, 'push')
+      const wrapper = mount(AgentChatPage, {
+        attachTo: document.body,
+        global: { plugins: [router] },
+      })
+      await flushPromises()
+
+      await wrapper.get('.message-input').setValue('央行利率')
+      await wrapper.get('.agent-form').trigger('submit')
+      await flushPromises()
+
+      expect(router.currentRoute.value.params.threadId).toBe(THREAD_ID)
+      expect(replace).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'agent-thread', params: { threadId: THREAD_ID } }),
+      )
+      expect(push).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('新建会话后不会再去回放它一遍', async () => {
+      // 补地址那次 replace 会触发监听路由的 watch。不守卫的话它立刻回放这个刚建出来的会话，
+      // 把刚流式生成的那一轮覆盖成从服务端读回来的版本。
+      const { wrapper } = await mountPage()
+
+      await wrapper.get('.message-input').setValue('央行利率')
+      await wrapper.get('.agent-form').trigger('submit')
+      await flushPromises()
+
+      expect(threadsApi.getAgentThreadMessages).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('会话打不开时说明情况，且不把地址悄悄改掉', async () => {
+      const { ApiError } = await import('@/api/client')
+      threadsApi.getAgentThreadMessages.mockRejectedValue(
+        new ApiError({ message: '没有', code: 'agent_thread_not_found', status: 404 }),
+      )
+      const { wrapper, router } = await mountThreadPage()
+
+      expect(wrapper.get('.thread-error').text()).toContain('会话不存在或已被删除')
+      // 留在原地址：跳回 /agent 的话用户不知道自己点的那个会话到底怎么了。
+      expect(router.currentRoute.value.name).toBe('agent-thread')
+      wrapper.unmount()
+    })
+
+    it('历史被压缩过时页面上有说明', async () => {
+      threadsApi.getAgentThreadMessages.mockResolvedValue({
+        ...REPLAY,
+        summarized: true,
+        summary: 'Here is a summary…',
+      })
+      const { wrapper } = await mountThreadPage()
+
+      expect(wrapper.get('.history-note').text()).toContain('压缩成摘要')
+      wrapper.unmount()
+    })
+
+    it('删掉当前会话后清空界面并退回 /agent', async () => {
+      threadsApi.getAgentThreadMessages.mockResolvedValue(REPLAY)
+      threadsApi.listAgentThreads.mockResolvedValue({
+        items: [
+          {
+            thread_id: THREAD_ID,
+            title: '央行降息了吗',
+            created_at: '2026-08-18T00:00:00Z',
+            last_active_at: '2026-08-18T00:00:00Z',
+          },
+        ],
+        total: 1,
+      })
+      threadsApi.deleteAgentThread.mockResolvedValue({ thread_id: THREAD_ID })
+      vi.stubGlobal('confirm', vi.fn().mockReturnValue(true))
+      const { wrapper, router } = await mountThreadPage()
+      expect(wrapper.text()).toContain('之前问过的')
+
+      threadsApi.listAgentThreads.mockResolvedValue({ items: [], total: 0 })
+      await wrapper.get('.thread-item .remove-button').trigger('click')
+      await flushPromises()
+
+      expect(router.currentRoute.value.name).toBe('agent-chat')
+      expect(wrapper.text()).not.toContain('之前问过的')
+      wrapper.unmount()
+    })
+
+    it('点「新对话」回到 /agent 并清空界面', async () => {
+      threadsApi.getAgentThreadMessages.mockResolvedValue(REPLAY)
+      const { wrapper, router } = await mountThreadPage()
+
+      await wrapper.get('.sidebar-head button').trigger('click')
+      await flushPromises()
+
+      expect(router.currentRoute.value.name).toBe('agent-chat')
+      expect(wrapper.text()).not.toContain('之前问过的')
+      wrapper.unmount()
+    })
+
+    it('后退回 /agent 时清空界面，下一轮开新会话', async () => {
+      // 不清的话旧会话的历史留在界面上，而 threadId 已经没了——用户以为在续聊，
+      // 实际上发出去的是一个新会话的第一轮。
+      threadsApi.getAgentThreadMessages.mockResolvedValue(REPLAY)
+      const { wrapper, router } = await mountPage()
+      await router.push(`/agent/${THREAD_ID}`)
+      await flushPromises()
+      expect(wrapper.text()).toContain('之前问过的')
+
+      await router.back()
+      await flushPromises()
+
+      expect(wrapper.text()).not.toContain('之前问过的')
+      wrapper.unmount()
+    })
+
+    it('会话列表读不出来不影响正常提问', async () => {
+      // 侧栏是导航，不是对话的前提。列表挂了还能聊，这条把它钉住。
+      const { ApiError } = await import('@/api/client')
+      threadsApi.listAgentThreads.mockRejectedValue(
+        new ApiError({
+          message: '库挂了',
+          code: 'agent_thread_database_unavailable',
+          status: 503,
+          retryable: true,
+        }),
+      )
+      const { wrapper } = await mountPage()
+
+      expect(wrapper.get('.sidebar-error').text()).toContain('会话记录暂时读不出来')
+
+      await wrapper.get('.message-input').setValue('央行利率')
+      await wrapper.get('.agent-form').trigger('submit')
+      await flushPromises()
+
+      expect(api.streamAgentChat).toHaveBeenCalledOnce()
+      wrapper.unmount()
+    })
   })
 })

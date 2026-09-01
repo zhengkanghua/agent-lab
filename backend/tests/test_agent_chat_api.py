@@ -11,25 +11,23 @@ OpenAPI 契约，以及流开始前后两条不同的失败路径。
 import asyncio
 import json
 from typing import Any
+from uuid import UUID, uuid4
 
 import httpx
 import openai
 from fastapi import FastAPI
 from langchain_core.messages import AIMessage
-from langgraph.checkpoint.memory import InMemorySaver
 
 from agent_lab.agent.prompts import DEFAULT_SYSTEM_PROMPT
-from agent_lab.agent.runtime import AgentRuntime
 from agent_lab.auth.dependencies import current_active_user, current_superuser
-from agent_lab.config.llm import LlmProvider, LlmSettings
 from agent_lab.schemas.agent_chat import AgentChatEventEnvelope
 from tests.agent_helpers import (
     FailingChatModel,
     ScriptedChatModel,
     StreamingChatModel,
 )
-from tests.app_helpers import create_offline_app
-from tests.auth_helpers import allow_reader, allow_superuser
+from tests.app_helpers import create_agent_app, seed_owned_thread, send
+from tests.auth_helpers import SUPERUSER_ID
 
 
 def run(coroutine: Any) -> Any:
@@ -38,98 +36,23 @@ def run(coroutine: Any) -> Any:
     return asyncio.run(coroutine)
 
 
-OFFLINE_LLM_SETTINGS = LlmSettings(
-    provider=LlmProvider.OLLAMA,
-    base_url="http://127.0.0.1:11434",
-    model="offline-test-model",
-    fallback_model="offline-test-fallback",
-)
-
-
-class FakeSearchService:
-    """记录检索请求并返回空结果，不执行任何网络 I/O。
-
-    本文件的用例都不触发工具调用，所以它主要有两个用处：证明 Agent 拿到的是同一个
-    Service 实例，以及在 Agent 装配失败时充当「只读链路还活着」的探针。
-    """
-
-    def __init__(self) -> None:
-        self.calls: list[Any] = []
-
-    async def search(self, request: Any) -> list[Any]:
-        """记录请求并返回空结果。"""
-
-        self.calls.append(request)
-        return []
-
-
-class FakeSearchRuntime:
-    """只暴露 API 与 Agent 装配所需的 ``service`` 字段。"""
-
-    def __init__(self) -> None:
-        self.service = FakeSearchService()
-        self.closed = False
-
-    async def close(self) -> None:
-        """记录关闭，不访问外部资源。"""
-
-        self.closed = True
-
-
 def app_for(
     model: Any,
     *,
     superuser: bool = True,
     agent_build_error: Exception | None = None,
-) -> tuple[FastAPI, FakeSearchRuntime]:
-    """创建注入 fake 模型的应用。
+) -> tuple[FastAPI, Any]:
+    """本文件的简写：转调共享的 ``create_agent_app``。
 
-    ``agent_build_error`` 非空时模拟「Agent 装配失败」，用来验证它不会连带把只读系统
-    一起拖下线。
+    保留这层薄封装只为让下面几十个用例的调用点不用改动；真正的装配逻辑在
+    ``tests/app_helpers.py``，与会话记录测试共用一份。
     """
 
-    search_runtime = FakeSearchRuntime()
-
-    def agent_factory(service: Any) -> AgentRuntime:
-        if agent_build_error is not None:
-            raise agent_build_error
-        assert service is search_runtime.service
-        return AgentRuntime.build(
-            llm_settings=OFFLINE_LLM_SETTINGS,
-            search_service=service,
-            session_factory=None,  # type: ignore[arg-type]
-            database_url="postgresql+psycopg://unused/unused",
-            checkpointer=InMemorySaver(),
-            model=model,
-            # 退避是真 sleep，HTTP 层测的是 SSE 帧格式和状态码，不需要等。
-            retry_initial_delay=0.0,
-        )
-
-    grant = allow_superuser if superuser else allow_reader
-    app = grant(
-        create_offline_app(
-            runtime_factory=lambda: search_runtime,
-            agent_runtime_factory=agent_factory,
-        )
+    return create_agent_app(
+        model,
+        superuser=superuser,
+        agent_build_error=agent_build_error,
     )
-    return app, search_runtime
-
-
-async def send(
-    app: FastAPI,
-    method: str,
-    path: str,
-    **kwargs: Any,
-) -> httpx.Response:
-    """在显式 lifespan 内发送一个非流式 ASGI 请求。"""
-
-    async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(
-            transport=transport,
-            base_url="http://testserver",
-        ) as client:
-            return await client.request(method, path, **kwargs)
 
 
 async def chat(app: FastAPI, **payload: Any) -> tuple[httpx.Response, list[str]]:
@@ -227,15 +150,94 @@ def test_server_generates_thread_id_when_omitted() -> None:
     assert done[0]["thread_id"]
 
 
-def test_client_supplied_thread_id_is_honoured() -> None:
+def test_client_supplied_thread_id_is_honoured_when_owned() -> None:
+    """带上**自己的** thread_id 就接着聊，``done`` 事件回同一个 id。
+
+    这条以前不需要预置归属：那时任何 UUID 都能直接用。现在必须先在会话表里有一行属于当前账号的
+    记录，否则会被判成别人的会话——这正是本次要修的漏洞，所以测试形状跟着变是对的。
+    """
+
     model = scripted("第一轮", "第二轮")
     app, _search = app_for(model)
-    thread_id = "8f14e45f-ceea-467a-9a3f-a1f1b8a1b1c1"
+    thread_id = uuid4()
+    seed_owned_thread(app, thread_id)
 
-    _response, frames = run(chat(app, message="问题", thread_id=thread_id))
+    _response, frames = run(chat(app, message="问题", thread_id=str(thread_id)))
 
     done = [each for each in payloads(frames) if each["event"] == "done"]
-    assert done[0]["thread_id"] == thread_id
+    assert done[0]["thread_id"] == str(thread_id)
+
+
+def test_thread_id_owned_by_another_account_is_rejected_before_the_model_runs() -> None:
+    """别人的 thread_id 一律 404，而且模型一次都不该被调用。
+
+    这是本次改动的核心断言，两半都重要：
+
+    - 404 而不是 403：区分开会泄露「这个 id 是否存在」，等于给猜 id 的人一个预言机。
+    - 模型没被调用：证明校验发生在流开始**之前**。这一点决定了失败能不能带 HTTP 状态码——
+      流一旦开始，响应头就发出去了，之后只能塞一个 error 事件，前端要走完全不同的分支。
+      如果哪天有人把校验挪到生成器里面，这条断言会失败。
+    """
+
+    model = scripted("不该被看到")
+    app, _search = app_for(model)
+    someone_elses = uuid4()
+    seed_owned_thread(app, someone_elses, user_id=uuid4())
+
+    response = run(
+        send(
+            app,
+            "POST",
+            "/agent/chat",
+            json={"message": "问题", "thread_id": str(someone_elses)},
+        )
+    )
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "agent_thread_not_found"
+    # 响应体是 JSON 而不是 text/event-stream，这本身就证明流没开始过：校验要是挪进了生成器
+    # 内部，这里拿到的会是 200 加一个 SSE 流。
+    assert response.headers["content-type"].startswith("application/json")
+    assert model.received_messages == []
+
+
+def test_unknown_thread_id_is_rejected_the_same_way_as_someone_elses() -> None:
+    """完全不存在的 thread_id 与「别人的」返回同一个 code 和状态码。
+
+    两者刻意不可区分：能区分就能枚举。这条测试把这个性质钉住，防止将来有人「顺手」给不存在的
+    情况换个更精确的 code。
+    """
+
+    model = scripted("不该被看到")
+    app, _search = app_for(model)
+
+    response = run(
+        send(
+            app,
+            "POST",
+            "/agent/chat",
+            json={"message": "问题", "thread_id": str(uuid4())},
+        )
+    )
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "agent_thread_not_found"
+    assert model.received_messages == []
+
+
+def test_new_conversation_records_ownership_for_the_current_account() -> None:
+    """不带 thread_id 时服务端建会话，归属记到当前账号，标题取首条提问。"""
+
+    model = scripted("答案")
+    app, _search = app_for(model)
+
+    _response, frames = run(chat(app, message="央行降息了吗"))
+
+    done = [each for each in payloads(frames) if each["event"] == "done"]
+    created = UUID(done[0]["thread_id"])
+    record = app.state.offline_threads.threads[created]
+    assert record.user_id == SUPERUSER_ID
+    assert record.title == "央行降息了吗"
 
 
 def test_custom_system_prompt_reaches_the_model() -> None:
@@ -286,10 +288,14 @@ def test_request_without_superuser_credentials_is_rejected() -> None:
 
 
 def test_agent_routes_are_guarded_by_superuser_not_active_user() -> None:
-    """结构性断言：Agent 路由挂的是超级用户守卫。
+    """结构性断言：**每个** Agent 路由器挂的都是超级用户守卫。
 
     上一条测试只能证明「没凭据进不来」，那连挂 ``current_active_user`` 也能通过。这条
     直接查挂上去的是哪个依赖对象，能挡住「有人把守卫降级成普通用户」这种改动。
+
+    断言的是「全部 ``/agent/`` 路由器都被守卫」而不是「恰好有一个路由器」：``/agent`` 前缀下
+    现在有对话和会话记录两个路由器，以后可能更多，而这条测试要保住的性质是「没有一个漏掉守卫」。
+    写成固定条数的话，新增一个路由器只会让它失败，而失败原因和它想防的风险无关。
 
     为什么要翻 ``include_context`` 而不是路由自己的 ``dependant``：这个版本的 FastAPI 把
     ``include_router(dependencies=...)`` 存在「被包含的路由器」上，匹配时才合进去，所以
@@ -309,9 +315,11 @@ def test_agent_routes_are_guarded_by_superuser_not_active_user() -> None:
             )
         )
     ]
-    assert len(included) == 1
-    guards = [dep.dependency for dep in included[0].include_context.dependencies]
-    assert current_superuser in guards
+    # 至少要找到对话和会话记录两个，否则说明上面那套反射没抓到东西，断言会变成空转。
+    assert len(included) >= 2
+    for router in included:
+        guards = [dep.dependency for dep in router.include_context.dependencies]
+        assert current_superuser in guards
     assert current_active_user not in guards
 
 

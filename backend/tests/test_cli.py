@@ -402,3 +402,214 @@ def test_main_reports_only_exception_type_on_command_failure(
         "error_type": "RuntimeError",
         "ok": False,
     }
+
+
+# --- prune-orphan-threads ------------------------------------------------------
+#
+# 这个命令**不可恢复地删除**会话历史，所以下面的用例重点不在「能不能删」，而在「会不会删错」：
+# 有归属记录的会话一条都不能碰，而且默认不许真删。
+
+
+class _FakeThreadService:
+    """只回答「业务表里有哪些 thread_id」的替身。"""
+
+    def __init__(self, known: set[Any]) -> None:
+        self._known = known
+        self.calls = 0
+
+    async def list_known_thread_ids(self) -> set[Any]:
+        """记一次调用并返回预置集合。"""
+
+        self.calls += 1
+        return self._known
+
+
+def _patch_prune(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    known: set[Any],
+    stored: set[str],
+) -> dict[str, Any]:
+    """把 prune 命令的四个外部依赖全换成替身。
+
+    Args:
+        monkeypatch: pytest 的替换工具。
+        known: 业务表里的归属记录 id（可以是 UUID 对象，与真实实现一致）。
+        stored: checkpointer 里存有历史的 thread_id（字符串，与真实实现一致）。
+
+    Returns:
+        记录本次调用情况的字典，含 ``deleted``（真删时收到的 id 列表）。
+
+    Notes:
+        两侧刻意用不同类型：业务表存 UUID 对象、checkpointer 存字符串，这正是真实情况。
+        替身保持这个差异，才能测出「有没有统一成同一种类型再比」。
+    """
+
+    seen: dict[str, Any] = {"deleted": None, "delete_calls": 0}
+    service = _FakeThreadService(known)
+
+    monkeypatch.setattr(
+        cli_module,
+        "get_settings",
+        lambda: SimpleNamespace(database_url="postgresql+psycopg://unused/unused"),
+    )
+    monkeypatch.setattr(cli_module, "async_session_factory", object())
+    monkeypatch.setattr(cli_module, "AgentThreadService", lambda _factory: service)
+
+    async def fake_list(_database_url: str) -> set[str]:
+        return stored
+
+    async def fake_delete(_database_url: str, thread_ids: Any) -> int:
+        seen["delete_calls"] += 1
+        seen["deleted"] = list(thread_ids)
+        return len(list(thread_ids))
+
+    monkeypatch.setattr(cli_module, "list_checkpointer_thread_ids", fake_list)
+    monkeypatch.setattr(cli_module, "delete_checkpointer_threads", fake_delete)
+    seen["service"] = service
+    return seen
+
+
+def test_prune_orphan_threads_defaults_to_a_dry_run() -> None:
+    """不加 ``--yes`` 时 ``yes`` 为假。
+
+    这条是安全默认值的断言。默认真删的话，一次手误就把历史清了，而且没有回收站。
+    """
+
+    args = build_parser().parse_args(["prune-orphan-threads"])
+
+    assert args.yes is False
+    assert build_parser().parse_args(["prune-orphan-threads", "--yes"]).yes is True
+
+
+def test_prune_dry_run_reports_the_count_without_deleting_anything(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """预演只报数：``deleted_threads`` 为 0，且删除函数一次都没被调用。
+
+    只断言返回值里的 0 不够——一个「先删了再把计数写成 0」的实现同样通过。必须断言删除函数
+    没被调过。
+    """
+
+    orphan = uuid4()
+    seen = _patch_prune(monkeypatch, known=set(), stored={str(orphan)})
+
+    outcome = run(
+        cli_module.dispatch_command(
+            build_parser().parse_args(["prune-orphan-threads"])
+        )
+    )
+
+    assert outcome.exit_code == 0
+    assert outcome.payload == {
+        "command": "prune-orphan-threads",
+        "ok": True,
+        "dry_run": True,
+        "orphan_threads": 1,
+        "deleted_threads": 0,
+    }
+    assert seen["delete_calls"] == 0
+
+
+def test_prune_with_yes_deletes_exactly_the_orphans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--yes`` 时只把孤儿传给删除函数，有归属记录的那个不在其中。
+
+    这是本命令最危险的一步，所以断言的是**传给删除函数的确切集合**，不是数量。数量相同但删错
+    对象的实现（比如把差集方向写反）在只数个数时照样通过。
+    """
+
+    owned = uuid4()
+    orphan_one, orphan_two = uuid4(), uuid4()
+    seen = _patch_prune(
+        monkeypatch,
+        known={owned},
+        stored={str(owned), str(orphan_one), str(orphan_two)},
+    )
+
+    outcome = run(
+        cli_module.dispatch_command(
+            build_parser().parse_args(["prune-orphan-threads", "--yes"])
+        )
+    )
+
+    assert outcome.payload["dry_run"] is False
+    assert outcome.payload["orphan_threads"] == 2
+    assert outcome.payload["deleted_threads"] == 2
+    assert set(seen["deleted"]) == {str(orphan_one), str(orphan_two)}
+    assert str(owned) not in seen["deleted"]
+
+
+def test_prune_does_not_treat_owned_threads_as_orphans_despite_type_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """业务表存 UUID 对象、checkpointer 存字符串，两边同一个会话不能被当成孤儿。
+
+    **这条防的是一个会删掉全部历史的 bug。** 直接 ``set[str] - set[UUID]`` 永远等于左边全集，
+    因为 ``UUID(...) != "..."``，于是每个会话都成了孤儿。加上 ``--yes`` 就是把所有人的历史清空，
+    而命令还会报告「成功」。实现里靠 ``{str(x) for x in owned}`` 统一类型，这条钉住它。
+    """
+
+    owned = [uuid4(), uuid4(), uuid4()]
+    seen = _patch_prune(
+        monkeypatch,
+        known=set(owned),
+        stored={str(thread_id) for thread_id in owned},
+    )
+
+    outcome = run(
+        cli_module.dispatch_command(
+            build_parser().parse_args(["prune-orphan-threads", "--yes"])
+        )
+    )
+
+    assert outcome.payload["orphan_threads"] == 0
+    assert seen["deleted"] == []
+
+
+def test_prune_cleans_up_a_non_uuid_thread_id_instead_of_crashing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """checkpointer 里混进非 UUID 的 thread_id 时把它当孤儿清掉，而不是让整个命令炸掉。
+
+    这种值只可能来自手工写库或别的实验，业务表里不可能有对应归属，本来就该清。若实现先
+    ``UUID(...)`` 解析再比，一个脏值会让命令抛异常，连带真正的孤儿也清不掉。
+    """
+
+    seen = _patch_prune(monkeypatch, known=set(), stored={"手工塞进来的-id"})
+
+    outcome = run(
+        cli_module.dispatch_command(
+            build_parser().parse_args(["prune-orphan-threads", "--yes"])
+        )
+    )
+
+    assert outcome.payload["orphan_threads"] == 1
+    assert seen["deleted"] == ["手工塞进来的-id"]
+
+
+def test_prune_reads_the_ownership_table_before_touching_the_checkpointer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """业务表读不出来时直接失败，不进入删除逻辑。
+
+    顺序在这里是安全属性：``agent_threads`` 查不到（比如迁移还没跑）时若把它当成空集，
+    全部历史都会被判成孤儿。所以异常必须往上抛。
+    """
+
+    class _BrokenService:
+        async def list_known_thread_ids(self) -> set[Any]:
+            raise RuntimeError("业务库不可用")
+
+    seen = _patch_prune(monkeypatch, known=set(), stored={str(uuid4())})
+    monkeypatch.setattr(cli_module, "AgentThreadService", lambda _f: _BrokenService())
+
+    with pytest.raises(RuntimeError):
+        run(
+            cli_module.dispatch_command(
+                build_parser().parse_args(["prune-orphan-threads", "--yes"])
+            )
+        )
+
+    assert seen["delete_calls"] == 0

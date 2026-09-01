@@ -24,6 +24,23 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresSuperuser: true },
     },
     {
+      /*
+       * 带会话 id 的对话页。与 `agent-chat` 共用同一个组件，靠 `threadId` 参数区分
+       * 「新对话」和「打开某个会话」。
+       *
+       * 单独一条路由而不是把 id 塞进 query：这个 URL 是可分享、可收藏、可刷新的——刷新后
+       * 还在同一个会话里是基本预期。放 query 里也能做到，但那会让「有没有会话」看起来像个
+       * 可选筛选条件，而它决定的是整页的内容。
+       *
+       * 不校验 id 格式：格式对不对由后端说，前端拦一道只是重复实现，而且拦错了会让合法
+       * 链接打不开。非法 id 走的是「读历史失败」那条路径，界面上是一句可操作的说明。
+       */
+      path: '/agent/:threadId',
+      name: 'agent-thread',
+      component: () => import('../pages/AgentChatPage.vue'),
+      meta: { requiresAuth: true, requiresSuperuser: true },
+    },
+    {
       path: '/admin/users',
       name: 'user-admin',
       component: () => import('../pages/UserAdminPage.vue'),

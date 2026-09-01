@@ -226,7 +226,11 @@ async def stream_agent_events(
             type(exc).__name__,
             rule.code,
         )
+        # thread_id 也要带上：归属行在流开始之前就写好了，所以失败的这一轮同样有会话。
+        # 不带的话前端不知道 id，用户点「重发」会开出第二个会话，列表里于是多一条
+        # 「有提问、没答案」——重试几次就多几条。
         yield AgentErrorEvent(
+            thread_id=thread_id,
             code=rule.code,
             detail=rule.detail,
             retryable=rule.retryable,

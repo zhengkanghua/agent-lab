@@ -286,10 +286,105 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agent/threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 列出当前账号的 Agent 会话
+         * @description 按最后活跃时间倒序分页返回当前账号的会话。只返回自己的会话，`total` 是不受分页影响的总数，供界面显示总量和算页数。
+         */
+        get: operations["list_agent_threads_agent_threads_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/threads/{thread_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 读取一个会话的历史消息
+         * @description 回放某个会话已经存下的问答，供前端在续聊前把界面补齐。不分页：历史被压缩中间件封在有限条数内。
+         *
+         *     `summarized` 为真表示早期历史已被压缩成摘要、原始消息已不存在，此时 `turns` 不是全部历史，界面必须如实说明。
+         */
+        get: operations["get_agent_thread_messages_agent_threads__thread_id__messages_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/threads/{thread_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 删除一个会话及其历史
+         * @description 删除会话记录，并清掉 checkpointer 里对应的全部历史。删除后同一个 id 无法续聊。
+         */
+        delete: operations["delete_agent_thread_agent_threads__thread_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AgentChatErrorResponse
+         * @description Agent 链路以 HTTP 状态码返回失败时的响应体（固定三字段）。
+         *
+         *     用在会话记录那几条普通 JSON 路由上，以及 ``/agent/chat`` 在**流开始之前**就失败的情况
+         *     （权限、会话归属、Runtime 不可用）。流一旦开始，失败只能作为 ``AgentErrorEvent`` 送达——
+         *     响应头已经发出去了，改不了状态码。
+         *
+         *     与 ``AgentErrorEvent`` 三个字段同名同义，前端因此可以对两条路径复用同一套错误文案映射
+         *     （``frontend/src/features/agent-chat/model/agent-error.ts``），不必分别写一份。
+         *
+         *     ``code`` 声明成 ``str`` 而不是 ``AgentChatErrorCode`` 那个 Literal，与紧邻的
+         *     ``AgentErrorEvent`` 保持一致：那个 Literal 定义在 ``api.error_contract`` 里，而本模块位于它
+         *     下面一层（``error_contract`` 反过来 import 本模块），引它会成环。前端的文案表本来就是按
+         *     字符串查、查不到走兜底，收窄成 Literal 拿不到额外保障。
+         */
+        AgentChatErrorResponse: {
+            /**
+             * Code
+             * @description 稳定机器错误码，前端据此选择提示文案。
+             */
+            code: string;
+            /**
+             * Detail
+             * @description 安全中文概述，不含异常文本、连接串或第三方原始响应。
+             */
+            detail: string;
+            /**
+             * Retryable
+             * @description 是否「不改请求、稍后重试可能成功」；权限与归属类错误为 False。
+             */
+            retryable: boolean;
+        };
         /**
          * AgentChatEventEnvelope
          * @description SSE ``data:`` 行里那一个 JSON 对象的类型。
@@ -304,8 +399,11 @@ export interface components {
          * @description 一次 Agent 对话提问。
          *
          *     ``thread_id`` 是「会话」的标识：带上同一个值就接着上次聊，历史由 checkpointer 按它
-         *     存取；省略则由服务端新建一个并在 ``done`` 事件里告知，这样前端不必自己生成 UUID，
-         *     也不会因为伪造一个 id 而读到别人的会话。
+         *     存取；省略则由服务端新建一个并在 ``done`` 事件里告知，这样前端不必自己生成 UUID。
+         *
+         *     伪造一个 id 读不到别人的会话，但**挡住它的不是这个 schema**：checkpointer 只按 id 取历史、
+         *     不校验归属，所以归属由 ``services.agent_thread_service`` 在流开始前判定，不属于当前账号一律
+         *     404。这里只负责「格式得是个 UUID」。
          */
         AgentChatRequest: {
             /**
@@ -315,7 +413,7 @@ export interface components {
             message: string;
             /**
              * Thread Id
-             * @description 要接着聊的会话 id；省略表示新建会话，新 id 通过 done 事件返回。
+             * @description 要接着聊的会话 id，必须是当前账号自己的会话，否则返回 404；省略表示新建会话，新 id 通过 done 事件返回。
              */
             thread_id?: string | null;
             /**
@@ -366,6 +464,9 @@ export interface components {
          *
          *     为什么错误走事件而不是 HTTP 状态码：响应头在第一个 token 发出时就已经发送，之后
          *     没法再改状态码。所以流一旦开始，所有失败都只能作为事件送达。
+         *
+         *     它和 ``AgentDoneEvent`` 一样带 ``thread_id``，理由见该字段的说明——**失败的那一轮
+         *     也已经有会话行了**。
          */
         AgentErrorEvent: {
             /**
@@ -373,6 +474,12 @@ export interface components {
              * @enum {string}
              */
             event: "error";
+            /**
+             * Thread Id
+             * Format: uuid
+             * @description 本次运行所属会话的 id。失败也带它，因为归属行在流开始之前就已写入：前端据此把重试发到同一个会话，而不是另开一个。
+             */
+            thread_id: string;
             /**
              * Code
              * @description 稳定机器错误码，前端据此选择提示文案。
@@ -388,6 +495,171 @@ export interface components {
              * @description 是否「不改提问、稍后重试可能成功」；认证与配置类错误为 False。
              */
             retryable: boolean;
+        };
+        /**
+         * AgentReplayTrace
+         * @description 回放出来的一次工具调用轨迹。
+         *
+         *     与 SSE 的 ``tool_call``/``tool_result`` 两个事件相比，这里调用和结果已经合成一条：回放时
+         *     两者都是既成事实，没有「已经开始查、还没查完」的中间态。
+         *
+         *     配对精度也比流式那边高：checkpointer 里的 ``ToolMessage`` 带 ``tool_call_id``，所以调用与结果
+         *     是精确对应的；而 SSE 的 ``tool_result`` 事件不带 id，前端只能按「同名且还没结果的最早那条」
+         *     近似配对（见 ``frontend/src/features/agent-chat/model/conversation.ts``）。
+         */
+        AgentReplayTrace: {
+            /**
+             * Tool
+             * @description 被调用的工具名。
+             */
+            tool: string;
+            /**
+             * Arguments
+             * @description 模型给出的调用参数；属于展示给用户的调用轨迹，不含服务端凭据。
+             */
+            arguments?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Content
+             * @description 工具返回给模型的文本。为 null 表示历史里只有调用、没有对应结果（那一轮在工具返回前就中断了）。
+             */
+            content?: string | null;
+            /**
+             * Failed
+             * @description 该次调用是否失败；失败时 content 是安全文案，不含异常细节。
+             * @default false
+             */
+            failed: boolean;
+        };
+        /**
+         * AgentReplayTurn
+         * @description 回放出来的一轮问答。
+         *
+         *     ``answer`` 可能是空串：首轮运行失败（模型没来得及作答）时，checkpointer 里只有用户那条消息。
+         *     这种情况不伪造一个错误——当时的失败原因没有存下来，编一个出来会误导排查方向。前端显示一句
+         *     中性说明即可。
+         */
+        AgentReplayTurn: {
+            /**
+             * Question
+             * @description 用户这一轮的提问原文。
+             */
+            question: string;
+            /**
+             * Answer
+             * @description 模型这一轮的最终回答；空串表示当时没有产出回答。
+             */
+            answer: string;
+            /**
+             * Traces
+             * @description 这一轮里的工具调用轨迹，按发生顺序。
+             * @default []
+             */
+            traces: components["schemas"]["AgentReplayTrace"][];
+        };
+        /**
+         * AgentThreadDeletionResponse
+         * @description ``DELETE /agent/threads/{thread_id}`` 的响应。
+         *
+         *     为什么删除有响应体而不是 204：这条路由的失败分支（404 归属校验失败、503 数据库不可用）都要带
+         *     ``code``/``detail``/``retryable``，而 FastAPI 不允许给 204 声明任何响应体——真用 204 就只能把
+         *     错误契约从 OpenAPI 里删掉，前端生成的类型里也就看不到这两种失败。项目里 ``DELETE
+         *     /admin/users/{user_id}/sessions`` 出于同样的原因返回 200 加一个小对象。
+         *
+         *     回带 ``thread_id`` 而不是空对象 ``{}``：前端可以核对「删掉的确实是我点的那个」，
+         *     这在列表刚刷新过、行序变了的情况下有用。
+         */
+        AgentThreadDeletionResponse: {
+            /**
+             * Thread Id
+             * Format: uuid
+             * @description 已删除的会话 id。
+             */
+            thread_id: string;
+        };
+        /**
+         * AgentThreadListResponse
+         * @description ``GET /agent/threads`` 的响应。
+         *
+         *     带 ``total`` 是有意的：offset 分页下前端要显示「共 N 个」和算总页数，而这两件事光有当前页
+         *     的条数算不出来。
+         */
+        AgentThreadListResponse: {
+            /**
+             * Items
+             * @description 本页会话，按最后活跃时间倒序。
+             */
+            items: components["schemas"]["AgentThreadSummary"][];
+            /**
+             * Total
+             * @description 当前账号的会话总数，与分页参数无关。
+             */
+            total: number;
+        };
+        /**
+         * AgentThreadMessagesResponse
+         * @description ``GET /agent/threads/{thread_id}/messages`` 的响应。
+         *
+         *     ``summarized`` 与 ``summary`` 一起表达「早期历史已经不在了」这件事，前端必须如实显示，
+         *     不能把回放当成完整历史：``SummarizationMiddleware`` 的压缩是破坏性的，被压掉的原始消息
+         *     真的不在 checkpointer 里了，模型看到的也只是那段摘要。
+         */
+        AgentThreadMessagesResponse: {
+            /**
+             * Thread Id
+             * Format: uuid
+             * @description 本次回放所属的会话 id。
+             */
+            thread_id: string;
+            /**
+             * Turns
+             * @description 按时间顺序的历史轮次；不包含摘要那条伪提问。
+             */
+            turns: components["schemas"]["AgentReplayTurn"][];
+            /**
+             * Summarized
+             * @description 早期历史是否已被压缩成摘要；为真表示 turns 不是全部历史。
+             */
+            summarized: boolean;
+            /**
+             * Summary
+             * @description 压缩后的摘要正文，仅在 summarized 为真时存在。原样透传，可能带有上游库加的英文前缀。
+             */
+            summary?: string | null;
+        };
+        /**
+         * AgentThreadSummary
+         * @description 会话列表里的一行。
+         *
+         *     刻意不含消息内容、轮数和「最后一条回答」：那些要么是 checkpointer 里已有内容的副本
+         *     （会因历史压缩而与真实上下文不一致），要么需要额外维护一个容易飘的计数列。
+         *     列表只承担导航，认出「是哪个会话」够用。
+         */
+        AgentThreadSummary: {
+            /**
+             * Thread Id
+             * Format: uuid
+             * @description 会话 id；带上它请求历史或续聊。
+             */
+            thread_id: string;
+            /**
+             * Title
+             * @description 会话标题，由首条提问截断而来，最长 60 字符；不含省略号，截断标记由前端呈现。
+             */
+            title: string;
+            /**
+             * Created At
+             * Format: date-time
+             * @description 会话创建时间（带时区）。
+             */
+            created_at: string;
+            /**
+             * Last Active At
+             * Format: date-time
+             * @description 最后一次在本会话提问的时间（带时区）；列表按它倒序。
+             */
+            last_active_at: string;
         };
         /**
          * AgentTokenEvent
@@ -1978,6 +2250,147 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentDefaultPromptResponse"];
+                };
+            };
+        };
+    };
+    list_agent_threads_agent_threads_get: {
+        parameters: {
+            query?: {
+                /** @description 本页最多返回几个会话。 */
+                limit?: number;
+                /** @description 跳过前几个会话。 */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentThreadListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentChatErrorResponse"];
+                };
+            };
+        };
+    };
+    get_agent_thread_messages_agent_threads__thread_id__messages_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentThreadMessagesResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentChatErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentChatErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_agent_thread_agent_threads__thread_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentThreadDeletionResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentChatErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentChatErrorResponse"];
                 };
             };
         };
