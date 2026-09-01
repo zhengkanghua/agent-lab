@@ -75,3 +75,12 @@ buildx 从 v0.10 起默认给镜像附加来源证明和物料清单，它们在
 同理，构建缓存用 `type=gha` 而不是 `type=registry`：后者要往 registry 写
 `application/vnd.buildkit.cacheconfig.v0`，同一个 registry 已经拒了上面那个类型，没有理由赌它认这个。
 换成支持完整 OCI 规范的 registry（ACR 企业版、GHCR、Harbor）后这三项都可以放开。
+
+**镜像和 CI runner 都绑死在 arm64 上，因为目标机是 Ampere A1。** 甲骨文那台 `uname -m`
+是 `aarch64`，所以工作流跑在 `ubuntu-24.04-arm` 上原生构建，并在构建步骤显式写
+`platforms: linux/arm64`。选原生 ARM runner 而不是在 x64 上开 QEMU：QEMU 下装依赖并预编译
+字节码要慢十几分钟，而 ARM 托管 runner 对公开仓库免费。代价是前端也在 ARM 上构建，依赖
+`package-lock.json` 里存有 `@rolldown/binding-linux-arm64-gnu` 和
+`lightningcss-linux-arm64-gnu`——缺了 `npm ci` 会直接失败，所以换 Vite 或 Tailwind 大版本后要
+复查一次。架构不符的表现是容器无限重启、日志里只有一行 `exec format error`，而这行错看起来
+像文件坏了或路径不对，实际是 ENOEXEC（认出 ELF 但看不懂机器码），排查时容易往错的方向走。

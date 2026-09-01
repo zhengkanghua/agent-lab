@@ -39,8 +39,20 @@ env:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
-    # 甲骨文那台是 x86_64，所以用默认的 amd64 runner 原生构建，不需要 QEMU 或多架构。
+    # ⚠ 必须是 ARM runner。甲骨文那台是 Ampere A1（`uname -m` 输出 aarch64），
+    # 镜像架构和它不符时，容器会起不来并无限重启，日志里只有一行
+    # `exec /app/.venv/bin/uvicorn: exec format error`——这是内核认出 ELF 但看不懂
+    # 里面的机器码（ENOEXEC）。这个错很容易误判：它看起来像文件坏了或路径不对，
+    # 但 shebang 坏掉、解释器缺失报的是 "no such file or directory"，不是这个。
+    #
+    # 用 ARM runner 原生构建，而不是在 x64 上开 QEMU 跑 linux/arm64：
+    # QEMU 下装依赖并预编译字节码（Dockerfile 里 UV_COMPILE_BYTECODE=1）要慢十几分钟。
+    # ARM 托管 runner 对公开仓库免费，本仓库是公开的。
+    #
+    # 前端在 ARM 上构建也没问题：package-lock.json 里有
+    # @rolldown/binding-linux-arm64-gnu 和 lightningcss-linux-arm64-gnu，
+    # 缺了这些 npm ci 会直接失败，所以换 Vite/Tailwind 大版本后要复查一次。
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
 
     steps:
@@ -145,6 +157,12 @@ jobs:
           # 构建上下文是 backend/，不是仓库根：Dockerfile 里的 COPY 路径都相对它。
           context: backend
           push: true
+
+          # 写死目标架构，不靠 runner 默认值。这一行是护栏：万一有人把上面的
+          # runs-on 换回 x64，构建会因为要在 x64 上跑 arm64 而立刻报错（没装 QEMU），
+          # 而不是安安静静推一个服务器跑不了的 amd64 镜像上去——后者的表现是
+          # 部署全绿、容器无限重启，只有 docker logs 里那行 exec format error。
+          platforms: linux/arm64
           # 这个值必须和服务器 .env 里的 BACKEND_IMAGE 完全一致，
           # 否则会出现「CI 推 A、服务器拉 B」——表现是部署全绿但代码没更新。
           tags: ${{ env.BACKEND_IMAGE }}

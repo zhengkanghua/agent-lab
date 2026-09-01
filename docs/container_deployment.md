@@ -280,6 +280,27 @@ docker compose run --rm backend agent-lab init-checkpointer
 这是另一回事：池里的连接被服务端掐了（`idle_session_timeout`、中间代理回收、PG 重启都会
 造成），日志里会有 `discarding closed connection`。重发即可，表是好的。
 
+### 容器无限重启，日志只有 `exec format error`
+
+```text
+exec /app/.venv/bin/uvicorn: exec format error
+```
+
+镜像架构和服务器不符。这台是 Ampere A1（`uname -m` → `aarch64`），镜像必须是
+`linux/arm64`。工作流用 `runs-on: ubuntu-24.04-arm` 原生构建，并在构建步骤写死
+`platforms: linux/arm64`，两处都不要改回 x64。
+
+这个错的迷惑性在于它长得像「文件坏了」或「路径不对」，但那两种情况报的是
+`no such file or directory`。`exec format error` 是 ENOEXEC，只有一个含义：
+内核认出这是可执行文件，但看不懂里面的机器码。
+
+确认现有镜像的架构：
+
+```bash
+docker image inspect <BACKEND_IMAGE> --format '{{.Architecture}}'   # 应为 arm64
+uname -m                                                            # 应为 aarch64
+```
+
 ### 推镜像失败：`unknown manifest class for application/vnd.oci.empty.v1+json`
 
 ACR 个人版不认 buildx 默认附加的 provenance / SBOM 证明。工作流里已经用
