@@ -292,6 +292,62 @@ class AgentThreadService:
             rows = await session.scalars(select(AgentThreadRecord.thread_id))
             return set(rows)
 
+    async def list_threads_before(self, cutoff: datetime) -> list[AgentThreadRecord]:
+        """读取最后活跃早于指定时间的所有会话，供旧会话清理命令使用。
+
+        Args:
+            cutoff: 时间截止点；最后活跃早于此时间的会话将被返回。
+
+        Returns:
+            符合条件的会话记录列表。
+
+        Raises:
+            SQLAlchemyError: 业务库不可用。
+
+        Notes:
+            只读、不分账号——它服务的是运维命令 ``prune-old-threads``。返回完整记录而非只返回 id，
+            是为了让调用方能记录每个被删会话的标题和最后活跃时间。
+        """
+
+        async with self._session_factory() as session:
+            rows = await session.scalars(
+                select(AgentThreadRecord)
+                .where(AgentThreadRecord.last_active_at < cutoff)
+                .order_by(AgentThreadRecord.last_active_at.asc())
+            )
+            return list(rows)
+
+    async def delete_threads(self, thread_ids: list[str]) -> int:
+        """批量删除指定 id 的会话归属记录，供旧会话清理命令使用。
+
+        Args:
+            thread_ids: 要删除的会话 id 列表，已转成字符串。
+
+        Returns:
+            实际删除的记录数。
+
+        Raises:
+            SQLAlchemyError: 业务库不可用。
+
+        Notes:
+            只删本表，**不删 checkpointer 里的历史**。调用方必须先删 checkpointer 历史，
+            成功后再调本方法。不校验归属——它服务的是运维命令，操作的是跨账号清理。
+        """
+
+        if not thread_ids:
+            return 0
+
+        # 转回 UUID：业务表存的是 UUID 类型，传入的是字符串（与 checkpointer 一致）
+        uuids = [UUID(tid) for tid in thread_ids]
+
+        async with self._session_factory() as session:
+            result = await session.execute(
+                delete(AgentThreadRecord).where(AgentThreadRecord.thread_id.in_(uuids))
+            )
+            await session.commit()
+            return result.rowcount or 0
+
+
 
 __all__ = [
     "FALLBACK_THREAD_TITLE",

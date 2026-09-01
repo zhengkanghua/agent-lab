@@ -25,6 +25,9 @@ const isThinking = computed(() => isStreaming.value && props.turn.answer.length 
 const isUnanswered = computed(
   () => !isStreaming.value && props.turn.answer.length === 0 && props.turn.error === null,
 )
+
+/** 有工具轨迹但没有文字回答——通常是模型故障或上游返回空内容。 */
+const hasTracesOnly = computed(() => isUnanswered.value && props.turn.traces.length > 0)
 </script>
 
 <template>
@@ -57,7 +60,10 @@ const isUnanswered = computed(
           :markdown="turn.answer"
           :streaming="isStreaming"
         />
-        <p v-else-if="isUnanswered" class="unanswered">这一轮没有留下回答。</p>
+        <p v-else-if="isUnanswered" class="unanswered">
+          {{ hasTracesOnly ? '模型未给出文字回答。' : '这一轮没有留下回答。' }}
+          <span v-if="hasTracesOnly" class="trace-hint">已执行的检索结果见上方。</span>
+        </p>
 
         <div v-if="turn.error" class="turn-error" role="alert">
           <p class="error-title">
@@ -158,6 +164,13 @@ const isUnanswered = computed(
   color: var(--text-muted);
   font-size: 0.85rem;
   font-style: italic;
+}
+
+.trace-hint {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-tertiary);
+  font-size: 0.8rem;
 }
 
 .turn-error {

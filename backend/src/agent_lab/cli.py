@@ -172,6 +172,23 @@ def build_parser() -> argparse.ArgumentParser:
         # 动作、「真删」成为显式选择。
         help="确认执行删除；省略时只列出将被删除的会话数量，不做任何修改。",
     )
+
+    prune_old_parser = subparsers.add_parser(
+        "prune-old-threads",
+        help="清理指定天数之前的 Agent 会话历史；默认只预演，加 --yes 才真删。",
+    )
+    prune_old_parser.add_argument(
+        "--before-days",
+        type=_bounded_integer("before-days", minimum=1, maximum=3650),
+        required=True,
+        help="删除最后活跃时间早于指定天数前的会话，范围 1..3650（10年）。",
+    )
+    prune_old_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="确认执行删除；省略时只列出将被删除的会话数量，不做任何修改。",
+    )
+
     return parser
 
 
@@ -243,6 +260,9 @@ async def dispatch_command(args: argparse.Namespace) -> CommandOutcome:
 
     if args.command == "prune-orphan-threads":
         return await _prune_orphan_threads(args)
+
+    if args.command == "prune-old-threads":
+        return await _prune_old_threads(args)
 
     executor = NewsPipelineExecutionService(async_session_factory)
     # 命令分派：sync-news 只同步；index-pending 只索引；run-once 两步都做
@@ -445,6 +465,78 @@ async def _prune_orphan_threads(args: argparse.Namespace) -> CommandOutcome:
         },
         exit_code=0,
     )
+
+
+async def _prune_old_threads(args: argparse.Namespace) -> CommandOutcome:
+    """清理指定天数之前最后活跃的会话历史。
+
+    Args:
+        args: 用到 ``command``、``before_days`` 与 ``yes``；``yes`` 为假时只预演不删。
+
+    Returns:
+        符合条件的会话数量与本次实际删除数量，退出码 0。
+
+    Raises:
+        Exception: 无法连接 PostgreSQL、checkpointer 表或 agent_threads 表不存在、
+            或删除失败时传播；最外层只按异常类型报告。
+
+    Notes:
+        「旧会话」的定义是：``agent_threads.last_active_at`` 早于 ``<now> - <before_days>``。
+        只有业务表里有归属记录的会话会被删除——孤儿会话交给 ``prune-orphan-threads``。
+
+        **默认只预演。** 加 ``--yes`` 才真删，且删除不可恢复。
+
+        删除顺序：先清 checkpointer 历史，成功后再删业务表归属记录。这个顺序留下的是
+        「历史已删、业务行还在」的可自愈残余，反过来留下的是无法删除的孤儿。
+
+        本命令必须在 ``alembic upgrade head`` 之后跑：``agent_threads`` 表还不存在时会失败。
+    """
+
+    from datetime import UTC, datetime
+
+    database_url = str(get_settings().database_url)
+    cutoff = datetime.now(UTC) - timedelta(days=args.before_days)
+
+    # 1、从业务表查出所有最后活跃早于截止时间的会话 id
+    threads = AgentThreadService(async_session_factory)
+    old_threads = await threads.list_threads_before(cutoff)
+    old_thread_ids = [str(thread.thread_id) for thread in old_threads]
+
+    # 2、预演模式只报数，不动数据
+    if not args.yes:
+        return CommandOutcome(
+            payload={
+                "command": args.command,
+                "ok": True,
+                "dry_run": True,
+                "before_days": args.before_days,
+                "cutoff_time": cutoff.isoformat(),
+                "old_threads": len(old_thread_ids),
+                "deleted_threads": 0,
+            },
+            exit_code=0,
+        )
+
+    # 3、真删：先清 checkpointer 历史
+    deleted = await delete_checkpointer_threads(database_url, old_thread_ids)
+
+    # 4、再删业务表归属记录（只删 checkpointer 清理成功的那些）
+    deleted_records = await threads.delete_threads(old_thread_ids[:deleted])
+
+    return CommandOutcome(
+        payload={
+            "command": args.command,
+            "ok": True,
+            "dry_run": False,
+            "before_days": args.before_days,
+            "cutoff_time": cutoff.isoformat(),
+            "old_threads": len(old_thread_ids),
+            "deleted_threads": deleted,
+            "deleted_records": deleted_records,
+        },
+        exit_code=0,
+    )
+
 
 
 async def _execute_index_batch(

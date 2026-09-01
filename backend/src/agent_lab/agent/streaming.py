@@ -184,6 +184,8 @@ async def stream_agent_events(
     #    client 为 None 表示这次不上报追踪。
     config = {"configurable": {"thread_id": str(thread_id)}}
     client = _build_tracing_client(langsmith_settings)
+    actual_model_name: str | None = None
+    has_answer = False
     try:
         # 2、开一个「只管本次运行」的追踪范围。tracing_context 不写 os.environ，
         #    所以并发请求之间不会互相污染，也不需要在进程启动时就决定好。
@@ -208,8 +210,12 @@ async def stream_agent_events(
                         isinstance(part, AIMessage)
                         and metadata.get("langgraph_node") == _MODEL_NODE
                     ):
+                        # 记录实际模型名：只记一次，从第一个 AIMessage 的 response_metadata 取。
+                        if actual_model_name is None and hasattr(part, "response_metadata"):
+                            actual_model_name = part.response_metadata.get("model_name")
                         token = _token_event(part)
                         if token is not None:
+                            has_answer = True
                             yield token
                 # 5、updates 流 → 工具轨迹。工具调用和工具结果只在这个流里出现，
                 #    messages 流里没有。
@@ -236,6 +242,14 @@ async def stream_agent_events(
             retryable=rule.retryable,
         )
         return
+    finally:
+        # 记录对话结束，标记是否有回答内容、实际使用的模型。
+        logger.info(
+            "Agent 对话结束 thread_id=%s has_answer=%s model=%s",
+            thread_id,
+            has_answer,
+            actual_model_name or "unknown",
+        )
     # 7、正常收尾。done 带上 thread_id，前端拿它接着发下一轮。
     yield AgentDoneEvent(thread_id=thread_id)
 
