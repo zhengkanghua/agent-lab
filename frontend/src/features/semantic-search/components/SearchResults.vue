@@ -12,6 +12,7 @@ import type {
   NewsReadableResult,
   SearchMode,
 } from '../model/search-result'
+import { SEARCH_EXAMPLES } from '../constants/examples'
 import ChunkResultCard from './ChunkResultCard.vue'
 import SearchResultCard from './SearchResultCard.vue'
 
@@ -29,8 +30,6 @@ const emit = defineEmits<{
   chooseExample: [value: string]
   read: [result: NewsReadableResult, trigger: HTMLButtonElement | null]
 }>()
-
-const examples = ['央行近期是否调整利率？', '新能源车出口趋势', '宏观数据与居民消费']
 
 const errorPresentation = computed(() => (props.error ? presentSearchError(props.error) : null))
 const resultCount = computed(() =>
@@ -87,7 +86,7 @@ const isDocumentMode = computed(() => props.mode === 'document')
       </div>
       <div class="example-list" aria-label="示例检索">
         <button
-          v-for="example in examples"
+          v-for="example in SEARCH_EXAMPLES"
           :key="example"
           type="button"
           @click="emit('chooseExample', example)"

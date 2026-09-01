@@ -10,13 +10,8 @@ import ThreadSidebar from '@/features/agent-chat/components/ThreadSidebar.vue'
 import { useAgentChat } from '@/features/agent-chat/composables/useAgentChat'
 import { useAgentDefaultPrompt } from '@/features/agent-chat/composables/useAgentDefaultPrompt'
 import { useThreadList } from '@/features/agent-chat/composables/useThreadList'
+import { AGENT_EXAMPLES } from '@/features/agent-chat/constants/examples'
 import type { AgentThreadSummaryDto } from '@/api/agent-threads'
-
-const EXAMPLES = [
-  '最近有哪些关于利率的报道？',
-  '总结一下本周的科技新闻要点',
-  '关于新能源汽车，各家来源的说法有分歧吗？',
-] as const
 
 const route = useRoute()
 const router = useRouter()
@@ -207,7 +202,7 @@ async function chooseExample(value: string): Promise<void> {
           <AgentTranscript
             :turns="chat.turns.value"
             :streaming="chat.isStreaming.value"
-            :examples="EXAMPLES"
+            :examples="AGENT_EXAMPLES"
             @retry="chat.retry"
             @choose-example="chooseExample"
           />
