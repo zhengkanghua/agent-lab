@@ -1,0 +1,56 @@
+# Agent Lab 后端容器编排。
+#
+# 服务器上的用法：把本文件和填好的 .env 放进同一个目录（约定 /opt/agent-lab/），
+# 不需要复制仓库其余部分。compose 会读同目录的 .env 做两件事——替换下面的 ${...}
+# 占位符，以及通过 env_file 把同一份变量注入容器进程。
+#
+# 这里只有后端一个服务。前端不在容器里：dist 是静态文件，由 OpenResty 直接发，
+# 理由见 docs/adr/0008-backend-in-image-frontend-as-static-files.md。
+#
+# 迁移刻意不写成 compose 服务，而是部署脚本里显式两条命令，见 docs/container_deployment.md。
+# 原因是迁移失败时要保留旧容器继续服务；写成 depends_on 会让后端直接起不来。
+networks:
+    1panel-network:
+        external: true
+services:
+  backend:
+    # 镜像地址没有默认值，必须由 .env 提供。本仓库是公开的，registry 实例 id 和命名空间
+    # 不写进代码。`:?` 的作用是缺值时让 compose 立刻报错退出——否则 image 会变成空字符串，
+    # docker 报的错跟「镜像不存在」长得一样，会往错的方向查。
+    #
+    # ⚠ 这个值必须和 CI 构建的 tag 完全一致。CI 那边由 GitHub Variables 的
+    # ACR_REGISTRY / ACR_NAMESPACE / ACR_REPOSITORY 拼出来，两处都不在仓库里、无法自动比对；
+    # 不一致的表现是「CI 全绿、容器也重启了，但跑的还是上一版代码」。
+    # 改 registry 的完整清单见 docs/container_deployment.md 的「更换 registry」。
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE 未设置：检查本文件同目录的 .env}
+    container_name: agent-lab-backend
+    restart: unless-stopped
+
+    # 只绑 127.0.0.1：这个端口只给同机的 OpenResty 反代用，不该被公网直接访问。
+    # 写成 "18000:8000" 会绑到 0.0.0.0，且 Docker 直接改 iptables、绕过 ufw
+    # （甲骨文云端安全列表仍然挡得住，但没有理由多开一层）。左边是宿主机端口、
+    # 可在 .env 改；右边 8000 是容器内 uvicorn 监听的端口，不要改。
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-18000}:8000"
+
+    # 应用配置全部来自这份文件。注意 env_file 注入的值一律是字符串，所以
+    # LLM_CHECKPOINT_POOL_SIZE 绝对不能写进 .env——它在 config/llm.py 里声明为
+    # strict=True，配上会让进程启动即 ValidationError。要改连接池就改代码默认值。
+    env_file:
+      - .env
+
+    environment:
+      # 只影响容器内日志时间戳的显示，不影响数据库时区（那个由 .env 的
+      # DATABASE_TIMEZONE=UTC 决定，两者互不干涉）。
+      TZ: ${TZ:-Asia/Shanghai}
+    networks:
+    - 1panel-network
+    # Docker 默认的 json-file 驱动不限制日志大小，跑久了能把磁盘写满——那台机器上
+    # 还有其他服务，写满会一起出事。10m × 3 份，总上限 30MB。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    volumes:
+      - ./data:/data

@@ -1,0 +1,67 @@
+# ============================================================
+# backend/ 镜像构建上下文排除规则
+#
+# 与 .gitignore 的区别：.gitignore 管「什么不进 git」，本文件管「什么不传给 Docker」。
+# 两者目标不同，所以有些东西只在这里排除（如 tests/、README 之外的文档），
+# 有些只在 .gitignore 里（如 .env.example 要进 git 但不进镜像）。
+#
+# 漏排除的后果分两种：
+#   - .venv/ 之类漏了 → 构建上下文几百 MB，每次构建都白传一遍
+#   - .env 漏了 → 密钥被打进镜像层，推到 ACR 后谁能拉镜像谁就能看到
+# ============================================================
+
+# ---------- 密钥（最重要，绝不能进镜像）----------
+# 这里不像 .gitignore 那样给 .env.example 开例外——镜像里不需要任何 env 模板，
+# 配置由 compose 的 env_file 在运行时注入。
+.env
+.env.*
+
+# ---------- 虚拟环境（镜像里的 .venv 由构建阶段重新生成）----------
+.venv/
+venv/
+ENV/
+
+# ---------- Python 缓存与构建产物 ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+build/
+dist/
+wheels/
+*.egg-info/
+*.egg
+
+# ---------- 测试与检查缓存 ----------
+# tests/ 不进镜像：测试在 CI 里跑，跑的是仓库代码，不是镜像。
+tests/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage*
+coverage.xml
+htmlcov/
+
+# ---------- 文档（README.md 例外，pyproject.toml 的 readme 字段要读它）----------
+docs/
+AGENTS.md
+
+# ---------- 容器与部署文件本身 ----------
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# ---------- 版本控制与编辑器 ----------
+.git/
+.gitignore
+.idea/
+.vscode/
+*.swp
+
+# ---------- 操作系统 ----------
+.DS_Store
+Thumbs.db

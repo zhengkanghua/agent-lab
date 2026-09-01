@@ -1,0 +1,222 @@
+# 推 main 即测试、构建、部署。手动入口 workflow_dispatch 用于「服务器侧改了配置，
+# 想重跑一次部署」而不必造一个空提交。
+#
+# 单 job 顺序执行，不拆并行：后端必须先部署完再传前端 dist（顺序理由见 deploy 那一步的注释），
+# 拆开之后要额外做 job 间的产物传递和顺序编排，对单人项目不划算。
+#
+# 整体设计与取舍见 docs/adr/0008-backend-in-image-frontend-as-static-files.md，
+# 服务器侧一次性准备见 docs/container_deployment.md。
+
+name: 部署到甲骨文
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 同一分支的新推送取消仍在跑的旧运行，避免两次部署并发改同一台服务器和同一个数据库。
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # 镜像地址来自 GitHub Variables（仓库 Settings → Secrets and variables → Actions →
+  # Variables 页签），不写在仓库里——本仓库是公开的，registry 实例 id 和命名空间不必公开。
+  #
+  # 用 Variables 而不是 Secrets：Secrets 的值在运行日志里会被替换成 ***，第一次调 CI 时
+  # 看到的是 `docker push ***/***:backend-latest`，出错几乎无法定位。Variables 不加密、
+  # 日志照常显示，而这些值本来也不是凭据（凭据是 ACR_USERNAME / ACR_PASSWORD）。
+  #
+  # ⚠ 下面拼出来的镜像地址必须和服务器 /opt/agent-lab/.env 里的 BACKEND_IMAGE 完全一致。
+  # 两个值现在分别藏在 GitHub Variables 和服务器文件里，仓库里看不到、也没法自动比对；
+  # 不一致的表现是「本工作流全绿、容器也重启了，但跑的还是上一版代码」。
+  # 改 registry 时两处必须同步改，清单见 docs/container_deployment.md 的「更换 registry」。
+  ACR_REGISTRY: ${{ vars.ACR_REGISTRY }}
+  BACKEND_IMAGE: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/${{ vars.ACR_REPOSITORY }}:backend-latest
+  BUILD_CACHE_IMAGE: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/${{ vars.ACR_REPOSITORY }}:buildcache
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # 甲骨文那台是 x86_64，所以用默认的 amd64 runner 原生构建，不需要 QEMU 或多架构。
+    timeout-minutes: 30
+
+    steps:
+      - name: 取代码
+        uses: actions/checkout@v7
+
+      # 未配置的 Variables 会静默变成空字符串，镜像名就成了 "/agent-lab:backend-latest"，
+      # 报错发生在几分钟后的 push 步骤且信息含糊。这一步把它变成第一秒就失败、且说清缺哪个。
+      # 只检查 Variables 与部署路径；ACR/SSH 凭据留给各自的步骤报错，避免在日志里提凭据名。
+      - name: 检查必需的 Variables 已配置
+        run: |
+          missing=""
+          for pair in \
+            "ACR_REGISTRY=${{ vars.ACR_REGISTRY }}" \
+            "ACR_NAMESPACE=${{ vars.ACR_NAMESPACE }}" \
+            "ACR_REPOSITORY=${{ vars.ACR_REPOSITORY }}" \
+            "DEPLOY_DIR=${{ vars.DEPLOY_DIR }}" \
+            "WEB_ROOT=${{ vars.WEB_ROOT }}"; do
+            name="${pair%%=*}"
+            value="${pair#*=}"
+            [ -z "$value" ] && missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "以下 Variables 未配置：$missing"
+            echo "配置位置：仓库 Settings → Secrets and variables → Actions → Variables 页签"
+            echo "应填什么见 docs/container_deployment.md 的「配置 GitHub Secrets 与 Variables」"
+            exit 1
+          fi
+          echo "镜像地址：${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/${{ vars.ACR_REPOSITORY }}:backend-latest"
+
+      # ---------- 1. 后端测试 ----------
+      # 测试不连真实数据库和外部服务（fake Embeddings、内存 Qdrant、httpx ASGITransport），
+      # 所以这里不需要起 PostgreSQL 服务容器。见 backend/README.md 的「测试」一节。
+      - name: 装 uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: 装后端依赖
+        working-directory: backend
+        run: uv sync --frozen --all-groups
+
+      # 必须给 DATABASE_URL 一个占位值。测试本身不连数据库，但 Settings.database_url 没有
+      # 默认值，而 runner 上没有 .env——缺了它 pytest 在**收集阶段**就 ValidationError，
+      # 一个用例都跑不到。这个值必须是假的：填真实连接串等于把生产库暴露给 CI 日志。
+      - name: 后端测试
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://ci:ci@127.0.0.1:5432/ci
+        run: uv run --frozen pytest
+
+      # ---------- 2. 前端检查与测试 ----------
+      - name: 装 Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 装前端依赖
+        working-directory: frontend
+        run: npm ci
+
+      - name: 前端类型检查
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: 前端 lint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: 前端测试
+        working-directory: frontend
+        run: npm run test:run
+
+      # ---------- 3. 前端构建 ----------
+      # 不传任何 VITE_* 变量：VITE_API_BASE_URL 默认就是 /api（frontend/src/api/client.ts），
+      # 而 VITE_* 会被编译进公开产物，不能放密钥。
+      - name: 构建前端
+        working-directory: frontend
+        run: npm run build
+
+      # ---------- 4. 构建并推送后端镜像 ----------
+      - name: 登录 ACR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: 准备 Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: 构建并推送后端镜像
+        uses: docker/build-push-action@v7
+        with:
+          # 构建上下文是 backend/，不是仓库根：Dockerfile 里的 COPY 路径都相对它。
+          context: backend
+          push: true
+          # 这个值必须和 backend/docker-compose.yml 里 image: 的默认值完全一致，
+          # 否则会出现「CI 推 A、服务器拉 B」——表现是部署全绿但代码没更新。
+          tags: ${{ env.BACKEND_IMAGE }}
+          # 把构建缓存存在 registry 里，下次构建时依赖没变就不用重装 langchain 全家桶。
+          cache-from: type=registry,ref=${{ env.BUILD_CACHE_IMAGE }}
+          cache-to: type=registry,ref=${{ env.BUILD_CACHE_IMAGE }},mode=max
+
+      # ---------- 5. 部署后端 ----------
+      # 在传前端之前做，是有意的：迁移失败就中止在这里，前端仍是旧版本，
+      # 不会出现「新前端调老后端」。反过来先传前端则做不到这一点。
+      - name: 部署后端
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          # 密码通过 envs 传成远端的环境变量，不写进 script 的命令行——命令行会进
+          # 服务器的进程列表和 shell history。
+          envs: ACR_PASSWORD,ACR_REGISTRY,ACR_USERNAME,DEPLOY_DIR
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd "$DEPLOY_DIR"
+
+            # --password-stdin 而不是 -p：后者会让密码出现在进程列表里。
+            echo "$ACR_PASSWORD" | docker login "$ACR_REGISTRY" -u "$ACR_USERNAME" --password-stdin
+
+            # 这一步不能省。tag 恒为 backend-latest，up -d 认为 tag 没变就会直接复用
+            # 本地旧镜像——表现是本工作流全绿、容器也重启了，但跑的还是上一版代码。
+            docker compose pull
+
+            # 迁移必须在 up -d 之前，且这两条的顺序不能反：checkpointer 的四张表不由
+            # Alembic 管，见 docs/adr/0004-checkpointer-tables-outside-alembic.md。
+            # 用 run --rm 起一次性容器，不碰正在服务的那个。任一条失败，set -e 会让
+            # 本步骤直接失败并中止后续步骤，旧容器保持运行。
+            docker compose run --rm backend alembic upgrade head
+            docker compose run --rm backend agent-lab init-checkpointer
+
+            docker compose up -d
+
+            # 验证进程真的起来了并且连得上 PostgreSQL。没有这一步，容器崩溃重启循环时
+            # 本工作流仍会显示成功。python:3.12-slim 里没有 curl，所以用 Python 自己发请求。
+            for i in $(seq 1 10); do
+              if docker compose exec -T backend python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status == 200 else 1)"; then
+                echo "健康检查通过"
+                break
+              fi
+              if [ "$i" -eq 10 ]; then
+                echo "健康检查连续失败，输出最后 50 行日志："
+                docker compose logs --tail 50 backend
+                exit 1
+              fi
+              sleep 3
+            done
+
+            # 被 backend-latest 覆盖掉的旧镜像会变成无名镜像留在磁盘上，不清理会慢慢吃满。
+            docker image prune -f
+        env:
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
+
+      # ---------- 6. 上传前端 dist ----------
+      # 用 rsync --delete 而不是 scp：Vite 产物文件名带哈希（app-abc123.js），
+      # 每次构建都变，只拷不删会让目录里堆满历史废文件。
+      # 尾部斜杠有意义：source 带斜杠表示「拷目录内容」而不是「拷目录本身」，
+      # 去掉会变成 index/dist/ 这样嵌一层。
+      - name: 上传前端 dist
+        uses: burnett01/rsync-deployments@v9
+        with:
+          switches: -rlgoDz --delete
+          path: frontend/dist/
+          # 尾部斜杠是必需的，见上面注释。WEB_ROOT 里不要带尾部斜杠，这里统一补一个，
+          # 避免 Variables 里填了斜杠时变成两个（rsync 对 // 宽容，但目录名会显得可疑）。
+          remote_path: ${{ vars.WEB_ROOT }}/
+          remote_host: ${{ secrets.SSH_HOST }}
+          remote_user: ${{ secrets.SSH_USER }}
+          remote_key: ${{ secrets.SSH_KEY }}
