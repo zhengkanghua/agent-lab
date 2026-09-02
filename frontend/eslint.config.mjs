@@ -90,7 +90,7 @@ const layerBoundaries = [
 
 export default withVueTs(
   {
-    ignores: ['dist/**', 'src/api/generated/**'],
+    ignores: ['dist/**', 'src/api/generated/**', 'scripts/**'],
   },
   pluginVue.configs['flat/recommended'],
   vueTsConfigs.recommended,

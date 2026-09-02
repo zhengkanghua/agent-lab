@@ -12,7 +12,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "dev:shots": "node scripts/dev-screenshot.mjs",
+    "dev:audit": "node scripts/dev-audit.mjs"
   },
   "dependencies": {
     "@crazydos/vue-markdown": "^1.1.4",
@@ -33,6 +35,7 @@
     "eslint-plugin-vue": "^10.10.0",
     "jsdom": "^30.0.1",
     "openapi-typescript": "^7.13.0",
+    "playwright": "^1.62.1",
     "prettier": "^3.9.6",
     "typescript": "^5.9.3",
     "vite": "^8.2.0",

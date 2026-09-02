@@ -66,6 +66,13 @@ npm install
 npm run dev
 ```
 
+### 不启动后端也能看页面（scripts/）
+
+要看页面真实渲染出来的样式、或走一遍界面流程，却不想（或暂时起不了）后端时，用
+`scripts/` 下的纯前端可视化工具（Playwright route mock 拦截 `/api`，返回契约一致的模拟数据）。
+见 [`scripts/README.md`](scripts/README.md)：先起 dev server，再 `npm run dev:shots`（逐页截图）
+或 `npm run dev:audit`（布局审计）。注意该工具只用于核验前端，不能当后端已更新/部署成功的依据。
+
 开发服务器把 `/api/*` 代理到 `http://127.0.0.1:8000`，因此浏览器只使用同域相对 API
 路径。若需要切换地址，可通过 `VITE_API_BASE_URL` 指向另一个公开的 API 前缀；绝不能把
 账号密码或服务端密钥放进 `VITE_*` 变量。保底管理员配置属于后端进程，只能写入
