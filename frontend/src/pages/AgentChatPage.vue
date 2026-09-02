@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Bot, History, Search, ShieldCheck, UsersRound } from '@lucide/vue'
+import { Bot, History, Search, ShieldCheck } from '@lucide/vue'
 import AppShell from '@/layouts/AppShell.vue'
-import { authSession } from '@/features/auth/auth-session'
 import { useLogout } from '@/features/auth/useLogout'
 import AgentComposer from '@/features/agent-chat/components/AgentComposer.vue'
 import AgentTranscript from '@/features/agent-chat/components/AgentTranscript.vue'
@@ -37,20 +36,9 @@ const transcriptEndRef = ref<HTMLElement | null>(null)
 
 const hasHistory = computed(() => chat.turns.value.length > 0)
 
-/* 账号管理只给超管，理由与检索页那份 navLinks 相同：它会改别人的权限。
-   语义检索恒显示——能进本页的已经是超管，而超管必然能进检索页。
-
-   本页原来只有「语义检索」一项，于是超管在对话页时通往账号管理的路是断的，
-   得先退回检索页再点一次。两页的入口集合本就该一致，缺的那项是漏写。 */
-const navLinks = computed(() => [
-  { to: { name: 'search' }, label: '语义检索', icon: Search },
-  {
-    to: { name: 'user-admin' },
-    label: '账号管理',
-    icon: UsersRound,
-    visible: authSession.user.value?.is_superuser === true,
-  },
-])
+/* 前台顶栏只放「语义检索」这一功能跳转。后台入口统一收敛到账号设置页，不在前台顶栏
+   重复放图标——能进本页的已是超管，需要管理账号时从右上角账号设置进入。 */
+const navLinks = computed(() => [{ to: { name: 'search' }, label: '语义检索', icon: Search }])
 
 /** 路由参数里的会话 id。`/agent` 上没有这个参数，值为 null。 */
 const routeThreadId = computed(() => {

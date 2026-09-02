@@ -132,15 +132,17 @@ describe('AgentChatPage', () => {
   })
 
   /* 断言 aria-label 而不是图标组件：入口对用户和读屏的可见性由它决定，
-     换图标不该让这两条失败。 */
-  it('超管在本页顶栏能直接进账号管理，不必先退回检索页', async () => {
+     换图标不该让这两条失败。
+     后台入口按新契约收敛：前台顶栏只保留前台功能跳转，不再提供账号管理的直达图标，
+     统一从右上角账号设置（/account）进入后台。 */
+  it('顶栏不提供账号管理直达：后台统一从账号设置页进入', async () => {
     const { wrapper } = await mountPage()
 
-    const link = wrapper
-      .findAll('.topbar-nav-link')
-      .find((item) => item.attributes('aria-label') === '账号管理')
+    const labels = wrapper.findAll('.topbar-nav-link').map((item) => item.attributes('aria-label'))
+    expect(labels).toEqual(['语义检索'])
 
-    expect(link?.attributes('href')).toBe('/admin/users')
+    // 账号设置入口仍在右上角，管理后台从这里进入。
+    expect(wrapper.get('.account-identity').attributes('href')).toBe('/account')
     wrapper.unmount()
   })
 

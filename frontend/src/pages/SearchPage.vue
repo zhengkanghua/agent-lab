@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Bot, BookOpenText, Search, ShieldCheck, UsersRound } from '@lucide/vue'
+import { Bot, BookOpenText, Search, ShieldCheck } from '@lucide/vue'
 import AppShell from '@/layouts/AppShell.vue'
 import { authSession } from '@/features/auth/auth-session'
 import { useLogout } from '@/features/auth/useLogout'
@@ -48,14 +48,12 @@ const modeCopy = computed(() =>
       },
 )
 
-// 两个入口都只给超管：Agent 会花掉模型额度，账号管理会改别人的权限。
-const navLinks = computed(() => {
-  const isSuperuser = authSession.user.value?.is_superuser === true
-  return [
-    { to: { name: 'agent-chat' }, label: 'Agent 对话', icon: Bot, visible: isSuperuser },
-    { to: { name: 'user-admin' }, label: '账号管理', icon: UsersRound, visible: isSuperuser },
-  ]
-})
+// 前台顶栏只放「Agent 对话」这一个功能跳转，后台（账号管理等）不再从这里直达——
+// 统一走右上角账号设置 → 账号设置页的「管理员功能」入口，让前台保持纯工作台路线。
+const isSuperuser = computed(() => authSession.user.value?.is_superuser === true)
+const navLinks = computed(() => [
+  { to: { name: 'agent-chat' }, label: 'Agent 对话', icon: Bot, visible: isSuperuser.value },
+])
 
 function switchMode(nextMode: SearchMode): void {
   if (mode.value === nextMode) return
@@ -195,7 +193,7 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
 }
 
 .workspace-label {
-  color: var(--text-secondary);
+  color: var(--accent);
   font-size: 0.76rem;
   font-weight: 760;
 }

@@ -193,7 +193,9 @@ const isDocumentMode = computed(() => props.mode === 'document')
   gap: 24px;
   min-height: 82px;
   padding: 5px 4px 16px;
-  border-bottom: 1px solid var(--text-primary);
+  /* 分离「检索结果」标题区与下方列表：主分隔线用强灰，标签行留一条青色小短线，
+     比原来一整条近黑线更透气，也更贴合青色品牌色。 */
+  border-bottom: 1px solid var(--border-strong);
 }
 
 .results-status {
@@ -205,6 +207,18 @@ const isDocumentMode = computed(() => props.mode === 'document')
   font-size: 0.72rem;
   font-weight: 760;
   letter-spacing: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* 标签左侧的短青色条：让「检索结果」这一行有个明确的起点标记。 */
+.section-label::before {
+  width: 11px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  content: '';
 }
 
 h2 {

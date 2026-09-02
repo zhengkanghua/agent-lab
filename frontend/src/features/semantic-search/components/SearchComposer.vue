@@ -180,11 +180,16 @@ const counterTone = computed(() => {
 
 <style scoped>
 .composer {
+  position: relative;
   padding: 22px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface-raised);
-  box-shadow: var(--shadow-soft);
+  /* 顶部一条 3px 青色签名条：用 inset 阴影画，避开 overflow:hidden 带来的裁剪副作用
+     （比如 disclosure 展开时不该被卡住），也不额外引入 DOM 节点。 */
+  box-shadow:
+    var(--shadow-soft),
+    inset 0 3px 0 var(--accent);
 }
 
 .composer-heading {
@@ -192,7 +197,7 @@ const counterTone = computed(() => {
 }
 
 .composer-heading p {
-  color: var(--text-secondary);
+  color: var(--accent);
   font-size: 0.72rem;
   font-weight: 760;
   letter-spacing: 0;
