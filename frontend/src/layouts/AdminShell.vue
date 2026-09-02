@@ -2,8 +2,7 @@
 import { computed, ref } from 'vue'
 import { ArrowLeft, LogOut, Menu, ShieldCheck, UsersRound, X } from '@lucide/vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
-import { authSession } from '@/features/auth/auth-session'
-import { useLogout } from '@/features/auth/useLogout'
+import { authSession, useLogout } from '@/features/auth'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 
 /* 后台控制台布局：固定左侧导航 + 右侧内容区。它作为 /admin 父路由的组件挂在路由上，

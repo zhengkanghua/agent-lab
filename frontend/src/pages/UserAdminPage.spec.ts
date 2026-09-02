@@ -70,13 +70,20 @@ function testRouter() {
   })
 }
 
+import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
+
 async function mountPage() {
   const router = testRouter()
   await router.push('/admin/users')
   await router.isReady()
+  
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+
   const wrapper = mount(UserAdminPage, {
     attachTo: document.body,
-    global: { plugins: [router] },
+    global: { plugins: [router, [VueQueryPlugin, { queryClient }]] },
   })
   await flushPromises()
   return wrapper

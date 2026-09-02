@@ -2,7 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import SearchPage from '@/pages/SearchPage.vue'
-import { _resetRecordSequence } from '@/features/semantic-search/model/search-record'
+import { _resetRecordSequence } from '@/features/semantic-search'
 
 const match = {
   chunk_id: '10000000-0000-4000-8000-000000000001',

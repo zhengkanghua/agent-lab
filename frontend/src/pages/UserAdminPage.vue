@@ -3,12 +3,14 @@ import { computed, onMounted } from 'vue'
 import { Check, Plus } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 import BaseButton from '@/shared/ui/BaseButton.vue'
-import { authSession } from '@/features/auth/auth-session'
-import UserCreateForm from '@/features/user-admin/components/UserCreateForm.vue'
-import UserDirectorySummary from '@/features/user-admin/components/UserDirectorySummary.vue'
-import UserDirectoryTable from '@/features/user-admin/components/UserDirectoryTable.vue'
-import { useAccountCreateForm } from '@/features/user-admin/composables/useAccountCreateForm'
-import { useUserDirectory } from '@/features/user-admin/composables/useUserDirectory'
+import { authSession } from '@/features/auth'
+import {
+  UserCreateForm,
+  UserDirectorySummary,
+  UserDirectoryTable,
+  useAccountCreateForm,
+  useUserDirectory
+} from '@/features/user-admin'
 
 /* 账号管理页：作为 /admin 的子路由渲染在 AdminShell 的内容区（RouterView）里。
  * 侧边栏、顶部标题栏、退出登录都由 AdminShell 提供；本页只负责账号管理的正文内容。
@@ -42,7 +44,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="admin-page" aria-labelledby="admin-title">
+  <section class="admin-page" aria-labelledby="admin-title" style="container-type: inline-size">
     <div class="page-bar">
       <p class="page-intro">创建平台账号、调整使用权限，并在需要时重置密码或撤销登录会话。</p>
       <BaseButton v-if="!createForm.expanded.value" variant="primary" @click="createForm.open">
@@ -125,7 +127,7 @@ onMounted(() => {
   font-size: 0.77rem;
 }
 
-@media (max-width: 640px) {
+@container (max-width: 640px) {
   .page-bar {
     align-items: flex-start;
     flex-direction: column;

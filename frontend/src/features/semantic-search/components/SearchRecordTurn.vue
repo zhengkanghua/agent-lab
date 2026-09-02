@@ -45,7 +45,7 @@ function toggle(): void {
 </script>
 
 <template>
-  <article class="record" :class="[`is-${record.status}`, { 'is-collapsed': !expanded }]">
+  <article class="record" :class="[`is-${record.status}`, { 'is-collapsed': !expanded }]" style="container-type: inline-size">
     <!-- 头：检索词是这条记录的识别主信息。展开态也放，让每条记录自带归属；latest 不提供折叠。 -->
     <header class="record-head" :aria-expanded="expanded ? 'true' : 'false'">
       <span class="record-mark" aria-hidden="true"><Search :size="15" /></span>
@@ -123,7 +123,7 @@ function toggle(): void {
         </div>
       </div>
 
-      <div v-else-if="record.status === 'success'" class="result-list">
+      <TransitionGroup v-else-if="record.status === 'success'" name="list" tag="div" class="result-list">
         <SearchResultCard
           v-for="(result, index) in record.results"
           :key="result.documentId"
@@ -131,7 +131,7 @@ function toggle(): void {
           :rank="index"
           @read="(item, trigger) => emit('read', item, trigger)"
         />
-      </div>
+      </TransitionGroup>
     </div>
   </article>
 </template>
@@ -143,6 +143,7 @@ function toggle(): void {
   background: var(--surface-raised);
   box-shadow: var(--shadow-card);
   overflow: hidden;
+  transition: box-shadow 200ms ease, background-color 200ms ease, border-color 200ms ease;
 }
 
 /* 折叠态记录更沉静：弱化边框，像一条可点开的历史，而不是一整块内容。 */
@@ -200,6 +201,7 @@ function toggle(): void {
   font-weight: 760;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: color 150ms ease;
 }
 
 .record-meta {
@@ -323,7 +325,7 @@ function toggle(): void {
   white-space: nowrap;
 }
 
-@media (max-width: 600px) {
+@container (max-width: 600px) {
   .record-mark {
     flex-basis: 34px;
   }

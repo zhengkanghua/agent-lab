@@ -2,16 +2,17 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { Bot, Search } from '@lucide/vue'
 import AppShell from '@/layouts/AppShell.vue'
-import { authSession } from '@/features/auth/auth-session'
-import { useLogout } from '@/features/auth/useLogout'
-import DocumentReader from '@/features/semantic-search/components/DocumentReader.vue'
-import SearchComposer from '@/features/semantic-search/components/SearchComposer.vue'
-import SearchRecordTurn from '@/features/semantic-search/components/SearchRecordTurn.vue'
-import { SEARCH_EXAMPLES } from '@/features/semantic-search/constants/examples'
-import { useDocumentReader } from '@/features/semantic-search/composables/useDocumentReader'
-import { useSearchStream } from '@/features/semantic-search/composables/useSearchStream'
-import type { NewsReadableResult } from '@/features/semantic-search/model/search-result'
-import type { SearchRecord } from '@/features/semantic-search/model/search-record'
+import { authSession, useLogout } from '@/features/auth'
+import {
+  DocumentReader,
+  SearchComposer,
+  SearchRecordTurn,
+  SEARCH_EXAMPLES,
+  useDocumentReader,
+  useSearchStream,
+  type NewsReadableResult,
+  type SearchRecord
+} from '@/features/semantic-search'
 
 /* 语义检索页（Q1–Q15 的落地）。
  *

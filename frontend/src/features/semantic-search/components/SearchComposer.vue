@@ -74,7 +74,7 @@ defineExpose({ focusInput })
 </script>
 
 <template>
-  <section class="composer" aria-label="语义检索输入条">
+  <section class="composer" aria-label="语义检索输入条" style="container-type: inline-size">
     <form class="search-form" :aria-busy="loading" @submit.prevent="emit('submit')">
       <BaseField id="search-query" label="研究内容" :error="inputError ?? undefined">
         <template #default="{ control }">
@@ -175,7 +175,7 @@ defineExpose({ focusInput })
   border-radius: var(--radius-md);
   background: var(--surface-raised);
   box-shadow: var(--shadow-soft);
-  transition: border-color 150ms ease;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
 .composer:focus-within {
@@ -318,7 +318,7 @@ defineExpose({ focusInput })
   min-width: 132px;
 }
 
-@media (max-width: 600px) {
+@container (max-width: 600px) {
   .composer {
     padding: 12px 12px 10px;
   }

@@ -45,9 +45,39 @@ const pagesRelativeImport = {
 /* 依赖方向铁律。违反它不会立刻报错，只会让层次悄悄失效，所以交给 lint 守。 */
 const layerBoundaries = [
   {
+    files: ['src/**/*.{ts,vue}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          ...crossLayerRelativeImport,
+          patterns: [
+            ...crossLayerRelativeImport.patterns,
+            {
+              group: ['@/features/*/*/**'],
+              message: '禁止深度导入 Feature 内部模块。请通过 Feature 根目录 (index.ts) 的公开 API 引入。',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: ['src/pages/**/*.{ts,vue}'],
     rules: {
-      'no-restricted-imports': ['error', pagesRelativeImport],
+      'no-restricted-imports': [
+        'error',
+        {
+          ...pagesRelativeImport,
+          patterns: [
+            ...pagesRelativeImport.patterns,
+            {
+              group: ['@/features/*/*/**'],
+              message: '禁止深度导入 Feature 内部模块。请通过 Feature 根目录 (index.ts) 的公开 API 引入。',
+            },
+          ],
+        }
+      ],
     },
   },
   {
@@ -80,6 +110,10 @@ const layerBoundaries = [
             {
               group: ['@/pages/*', '@/layouts/*'],
               message: 'feature 不能 import 页面或布局。要共享就下沉到 shared/。',
+            },
+            {
+              group: ['@/features/*'],
+              message: 'Feature 之间禁止相互导入，保持完全解耦。如需交互请在 pages 层组合，或将逻辑下沉至 shared/。',
             },
           ],
         },

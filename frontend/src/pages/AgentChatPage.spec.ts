@@ -91,16 +91,23 @@ function testRouter() {
   })
 }
 
+import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
+
 async function mountPage() {
   const router = testRouter()
   await router.push('/agent')
   await router.isReady()
+  
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+
   const wrapper = mount(AgentChatPage, {
     attachTo: document.body,
-    global: { plugins: [router] },
+    global: { plugins: [router, [VueQueryPlugin, { queryClient }]] },
   })
   await flushPromises()
-  return { wrapper, router }
+  return { wrapper, router, queryClient }
 }
 
 /* 系统提示词从输入框下的 <details> 改成了底部齿轮浮层（Q8），面板只在展开时进 DOM。
@@ -437,12 +444,17 @@ describe('AgentChatPage', () => {
       const router = testRouter()
       await router.push(`/agent/${threadId}`)
       await router.isReady()
+      
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      })
+      
       const wrapper = mount(AgentChatPage, {
         attachTo: document.body,
-        global: { plugins: [router] },
+        global: { plugins: [router, [VueQueryPlugin, { queryClient }]] },
       })
       await flushPromises()
-      return { wrapper, router }
+      return { wrapper, router, queryClient }
     }
 
     it('挂载时就读会话列表，侧栏立刻有内容', async () => {
@@ -508,9 +520,14 @@ describe('AgentChatPage', () => {
       await router.isReady()
       const replace = vi.spyOn(router, 'replace')
       const push = vi.spyOn(router, 'push')
+      
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      })
+      
       const wrapper = mount(AgentChatPage, {
         attachTo: document.body,
-        global: { plugins: [router] },
+        global: { plugins: [router, [VueQueryPlugin, { queryClient }]] },
       })
       await flushPromises()
 

@@ -36,7 +36,7 @@ function requestFullText(event: MouseEvent): void {
 </script>
 
 <template>
-  <article class="result-card">
+  <article class="result-card" style="container-type: inline-size">
     <div class="document-locator" aria-hidden="true">
       <strong>{{ rankLabel }}</strong>
       <span class="locator-line"></span>
@@ -382,7 +382,7 @@ function requestFullText(event: MouseEvent): void {
   color: var(--accent);
 }
 
-@media (max-width: 680px) {
+@container (max-width: 680px) {
   .result-card {
     grid-template-columns: 38px minmax(0, 1fr);
     gap: 12px;

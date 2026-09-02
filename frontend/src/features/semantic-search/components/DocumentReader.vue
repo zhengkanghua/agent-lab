@@ -108,7 +108,7 @@ function handleKeydown(event: KeyboardEvent): void {
 <template>
   <Teleport to="body">
     <Transition name="reader" @after-leave="emit('closed')">
-      <div v-if="open && result" class="reader-backdrop" @click.self="emit('close')">
+      <div v-if="open && result" class="reader-backdrop" style="container-type: inline-size" @click.self="emit('close')">
         <aside
           ref="panel"
           class="reader-panel"
@@ -445,7 +445,7 @@ function handleKeydown(event: KeyboardEvent): void {
 
 /* @keyframes shimmer 见 styles/components/motion.css。 */
 
-@media (max-width: 760px) {
+@container (max-width: 760px) {
   .reader-panel {
     width: 100%;
     min-width: 0;

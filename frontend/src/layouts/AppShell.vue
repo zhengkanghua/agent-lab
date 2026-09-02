@@ -2,7 +2,7 @@
 import { computed, type Component } from 'vue'
 import { LogOut, UserRound } from '@lucide/vue'
 import { RouterLink, type RouteLocationRaw } from 'vue-router'
-import { authSession } from '@/features/auth/auth-session'
+import { authSession } from '@/features/auth'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 
 /* 登录后三页共用的外壳：跳转链接、顶栏、页脚。

@@ -66,7 +66,7 @@ async function retrySessionCheck(): Promise<void> {
 </script>
 
 <template>
-  <div class="login-shell">
+  <div class="login-shell" style="container-type: inline-size">
     <header class="login-topbar">
       <div class="login-wrap topbar-inner">
         <a class="login-brand" href="/" aria-label="Signal Desk 首页">
@@ -430,7 +430,7 @@ async function retrySessionCheck(): Promise<void> {
   font-size: 0.72rem;
 }
 
-@media (max-width: 820px) {
+@container (max-width: 820px) {
   .login-main {
     grid-template-columns: 1fr;
     align-content: start;
@@ -455,7 +455,7 @@ async function retrySessionCheck(): Promise<void> {
   }
 }
 
-@media (max-width: 560px) {
+@container (max-width: 560px) {
   .login-wrap {
     width: min(calc(100% - 30px), 1080px);
   }

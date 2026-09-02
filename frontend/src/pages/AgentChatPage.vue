@@ -3,14 +3,16 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Bot, History, Search, ShieldCheck } from '@lucide/vue'
 import AppShell from '@/layouts/AppShell.vue'
-import { useLogout } from '@/features/auth/useLogout'
-import AgentComposer from '@/features/agent-chat/components/AgentComposer.vue'
-import AgentTranscript from '@/features/agent-chat/components/AgentTranscript.vue'
-import ThreadSidebar from '@/features/agent-chat/components/ThreadSidebar.vue'
-import { useAgentChat } from '@/features/agent-chat/composables/useAgentChat'
-import { useAgentDefaultPrompt } from '@/features/agent-chat/composables/useAgentDefaultPrompt'
-import { useThreadList } from '@/features/agent-chat/composables/useThreadList'
-import { AGENT_EXAMPLES } from '@/features/agent-chat/constants/examples'
+import { useLogout } from '@/features/auth'
+import {
+  AgentComposer,
+  AgentTranscript,
+  ThreadSidebar,
+  useAgentChat,
+  useAgentDefaultPrompt,
+  useThreadList,
+  AGENT_EXAMPLES
+} from '@/features/agent-chat'
 import type { AgentThreadSummaryDto } from '@/api/agent-threads'
 
 const route = useRoute()
