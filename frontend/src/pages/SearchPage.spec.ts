@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import SearchPage from '@/pages/SearchPage.vue'
+import { _resetRecordSequence } from '@/features/semantic-search/model/search-record'
 
 const match = {
   chunk_id: '10000000-0000-4000-8000-000000000001',
@@ -11,90 +12,138 @@ const match = {
   chunk_count: 2,
 }
 
-const documentResult = {
-  document_id: '20000000-0000-4000-8000-000000000001',
-  content_hash: 'a'.repeat(64),
-  title: '文档模式结果',
-  url: 'https://example.com/news',
-  source_name: '测试来源',
-  published_at: null,
-  authors: [],
-  labels: ['宏观'],
-  chunk_count: 2,
-  best_score: match.score,
-  best_match: match,
-  additional_matches: [],
+function documentResult(title: string) {
+  return {
+    document_id:
+      title === '第一篇'
+        ? '20000000-0000-4000-8000-000000000001'
+        : '20000000-0000-4000-8000-000000000002',
+    content_hash: 'a'.repeat(64),
+    title,
+    url: 'https://example.com/news',
+    source_name: '测试来源',
+    published_at: null,
+    authors: [],
+    labels: ['宏观'],
+    chunk_count: 2,
+    best_score: match.score,
+    best_match: match,
+    additional_matches: [],
+  }
 }
 
-const chunkResult = {
-  chunk_id: match.chunk_id,
-  score: 0.82,
-  page_content: '原始 Chunk 模式结果。',
-  document_id: documentResult.document_id,
-  content_hash: documentResult.content_hash,
-  chunk_index: 0,
-  chunk_count: 2,
-  title: '片段模式结果',
-  url: documentResult.url,
-  published_at: null,
-  source_updated_at: null,
-  document_type: 'article',
-  source_id: '30000000-0000-4000-8000-000000000001',
-  source_provider: 'test',
-  source_name: documentResult.source_name,
-  source_external_id: 'feed/1',
-  document_external_id: 'article/1',
-  authors: [],
-  labels: ['宏观'],
-  previous_chunk_id: null,
-  next_chunk_id: null,
-  embedding_model: 'bge-m3:567m',
-}
-
-describe('SearchPage search modes', () => {
+describe('SearchPage search stream', () => {
   afterEach(() => {
     document.body.replaceChildren()
     vi.unstubAllGlobals()
+    _resetRecordSequence()
   })
 
-  it('uses the grouped endpoint by default and the raw endpoint after switching modes', async () => {
+  it('searches the grouped endpoint and shows the result as a record', async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      const url = String(input)
-      const responseBody = url.endsWith('/document-search') ? [documentResult] : [chunkResult]
+      void input
       return Promise.resolve(
-        new Response(JSON.stringify(responseBody), {
+        new Response(JSON.stringify([documentResult('第一篇')]), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         }),
       )
     })
     vi.stubGlobal('fetch', fetchMock)
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    })
     const wrapper = mount(SearchPage, {
       attachTo: document.body,
-      global: { plugins: [[VueQueryPlugin, { queryClient }]] },
+      global: { plugins: [[VueQueryPlugin, { queryClient: makeQueryClient() }]] },
     })
+
+    expect(wrapper.find('.empty-state').exists()).toBe(true)
+    expect(wrapper.find('.stream').exists()).toBe(false)
 
     await wrapper.get('textarea').setValue('央行利率')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/document-search')
+    expect(wrapper.find('.empty-state').exists()).toBe(false)
+    expect(wrapper.findAll('.record')).toHaveLength(1)
     expect(wrapper.findAll('.result-card')).toHaveLength(1)
+    wrapper.unmount()
+  })
 
-    const chunkModeButton = wrapper
-      .findAll<HTMLButtonElement>('.mode-switch button')
-      .find((button) => button.text().includes('按片段'))
-    await chunkModeButton?.trigger('click')
-    await wrapper.get('textarea').setValue('央行利率')
+  it('accumulates rounds and keeps the newest record closest to the input', async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const title = String(input).includes('楼市') ? '楼市结果' : '利率结果'
+      return Promise.resolve(
+        new Response(JSON.stringify([documentResult(title)]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(SearchPage, {
+      attachTo: document.body,
+      global: { plugins: [[VueQueryPlugin, { queryClient: makeQueryClient() }]] },
+    })
+
+    // 第一轮
+    await wrapper.get('textarea').setValue('利率')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/vector-search')
-    expect(wrapper.findAll('.chunk-card')).toHaveLength(1)
-    expect(wrapper.text()).toContain('片段模式结果')
+    // 第二轮（换词）
+    await wrapper.get('textarea').setValue('楼市')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.findAll('.record')).toHaveLength(2)
+
+    // 模型二：最新一条（楼市）贴顶，旧记录（利率）往下。
+    const firstQuery = wrapper.get('.record .record-query')
+    expect(firstQuery.text()).toBe('楼市')
+    wrapper.unmount()
+  })
+
+  it('removes chunk mode controls entirely (no switch in the composer)', async () => {
+    const wrapper = mount(SearchPage, {
+      attachTo: document.body,
+      global: { plugins: [[VueQueryPlugin, { queryClient: makeQueryClient() }]] },
+    })
+
+    expect(wrapper.find('.mode-switch').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('按片段')
+    wrapper.unmount()
+  })
+
+  it('clear-stream empties the records back to the empty state', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify([documentResult('第一篇')]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(SearchPage, {
+      attachTo: document.body,
+      global: { plugins: [[VueQueryPlugin, { queryClient: makeQueryClient() }]] },
+    })
+
+    await wrapper.get('textarea').setValue('央行')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.findAll('.record')).toHaveLength(1)
+
+    await wrapper.get('.clear-button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.empty-state').exists()).toBe(true)
+    expect(wrapper.findAll('.record')).toHaveLength(0)
     wrapper.unmount()
   })
 })
+
+function makeQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+}

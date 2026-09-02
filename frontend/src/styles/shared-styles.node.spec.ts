@@ -170,16 +170,11 @@ describe('颜色 token 分层', () => {
  */
 /* spin 曾有一条：UserAdminPage 用 800ms 覆盖共享的 900ms。收编转圈到 BaseSpinner 时
    那处只剩刷新键一个使用者，计时也统一回 900ms，条目随之删除。
-   locator-line 与 score-block 仍然成立：它们属于检索结果卡片，本轮重构不动检索页骨架。 */
+   locator-line 与 score-block 仍然成立：它们属于检索结果卡片；按片段已随重构移除，
+   现在只有按新闻的 SearchResultCard 一个使用方。 */
 const LOCAL_OVERRIDES: Record<string, string[]> = {
-  'locator-line': [
-    'features/semantic-search/components/ChunkResultCard.vue',
-    'features/semantic-search/components/SearchResultCard.vue',
-  ],
-  'score-block': [
-    'features/semantic-search/components/ChunkResultCard.vue',
-    'features/semantic-search/components/SearchResultCard.vue',
-  ],
+  'locator-line': ['features/semantic-search/components/SearchResultCard.vue'],
+  'score-block': ['features/semantic-search/components/SearchResultCard.vue'],
 }
 
 /** 按大括号配对删掉 @media 块：断点覆盖不算回退，两页断点本就不同。 */
@@ -236,7 +231,7 @@ describe('共享类未被组件重新声明', () => {
     // 不锁总数，只确认遍历真的走到了参与提取的五个文件——它们是断言的实际对象。
     expect(vueFiles).toEqual(
       expect.arrayContaining([
-        'features/semantic-search/components/ChunkResultCard.vue',
+        'features/semantic-search/components/SearchRecordTurn.vue',
         'features/semantic-search/components/SearchResultCard.vue',
         'pages/LoginPage.vue',
         'pages/SearchPage.vue',

@@ -29,3 +29,8 @@
 chunk 模式下的多 Chunk 断言不要跟着一起删：`POST /vector-search` 是 Chunk 级契约，同一
 document 的多个 Chunk 分别出现是合法的，那不是漏了去重。文档级分组走
 `POST /document-search`。
+
+> 更新：检索页后来重构去掉了前端「按片段」模式，只走 `POST /document-search` 并做多轮检索流
+> （`SearchResults.spec.ts`、`useChunkSearch` 等按片段前端文件随之删除）。后端 `/vector-search`
+> 契约与单测保留，仍属 Chunk 级，多 Chunk 合法的结论不变；本 ADR「分组与排序由后端负责」的
+> 立场不受影响。

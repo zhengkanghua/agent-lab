@@ -1,9 +1,6 @@
 import type { DocumentSearchMatchDto, DocumentSearchResultDto } from '@/api/document-search'
-import type { VectorSearchResultDto } from '@/api/vector-search'
 
-export type SearchMode = 'document' | 'chunk'
-
-/** 搜索结果打开全文时所需的稳定文档身份和回退元数据。 */
+/** 检索结果打开全文时所需的稳定文档身份和回退元数据。 */
 export interface NewsReadableResult {
   documentId: string
   contentHash: string
@@ -116,37 +113,4 @@ export function isExcerptLong(excerpt: string): boolean {
 export function collapseExcerpt(excerpt: string, expanded: boolean): string {
   if (expanded || !isExcerptLong(excerpt)) return excerpt
   return `${excerpt.slice(0, COLLAPSED_CHARACTERS).trimEnd()}…`
-}
-
-// 保留原始 Chunk 展示模型导出，供仍直接消费 /vector-search 的独立调用方使用。
-export interface NewsChunkResult extends NewsReadableResult {
-  id: string
-  excerpt: string
-  score: number
-  chunkIndex: number
-  chunkCount: number
-  embeddingModel: string
-}
-
-export function toNewsChunkResult(dto: VectorSearchResultDto): NewsChunkResult {
-  return {
-    id: dto.chunk_id,
-    documentId: dto.document_id,
-    contentHash: dto.content_hash,
-    title: dto.title,
-    excerpt: dto.page_content,
-    url: dto.url,
-    sourceName: dto.source_name,
-    publishedAt: dto.published_at ?? null,
-    labels: [...dto.labels],
-    authors: [...dto.authors],
-    score: dto.score,
-    chunkIndex: dto.chunk_index,
-    chunkCount: dto.chunk_count,
-    embeddingModel: dto.embedding_model,
-  }
-}
-
-export function toNewsChunkResults(dtos: VectorSearchResultDto[]): NewsChunkResult[] {
-  return dtos.map(toNewsChunkResult)
 }

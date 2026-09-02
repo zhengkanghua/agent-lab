@@ -19,15 +19,20 @@
 
 ```
 SearchPage.vue
-  └─ useSemanticSearch          归一化 limit 参数
-      └─ useSearchRequest       query 生命周期、AbortController、陈旧响应守卫
-          └─ api/document-search.ts
-              ═══ HTTP ═══
-              api/document_search.py          Pydantic 校验
-                └─ services/vector_search_service.py
-                    ├─ Ollama    query 向量化 + 按索引规格校验向量
-                    └─ qdrant/search.py       grouped query，一次只读查询
+  ├─ SearchComposer.vue        顶部常驻输入条（全局数量参数）
+  ├─ SearchRecordTurn.vue      单条检索记录（折叠标题行 + 展开内容）
+  └─ useSearchStream           多轮累积、单活动请求、陈旧响应守卫
+      └─ api/document-search.ts
+          ═══ HTTP ═══
+          api/document_search.py          Pydantic 校验
+            └─ services/vector_search_service.py
+                ├─ Ollama    query 向量化 + 按索引规格校验向量
+                └─ qdrant/search.py       grouped query，一次只读查询
 ```
+
+检索页重构后把每次搜索追加成一条「检索记录」形成向下长的检索流（最新贴顶、旧记录折叠、
+刷新即清空），但**单条记录的那次 `/document-search` 请求链路不变**——本图即单次检索的请求
+链。不再有「按片段」模式，前端只走按新闻分组。
 
 后端两步，顺序固定：**先向量化，再查 Qdrant**。向量化后还要对着当前索引规格
 （维度、模型）校验一遍，不合就直接报错——避免用错模型的向量去查，那会返回看似正常
@@ -38,20 +43,22 @@ SearchPage.vue
 Qdrant 的 grouped query 按 `document_id` 分组，`document_limit` 控制返回几篇、
 `matches_per_document` 控制每篇几个片段。结果按每篇最高分降序。
 
-**前端不重排、不聚合、不二次去重**（`useSemanticSearch.ts` 的模块 docstring 有同样的注释）。前端再排一遍
-的话，两边规则一有出入，用户看到的顺序就和后端算出来的不一致，而且很难查。
+**前端不重排、不聚合、不二次去重**（`features/semantic-search/model/search-result.ts` 的
+`toNewsDocumentResults` 注释有同样的说明）。前端再排一遍的话，两边规则一有出入，用户看到的
+顺序就和后端算出来的不一致，而且很难查。
 
 背景见 [`../adr/0001-backend-owns-result-uniqueness-and-order.md`](../adr/0001-backend-owns-result-uniqueness-and-order.md)。
 
 ## 快速连打的陈旧响应
 
-`useSearchRequest.ts` 用两道机制防止旧响应盖掉新结果：
+`useSearchStream` 用两道机制防止旧响应盖掉新结果，并**只允许一条在途搜索**：
 
-1. **AbortController**：发新请求前 abort 上一个。
-2. **请求序号**：`useSearchRequest()` 的 docstring 记了一个 abort 管不到的窗口——请求已经
-   resolve、`await` 还没恢复执行的那一瞬间，`abort()` 不再起作用，只能靠序号比对丢弃。
+1. **AbortController**：提交新搜索前 abort 上一条；被中途放弃的 loading 占位轮会从检索流里
+   移除，不留在界面上空转。
+2. **请求序号**：记了一个 abort 管不到的窗口——请求已经 resolve、`await` 还没恢复执行的那
+   一瞬间，`abort()` 不再起作用，只能靠序号比对丢弃。
 
-只做第一道会漏。这个窗口很窄但真实存在，用户连续输入时能碰到。
+只做第一道会漏。这个窗口很窄但真实存在，用户连续换词输入时能碰到。
 
 ## 失败边界
 
@@ -73,8 +80,10 @@ Qdrant 的 grouped query 按 `document_id` 分组，`document_limit` 控制返�
 
 ## 边界
 
-- 本文这条链路只读检索，不生成回答：`/document-search` 与 `/vector-search` 只返回检索到的原文
-  片段。模型作答是另一条链路（`POST /agent/chat`，SSE），它复用同一个 `DocumentSearchService`
-  作为工具，但走不同的路由、不同的权限（仅超级用户）和不同的响应形状。
-- 检索不写任何库，不记录检索历史。Agent 链路也不写业务表和 Qdrant，唯一的写入是会话历史
-  落在 checkpointer 自己的四张表里（ADR 0003、0004）。
+- 本文这条链路只读检索，不生成回答：`/document-search` 只返回检索到的原文片段，前端也只在
+  页内做多轮检索流展示。`/vector-search` 后端仍保留，但前端检索页不再调用它。模型作答是另一条
+  链路（`POST /agent/chat`，SSE），它复用同一个 `DocumentSearchService` 作为工具，但走不同的
+  路由、不同的权限（仅超级用户）和不同的响应形状。
+- 检索页的多轮「检索流」是纯页面状态：记录只在内存里向下累积，刷新或离开即清空，不写后端、
+  不留库。Agent 链路也不写业务表和 Qdrant，唯一的写入是会话历史落在 checkpointer 自己的
+  四张表里（ADR 0003、0004）。

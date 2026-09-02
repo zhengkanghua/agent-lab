@@ -17,9 +17,8 @@
 | 账号密码登录、退出 | `/login` | `POST /auth/login`、`POST /auth/logout` | `api/auth.py`（FastAPI Users Cookie backend）、`auth/`；前端 `api/auth.ts`、`features/auth/auth-session.ts` | `tests/test_auth.py`、`src/features/auth/auth-session.spec.ts`、`src/pages/LoginPage.spec.ts` |
 | 读取当前登录身份 | 无独立页面，路由守卫用 | `GET /auth/me` | `api/auth.py`、`schemas/auth.py`；前端 `features/auth/auth-session.ts`、`app/router.ts` | `tests/test_auth.py`、`src/features/auth/auth-session.spec.ts` |
 | 账号自助（看自己信息、改自己密码） | `/account` | `POST /auth/me/password` | `api/account.py` → `services/account_service.py`；前端 `api/account.ts`、`pages/AccountPage.vue`、`features/account/` | `tests/test_account.py` |
-| 语义检索（Chunk 级） | `/` | `POST /vector-search` | `api/vector_search.py` → `services/vector_search_service.py` → `qdrant/search.py`；前端 `api/vector-search.ts`、`features/semantic-search/composables/useChunkSearch.ts` | `tests/test_vector_search.py`、`tests/test_vector_search_api.py`、`src/api/vector-search.spec.ts` |
-| 文档检索（文档级） | `/` | `POST /document-search` | `api/document_search.py` → `services/vector_search_service.py`；前端 `api/document-search.ts`、`features/semantic-search/composables/useSearchRequest.ts` | `tests/test_document_search.py`、`src/api/document-search.spec.ts` |
-| 读取单篇文档 | `/`（结果内展开） | `GET /documents/{document_id}` | `api/documents.py` → `repositories/document_repository.py`；前端 `api/documents.ts`、`features/semantic-search/composables/useDocumentReader.ts` | `tests/test_documents_api.py`、`src/api/documents.spec.ts` |
+| 语义检索（按新闻分组，检索页多轮累积的检索流） | `/` | `POST /document-search` | `api/document_search.py` → `services/vector_search_service.py`；前端 `api/document-search.ts`、`features/semantic-search/composables/useSearchStream.ts`、`components/SearchComposer.vue`、`components/SearchRecordTurn.vue`、`pages/SearchPage.vue` | `tests/test_document_search.py`、`src/api/document-search.spec.ts`、`src/features/semantic-search/tests/useSearchStream.spec.ts`、`SearchComposer.spec.ts`、`SearchRecordTurn.spec.ts`、`src/pages/SearchPage.spec.ts` |
+| 读取单篇文档 | `/`（检索流某条记录内展开） | `GET /documents/{document_id}` | `api/documents.py` → `repositories/document_repository.py`；前端 `api/documents.ts`、`features/semantic-search/composables/useDocumentReader.ts` | `tests/test_documents_api.py`、`src/api/documents.spec.ts` |
 | 用户管理（增删改、改密、踢会话） | `/admin/users` | `GET /admin/users`、`POST /admin/users`、`PATCH /admin/users/{user_id}`、`POST /admin/users/{user_id}/password`、`DELETE /admin/users/{user_id}/sessions` | `api/user_admin.py` → `services/user_admin_service.py`；前端 `api/user-admin.ts`、`pages/UserAdminPage.vue` | `tests/test_user_admin.py`、`src/api/user-admin.spec.ts`、`src/pages/UserAdminPage.spec.ts` |
 | 手工触发同步加索引 | 无页面 | `POST /pipeline/run-once` | `api/pipeline.py` → `services/news_pipeline_execution_service.py` | `tests/test_pipeline_api.py`、`tests/test_news_pipeline_execution.py` |
 | Agent 对话（模型自己调检索工具再作答，SSE 流式） | `/agent` | `POST /agent/chat` | `api/agent_chat.py` → `agent/runtime.py`、`agent/streaming.py`、`agent/tools/`；前端 `api/agent-chat.ts`、`features/agent-chat/`、`pages/AgentChatPage.vue` | `tests/test_agent_chat_api.py`、`tests/test_agent_streaming.py`、`tests/test_agent_tools.py`、`tests/test_agent_middleware.py`、`src/api/agent-chat.spec.ts`、`src/features/agent-chat/tests/`、`src/pages/AgentChatPage.spec.ts` |
@@ -29,6 +28,10 @@
 
 `/vector-search`、`/document-search`、`/documents` 要求登录；`/pipeline`、`/admin/users`、`/agent`
 要求超级用户。挂载点和依赖在 `backend/src/agent_lab/main.py` 的 `include_router` 处。
+
+检索页重构后去掉了「按片段」模式，前端只走 `POST /document-search`（按新闻分组）并在页内做
+多轮累积（检索流）；后端 `/vector-search` 接口与后端单测仍保留，只是前端不再调用它，因此
+不再占「对外能力」一行。
 
 Agent 那几行的能力边界见 [`adr/0003-agent-v1-is-read-only.md`](adr/0003-agent-v1-is-read-only.md)：
 它只有两个只读工具，不写业务表也不写 Qdrant。会话历史落在 checkpointer 自己的四张表里，

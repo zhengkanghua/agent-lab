@@ -1,10 +1,11 @@
 # Signal Desk 前端
 
-Signal Desk 是新闻语义检索工作台的 Vue 3 前端。检索页提供两个只读搜索模式：默认
-“按新闻”调用 `POST /document-search`，按每篇新闻最高 Qdrant Cosine score 展示结果组；
-“按片段”调用兼容的 `POST /vector-search`，逐条保留后端返回的原始 Chunk 顺序和重复
-新闻。用户点击“阅读全文”后才调用 `GET /documents/{document_id}` 读取 PostgreSQL 当前
-完整正文。这两个模式本身不调用生成式 LLM：它们只返回检索到的原文片段。
+Signal Desk 是新闻语义检索工作台的 Vue 3 前端。检索页 `/` 走 `POST /document-search`：
+后端用 Qdrant grouped query 按每篇新闻的最高 Cosine score 做分组，前端把命中结果按
+“最新一条检索贴在输入框正下方、旧记录往下沉”的检索流（仿 Agent 会话体感）逐轮向下累积，
+多条历史记录可折叠回看，刷新即清空。该页不生成答案、不调用生成式 LLM，只返回检索到的
+原文片段；用户点击“阅读全文”后才调用 `GET /documents/{document_id}` 读取 PostgreSQL 当前
+完整正文。
 
 `/agent` 是另一条链路：超级用户在那里提问，由后端 Agent 自己决定检索哪些新闻、要不要读
 全文，再基于查到的内容作答，回答与工具调用轨迹以 SSE 流式到达。它同样只读——不写
@@ -23,15 +24,18 @@ Session Storage 保存密码和 Token。退出调用 `POST /auth/logout` 撤销�
 
 ## 交互与数据边界
 
-- “按新闻”中 `document_limit` 控制不同新闻数量（下限 1、默认 10），
-  `matches_per_document` 控制每篇新闻返回的有限相关片段数量。分组由后端 Qdrant grouped
-  query 完成，前端直接按返回顺序渲染。
-- “按片段”中 `top_k` 控制原始 Chunk 数量（下限 1、默认 10）；同一 document 的多个 Chunk
-  会分别出现，后端已排好序，前端不再重排。
+- 检索页没有模式切换，只走按新闻分组：`document_limit` 控制一次检索的不同新闻数量
+  （下限 1、默认 10），`matches_per_document` 控制每篇新闻返回的相关片段数。两者是
+  全局一份，影响之后所有检索；分组由后端 Qdrant grouped query 完成，前端按返回顺序渲染。
+- 每次搜索固化成一条“检索记录”，追加成向下长的检索流：最新一条顶在输入框正下方并完整
+  展开，旧记录折叠成“检索词 + 命中数”的标题行，可点开回看；刷新或离开页面即清空，不做
+  真会话、不落后端。
+- 一次只允许一条在途搜索：提交新搜索会取消上一条；输入条顶部常驻，一轮进入终态后清空
+  输入并把焦点留回输入框，方便连续换词。
 - 每篇新闻默认只展示最高分片段，其他相关片段使用无框分隔列表展开；score 始终显示
   原始数值，不转换成概率或百分比。
 - 全文由 Vue Query 以 `document_id + content_hash` 为缓存 key 按需加载，关闭或快速
-  切换时取消旧请求；全文失败只影响阅读面板，不清空搜索结果。
+  切换时取消旧请求；全文失败只影响阅读面板，不清空检索流。
 - 搜索 hash 与 PostgreSQL 当前 hash 不同时展示版本更新提示，并显示数据库中的最新
   纯文本；正文使用 Vue 文本插值，不使用 `v-html`。
 - 桌面端使用右侧阅读面板，移动端使用全屏阅读层；支持 Esc、明确关闭按钮、焦点约束
@@ -113,8 +117,8 @@ npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated/o
 - `src/api`：Cookie 登录、账号管理、HTTP 客户端、文档搜索/详情、Agent SSE 流、错误归一化
   和生成类型；
 - `src/features/auth`：当前用户会话恢复、登录、退出和过期状态；
-- `src/features/semantic-search`：文档/Chunk 搜索状态、全文 Query、展示模型和两类结果
-  组件；
+- `src/features/semantic-search`：文档搜索状态（多轮检索流）、全文 Query、展示模型和
+  检索流组件（输入条 / 单条记录 / 结果卡）；
 - `src/features/agent-chat`：多轮对话状态、工具轨迹配对、错误文案表和对话组件；
 - `src/pages`：登录、检索、Agent 对话与超级用户账号管理的路由级组合，不直接执行 `fetch`；
 - `src/styles`：设计令牌（`tokens.css`）；全局 reset/base/components 分层写在 `src/style.css`。

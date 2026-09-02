@@ -1,79 +1,102 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { Bot, Search } from '@lucide/vue'
 import AppShell from '@/layouts/AppShell.vue'
 import { authSession } from '@/features/auth/auth-session'
 import { useLogout } from '@/features/auth/useLogout'
 import DocumentReader from '@/features/semantic-search/components/DocumentReader.vue'
 import SearchComposer from '@/features/semantic-search/components/SearchComposer.vue'
-import SearchResults from '@/features/semantic-search/components/SearchResults.vue'
+import SearchRecordTurn from '@/features/semantic-search/components/SearchRecordTurn.vue'
 import { SEARCH_EXAMPLES } from '@/features/semantic-search/constants/examples'
-import { useChunkSearch } from '@/features/semantic-search/composables/useChunkSearch'
 import { useDocumentReader } from '@/features/semantic-search/composables/useDocumentReader'
-import { useSemanticSearch } from '@/features/semantic-search/composables/useSemanticSearch'
-import type { NewsReadableResult, SearchMode } from '@/features/semantic-search/model/search-result'
+import { useSearchStream } from '@/features/semantic-search/composables/useSearchStream'
+import type { NewsReadableResult } from '@/features/semantic-search/model/search-result'
+import type { SearchRecord } from '@/features/semantic-search/model/search-record'
 
-const mode = ref<SearchMode>('document')
-const { loggingOut, logoutError, logout } = useLogout()
-const documentSearch = useSemanticSearch()
-const chunkSearch = useChunkSearch()
+/* 语义检索页（Q1–Q15 的落地）。
+ *
+ * 检索从「单次覆盖式搜索」重构为一条仿 Agent 会话体感、向下累积的检索流：
+ *  - 顶部一条常驻输入框（Q3 / Q4 模型二），不再有两态跳变、也没有「按片段」模式；
+ *  - 最新一次检索记录顶在输入框正下方展开，旧记录折叠成标题行往下沉（Q5 乙 / Q8 / Q9）；
+ *  - 每搜一次追加一条，刷新即清空，不做真会话、不落后端（Q1 b）；
+ *  - 有「清空检索流」入口（Q6）。
+ *
+ * 折叠态由本页维护：latest 恒展开，旧记录默认折叠、手动展开的保留在 expandedIds 里。
+ */
+
+const composerRef = ref<InstanceType<typeof SearchComposer> | null>(null)
 const reader = useDocumentReader()
+const stream = useSearchStream()
+const { loggingOut, logoutError, logout } = useLogout()
 
-// 两个模式各自维护完整的请求状态，页面只需要知道「当前是哪一个」。所有 query 状态和
-// 动作都从这一个 computed 派生，新增模式时不必再逐个补分叉。
-const activeSearch = computed(() => (mode.value === 'document' ? documentSearch : chunkSearch))
+/** 用户手动展开过的旧记录的 id（latest 不需要进这里，恒展开）。 */
+const expandedIds = ref<Set<number>>(new Set())
 
-const activeQuery = computed({
-  get: () => activeSearch.value.query.value,
-  set: (value: string) => {
-    activeSearch.value.query.value = value
-  },
-})
-const activeStatus = computed(() => activeSearch.value.status.value)
-const activeInputError = computed(() => activeSearch.value.inputError.value)
-const activeRequestError = computed(() => activeSearch.value.requestError.value)
-const activeLastQuery = computed(() => activeSearch.value.lastQuery.value)
-const activeRemainingCharacters = computed(() => activeSearch.value.remainingCharacters.value)
-
-/** 是否已经提交过一次检索（不再处于「等待输入」的 idle）。初始态用它在屏幕中央展示
- *  大输入框与引导；一旦提交（无论 loading/empty/有结果），就转成紧凑吸顶输入条，
- *  把屏幕让给检索内容。empty 也算已检索：那种情况要给空结果态让位。 */
-const hasSearched = computed(() => activeStatus.value !== 'idle')
-
-// 顶栏 mode-label 用的短徽标文案。模式本身的详细引导放在 SearchComposer 的
-// mode-description 里（紧挨切换控件），这里不再带一套重复的 intro/fact。
-const modeBadge = computed(() => (mode.value === 'document' ? '按新闻分组' : '原始片段模式'))
-
-// 前台顶栏只放「Agent 对话」这一个功能跳转，后台（账号管理等）不再从这里直达——
-// 统一走右上角账号设置 → 账号设置页的「管理员功能」入口，让前台保持纯工作台路线。
 const isSuperuser = computed(() => authSession.user.value?.is_superuser === true)
 const navLinks = computed(() => [
   { to: { name: 'agent-chat' }, label: 'Agent 对话', icon: Bot, visible: isSuperuser.value },
 ])
 
-function switchMode(nextMode: SearchMode): void {
-  if (mode.value === nextMode) return
-  // 每个模式维护独立请求状态；切换时取消在途请求，避免隐藏响应在返回后变成陈旧结果。
-  documentSearch.reset()
-  chunkSearch.reset()
-  mode.value = nextMode
+const hasRecords = computed(() => stream.records.value.length > 0)
+const latest = computed<SearchRecord | null>(() => stream.latestRecord.value)
+
+/** 渲染顺序：最新贴顶（模型二），旧的按提交先后往下沉。 */
+const newestFirst = computed<SearchRecord[]>(() => [...stream.records.value].reverse())
+
+function recordExpanded(id: number): boolean {
+  return latest.value?.id === id || expandedIds.value.has(id)
 }
 
-function submitSearch(): Promise<void> {
-  return activeSearch.value.search()
+function toggleRecord(record: SearchRecord): void {
+  if (record.id === latest.value?.id) return
+  const next = new Set(expandedIds.value)
+  if (next.has(record.id)) next.delete(record.id)
+  else next.add(record.id)
+  expandedIds.value = next
 }
 
-function clearSearch(): void {
-  activeSearch.value.clear()
+async function submitSearch(): Promise<void> {
+  await stream.search()
 }
 
-function retrySearch(): Promise<void> {
-  return activeSearch.value.retry()
-}
+/**
+ * Q11：每轮搜索进入终态后清空输入、把焦点留回输入框，方便连续换词。
+ *
+ * 用两条 watch 协作而不是简单地在 submit 后置位：输入校验不过时（空草稿）search 不会
+ * 产生新记录，任何残留置位都会在下一次真正出结果时误触发。改为「latest 记录出现新 id」
+ * 置位、该轮从 loading 走向终态时消费，校验失败没有新 id，标志不会残留。
+ */
+let focusNextRound = false
+watch(
+  () => latest.value?.id,
+  (id) => {
+    if (id !== undefined) focusNextRound = true
+  },
+)
+watch(
+  () => latest.value?.status,
+  async (status, previous) => {
+    if (!focusNextRound) return
+    if (previous !== 'loading' || status === 'loading' || status === undefined) return
+    focusNextRound = false
+    stream.draft.value = ''
+    await nextTick()
+    composerRef.value?.focusInput()
+  },
+)
 
 async function chooseExample(value: string): Promise<void> {
-  activeQuery.value = value
-  await submitSearch()
+  stream.draft.value = value
+  await stream.search()
+}
+
+async function clearStream(): Promise<void> {
+  stream.clear()
+  expandedIds.value = new Set()
+}
+
+async function retryRecord(record: SearchRecord): Promise<void> {
+  await stream.retry(record.query)
 }
 
 function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | null): void {
@@ -82,8 +105,6 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
 </script>
 
 <template>
-  <!-- mode-detail 写「本页只给原文」是认真的：本页不生成答案，只返回检索到的原文
-       片段。要模型作答请走 /agent。 -->
   <AppShell
     brand-title="Signal Desk"
     brand-subtitle="新闻语义研究台"
@@ -92,82 +113,68 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
     main-id="search-workspace"
     skip-label="跳到检索工作台"
     :nav-links="navLinks"
-    :mode-label="modeBadge"
-    mode-detail="本页只给原文"
+    mode-label="按新闻检索"
+    mode-detail="只给原文"
     :logging-out="loggingOut"
     :logout-error="logoutError"
     @logout="logout"
   >
     <template #brand-icon><Search :size="19" stroke-width="2.2" /></template>
 
-    <!-- 检索页按 Agent 对话那种「输入 + 内容」两段式重组（底部输入换成顶部输入）：
-         - idle（还没检索）：搜索框在视口中央的大引导形态，下方放示例，方便第一次上手；
-         - 已检索：搜索框收细、吸在顶部可随时换词，把大部分屏幕让给检索内容。
-         切换全在 .workspace 的 is-idle / is-searched 两个类上做，不搬组件。
-         这一页不渲染页脚：底部要让位给结果内容区，页脚那句「只读访问」由顶栏
-         mode-note 承担，与 Agent 页同理。 -->
-    <main
-      id="search-workspace"
-      class="content-wrap workspace"
-      :class="hasSearched ? 'is-searched' : 'is-idle'"
-    >
-      <!-- 页级标题给读屏与文档大纲；视觉标题由 SearchComposer 自带的可见标题承担。 -->
+    <main id="search-workspace" class="workspace">
       <h1 class="sr-only">新闻语义检索</h1>
 
-      <!-- 一条连续的中置「检索流」：输入框与结果是同一条纵向流里的相邻成员，共用同一条
-           列宽与左对齐基线，视觉上浑然一体（不再让输入卡居中窄、结果却贴左全宽，那会
-           把一页割成两块内容）。idle 时输入框在这条流里靠垂直居中大引导；检索后输入框
-           以紧凑条固定在这条流顶部，结果直接续排其下。 -->
-      <div class="flow">
-        <div class="flow-input">
-          <SearchComposer
-            v-model="activeQuery"
-            :slim="hasSearched"
-            :mode="mode"
-            :document-limit="documentSearch.documentLimit.value"
-            :top-k="chunkSearch.topK.value"
-            :matches-per-document="documentSearch.matchesPerDocument.value"
-            :loading="activeStatus === 'loading'"
-            :input-error="activeInputError"
-            :remaining-characters="activeRemainingCharacters"
-            @update:mode="switchMode"
-            @update:document-limit="documentSearch.documentLimit.value = $event"
-            @update:top-k="chunkSearch.topK.value = $event"
-            @update:matches-per-document="documentSearch.matchesPerDocument.value = $event"
-            @submit="submitSearch"
-            @clear="clearSearch"
-          />
+      <!-- 顶部常驻输入条。检索页不渲染页脚：底部要让位给向下长的检索流。 -->
+      <div class="composer-dock">
+        <SearchComposer
+          ref="composerRef"
+          v-model="stream.draft.value"
+          :document-limit="stream.documentLimit.value"
+          :matches-per-document="stream.matchesPerDocument.value"
+          :loading="stream.isSearching.value"
+          :input-error="stream.inputError.value"
+          :remaining-characters="stream.remainingCharacters.value"
+          :has-records="hasRecords"
+          @update:document-limit="stream.documentLimit.value = $event"
+          @update:matches-per-document="stream.matchesPerDocument.value = $event"
+          @submit="submitSearch"
+          @clear="clearStream"
+        />
+      </div>
 
-          <!-- idle 时的引导：点一下就能跑的示例，跟在输入框下面同一列。 -->
-          <div v-if="!hasSearched" class="flow-examples">
-            <p class="hint-lead">先试试这些例子</p>
-            <div class="hint-examples" aria-label="示例检索">
-              <button
-                v-for="example in SEARCH_EXAMPLES"
-                :key="example"
-                type="button"
-                @click="chooseExample(example)"
-              >
-                {{ example }}
-              </button>
-            </div>
-          </div>
+      <!-- 空态：还没有任何检索记录。居中一句引导 + 示例，点一下直接搜。 -->
+      <div v-if="!hasRecords" class="empty-state">
+        <div class="empty-lead">
+          <h2>从一个研究问题开始</h2>
+          <p>
+            输入要研究的新闻主题，结果会按新闻分组返回原始片段。每次搜索都会往下追加成一条记录，刷新后清空。
+          </p>
         </div>
 
-        <!-- 检索内容（loading/空态/结果）作为流的下一段直接续在输入下方，同一条列。 -->
-        <div v-if="hasSearched" class="flow-results">
-          <SearchResults
-            :mode="mode"
-            :status="activeStatus"
-            :results="documentSearch.results.value"
-            :chunk-results="chunkSearch.results.value"
-            :error="activeRequestError"
-            :last-query="activeLastQuery"
-            @retry="retrySearch"
-            @choose-example="chooseExample"
-            @read="openDocument"
-          />
+        <div class="example-list" aria-label="示例检索">
+          <button
+            v-for="example in SEARCH_EXAMPLES"
+            :key="example"
+            type="button"
+            @click="chooseExample(example)"
+          >
+            <span>{{ example }}</span>
+          </button>
         </div>
+      </div>
+
+      <!-- 检索流：最新贴顶展开，旧记录折叠。 -->
+      <div v-else class="stream" aria-label="检索记录">
+        <SearchRecordTurn
+          v-for="record in newestFirst"
+          :key="record.id"
+          :record="record"
+          :is-latest="record.id === latest?.id"
+          :expanded="recordExpanded(record.id)"
+          @toggle="toggleRecord(record)"
+          @retry="retryRecord(record)"
+          @read="openDocument"
+        />
       </div>
     </main>
 
@@ -186,8 +193,7 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
 </template>
 
 <style scoped>
-/* 整页占满「视口 - 顶栏」，输入与结果共用同一条垂直流，不产生额外空隙。
-   --app-topbar-height 由 AppShell 提供，两个 compact 断点会改写它。 */
+/* 整页占满「视口 - 顶栏」；单列检索流用阅读宽度居中，比 agent 页略宽一点容纳结果卡。 */
 .workspace {
   display: flex;
   flex-direction: column;
@@ -195,104 +201,112 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
   min-height: calc(100dvh - var(--app-topbar-height, 69px));
 }
 
-/* 唯一的一条中置列：输入卡与结果卡都铺满它、左对齐基线一致，视觉上是一条连续流。
-   宽度取「比 content-wrap 全宽收敛、又不像纯正文那么窄」的中值，结果卡不会过长。 */
-.flow {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  max-width: 1000px;
-  margin-inline: auto;
-}
-
-/* ---- idle：输入作为这条流的第一段，垂直居中大引导，示例居中跟在下面 ---- */
-.is-idle .flow {
-  flex: 1 1 auto;
-  justify-content: center;
-}
-
-.is-idle .flow-input {
-  width: 100%;
-  text-align: center;
-}
-
-/* idle 的输入卡本身仍左对齐排版（让输入区可读），外层文字才居中。 */
-.is-idle .flow-input :deep(.composer) {
-  text-align: left;
-}
-
-.flow-examples {
-  margin-top: 18px;
-}
-
-.hint-lead {
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  font-weight: 720;
-}
-
-.hint-examples {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 9px;
-}
-
-.hint-examples button {
-  padding: 6px 13px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
-  color: var(--text-secondary);
-  background: var(--surface-raised);
-  font-size: 0.78rem;
-  transition:
-    border-color 150ms ease,
-    color 150ms ease;
-}
-
-.hint-examples button:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-/* ---- 已检索：输入作为流的固定头部，结果作为流的延续 ---- */
-.is-searched .flow {
-  flex: 1 1 auto;
-}
-
-.is-searched .flow-input {
+.composer-dock {
   position: sticky;
   z-index: 8;
   top: var(--app-topbar-height, 69px);
-  width: 100%;
-  padding: 12px 0 10px;
+  width: min(100%, calc(var(--reading-width) + 80px));
+  margin: 0 auto;
+  padding: 16px 0 14px;
   background: var(--surface-scrim);
   backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--border-subtle);
 }
 
-/* 结果是这条流的下一段，与输入同宽，直接续排其下，不再作为另一块版面。 */
-.flow-results {
-  padding: 20px 0 60px;
+.stream {
+  display: grid;
+  gap: 12px;
+  width: min(100%, calc(var(--reading-width) + 80px));
+  margin: 0 auto;
+  padding: 4px 0 90px;
 }
 
-/* 顶栏与页脚的样式随结构一起搬到 layouts/AppShell.vue。 */
+/* 空态沿用 agent 页的居中引导：标题 + 一句说明 + 示例词，不再是一张独立卡片。 */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: min(100%, var(--reading-width));
+  margin: 0 auto;
+  padding: 64px 0 0;
+  text-align: center;
+}
 
-@media (max-width: 980px) {
-  .is-searched .flow-input {
-    padding: 10px 0 9px;
+.empty-lead h2 {
+  color: var(--text-primary);
+  font-size: 1.72rem;
+  font-weight: 780;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.empty-lead p {
+  max-width: 52ch;
+  margin-top: 12px;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.7;
+}
+
+.example-list {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  max-width: 620px;
+  margin-top: 28px;
+}
+
+.example-list button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  font-size: 0.88rem;
+  text-align: center;
+  transition:
+    border-color 150ms ease,
+    color 150ms ease,
+    transform 150ms ease;
+}
+
+.example-list button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+  .composer-dock {
+    width: calc(100% - 24px);
+    padding: 12px 0 10px;
   }
-}
 
-@media (max-width: 560px) {
-  .is-idle .flow {
-    justify-content: flex-start;
-    padding-top: 26px;
+  .stream {
+    width: calc(100% - 24px);
+    padding-top: 2px;
   }
 
-  .flow-results {
-    padding-top: 14px;
+  .empty-state {
+    width: calc(100% - 24px);
+    padding-top: 34px;
+  }
+
+  .empty-lead h2 {
+    font-size: 1.5rem;
   }
 }
 </style>

@@ -1,14 +1,13 @@
-/* 检索结果卡片：ChunkResultCard 与 SearchResultCard 共用的部分。
+/* 检索结果卡片：SearchResultCard 共用部分。
  *
- * 两个卡片原本一青一红，靠强调色本身区分。红收窄到只报错之后两者都落到
- * --accent，颜色不再是区分手段——现在靠填充轻重区分：实心填充是主操作
- * （.read-button），浅底是标记（.source-name）。
- * .locator-line 与 .score-block 仍只收录与配色无关的几何属性，那一条声明留在
- * 各组件 scoped 块里，各文件剩下的 CSS 恰好就是「它与另一个卡片的差别」。
+ * 重构去掉「按片段」模式后，本文件只剩按新闻的 SearchResultCard 一个使用方。文件保留为
+ * 独立共享层：让组件的 scoped 块只留「这条卡片自己的那部分」，同名字的几何/通用规则仍
+ * 集中在 components 层，避免卡片越长越乱。
+ * .locator-line 与 .score-block 仍只收录与配色无关的几何属性，那一条颜色声明留在
+ * SearchResultCard 的 scoped 块里。
  *
- * .match-heading 与 .read-button 在原文件里和 .related-heading、.chunk-actions a、
- * .result-actions a 写在同一条分组选择器中；此处只提取重复的那一半，
- * 兄弟选择器留在各自组件内。
+ * .match-heading 与 .read-button 在原文件里和 .related-heading、.result-actions a
+ * 写在同一条分组选择器中；此处只提取重复的那一半，兄弟选择器留在组件内。
  */
 
 @layer components {
