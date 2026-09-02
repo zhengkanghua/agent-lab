@@ -80,18 +80,18 @@ defineExpose({ focus })
 }
 
 .is-lg {
+  width: 44px;
+  height: 44px;
+}
+
+.is-md {
   width: 40px;
   height: 40px;
 }
 
-.is-md {
+.is-sm {
   width: 34px;
   height: 34px;
-}
-
-.is-sm {
-  width: 28px;
-  height: 28px;
 }
 
 .base-icon-button:hover:not(:disabled) {

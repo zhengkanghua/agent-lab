@@ -78,6 +78,7 @@ const exactTime = computed(() => {
   gap: 2px;
   align-items: center;
   border-radius: var(--radius-sm);
+  transition: background-color 150ms ease;
 }
 
 .thread-item:hover {

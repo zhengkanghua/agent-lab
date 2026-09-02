@@ -21,7 +21,7 @@ function isLast(index: number): boolean {
 </script>
 
 <template>
-  <section class="transcript" aria-labelledby="transcript-title" :aria-busy="streaming">
+  <section class="transcript" aria-labelledby="transcript-title" :aria-busy="streaming" style="container-type: inline-size">
     <h2 id="transcript-title" class="sr-only">对话记录</h2>
 
     <!-- 空态只有一句标题 + 建议卡（Q9）。原来那个圆形图标是装饰性品牌元素，撤掉了：
@@ -43,7 +43,7 @@ function isLast(index: number): boolean {
       </ul>
     </div>
 
-    <div v-else class="turn-list">
+    <TransitionGroup v-else name="list" tag="div" class="turn-list">
       <AgentTurnCard
         v-for="(turn, index) in turns"
         :key="turn.id"
@@ -51,7 +51,7 @@ function isLast(index: number): boolean {
         :can-retry="isLast(index) && !streaming"
         @retry="emit('retry')"
       />
-    </div>
+    </TransitionGroup>
   </section>
 </template>
 
@@ -73,7 +73,7 @@ function isLast(index: number): boolean {
 /* 空态不再是一张虚线卡片：单列布局里它就是这一列的全部内容，再画个框等于给
    整页描边。改成无框，靠垂直居中把它托在输入区上方。 */
 .empty-state {
-  padding: 8px 2px 0;
+  padding: 28px 12px 12px;
 }
 
 .empty-state h3 {
@@ -138,7 +138,7 @@ function isLast(index: number): boolean {
   color: var(--accent);
 }
 
-@media (max-width: 560px) {
+@container (max-width: 560px) {
   .empty-state h3 {
     font-size: 1.5rem;
   }

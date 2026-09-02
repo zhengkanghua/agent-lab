@@ -46,7 +46,7 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
 </script>
 
 <template>
-  <section class="create-editor" aria-labelledby="create-title">
+  <section class="create-editor" aria-labelledby="create-title" style="container-type: inline-size">
     <div class="editor-heading">
       <div>
         <p>新账号</p>
@@ -197,7 +197,7 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
   font-size: 0.76rem;
 }
 
-@media (max-width: 1040px) {
+@container (max-width: 1040px) {
   .create-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -207,7 +207,7 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
   }
 }
 
-@media (max-width: 720px) {
+@container (max-width: 720px) {
   .create-editor {
     padding: 22px 17px 24px;
   }

@@ -168,6 +168,7 @@ function checkedOf(event: Event): boolean {
   padding: 15px 14px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface-raised);
+  transition: background-color 200ms ease;
 }
 
 .user-row:hover {
@@ -358,7 +359,7 @@ function checkedOf(event: Event): boolean {
   font-size: 0.73rem;
 }
 
-@media (max-width: 1040px) {
+@container (max-width: 1040px) {
   .user-row {
     grid-template-columns: minmax(260px, 1.4fr) repeat(2, minmax(120px, 0.7fr));
   }
@@ -372,7 +373,7 @@ function checkedOf(event: Event): boolean {
   }
 }
 
-@media (max-width: 720px) {
+@container (max-width: 720px) {
   .user-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 15px 12px;
@@ -392,7 +393,7 @@ function checkedOf(event: Event): boolean {
   }
 }
 
-@media (max-width: 430px) {
+@container (max-width: 430px) {
   .user-row {
     grid-template-columns: 1fr;
   }

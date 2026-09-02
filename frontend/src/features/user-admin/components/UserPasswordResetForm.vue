@@ -32,7 +32,7 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
 </script>
 
 <template>
-  <form class="reset-editor" @submit.prevent="emit('submit')">
+  <form class="reset-editor" style="container-type: inline-size" @submit.prevent="emit('submit')">
     <label class="field-control">
       <span>为 {{ email }} 设置新密码</span>
       <input
@@ -119,7 +119,7 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
   font-size: 0.76rem;
 }
 
-@media (max-width: 720px) {
+@container (max-width: 720px) {
   .reset-editor {
     grid-template-columns: 1fr auto;
     padding: 15px 0 1px;
@@ -131,7 +131,7 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
   }
 }
 
-@media (max-width: 430px) {
+@container (max-width: 430px) {
   .reset-editor {
     grid-template-columns: 1fr;
   }

@@ -70,7 +70,7 @@ function useDefaultPrompt(): void {
 </script>
 
 <template>
-  <section class="agent-composer" aria-label="向 Agent 提问">
+  <section class="agent-composer" aria-label="向 Agent 提问" style="container-type: inline-size">
     <form class="agent-form" :aria-busy="streaming" @submit.prevent="emit('submit')">
       <label class="sr-only" for="agent-message">这一轮的问题</label>
       <textarea
@@ -198,12 +198,12 @@ function useDefaultPrompt(): void {
 
 <style scoped>
 .agent-composer {
-  padding: 10px 11px 9px;
+  padding: 10px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   background: var(--surface-raised);
   box-shadow: var(--shadow-soft);
-  transition: border-color 150ms ease;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
 /* 焦点环画在外框上而不是文本域上：视觉上这一整块是一个输入控件。
@@ -355,7 +355,7 @@ function useDefaultPrompt(): void {
   font-weight: 650;
 }
 
-@media (max-width: 520px) {
+@container (max-width: 520px) {
   /* 窄屏把字数计数撤掉：它和发送键抢同一行，而上界是 4000 字，
      手机上打到临近值的可能极低。临近/超出两档仍然由语气色显示。 */
   .character-count:not(.is-near):not(.is-over) {

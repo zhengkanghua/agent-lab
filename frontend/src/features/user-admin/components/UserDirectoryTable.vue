@@ -45,7 +45,7 @@ function resetPasswordFor(user: UserAdminDto): string | null {
 </script>
 
 <template>
-  <section class="directory" aria-labelledby="directory-title">
+  <section class="directory" aria-labelledby="directory-title" style="container-type: inline-size">
     <div class="directory-heading">
       <div>
         <p>账号目录</p>
@@ -81,8 +81,8 @@ function resetPasswordFor(user: UserAdminDto): string | null {
       当前还没有可管理账号。
     </div>
 
-    <div v-else class="user-table" role="table" aria-label="平台账号列表">
-      <div class="user-table-head" role="row">
+    <TransitionGroup v-else name="list" tag="div" class="user-table" role="table" aria-label="平台账号列表">
+      <div key="table-head" class="user-table-head" role="row">
         <span role="columnheader">账号</span>
         <span role="columnheader">使用状态</span>
         <span role="columnheader">管理权限</span>
@@ -107,7 +107,7 @@ function resetPasswordFor(user: UserAdminDto): string | null {
         @cancel-reset="emit('cancel-reset')"
         @revoke-sessions="emit('revoke-sessions', user)"
       />
-    </div>
+    </TransitionGroup>
   </section>
 </template>
 
@@ -193,7 +193,7 @@ function resetPasswordFor(user: UserAdminDto): string | null {
   text-transform: uppercase;
 }
 
-@media (max-width: 1040px) {
+@container (max-width: 1040px) {
   /* 表头撤掉之后列宽不再需要对齐，窄屏的列由行组件自己决定。 */
   .user-table-head {
     display: none;

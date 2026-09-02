@@ -7,7 +7,7 @@ defineProps<{ stats: DirectoryStats }>()
 </script>
 
 <template>
-  <section class="account-summary" aria-label="账号概况">
+  <section class="account-summary" aria-label="账号概况" style="container-type: inline-size">
     <span>
       <strong>{{ stats.total }}</strong>
       全部账号
@@ -55,7 +55,7 @@ defineProps<{ stats: DirectoryStats }>()
   color: var(--text-muted);
 }
 
-@media (max-width: 720px) {
+@container (max-width: 720px) {
   .account-summary {
     display: grid;
     grid-template-columns: repeat(3, auto);
@@ -69,7 +69,7 @@ defineProps<{ stats: DirectoryStats }>()
   }
 }
 
-@media (max-width: 430px) {
+@container (max-width: 430px) {
   .account-summary {
     grid-template-columns: repeat(2, auto);
   }

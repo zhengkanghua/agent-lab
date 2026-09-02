@@ -72,8 +72,9 @@
   textarea:focus-visible,
   select:focus-visible,
   summary:focus-visible {
-    outline: 3px solid var(--accent-ring);
-    outline-offset: 3px;
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-ring);
+    transition: box-shadow 150ms ease;
   }
 }
 
@@ -81,6 +82,11 @@
   .app-shell {
     min-height: 100vh;
   }
+
+  p {
+    line-height: 1.65;
+  }
+
 
   .content-wrap {
     width: min(calc(100% - 48px), var(--content-width));

@@ -124,7 +124,7 @@
     background: var(--accent-hover);
   }
 
-  @media (max-width: 680px) {
+  @container (max-width: 680px) {
     .score-block {
       min-height: 29px;
       padding: 3px 7px;

@@ -31,7 +31,7 @@ const emit = defineEmits<{
 
 <template>
   <!-- nav 而不是 aside：这一列的作用是在会话之间导航，读屏用户按地标跳转时该能找到它。 -->
-  <nav class="thread-sidebar" aria-label="会话记录">
+  <nav class="thread-sidebar" aria-label="会话记录" style="container-type: inline-size">
     <div class="sidebar-head">
       <h2 class="sidebar-title">
         会话记录
@@ -64,7 +64,7 @@ const emit = defineEmits<{
          一句「暂无会话」只是重复了用户已经看到的事实。 -->
     <p v-else-if="isEmpty" class="sidebar-state">还没有会话。发出第一个问题就会在这里留下记录。</p>
 
-    <ul v-else class="thread-list">
+    <TransitionGroup v-else name="list" tag="ul" class="thread-list">
       <ThreadListItem
         v-for="thread in threads"
         :key="thread.thread_id"
@@ -74,7 +74,7 @@ const emit = defineEmits<{
         @open="emit('open', thread.thread_id)"
         @remove="emit('remove', thread)"
       />
-    </ul>
+    </TransitionGroup>
 
     <div v-if="hasPrevious || hasMore" class="pager">
       <BaseButton
@@ -186,7 +186,7 @@ const emit = defineEmits<{
 }
 
 /* 窄屏把它变成正常流里的一块，不再 sticky：一列 20 条会话钉在顶上会把对话挤出视口。 */
-@media (max-width: 900px) {
+@container (max-width: 900px) {
   .thread-sidebar {
     position: static;
   }
