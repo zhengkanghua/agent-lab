@@ -30,9 +30,7 @@ function mountHarness(stream: AgentChatStream, loader?: AgentThreadLoader) {
 type ReplayResult = Awaited<ReturnType<AgentThreadLoader>>
 
 /** 一个按脚本回放的假历史读取器，记下收到的会话 id。 */
-function scriptedLoader(
-  ...results: unknown[]
-): AgentThreadLoader & { calls: string[] } {
+function scriptedLoader(...results: unknown[]): AgentThreadLoader & { calls: string[] } {
   const calls: string[] = []
   let index = 0
   const loader = async (threadId: string) => {

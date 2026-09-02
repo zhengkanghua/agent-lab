@@ -175,7 +175,10 @@ describe('conversation', () => {
         '未送达。',
       )
 
-      const ids = [...turns.map((turn) => turn.id), ...turns.flatMap((t) => t.traces.map((x) => x.id))]
+      const ids = [
+        ...turns.map((turn) => turn.id),
+        ...turns.flatMap((t) => t.traces.map((x) => x.id)),
+      ]
       expect(new Set(ids).size).toBe(ids.length)
     })
 

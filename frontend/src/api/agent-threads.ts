@@ -74,10 +74,9 @@ export async function getAgentThreadMessages(
 
 /** 删除一个会话及其历史。删除不可撤销，调用方负责先向用户确认。 */
 export async function deleteAgentThread(threadId: string): Promise<AgentThreadDeletionDto> {
-  const response = await requestJson<unknown>(
-    `/agent/threads/${encodeURIComponent(threadId)}`,
-    { method: 'DELETE' },
-  )
+  const response = await requestJson<unknown>(`/agent/threads/${encodeURIComponent(threadId)}`, {
+    method: 'DELETE',
+  })
   if (!isRecord(response) || !isUuid(response.thread_id)) {
     throw invalidThreadResponse('会话服务返回的删除结果格式不正确。')
   }

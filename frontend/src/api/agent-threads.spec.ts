@@ -90,12 +90,14 @@ describe('agent threads API', () => {
   it('把 404 的 code 透传出来，让文案层能认出「会话打不开」', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue(
-        jsonResponse(
-          { code: 'agent_thread_not_found', detail: '会话不存在或已被删除。', retryable: false },
-          404,
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse(
+            { code: 'agent_thread_not_found', detail: '会话不存在或已被删除。', retryable: false },
+            404,
+          ),
         ),
-      ),
     )
 
     await expect(getAgentThreadMessages(THREAD_ID)).rejects.toMatchObject({

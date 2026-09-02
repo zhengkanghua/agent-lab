@@ -68,8 +68,7 @@ export function useAgentChat(
   // 读历史期间也不许发送：那时 threadId 还没设上，发出去会被当成新会话，用户以为自己在
   // 续聊、实际上开了一个新的，而且旧会话的历史马上会覆盖掉界面。
   const canSend = computed(
-    () =>
-      draft.value.trim().length > 0 && status.value !== 'streaming' && !isLoadingThread.value,
+    () => draft.value.trim().length > 0 && status.value !== 'streaming' && !isLoadingThread.value,
   )
   const isStreaming = computed(() => status.value === 'streaming')
 

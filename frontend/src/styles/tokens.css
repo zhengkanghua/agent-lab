@@ -99,18 +99,18 @@
   --radius-full: var(--radius-pill); /* 别名，语义更明确 */
 
   /* 间距（基于 4px 网格，以 rem 为单位适配字号缩放） */
-  --space-2: 0.5rem;   /* 8px */
-  --space-3: 0.75rem;  /* 12px */
-  --space-4: 1rem;     /* 16px */
-  --space-5: 1.25rem;  /* 20px */
-  --space-6: 1.5rem;   /* 24px */
-  --space-8: 2rem;     /* 32px */
+  --space-2: 0.5rem; /* 8px */
+  --space-3: 0.75rem; /* 12px */
+  --space-4: 1rem; /* 16px */
+  --space-5: 1.25rem; /* 20px */
+  --space-6: 1.5rem; /* 24px */
+  --space-8: 2rem; /* 32px */
 
   /* 字号（基于 16px base，接近 1.125 比例） */
-  --text-sm: 0.875rem;  /* 14px */
-  --text-base: 1rem;    /* 16px */
-  --text-lg: 1.125rem;  /* 18px */
-  --text-2xl: 1.5rem;   /* 24px */
+  --text-sm: 0.875rem; /* 14px */
+  --text-base: 1rem; /* 16px */
+  --text-lg: 1.125rem; /* 18px */
+  --text-2xl: 1.5rem; /* 24px */
 
   /* 布局宽度 */
   --content-width: 1420px;
