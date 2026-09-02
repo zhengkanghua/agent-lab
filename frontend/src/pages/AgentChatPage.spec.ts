@@ -85,6 +85,8 @@ function testRouter() {
       // 顶栏的账号管理入口指向这条。少了它 RouterLink 解析不到目标，
       // 本文件所有用例都会在挂载时炸掉，而不只是与入口相关的那两条。
       { path: '/admin/users', name: 'user-admin', component: { template: '<div>admin</div>' } },
+      // 顶栏邮箱链接指向账号页面。
+      { path: '/account', name: 'account', component: { template: '<div>account</div>' } },
     ],
   })
 }

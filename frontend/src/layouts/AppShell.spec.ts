@@ -22,6 +22,7 @@ function testRouter(): Router {
       { path: '/', name: 'search', component: { template: '<div />' } },
       { path: '/agent', name: 'agent-chat', component: { template: '<div />' } },
       { path: '/admin', name: 'user-admin', component: { template: '<div />' } },
+      { path: '/account', name: 'account', component: { template: '<div />' } },
     ],
   })
 }

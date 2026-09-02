@@ -65,6 +65,7 @@ function testRouter() {
       { path: '/', name: 'search', component: { template: '<div>search</div>' } },
       { path: '/login', name: 'login', component: { template: '<div>login</div>' } },
       { path: '/admin/users', name: 'user-admin', component: UserAdminPage },
+      { path: '/account', name: 'account', component: { template: '<div>account</div>' } },
     ],
   })
 }
