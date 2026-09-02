@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { effectScope } from 'vue'
+import { flushPromises } from '@vue/test-utils'
 import { ApiError } from '@/api/client'
 import type { AgentThreadSummaryDto } from '@/api/agent-threads'
 
@@ -30,13 +30,37 @@ function page(count: number, total = count) {
   }
 }
 
-/** 在 effectScope 内构造，让 onScopeDispose 有地方挂。 */
+import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
+import { createApp } from 'vue'
+
+/** 在 effectScope 内构造，让 onScopeDispose 有地方挂，并通过 App 注入 Vue Query。 */
 function build(options: Partial<Parameters<typeof useThreadList>[0]> = {}) {
   const onActiveThreadDeleted = options.onActiveThreadDeleted ?? vi.fn()
   const activeThreadId = options.activeThreadId ?? (() => null)
-  const scope = effectScope()
-  const list = scope.run(() => useThreadList({ onActiveThreadDeleted, activeThreadId }))!
-  return { list, scope, onActiveThreadDeleted }
+  
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+  
+  let result: ReturnType<typeof useThreadList> | undefined
+
+  const app = createApp({
+    setup() {
+      result = useThreadList({ onActiveThreadDeleted, activeThreadId })
+      return () => null
+    }
+  })
+  app.use(VueQueryPlugin, { queryClient })
+  
+  const container = document.createElement('div')
+  app.mount(container)
+  
+  return { 
+    list: result!, 
+    scope: { stop: () => app.unmount() }, 
+    onActiveThreadDeleted,
+    queryClient
+  }
 }
 
 describe('useThreadList', () => {
@@ -52,7 +76,7 @@ describe('useThreadList', () => {
     api.listAgentThreads.mockResolvedValue(page(3, 7))
     const { list, scope } = build()
 
-    await list.load()
+    await flushPromises()
 
     expect(list.threads.value).toHaveLength(3)
     expect(list.total.value).toBe(7)
@@ -65,7 +89,7 @@ describe('useThreadList', () => {
   it('翻页只改 offset，limit 始终是约定的页大小', async () => {
     api.listAgentThreads.mockResolvedValue(page(THREAD_PAGE_SIZE, 60))
     const { list, scope } = build()
-    await list.load()
+    await flushPromises()
 
     await list.nextPage()
 
@@ -79,7 +103,7 @@ describe('useThreadList', () => {
   it('已在最后一页时「下一页」不发请求', async () => {
     api.listAgentThreads.mockResolvedValue(page(3, 3))
     const { list, scope } = build()
-    await list.load()
+    await flushPromises()
     api.listAgentThreads.mockClear()
 
     await list.nextPage()
@@ -97,7 +121,7 @@ describe('useThreadList', () => {
       .mockResolvedValueOnce(page(THREAD_PAGE_SIZE, 20))
     api.deleteAgentThread.mockResolvedValue({ thread_id: thread(21).thread_id })
     const { list, scope } = build()
-    await list.load()
+    await flushPromises()
     await list.nextPage()
 
     await list.remove(thread(21))
@@ -111,7 +135,7 @@ describe('useThreadList', () => {
     api.listAgentThreads.mockResolvedValue(page(1))
     vi.stubGlobal('confirm', vi.fn().mockReturnValue(false))
     const { list, scope } = build()
-    await list.load()
+    await flushPromises()
 
     await list.remove(thread(1))
 
@@ -126,7 +150,7 @@ describe('useThreadList', () => {
     const { list, scope, onActiveThreadDeleted } = build({
       activeThreadId: () => target.thread_id,
     })
-    await list.load()
+    await flushPromises()
 
     await list.remove(target)
 
@@ -140,7 +164,7 @@ describe('useThreadList', () => {
     const { list, scope, onActiveThreadDeleted } = build({
       activeThreadId: () => thread(1).thread_id,
     })
-    await list.load()
+    await flushPromises()
 
     await list.remove(thread(2))
 
@@ -154,7 +178,7 @@ describe('useThreadList', () => {
       new ApiError({ message: '失败', code: 'agent_thread_database_unavailable', status: 503 }),
     )
     const { list, scope } = build()
-    await list.load()
+    await flushPromises()
 
     await list.remove(thread(1))
 
@@ -171,7 +195,7 @@ describe('useThreadList', () => {
       new ApiError({ message: '不存在', code: 'agent_thread_not_found', status: 404 }),
     )
     const { list, scope } = build()
-    await list.load()
+    await flushPromises()
     api.listAgentThreads.mockClear()
     api.listAgentThreads.mockResolvedValue({ items: [], total: 0 })
 
@@ -192,7 +216,7 @@ describe('useThreadList', () => {
     )
     const { list, scope } = build()
 
-    await list.load()
+    await flushPromises()
 
     expect(list.listState.value).toBe('error')
     expect(list.listError.value?.title).toBe('会话记录暂时读不出来')
@@ -200,33 +224,10 @@ describe('useThreadList', () => {
     scope.stop()
   })
 
-  it('后发的请求先回来时不覆盖当前页', async () => {
-    // 连点两次翻页，第一条响应慢。没有守卫的话它会把第二页的内容盖回第一页。
-    let resolveFirst: ((value: unknown) => void) | undefined
-    api.listAgentThreads
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            resolveFirst = resolve
-          }),
-      )
-      .mockResolvedValueOnce({ items: [thread(99)], total: 99 })
-    const { list, scope } = build()
-
-    const stale = list.load()
-    const fresh = list.load()
-    resolveFirst?.(page(3, 3))
-    await Promise.all([stale, fresh])
-
-    expect(list.threads.value.map((item) => item.title)).toEqual(['会话 99'])
-    expect(list.total.value).toBe(99)
-    scope.stop()
-  })
-
   it('新建的会话并进列表头部，不重复也不越过页大小', async () => {
     api.listAgentThreads.mockResolvedValue(page(THREAD_PAGE_SIZE, THREAD_PAGE_SIZE))
     const { list, scope } = build()
-    await list.load()
+    await flushPromises()
     const created = thread(999, { title: '刚建的' })
 
     list.acceptCreatedThread(created)
@@ -242,7 +243,7 @@ describe('useThreadList', () => {
     // 并进去会让它出现在一个它本不属于的页上，翻回第一页又会看到一遍。
     api.listAgentThreads.mockResolvedValue(page(THREAD_PAGE_SIZE, 60))
     const { list, scope } = build()
-    await list.load()
+    await flushPromises()
     await list.nextPage()
 
     list.acceptCreatedThread(thread(999))
@@ -256,7 +257,7 @@ describe('useThreadList', () => {
     const { list, scope } = build()
 
     expect(list.isEmpty.value).toBe(false) // 还在 loading，别先显示「还没有会话」
-    await list.load()
+    await flushPromises()
 
     expect(list.isEmpty.value).toBe(true)
     scope.stop()

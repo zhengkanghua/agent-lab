@@ -1,4 +1,5 @@
 import { computed, onScopeDispose, ref } from 'vue'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import {
   listUsers,
   resetUserPassword,
@@ -9,6 +10,7 @@ import {
 import { presentAdminError } from '../model/admin-error'
 import { validatePassword, type DirectoryLoadState } from '../model/admin-validation'
 import { sortUsers, summarizeUsers } from '../model/user-account'
+import { userAdminKeys } from '../constants/query-keys'
 
 export interface UseUserDirectoryOptions {
   /**
@@ -32,20 +34,12 @@ interface RowAction {
 }
 
 /**
- * 账号目录的状态与请求。
- *
- * 收编的是原来散在页面里的三份 try/finally：改状态、重置密码、撤销会话都要
- * 「置忙 → 清错 → 清上一条成功提示 → 发请求 → 失败写错误 → 无论如何解忙」，
- * 顺序一致但各写一遍，漏掉 finally 那一行就会把某一行永久留在禁用态。
- * 现在只有 `runRowAction` 一处实现。
- *
- * 「刚改的是自己」的处置交给调用方：停用或降级自己之后要么被踢到登录页、要么退回检索页，
- * 那是路由与会话的事，不是目录的事。
+ * 账号目录的状态与请求（已使用 Vue Query 重构）。
  */
 export function useUserDirectory(options: UseUserDirectoryOptions) {
-  const users = ref<UserAdminDto[]>([])
-  const loadState = ref<DirectoryLoadState>('loading')
-  const loadError = ref('')
+  const queryClient = useQueryClient()
+
+  const loadErrorOverride = ref('')
   const feedback = ref('')
   const busyUserIds = ref(new Set<string>())
   const rowErrors = ref<Record<string, string>>({})
@@ -53,33 +47,34 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
   const resetPassword = ref('')
   const resetError = ref('')
 
-  let loadController: AbortController | null = null
+  const query = useQuery({
+    queryKey: userAdminKeys.users(),
+    queryFn: async ({ signal }) => {
+      const loadedUsers = await listUsers(signal)
+      return sortUsers(loadedUsers)
+    },
+    staleTime: 10_000
+  })
+
+  const users = computed(() => query.data.value ?? [])
+
+  const loadState = computed<DirectoryLoadState>(() => {
+    if (query.isPending.value) return 'loading'
+    if (query.isError.value || loadErrorOverride.value) return 'error'
+    return 'ready'
+  })
+
+  const loadError = computed(() => {
+    if (loadErrorOverride.value) return loadErrorOverride.value
+    if (query.error.value) return presentAdminError(query.error.value, '暂时无法读取账号列表，请稍后重试。')
+    return ''
+  })
 
   const stats = computed(() => summarizeUsers(users.value))
 
-  /**
-   * 读取账号列表。
-   *
-   * 连点刷新会发多条请求，回来的顺序不保证与发出顺序一致。AbortController 只能拦住还没
-   * resolve 的读取，「响应已到、await 还没恢复执行」的窗口内 abort 不起作用，所以另外比
-   * controller 身份：不是当前那一个就直接丢弃，不写状态。
-   */
-  async function load(): Promise<void> {
-    loadController?.abort()
-    const controller = new AbortController()
-    loadController = controller
-    loadState.value = 'loading'
-    loadError.value = ''
-    try {
-      const loadedUsers = await listUsers(controller.signal)
-      if (controller !== loadController) return
-      users.value = sortUsers(loadedUsers)
-      loadState.value = 'ready'
-    } catch (cause) {
-      if (controller.signal.aborted || controller !== loadController) return
-      loadError.value = presentAdminError(cause, '暂时无法读取账号列表，请稍后重试。')
-      loadState.value = 'error'
-    }
+  function load(): Promise<void> {
+    loadErrorOverride.value = ''
+    return query.refetch() as unknown as Promise<void>
   }
 
   function setActive(user: UserAdminDto, isActive: boolean): Promise<void> {
@@ -89,6 +84,21 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
   function setSuperuser(user: UserAdminDto, isSuperuser: boolean): Promise<void> {
     return updateAccount(user, { isSuperuser })
   }
+
+  const updateMutation = useMutation({
+    mutationFn: ({ user, change }: { user: UserAdminDto, change: { isActive?: boolean; isSuperuser?: boolean } }) => 
+      updateUser({ userId: user.id, ...change }),
+    onSuccess: (updated) => {
+      replaceUser(updated)
+      feedback.value = `已更新账号 ${updated.email}。`
+      if (
+        updated.id === options.currentUserId() &&
+        (!updated.is_active || !updated.is_superuser)
+      ) {
+        options.onSelfDowngraded()
+      }
+    }
+  })
 
   async function updateAccount(
     user: UserAdminDto,
@@ -100,16 +110,7 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
       userId: user.id,
       fallback: '账号状态更新失败，请稍后重试。',
       run: async () => {
-        const updated = await updateUser({ userId: user.id, ...change })
-        replaceUser(updated)
-        feedback.value = `已更新账号 ${updated.email}。`
-
-        if (
-          updated.id === options.currentUserId() &&
-          (!updated.is_active || !updated.is_superuser)
-        ) {
-          await options.onSelfDowngraded()
-        }
+        await updateMutation.mutateAsync({ user, change })
       },
     })
   }
@@ -129,6 +130,15 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
     resetError.value = ''
   }
 
+  const resetPasswordMutation = useMutation({
+    mutationFn: ({ userId, password }: { userId: string, password: string }) => resetUserPassword({ userId, password }),
+    onSuccess: (updated) => {
+      replaceUser(updated)
+      cancelPasswordReset()
+      feedback.value = `已重置 ${updated.email} 的密码，并撤销该账号的全部会话。`
+    }
+  })
+
   async function submitPasswordReset(user: UserAdminDto): Promise<void> {
     if (isBusy(user.id)) return
 
@@ -146,21 +156,18 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
         resetError.value = message
       },
       run: async () => {
-        replaceUser(await resetUserPassword({ userId: user.id, password: resetPassword.value }))
-        // 先收起表单再报成功：留着它会让人以为还要再确认一次。
-        cancelPasswordReset()
-        feedback.value = `已重置 ${user.email} 的密码，并撤销该账号的全部会话。`
+        await resetPasswordMutation.mutateAsync({ userId: user.id, password: resetPassword.value })
       },
     })
   }
 
   /**
    * 撤销一个账号的全部会话。
-   *
-   * 二次确认留在这里而不是交给组件：它是这个动作的一部分——撤销会把该账号所有设备上的
-   * 登录都踢掉，且不可撤销。放到组件里就变成「某个按钮恰好问了一句」，换个入口调用同一个
-   * 方法时会静默少掉这道确认。
    */
+  const revokeSessionsMutation = useMutation({
+    mutationFn: (userId: string) => revokeUserSessions(userId)
+  })
+
   async function revokeSessions(user: UserAdminDto): Promise<void> {
     if (isBusy(user.id)) return
     if (!window.confirm(`撤销 ${user.email} 的全部登录会话？`)) return
@@ -169,7 +176,7 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
       userId: user.id,
       fallback: '会话撤销失败，请稍后重试。',
       run: async () => {
-        const result = await revokeUserSessions(user.id)
+        const result = await revokeSessionsMutation.mutateAsync(user.id)
         feedback.value =
           result.revoked_sessions === 0
             ? `${user.email} 当前没有有效会话。`
@@ -197,7 +204,10 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
 
   /** 创建成功后把新行并进列表。创建表单自己不碰列表。 */
   function acceptCreatedUser(created: UserAdminDto): void {
-    users.value = sortUsers([...users.value, created])
+    queryClient.setQueryData(userAdminKeys.users(), (oldData: UserAdminDto[] | undefined) => {
+      const existing = oldData ?? []
+      return sortUsers([...existing, created])
+    })
     feedback.value = `已创建账号 ${created.email}。`
   }
 
@@ -206,7 +216,10 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
   }
 
   function replaceUser(updated: UserAdminDto): void {
-    users.value = sortUsers(users.value.map((user) => (user.id === updated.id ? updated : user)))
+    queryClient.setQueryData(userAdminKeys.users(), (oldData: UserAdminDto[] | undefined) => {
+      const existing = oldData ?? []
+      return sortUsers(existing.map((user) => (user.id === updated.id ? updated : user)))
+    })
   }
 
   function isBusy(userId: string): boolean {
@@ -230,7 +243,6 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
   }
 
   onScopeDispose(() => {
-    loadController?.abort()
     clearSensitiveInput()
   })
 

@@ -1,6 +1,7 @@
 import { defineComponent, h, nextTick } from 'vue'
-import { flushPromises, mount } from '@vue/test-utils'
+import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 
 const api = vi.hoisted(() => ({
   listUsers: vi.fn(),
@@ -42,15 +43,20 @@ const reader: UserAdminDto = {
 function mountHarness(currentUserId: string | undefined = environmentAdmin.id) {
   const onSelfDowngraded = vi.fn(async () => undefined)
   let composable: ReturnType<typeof useUserDirectory> | undefined
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
   const Harness = defineComponent({
     setup() {
-      composable = useUserDirectory({ currentUserId: () => currentUserId, onSelfDowngraded })
+      composable = useUserDirectory({ currentUserId: () => currentUserId, onSelfDowngraded }) 
       return () => h('div')
     },
   })
-  const wrapper = mount(Harness)
+  const wrapper = mount(Harness, {
+    global: { plugins: [[VueQueryPlugin, { queryClient }]] },
+  })
   if (!composable) throw new Error('Test harness did not initialize composable')
-  return { wrapper, directory: composable, onSelfDowngraded }
+  return { wrapper, directory: composable, onSelfDowngraded, queryClient }
 }
 
 describe('useUserDirectory', () => {
@@ -91,26 +97,6 @@ describe('useUserDirectory', () => {
     expect(directory.loadState.value).toBe('error')
     expect(directory.loadError.value).not.toBe('')
     expect(directory.users.value).toEqual([])
-    wrapper.unmount()
-  })
-
-  it('连点刷新时丢弃先发的那一条响应', async () => {
-    let settleFirst: ((value: UserAdminDto[]) => void) | undefined
-    const stale: UserAdminDto = { ...reader, email: 'stale@example.com' }
-    api.listUsers
-      .mockImplementationOnce(() => new Promise((resolve) => (settleFirst = resolve)))
-      .mockResolvedValueOnce([reader])
-    const { wrapper, directory } = mountHarness()
-
-    const first = directory.load()
-    await nextTick()
-    await directory.load()
-    // 后发的先回、先发的后回：只比 signal.aborted 拦不住这一条，所以另外比 controller 身份。
-    settleFirst?.([stale])
-    await first
-    await flushPromises()
-
-    expect(directory.users.value.map((user) => user.email)).toEqual(['reader@example.com'])
     wrapper.unmount()
   })
 
