@@ -52,12 +52,21 @@
      不能用 --surface-raised 顶替：那个跟着页面走，反转后就成了深底深字。 */
   --surface-inverse: var(--neutral-900);
 
+  /* 扩展语义表面（账号管理页用） */
+  --surface-secondary: var(--neutral-50);
+  --surface-tertiary: #ffffff;
+  --surface-hover: var(--neutral-100);
+  --surface-error: var(--brick-100);
+  --surface-success: var(--teal-100);
+
   /* 5、语义层——文字。 */
   --text-primary: var(--neutral-900);
   --text-secondary: var(--neutral-700);
   --text-muted: var(--neutral-500);
   --text-on-accent: #ffffff;
   --text-on-inverse: var(--neutral-50);
+  --text-error: var(--brick-600);
+  --text-success: var(--teal-700);
 
   /* 6、语义层——描边。 */
   --border-subtle: var(--neutral-300);
@@ -65,6 +74,7 @@
 
   /* 7、语义层——强调与状态。 */
   --accent: var(--teal-600);
+  --accent-primary: var(--teal-600); /* 别名，语义更明确 */
   --accent-hover: var(--teal-700);
   --accent-soft: var(--teal-100);
   --accent-ring: rgb(15 110 99 / 38%);
@@ -81,10 +91,28 @@
   --shadow-drawer: -18px 0 48px rgb(20 24 26 / 18%);
 
   /* 9、非颜色 token 不分层：它们没有主题维度，多一层只是多一次跳转。 */
+  /* 圆角 */
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 14px;
   --radius-pill: 999px;
+  --radius-full: var(--radius-pill); /* 别名，语义更明确 */
+
+  /* 间距（基于 4px 网格，以 rem 为单位适配字号缩放） */
+  --space-2: 0.5rem;   /* 8px */
+  --space-3: 0.75rem;  /* 12px */
+  --space-4: 1rem;     /* 16px */
+  --space-5: 1.25rem;  /* 20px */
+  --space-6: 1.5rem;   /* 24px */
+  --space-8: 2rem;     /* 32px */
+
+  /* 字号（基于 16px base，接近 1.125 比例） */
+  --text-sm: 0.875rem;  /* 14px */
+  --text-base: 1rem;    /* 16px */
+  --text-lg: 1.125rem;  /* 18px */
+  --text-2xl: 1.5rem;   /* 24px */
+
+  /* 布局宽度 */
   --content-width: 1420px;
   /* 单列正文的阅读宽度。--content-width 是给检索页两栏结果用的，拿它排一列正文，
      一行会有 140+ 字符，眼睛要来回扫。760px 在 0.92rem 下约 68 字符。 */
