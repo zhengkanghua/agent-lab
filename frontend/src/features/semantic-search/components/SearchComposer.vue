@@ -7,16 +7,22 @@ import BaseField from '@/shared/ui/BaseField.vue'
 import type { SearchMode } from '../model/search-result'
 import { MAX_QUERY_CHARACTERS } from '../model/search-validation'
 
-const props = defineProps<{
-  mode: SearchMode
-  modelValue: string
-  documentLimit: number
-  topK: number
-  matchesPerDocument: number
-  loading: boolean
-  inputError: string | null
-  remainingCharacters: number
-}>()
+const props = withDefaults(
+  defineProps<{
+    mode: SearchMode
+    modelValue: string
+    documentLimit: number
+    topK: number
+    matchesPerDocument: number
+    loading: boolean
+    inputError: string | null
+    remainingCharacters: number
+    /** 紧凑顶条形态：已提交检索后输入条收细、吸在顶部，把屏幕让给结果。
+        关闭（缺省）是居中引导形态：大标题 + 多行输入 + 完整控件。 */
+    slim?: boolean
+  }>(),
+  { slim: false },
+)
 
 const emit = defineEmits<{
   'update:mode': [value: SearchMode]
@@ -56,11 +62,9 @@ const counterTone = computed(() => {
 </script>
 
 <template>
-  <section class="composer" aria-labelledby="composer-title">
-    <div class="composer-heading">
-      <p>检索条件</p>
-      <h2 id="composer-title">输入问题或主题</h2>
-    </div>
+  <section class="composer" :class="{ 'is-slim': slim }" aria-labelledby="composer-title">
+    <h2 v-if="!slim" id="composer-title">输入问题或主题</h2>
+    <h2 v-else id="composer-title" class="sr-only">检索条件</h2>
 
     <form class="search-form" :aria-busy="loading" @submit.prevent="emit('submit')">
       <div class="mode-switch" role="group" aria-label="搜索结果模式">
@@ -83,7 +87,7 @@ const counterTone = computed(() => {
           按片段
         </button>
       </div>
-      <p class="mode-description">
+      <p v-if="!slim" class="mode-description">
         {{
           mode === 'document'
             ? '同一新闻的相关片段合并展示。'
@@ -98,9 +102,9 @@ const counterTone = computed(() => {
             v-model="query"
             class="query-input"
             name="query"
-            rows="6"
+            :rows="slim ? 2 : 6"
             :maxlength="MAX_QUERY_CHARACTERS"
-            placeholder="例如：央行近期是否调整利率？"
+            :placeholder="slim ? '换个问题继续检索…' : '例如：央行近期是否调整利率？'"
           ></textarea>
         </template>
         <template #hint>
@@ -164,7 +168,7 @@ const counterTone = computed(() => {
           >
             <Eraser :size="18" aria-hidden="true" />
           </BaseButton>
-          <BaseButton variant="primary" block type="submit" :loading="loading">
+          <BaseButton class="search-submit" variant="primary" type="submit" :loading="loading">
             <template #icon>
               <Search :size="18" stroke-width="2.4" aria-hidden="true" />
             </template>
@@ -181,35 +185,22 @@ const counterTone = computed(() => {
 <style scoped>
 .composer {
   position: relative;
-  padding: 22px;
+  padding: 24px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface-raised);
-  /* 顶部一条 3px 青色签名条：用 inset 阴影画，避开 overflow:hidden 带来的裁剪副作用
-     （比如 disclosure 展开时不该被卡住），也不额外引入 DOM 节点。 */
-  box-shadow:
-    var(--shadow-soft),
-    inset 0 3px 0 var(--accent);
+  box-shadow: var(--shadow-soft);
 }
 
-.composer-heading {
-  margin-bottom: 18px;
-}
-
-.composer-heading p {
-  color: var(--accent);
-  font-size: 0.72rem;
-  font-weight: 760;
-  letter-spacing: 0;
-}
-
-.composer-heading h2 {
-  margin-top: 4px;
+/* 顶部主输入的卡片标题。不再带「检索条件」小眉标：那段在窄栏时是给卡片定位用的
+   标签，现在卡片本身就是页面的主搜索入口，眉标是多余的青色噪音，去掉后层次更干净。 */
+.composer h2 {
   color: var(--text-primary);
-  font-size: 1.28rem;
-  font-weight: 760;
+  font-size: 1.18rem;
+  font-weight: 780;
   letter-spacing: 0;
   line-height: 1.3;
+  margin-bottom: 16px;
 }
 
 .search-form {
@@ -317,21 +308,26 @@ const counterTone = computed(() => {
 }
 
 .composer-toolbar {
-  display: grid;
-  gap: 13px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  column-gap: 26px;
+  row-gap: 13px;
   margin-top: 4px;
   padding-top: 16px;
   border-top: 1px solid var(--surface-sunken);
 }
 
+/* 工具行在宽卡里被拉成一行：数量/每篇片段靠左，提交按钮用 margin-left:auto 贴右；
+   空间不足时按钮自然折到下一行仍右对齐。结果数量选择与 select 紧凑挨着，
+   不再用 justify-between 把两端拉开。 */
 .result-limit-control {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  min-height: 42px;
   color: var(--text-secondary);
   font-size: 0.8rem;
+  white-space: nowrap;
 }
 
 .control-label {
@@ -341,7 +337,7 @@ const counterTone = computed(() => {
 }
 
 .control-label svg {
-  color: var(--accent);
+  color: var(--text-muted);
 }
 
 .result-limit-control select,
@@ -358,16 +354,17 @@ const counterTone = computed(() => {
 }
 
 .advanced-options {
-  border-top: 1px solid var(--surface-sunken);
-  border-bottom: 1px solid var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   font-size: 0.8rem;
 }
 
-/* 摘要行的排布、箭头、meta 值都归 BaseDisclosure。这里只补一条本行专有的高度：
-   要和上面 .result-limit-control 的 44px 对齐，两行看起来才是一组。 */
+/* 摘要行的排布、箭头、meta 值都归 BaseDisclosure。这里只把 disclosure 与上面
+   数量选择对齐成一组（同 38px 级按钮高度），视觉上是工具行里的一个胶囊入口。 */
 .advanced-options :deep(.disclosure-summary) {
-  min-height: 44px;
+  min-height: 38px;
+  padding-left: 10px;
 }
 
 .advanced-options label {
@@ -376,35 +373,61 @@ const counterTone = computed(() => {
   justify-content: space-between;
   gap: 12px;
   min-height: 44px;
-  padding: 6px 0 12px 22px;
+  padding: 6px 12px 12px;
 }
 
+/* 主提交按钮在工具行里按内容收身、贴右即可，不做 block 满宽。 */
 .composer-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  margin-left: auto;
 }
 
 /* 两个按钮的几何、配色、悬停与加载态都归 BaseButton（清空 = secondary + icon-only，
-   搜索 = primary + block）。只剩清空按钮不参与伸缩这一条：它是固定宽的方块。 */
+   搜索 = primary）。只剩清空按钮不参与伸缩这一条：它是固定宽的方块。 */
 .clear-button {
   flex: 0 0 44px;
 }
 
-@media (max-width: 980px) and (min-width: 641px) {
-  .composer-toolbar {
-    grid-template-columns: minmax(190px, 0.7fr) minmax(240px, 1fr);
-    align-items: end;
-  }
+/* ---- 紧凑顶条形态（is-slim）----
+   提交检索后输入条收细吸顶：去掉标题与模式说明，输入框缩成两行，控件行更密。
+   卡片仍是圆角框，只是更矮；宽度与吸顶由页面（.docked-composer 容器）负责。 */
+.composer.is-slim {
+  padding: 10px 12px 12px;
 }
 
-@media (max-width: 420px) {
+.composer.is-slim .composer-toolbar {
+  column-gap: 14px;
+  row-gap: 8px;
+  margin-top: 2px;
+  padding-top: 10px;
+}
+
+.composer.is-slim .query-input {
+  min-height: 0;
+}
+
+.composer.is-slim .character-count {
+  display: none;
+}
+
+@media (max-width: 520px) {
   .composer {
     padding: 18px 15px;
   }
 
   .query-input {
     min-height: 142px;
+  }
+
+  /* 很窄时提交按钮回归满宽，作为拇指友好的主操作。 */
+  .composer-actions {
+    width: 100%;
+  }
+
+  .search-submit {
+    flex: 1;
   }
 }
 </style>
