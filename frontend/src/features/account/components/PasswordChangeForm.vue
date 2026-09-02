@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { usePasswordChangeForm } from '../composables/usePasswordChangeForm'
-import BaseButton from '../../../shared/ui/BaseButton.vue'
-import BaseField from '../../../shared/ui/BaseField.vue'
-import BaseSpinner from '../../../shared/ui/BaseSpinner.vue'
+import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseField from '@/shared/ui/BaseField.vue'
+import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
 
 const { form, validationErrors, canSubmit, submit, isPending, errorMessage, successMessage } =
   usePasswordChangeForm()

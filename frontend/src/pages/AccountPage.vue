@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { authSession } from '../features/auth/auth-session'
-import PasswordChangeForm from '../features/account/components/PasswordChangeForm.vue'
+import { authSession } from '@/features/auth/auth-session'
+import PasswordChangeForm from '@/features/account/components/PasswordChangeForm.vue'
 import { RouterLink } from 'vue-router'
 import { User, ShieldCheck } from '@lucide/vue'
 

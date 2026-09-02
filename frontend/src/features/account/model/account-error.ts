@@ -1,4 +1,4 @@
-import type { ApiError } from '../../../api/client'
+import type { ApiError } from '@/api/client'
 
 const ACCOUNT_ERROR_COPY: Record<string, string> = {
   current_password_invalid: '当前密码不正确。',

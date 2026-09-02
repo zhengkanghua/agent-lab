@@ -1,7 +1,7 @@
 import { ref, computed } from 'vue'
-import { changeOwnPassword, type PasswordChangeRequest } from '../../../api/account'
+import { changeOwnPassword, type PasswordChangeRequest } from '@/api/account'
 import { getAccountErrorCopy } from '../model/account-error'
-import type { ApiError } from '../../../api/client'
+import type { ApiError } from '@/api/client'
 
 export interface PasswordChangeFormState {
   currentPassword: string
