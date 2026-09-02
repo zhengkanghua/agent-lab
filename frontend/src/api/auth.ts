@@ -1,7 +1,10 @@
 import type { components } from './generated/openapi'
 import { requestJson, requestVoid } from './client'
 
-export type AuthUserDto = components['schemas']['AuthUserResponse']
+// 本地扩展：后端已添加 created_at，但 openapi.ts 被其他会话占用未重新生成
+export type AuthUserDto = components['schemas']['AuthUserResponse'] & {
+  created_at: string
+}
 
 export function fetchCurrentUser(): Promise<AuthUserDto> {
   return requestJson<AuthUserDto>('/auth/me', { method: 'GET' }, { notifyUnauthorized: false })

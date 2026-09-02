@@ -1,13 +1,16 @@
-"""暴露账号密码登录、退出和当前用户读取接口。
+"""暴露账号密码登录、退出、当前用户读取和账号自助操作接口。
 
 登录与退出由 FastAPI Users Cookie backend 提供；本模块只增加安全的 ``GET /auth/me``
-身份视图。公开注册、密码重置、邮箱验证和用户枚举路由均不挂载。
+身份视图，并挂上 ``/auth/me/*`` 的自助子路由。公开注册、密码重置、邮箱验证和用户枚举路由
+均不挂载——「忘记密码」需要发信通道且允许未登录者触发，与本项目「封闭内部账号」的前提冲突；
+自助改密要求先证明自己知道旧密码，是另一回事。
 """
 
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
+from agent_lab.api.account import router as account_router
 from agent_lab.auth.dependencies import (
     cookie_auth_backend,
     current_active_user,
@@ -19,6 +22,10 @@ from agent_lab.schemas.auth import AuthUserResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 router.include_router(fastapi_users.get_auth_router(cookie_auth_backend))
+# 自助子路由自带 ``route_class=SanitizedValidationRoute``（它的请求体有明文密码），而本
+# 路由没有。include 不会改写子路由的 route class：那些 route 对象在 account.py 里就已按它
+# 自己的 router 建好了。所以脱敏跟着自助路由走，不会被这里的默认行为吞掉。
+router.include_router(account_router)
 
 
 @router.get(

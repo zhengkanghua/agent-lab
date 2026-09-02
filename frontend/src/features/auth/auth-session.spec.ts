@@ -10,6 +10,7 @@ const currentUser = {
   is_superuser: false,
   is_verified: true,
   is_environment_admin: false,
+  created_at: '2026-08-18T00:00:00Z',
 }
 
 describe('auth session', () => {

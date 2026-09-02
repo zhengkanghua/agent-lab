@@ -16,6 +16,7 @@
 | --- | --- | --- | --- | --- |
 | 账号密码登录、退出 | `/login` | `POST /auth/login`、`POST /auth/logout` | `api/auth.py`（FastAPI Users Cookie backend）、`auth/`；前端 `api/auth.ts`、`features/auth/auth-session.ts` | `tests/test_auth.py`、`src/features/auth/auth-session.spec.ts`、`src/pages/LoginPage.spec.ts` |
 | 读取当前登录身份 | 无独立页面，路由守卫用 | `GET /auth/me` | `api/auth.py`、`schemas/auth.py`；前端 `features/auth/auth-session.ts`、`app/router.ts` | `tests/test_auth.py`、`src/features/auth/auth-session.spec.ts` |
+| 账号自助（看自己信息、改自己密码） | `/account` | `POST /auth/me/password` | `api/account.py` → `services/account_service.py`；前端 `api/account.ts`、`pages/AccountPage.vue`、`features/account/` | `tests/test_account.py` |
 | 语义检索（Chunk 级） | `/` | `POST /vector-search` | `api/vector_search.py` → `services/vector_search_service.py` → `qdrant/search.py`；前端 `api/vector-search.ts`、`features/semantic-search/composables/useChunkSearch.ts` | `tests/test_vector_search.py`、`tests/test_vector_search_api.py`、`src/api/vector-search.spec.ts` |
 | 文档检索（文档级） | `/` | `POST /document-search` | `api/document_search.py` → `services/vector_search_service.py`；前端 `api/document-search.ts`、`features/semantic-search/composables/useSearchRequest.ts` | `tests/test_document_search.py`、`src/api/document-search.spec.ts` |
 | 读取单篇文档 | `/`（结果内展开） | `GET /documents/{document_id}` | `api/documents.py` → `repositories/document_repository.py`；前端 `api/documents.ts`、`features/semantic-search/composables/useDocumentReader.ts` | `tests/test_documents_api.py`、`src/api/documents.spec.ts` |

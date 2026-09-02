@@ -124,10 +124,16 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
               <component :is="link.icon" :size="17" aria-hidden="true" />
             </RouterLink>
 
-            <span v-if="authSession.user.value" class="account-identity">
+            <RouterLink
+              v-if="authSession.user.value"
+              :to="{ name: 'account' }"
+              class="account-identity"
+              :aria-label="`账号设置 - ${authSession.user.value.email}`"
+              :title="`账号设置 - ${authSession.user.value.email}`"
+            >
               <UserRound :size="16" aria-hidden="true" />
               <span>{{ authSession.user.value.email }}</span>
-            </span>
+            </RouterLink>
 
             <BaseIconButton
               label="退出登录"
@@ -272,6 +278,17 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
   gap: 7px;
   color: var(--text-secondary);
   font-size: 0.75rem;
+  text-decoration: none;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+}
+
+.account-identity:hover {
+  color: var(--accent);
+  background: var(--surface-base);
 }
 
 .account-identity span {

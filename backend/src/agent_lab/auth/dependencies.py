@@ -117,3 +117,15 @@ fastapi_users = FastAPIUsers[UserRecord, UUID](
 # 漏掉 active 的话，「禁用账号」就只能等 Token 自然过期才生效。
 current_active_user = fastapi_users.current_user(active=True)
 current_superuser = fastapi_users.current_user(active=True, superuser=True)
+
+# 第三道门，只给「改自己密码」用：除了账号本身，还要拿到本次请求用的那个数据库 Token，
+# 返回的是 ``(user, token)`` 二元组。有它才能做到「踢掉其他设备、保留当前这一个」——
+# 要保留哪一个，只有认证层知道，请求体里读不到（读它等于让调用者指定自己是谁）。
+#
+# 必须在模块级只建一次，不能在路由里现调 ``current_user_token()``：每次调用返回的是一个
+# 新的函数对象，而 ``app.dependency_overrides`` 是按对象身份查的，现建的那个谁也覆盖不了，
+# 测试里就再也没法注入假身份。
+#
+# 走 ``.authenticator`` 而不是 ``fastapi_users.current_user_token``：``FastAPIUsers`` 只把
+# ``current_user`` 转发到了外层，带 Token 的那个变体没转发，只在 Authenticator 上。
+current_active_user_token = fastapi_users.authenticator.current_user_token(active=True)

@@ -1,6 +1,7 @@
 """本地账号密码 Cookie 认证、权限边界和公开契约的完全离线测试。"""
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -27,6 +28,12 @@ def run(coroutine: Any) -> Any:
     return asyncio.run(coroutine)
 
 
+# 账号建立时间的固定值。真实行由 PostgreSQL 的 server_default 填这一列，而这些替身账号从不
+# 落库，那一列就还是 None——``/auth/me`` 的响应模型要求它是 datetime，所以替身必须自己给。
+# 用固定时间而不是 ``datetime.now``：响应体是逐字段全等断言，取当前时间就没法写死期望值。
+CREATED_AT = datetime(2026, 8, 18, tzinfo=UTC)
+
+
 def user(*, superuser: bool = False) -> UserRecord:
     """构造不持久化的已启用内部账号。"""
 
@@ -38,6 +45,7 @@ def user(*, superuser: bool = False) -> UserRecord:
         is_superuser=superuser,
         is_verified=True,
         is_environment_admin=False,
+        created_at=CREATED_AT,
     )
 
 
@@ -136,6 +144,9 @@ def test_cookie_login_me_logout_and_revocation_flow() -> None:
                     "is_superuser": False,
                     "is_verified": True,
                     "is_environment_admin": False,
+                    # 写死 Pydantic 实际发出的那个形状（UTC 用 ``Z`` 而不是 ``+00:00``），
+                    # 因为前端解析的就是这串字面量。
+                    "created_at": "2026-08-18T00:00:00Z",
                 }
 
                 pipeline = await client.post("/pipeline/run-once", json={})
@@ -190,6 +201,10 @@ def test_openapi_exposes_cookie_security_without_public_registration() -> None:
     assert "/auth/me" in schema["paths"]
     assert "/auth/register" not in schema["paths"]
     assert "/auth/forgot-password" not in schema["paths"]
+    # 自助改密要挂在认证之后：它带 Cookie 安全声明，且成功响应是 204 无响应体。
+    self_service = schema["paths"]["/auth/me/password"]["post"]
+    assert self_service["security"] == [{"APIKeyCookie": []}]
+    assert "content" not in self_service["responses"]["204"]
     assert schema["paths"]["/admin/users"]["get"]["security"] == [
         {"APIKeyCookie": []}
     ]

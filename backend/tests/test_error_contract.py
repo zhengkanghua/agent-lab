@@ -45,7 +45,8 @@ def all_error_rules() -> tuple[ErrorContractRule, ...]:
 
 
 # 签名为 (code, detail) 的领域错误：detail 走第二个位置实参，没有关键字名可认。
-POSITIONAL_DETAIL_CALLS = {"UserAdminDomainError": 1}
+# 每新增一个这种形状的领域错误类都要登记进来，否则它抛出的 detail 字面量不受本文件约束。
+POSITIONAL_DETAIL_CALLS = {"UserAdminDomainError": 1, "AccountDomainError": 1}
 
 
 def called_name(node: ast.Call) -> str:

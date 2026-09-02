@@ -4,6 +4,7 @@
 绝不包含密码 Hash、Cookie 或数据库 Token。
 """
 
+from datetime import datetime
 from uuid import UUID
 
 from fastapi_users import schemas
@@ -34,3 +35,7 @@ class AuthUserResponse(schemas.BaseUser[UUID]):
     is_environment_admin: bool = Field(
         description="账号是否由服务端 AUTH_ADMIN_EMAIL/AUTH_ADMIN_PASSWORD 托管。",
     )
+    # 自助账号页要显示「这个号是什么时候建的」，好让人确认自己登的是不是以为的那个账号。
+    # 只加 created_at，不加 updated_at：后者会随任何一次改密或状态变更跳动，对账号主人没有
+    # 可解释的含义，反而像是「有人动过我的号」。要看变更历史是审计的活，不是这个视图的。
+    created_at: datetime = Field(description="账号在 PostgreSQL 中首次写入的时间。")
