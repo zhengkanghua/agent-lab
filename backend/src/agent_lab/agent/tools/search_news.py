@@ -15,12 +15,32 @@ source_id 列表、不知道语料库里有哪些标签、也读不懂原始 Cos
 为什么返回文本而不是 JSON：工具返回值会作为 ``ToolMessage`` 进入模型上下文，模型读的是
 自然语言。JSON 同样能读，但会多花 token 在括号和引号上，且模型更容易照抄结构而不是理解
 内容。这里排成带 document_id 的条目列表，既省 token 又保证引用所需的 id 一定在上下文里。
+
+工具函数实现说明
+----------------
+search_news:
+    参数说明在函数 docstring 的 Args 部分，校验规则通过 ``Annotated[type, Field(...)]`` 定义。
+
+    Returns:
+        格式化的新闻列表文本，见 ``_format_results``。没有命中时刻意返回一句说明而不是空字符串：
+        空字符串会让模型以为工具坏了，进而重试或编造。
+
+    Raises:
+        OllamaEmbeddingError: query Embedding 失败（子类区分认证、超时、连接、模型缺失）。
+        QueryVectorValidationError: 向量不符合当前索引规格。
+        QdrantVectorSearchError: Qdrant 查询失败。
+        一律向上抛，交给 ``ToolRetryMiddleware`` 重试、``ToolErrorMiddleware`` 脱敏；
+        这几个类名不写进工具 docstring，否则会随工具描述进模型上下文，绕过 ``sanitize_tool_error``。
+
+    I/O:
+        纯读取：一次 query Embedding 加一次 Qdrant 查询，不写 PostgreSQL 或 Qdrant。
 """
 
 from datetime import UTC, datetime, timedelta
+from typing import Annotated
 
 from langchain_core.tools import BaseTool, tool
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
 from agent_lab.agent.limits import (
     SEARCH_TOOL_MAX_DOCUMENTS,
@@ -35,46 +55,6 @@ from agent_lab.schemas.vector_search import MAX_QUERY_CHARACTERS, VectorSearchFi
 from agent_lab.services.vector_search_service import VectorSearchService
 
 
-class SearchNewsArguments(BaseModel):
-    """``search_news`` 的参数契约。
-
-    这些字段的 ``description`` 会被 LangChain 转成 JSON Schema 塞进模型上下文，模型据此
-    决定怎么填参数。所以它们同时是校验规则**和**提示词的一部分：写「必须是中文」这类约束
-    没用（校验不了），写「按什么思路填」才有用。
-    """
-
-    query: str = Field(
-        max_length=MAX_QUERY_CHARACTERS,
-        description=(
-            "要检索的内容，用陈述句或关键词描述你想找的新闻主题，例如「央行降息 房贷利率」。"
-            "这是语义检索，不是关键词匹配，所以写完整的意思比堆关键词效果好；不要写成问句。"
-        ),
-    )
-    document_limit: int = Field(
-        default=SEARCH_TOOL_MAX_DOCUMENTS,
-        ge=1,
-        le=SEARCH_TOOL_MAX_DOCUMENTS,
-        description=(
-            f"最多返回几篇新闻，范围 1..{SEARCH_TOOL_MAX_DOCUMENTS}，默认取上限。"
-            "只想确认某件事存不存在时可以填 1..2 以减少无关内容。"
-        ),
-    )
-    within_days: int | None = Field(
-        default=None,
-        ge=1,
-        le=SEARCH_TOOL_MAX_WITHIN_DAYS,
-        description=(
-            f"只看最近多少天内发布的新闻，范围 1..{SEARCH_TOOL_MAX_WITHIN_DAYS}；"
-            "不填表示不限发布时间。用户明确说了时间范围（「最近三天」「这一周」「今年」）"
-            "时填对应天数，否则不要填——填了会把窗口外确实相关的新闻整条排除掉，"
-            "而语义检索本来就倾向于把切题的排在前面。"
-            "注意语料库里有些新闻没有发布时间，填了这个参数它们一律不会出现。"
-        ),
-    )
-
-    model_config = ConfigDict(extra="forbid")
-
-
 def build_search_news_tool(service: VectorSearchService) -> BaseTool:
     """用闭包把 Service 绑进 Tool，得到一个模型可直接调用的检索工具。
 
@@ -86,17 +66,21 @@ def build_search_news_tool(service: VectorSearchService) -> BaseTool:
         service: 进程级只读检索 Service，由 composition root 装配。
 
     Returns:
-        名为 ``search_news`` 的 ``BaseTool``，已绑定 ``SearchNewsArguments`` 作为参数契约。
+        名为 ``search_news`` 的 ``BaseTool``。
 
     Notes:
         本函数只组装对象，不执行检索。
     """
 
-    @tool("search_news", args_schema=SearchNewsArguments)
+    @tool(parse_docstring=True)
     async def search_news(
-        query: str,
-        document_limit: int = SEARCH_TOOL_MAX_DOCUMENTS,
-        within_days: int | None = None,
+        query: Annotated[str, Field(max_length=MAX_QUERY_CHARACTERS)],
+        document_limit: Annotated[
+            int, Field(default=SEARCH_TOOL_MAX_DOCUMENTS, ge=1, le=SEARCH_TOOL_MAX_DOCUMENTS)
+        ] = SEARCH_TOOL_MAX_DOCUMENTS,
+        within_days: Annotated[
+            int | None, Field(default=None, ge=1, le=SEARCH_TOOL_MAX_WITHIN_DAYS)
+        ] = None,
     ) -> str:
         """按语义检索已入库的新闻，返回若干篇的标题、来源、发布时间和最相关片段。
 
@@ -106,27 +90,12 @@ def build_search_news_tool(service: VectorSearchService) -> BaseTool:
         检索不到时会返回一句明确的说明，不是空结果，此时可以换个说法再检索一次，或者
         直接告诉用户语料库里没有这个主题。用 within_days 缩小过时间范围而没有结果时，
         可以去掉这个参数再检索一次，语料库的时间覆盖可能和用户以为的不一样。
-        """
 
-        # 上面那份 docstring 会原样进模型上下文，所以维护者要看的东西写在这里：
-        #
-        # Args   —— 三个参数的填写说明在 SearchNewsArguments 的 Field description 里，
-        #           它们同样进模型上下文，在 docstring 里再写一遍是重复。
-        #
-        #           within_days 在这里换算成 published_from，而不是给模型一个日期字段：
-        #           模型不擅长做日期算术（「最近三天」减出来经常差一天，跨月更容易错），
-        #           但「三天」这个数它填得准。换算的基准是服务端的 UTC 当前时间，和系统
-        #           提示词里注入的当前日期同一套基准（见 middleware.append_current_date）。
-        #           published_to 刻意不给：上界永远是「现在」，给了只会多一个模型能填错的
-        #           维度——填成过去某天就等于悄悄排除掉最新的新闻，而这通常正是用户想要的。
-        # Returns—— _format_results 的返回值。没有命中时刻意返回一句说明而不是空字符串：
-        #           空字符串会让模型以为工具坏了，进而重试或编造。
-        # Raises —— query Embedding 失败（OllamaEmbeddingError，子类区分认证、超时、
-        #           连接、模型缺失）、向量不符合当前索引规格（QueryVectorValidationError）、
-        #           Qdrant 查询失败（QdrantVectorSearchError）。一律向上抛，交给
-        #           ToolRetryMiddleware 重试、ToolErrorMiddleware 脱敏；这几个类名不能
-        #           写进 docstring，否则会随工具描述进模型上下文，绕过 sanitize_tool_error。
-        # I/O    —— 纯读取：一次 query Embedding 加一次 Qdrant 查询，不写 PostgreSQL 或 Qdrant。
+        Args:
+            query: 要检索的内容，用陈述句或关键词描述你想找的新闻主题，例如「央行降息 房贷利率」。这是语义检索，不是关键词匹配，所以写完整的意思比堆关键词效果好；不要写成问句。
+            document_limit: 最多返回几篇新闻，默认取上限。只想确认某件事存不存在时可以填 1..2 以减少无关内容。具体范围见参数 schema 的 minimum/maximum。
+            within_days: 只看最近多少天内发布的新闻；不填表示不限发布时间。用户明确说了时间范围（「最近三天」「这一周」「今年」）时填对应天数，否则不要填——填了会把窗口外确实相关的新闻整条排除掉，而语义检索本来就倾向于把切题的排在前面。注意语料库里有些新闻没有发布时间，填了这个参数它们一律不会出现。具体范围见参数 schema 的 minimum/maximum。
+        """
 
         request = DocumentSearchRequest(
             query=query,
@@ -148,7 +117,7 @@ def _time_filters(within_days: int | None) -> VectorSearchFilters:
     是「明明有这条新闻却说没有」——比不过滤糟得多。
 
     Args:
-        within_days: 天数；``None`` 表示不限时间。范围由 ``SearchNewsArguments`` 校验，
+        within_days: 天数；``None`` 表示不限时间。范围由工具参数的 ``Annotated`` 约束校验，
             这里不重复校验。
 
     Returns:
@@ -199,4 +168,4 @@ def _format_results(results: list[DocumentSearchResult]) -> str:
     return "\n\n".join(blocks)
 
 
-__all__ = ["SearchNewsArguments", "build_search_news_tool"]
+__all__ = ["build_search_news_tool"]

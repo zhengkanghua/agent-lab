@@ -32,10 +32,7 @@ from agent_lab.agent.limits import (
 )
 from agent_lab.agent.tools import build_agent_tools
 from agent_lab.agent.tools.read_document import build_read_document_tool
-from agent_lab.agent.tools.search_news import (
-    SearchNewsArguments,
-    build_search_news_tool,
-)
+from agent_lab.agent.tools.search_news import build_search_news_tool
 from agent_lab.models.document import DocumentRecord
 from agent_lab.models.source import SourceRecord
 from agent_lab.schemas.document_search import (
@@ -215,8 +212,12 @@ def test_search_tool_rejects_a_document_limit_over_the_cap() -> None:
     之前，所以这类错误不会白白消耗一次 Embedding 和一次 Qdrant 查询。
     """
 
+    service = FakeSearchService([build_result()])
+    news_tool = build_search_news_tool(service)  # type: ignore[arg-type]
+
     with pytest.raises(ValidationError):
-        SearchNewsArguments(query="央行降息", document_limit=SEARCH_TOOL_MAX_DOCUMENTS + 1)
+        # 用工具的 args_schema 做校验，它由 LangChain 从函数签名+Annotated 自动生成。
+        news_tool.args_schema(query="央行降息", document_limit=SEARCH_TOOL_MAX_DOCUMENTS + 1)
 
 
 # ---- within_days：模型能表达时间范围，但只能表达这一种 ----
@@ -269,7 +270,8 @@ def test_within_days_outside_the_range_is_rejected(bad_value: int) -> None:
     """
 
     with pytest.raises(ValidationError):
-        SearchNewsArguments(query="央行降息", within_days=bad_value)
+        news_tool = build_search_news_tool(FakeSearchService([build_result()]))  # type: ignore[arg-type]
+        news_tool.args_schema(query="央行降息", within_days=bad_value)
 
 
 def test_search_tool_exposes_only_the_three_intended_arguments() -> None:
@@ -277,10 +279,17 @@ def test_search_tool_exposes_only_the_three_intended_arguments() -> None:
 
     Service 那层还支持 score_threshold、labels、source_id 等等，它们刻意不暴露：模型拿不到
     这些字段的合法取值，填了就是猜，而猜错的表现是「明明有这条新闻却说没有」。日后有人顺手
-    往 SearchNewsArguments 里加字段，这里会立刻失败，迫使他先想清楚模型有没有可能填对。
+    给工具函数加参数，这里会立刻失败，迫使他先想清楚模型有没有可能填对。
     """
 
-    assert set(SearchNewsArguments.model_fields) == {"query", "document_limit", "within_days"}
+    service = FakeSearchService([build_result()])
+    news_tool = build_search_news_tool(service)  # type: ignore[arg-type]
+
+    assert set(news_tool.args_schema.model_fields) == {
+        "query",
+        "document_limit",
+        "within_days",
+    }
 
 
 def test_search_tool_lets_upstream_errors_propagate() -> None:

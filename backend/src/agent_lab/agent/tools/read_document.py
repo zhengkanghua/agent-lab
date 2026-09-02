@@ -7,13 +7,30 @@ Qdrant 或 Ollama、不改 processing_status，也不捕获数据库异常（异
 会话生命周期是本模块唯一的复杂点：Agent 是进程级共享的，而 ``AsyncSession`` 是一次工作
 单元，不能被长期持有或跨并发请求共用。所以这里注入的是 session **工厂**，每次工具调用
 自己开一个短命 Session、用完立即归还连接池。
+
+工具函数实现说明
+----------------
+read_document:
+    参数只有 document_id，说明在函数 docstring 的 Args 部分。
+
+    Returns:
+        格式化的新闻全文（标题、来源、发布时间、正文），见 ``_format_document``。
+        文档不存在时返回说明文案而不是抛异常：「查不到这一篇」是正常业务结果，
+        模型应当据此改换思路（比如重新检索），而不是被中间件重试三次再收到系统故障。
+
+    Raises:
+        SQLAlchemyError: 数据库不可用或查询失败。这类是真故障，向上抛给中间件；
+        异常类名不写进工具 docstring，否则会随工具描述进模型上下文，绕过
+        ``sanitize_tool_error`` 的脱敏。
+
+    I/O:
+        纯读取：一次 eager-load source 的查询，不写库、不重新切分正文、不查 Qdrant。
 """
 
 from collections.abc import Callable
 from uuid import UUID
 
 from langchain_core.tools import BaseTool, tool
-from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_lab.agent.limits import READ_DOCUMENT_MAX_CHARS
@@ -22,23 +39,6 @@ from agent_lab.repositories.document_repository import DocumentRepository
 
 
 type SessionFactory = Callable[[], AsyncSession]
-
-
-class ReadDocumentArguments(BaseModel):
-    """``read_document`` 的参数契约。
-
-    只有一个参数，且它必须来自上一次 ``search_news`` 的输出——模型无法凭空构造出库里
-    存在的 UUID。description 明确这一点，是为了减少模型「猜一个 id 试试」的行为。
-    """
-
-    document_id: UUID = Field(
-        description=(
-            "要读取的新闻的 document_id，必须是 search_news 结果里出现过的那个 UUID，"
-            "原样照抄，不要改写或猜测。"
-        ),
-    )
-
-    model_config = ConfigDict(extra="forbid")
 
 
 def build_read_document_tool(session_factory: SessionFactory) -> BaseTool:
@@ -56,7 +56,7 @@ def build_read_document_tool(session_factory: SessionFactory) -> BaseTool:
         本函数只组装对象，不建立数据库连接。
     """
 
-    @tool("read_document", args_schema=ReadDocumentArguments)
+    @tool(parse_docstring=True)
     async def read_document(document_id: UUID) -> str:
         """按 document_id 读取一篇新闻的完整正文。
 
@@ -66,19 +66,10 @@ def build_read_document_tool(session_factory: SessionFactory) -> BaseTool:
         正文过长时会被截断并标注，看到截断标注就说明你只读到了前半部分，不要据此断言
         「文中没有提到」。document_id 查不到时会返回一句明确的说明，此时应当确认 id 是否
         来自 search_news 的结果，或者换个检索词重新检索。
-        """
 
-        # 上面那份 docstring 会原样进模型上下文，所以维护者要看的东西写在这里：
-        #
-        # Args   —— document_id 的说明在 ReadDocumentArguments 的 Field description 里，
-        #           它同样进模型上下文，在 docstring 里再写一遍是重复。
-        # Returns—— _format_document 的返回值。文档不存在时返回说明而不是抛异常：
-        #           「查不到这一篇」是正常业务结果，模型应当据此改换思路（比如重新检索），
-        #           而不是被中间件重试三次再收到一句系统故障。
-        # Raises —— SQLAlchemyError（数据库不可用或查询失败）。这类是真故障，向上抛给
-        #           中间件；类名不能写进 docstring，否则会随工具描述进模型上下文，
-        #           绕过 sanitize_tool_error 的脱敏。
-        # I/O    —— 纯读取：一次 eager-load source 的查询，不写库、不重新切分正文、不查 Qdrant。
+        Args:
+            document_id: 要读取的新闻的 document_id，必须是 search_news 结果里出现过的那个 UUID，原样照抄，不要改写或猜测。
+        """
 
         async with session_factory() as session:
             repository = DocumentRepository(session)
@@ -130,4 +121,4 @@ def _format_document(record: DocumentRecord) -> str:
     )
 
 
-__all__ = ["ReadDocumentArguments", "SessionFactory", "build_read_document_tool"]
+__all__ = ["SessionFactory", "build_read_document_tool"]
