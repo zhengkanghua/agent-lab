@@ -19,6 +19,7 @@ from fastapi import FastAPI
 from langchain_core.messages import AIMessage
 
 from agent_lab.agent.prompts import DEFAULT_SYSTEM_PROMPT
+from agent_lab.agent.model_catalog import LlmModelNotListedError
 from agent_lab.auth.dependencies import current_active_user, current_superuser
 from agent_lab.schemas.agent_chat import AgentChatEventEnvelope
 from tests.agent_helpers import (
@@ -41,8 +42,9 @@ def app_for(
     *,
     superuser: bool = True,
     agent_build_error: Exception | None = None,
+    model_catalog_error: Exception | None = None,
 ) -> tuple[FastAPI, Any]:
-    """本文件的简写：转调共享的 ``create_agent_app``。
+    """本文件的简写:转调共享的 ``create_agent_app``。
 
     保留这层薄封装只为让下面几十个用例的调用点不用改动；真正的装配逻辑在
     ``tests/app_helpers.py``，与会话记录测试共用一份。
@@ -52,6 +54,7 @@ def app_for(
         model,
         superuser=superuser,
         agent_build_error=agent_build_error,
+        model_catalog_error=model_catalog_error,
     )
 
 
@@ -247,7 +250,9 @@ def test_custom_system_prompt_reaches_the_model() -> None:
     run(chat(app, message="问题", system_prompt="只用一句话回答。"))
 
     system = model.received_messages[0][0]
-    assert system.content == "只用一句话回答。"
+    # startswith 而非相等：末尾有一段运行时注入的当前日期（见 middleware.append_current_date），
+    # 日期怎么追加由 test_agent_middleware.py 钉，这里只关心自定义那份有没有走通到模型。
+    assert str(system.content).startswith("只用一句话回答。")
 
 
 def test_default_prompt_applies_when_not_supplied() -> None:
@@ -257,10 +262,16 @@ def test_default_prompt_applies_when_not_supplied() -> None:
     run(chat(app, message="问题"))
 
     system = model.received_messages[0][0]
-    assert system.content == DEFAULT_SYSTEM_PROMPT
+    assert str(system.content).startswith(DEFAULT_SYSTEM_PROMPT)
 
 
 def test_default_prompt_endpoint_returns_the_same_constant() -> None:
+    """端点返回的是不含日期的那份原始常量。
+
+    这份是给前端编辑框当模板用的：用户看到的应该是可以改的回答规范，不该出现「当前日期：
+    2026-03-17」这种他一改就会过期的运行时事实。日期在每次运行时由服务端追加。
+    """
+
     model = scripted("答案")
     app, _search = app_for(model)
 
@@ -334,6 +345,31 @@ def test_agent_build_failure_yields_503_without_breaking_search() -> None:
     model = scripted("答案")
     app, search = app_for(
         model, agent_build_error=RuntimeError("缺少模型凭据")
+    )
+
+    chat_response = run(send(app, "POST", "/agent/chat", json={"message": "问题"}))
+    search_response = run(
+        send(app, "POST", "/vector-search", json={"query": "央行利率"})
+    )
+
+    assert chat_response.status_code == 503
+    assert chat_response.json()["code"] == "agent_runtime_unavailable"
+    assert search_response.status_code == 200
+    assert len(search.service.calls) == 1
+
+
+def test_a_model_name_not_in_the_catalog_yields_the_same_503() -> None:
+    """启动时模型名校验失败，对外表现与 Agent 装配失败完全一致。
+
+    与上一条成对：两者在 lifespan 里共用同一个 ``try``，因为对用户是同一件事——Agent 用不了，
+    别的照用。钉住「同一个 code」是为了让前端只需要认一套文案；把校验挪出那个 try、让它
+    冒到启动路径上，这条会红。
+    """
+
+    model = scripted("答案")
+    app, search = app_for(
+        model,
+        model_catalog_error=LlmModelNotListedError("上游模型列表中没有以下模型：auto。"),
     )
 
     chat_response = run(send(app, "POST", "/agent/chat", json={"message": "问题"}))

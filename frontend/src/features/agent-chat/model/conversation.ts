@@ -10,6 +10,13 @@ import type { AgentErrorPresentation } from './agent-error'
 export interface AgentToolTrace {
   /** v-for 的稳定 key。用递增序号而不是内容哈希：同一轮里可能有两次完全相同的调用。 */
   id: string
+  /**
+   * 后端给的调用 id，用来把结果配到这一条调用上。
+   *
+   * 和上面的 `id` 是两件事：`id` 是本地渲染 key，这个是后端契约里的值。回放出来的轨迹
+   * 没有它（那边调用和结果已经合成一条了），所以可以为 null。
+   */
+  toolCallId: string | null
   tool: string
   arguments: Record<string, unknown>
   content: string | null
@@ -50,6 +57,7 @@ export function createTurn(question: string): AgentTurn {
 export function appendToolCall(turn: AgentTurn, event: AgentToolCallEvent): void {
   turn.traces.push({
     id: nextLocalId('trace'),
+    toolCallId: event.tool_call_id,
     tool: event.tool,
     arguments: event.arguments ?? {},
     content: null,
@@ -60,16 +68,18 @@ export function appendToolCall(turn: AgentTurn, event: AgentToolCallEvent): void
 /**
  * 把工具结果并进对应的调用轨迹。
  *
- * 按「同名且还没有结果的最早那条」匹配：后端的 tool_result 事件不带调用 id（见
- * `agent/streaming.py` 的 `_tool_events`，ToolMessage 只有 name 和 content），所以没法做
- * 精确配对。同名并发调用时按到达顺序 FIFO 对齐是唯一可行的近似，最坏情况只是两条轨迹的
- * 结果互换，不会丢失或错算条数。
+ * 按 `tool_call_id` 精确配对，不依赖到达顺序。顺序靠不住：模型可以在一轮里用不同检索词
+ * 并发调用同一个工具多次，两次调用的结果谁先返回没有保证。按工具名先来先配的话，那两条
+ * 轨迹显示的检索词底下会挂上对方的结果。后端两个事件都带这个 id（见
+ * `agent/streaming.py` 的 `_tool_events`），回放那条路一直是这么配的。
  *
  * 找不到对应调用时补一条只有结果的轨迹，而不是丢掉：宁可显示一条来源不明的工具结果，
  * 也不要让用户以为模型没查资料。
  */
 export function applyToolResult(turn: AgentTurn, event: AgentToolResultEvent): void {
-  const pending = turn.traces.find((trace) => trace.tool === event.tool && trace.content === null)
+  const pending = turn.traces.find(
+    (trace) => trace.toolCallId === event.tool_call_id && trace.content === null,
+  )
 
   if (pending) {
     pending.content = event.content
@@ -79,6 +89,7 @@ export function applyToolResult(turn: AgentTurn, event: AgentToolResultEvent): v
 
   turn.traces.push({
     id: nextLocalId('trace'),
+    toolCallId: event.tool_call_id,
     tool: event.tool,
     arguments: {},
     content: event.content,
@@ -122,6 +133,8 @@ export function turnsFromReplay(
       answer: replayTurn.answer,
       traces: (replayTurn.traces ?? []).map((trace) => ({
         id: nextLocalId('trace'),
+        // 回放的轨迹里调用和结果已经合成一条，没有待配对的东西，所以不需要这个 id。
+        toolCallId: null,
         tool: trace.tool,
         arguments: trace.arguments ?? {},
         content: trace.content ?? null,

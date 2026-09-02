@@ -159,8 +159,19 @@ describe('useAgentChat', () => {
   it('把工具调用与结果并成一条轨迹', async () => {
     const { wrapper, chat } = mountHarness(
       scriptedStream([
-        { event: 'tool_call', tool: 'search_news', arguments: { query: '利率' } },
-        { event: 'tool_result', tool: 'search_news', content: '找到 2 篇。', failed: false },
+        {
+          event: 'tool_call',
+          tool_call_id: 'call-1',
+          tool: 'search_news',
+          arguments: { query: '利率' },
+        },
+        {
+          event: 'tool_result',
+          tool_call_id: 'call-1',
+          tool: 'search_news',
+          content: '找到 2 篇。',
+          failed: false,
+        },
         { event: 'done', thread_id: THREAD_ID },
       ]),
     )
@@ -179,13 +190,37 @@ describe('useAgentChat', () => {
     wrapper.unmount()
   })
 
-  it('同名并发调用按到达顺序配对，不会把两个结果塞进同一条', async () => {
+  it('同名并发调用的结果乱序返回时，仍按 tool_call_id 配到正确的检索词上', async () => {
+    // 结果的到达顺序和调用顺序相反，这在并发调用时完全可能。按工具名先来先配的话，「甲」
+    // 那条轨迹会挂上乙的结果——界面显示的检索词和结果对不上，用户看不出来哪个是哪个。
     const { wrapper, chat } = mountHarness(
       scriptedStream([
-        { event: 'tool_call', tool: 'search_news', arguments: { query: '甲' } },
-        { event: 'tool_call', tool: 'search_news', arguments: { query: '乙' } },
-        { event: 'tool_result', tool: 'search_news', content: '甲的结果', failed: false },
-        { event: 'tool_result', tool: 'search_news', content: '乙的结果', failed: false },
+        {
+          event: 'tool_call',
+          tool_call_id: 'call-1',
+          tool: 'search_news',
+          arguments: { query: '甲' },
+        },
+        {
+          event: 'tool_call',
+          tool_call_id: 'call-2',
+          tool: 'search_news',
+          arguments: { query: '乙' },
+        },
+        {
+          event: 'tool_result',
+          tool_call_id: 'call-2',
+          tool: 'search_news',
+          content: '乙的结果',
+          failed: false,
+        },
+        {
+          event: 'tool_result',
+          tool_call_id: 'call-1',
+          tool: 'search_news',
+          content: '甲的结果',
+          failed: false,
+        },
         { event: 'done', thread_id: THREAD_ID },
       ]),
     )
@@ -194,9 +229,11 @@ describe('useAgentChat', () => {
     await chat.send()
     await flushPromises()
 
-    expect(chat.turns.value[0]?.traces.map((trace) => trace.content)).toEqual([
-      '甲的结果',
-      '乙的结果',
+    expect(
+      chat.turns.value[0]?.traces.map((trace) => [trace.arguments.query, trace.content]),
+    ).toEqual([
+      ['甲', '甲的结果'],
+      ['乙', '乙的结果'],
     ])
     wrapper.unmount()
   })
@@ -204,8 +241,14 @@ describe('useAgentChat', () => {
   it('工具失败原样标记，回答仍然保留', async () => {
     const { wrapper, chat } = mountHarness(
       scriptedStream([
-        { event: 'tool_call', tool: 'read_document', arguments: {} },
-        { event: 'tool_result', tool: 'read_document', content: '读取失败。', failed: true },
+        { event: 'tool_call', tool_call_id: 'call-1', tool: 'read_document', arguments: {} },
+        {
+          event: 'tool_result',
+          tool_call_id: 'call-1',
+          tool: 'read_document',
+          content: '读取失败。',
+          failed: true,
+        },
         { event: 'token', text: '我没读到全文，但根据摘要…' },
         { event: 'done', thread_id: THREAD_ID },
       ]),
@@ -254,7 +297,12 @@ describe('useAgentChat', () => {
   it('未完成的工具轨迹在中断时被收尾，不会一直转圈', async () => {
     const { wrapper, chat } = mountHarness(
       scriptedStream([
-        { event: 'tool_call', tool: 'search_news', arguments: { query: '利率' } },
+        {
+          event: 'tool_call',
+          tool_call_id: 'call-1',
+          tool: 'search_news',
+          arguments: { query: '利率' },
+        },
         {
           event: 'error',
           thread_id: THREAD_ID,

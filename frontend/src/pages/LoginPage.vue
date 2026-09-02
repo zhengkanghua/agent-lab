@@ -11,8 +11,8 @@ import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 
 const route = useRoute()
 const router = useRouter()
-const email = ref('')
-const password = ref('')
+const email = ref(import.meta.env.VITE_DEV_LOGIN_EMAIL || '')
+const password = ref(import.meta.env.VITE_DEV_LOGIN_PASSWORD || '')
 const showPassword = ref(false)
 const submitting = ref(false)
 const loginError = ref<string | null>(null)

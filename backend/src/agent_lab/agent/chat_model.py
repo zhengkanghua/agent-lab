@@ -83,7 +83,7 @@ def _build_openai_compatible_model(settings: LlmSettings, model: str) -> BaseCha
         api_key=settings.api_key,
         temperature=settings.temperature,
         timeout=settings.request_timeout_seconds,
-        default_headers=_build_user_agent_headers(settings),
+        default_headers=build_user_agent_headers(settings),
         # 关掉客户端自带重试：重试统一由 ModelRetryMiddleware 负责，两层都开会让实际
         # 请求次数变成乘积（2×3=6），超时和额度都不可预期。
         max_retries=0,
@@ -112,7 +112,7 @@ def _build_ollama_model(settings: LlmSettings, model: str) -> BaseChatModel:
     # 1、Ollama 原生 API 不要求凭据，但反向代理可能要，所以 Key 有值就带成 Bearer 头，
     #    为空就不带——不像 OpenAI 分支那样报错。
     secret = settings.api_key.get_secret_value().strip()
-    headers = _build_user_agent_headers(settings) or {}
+    headers = build_user_agent_headers(settings) or {}
     if secret:
         headers["Authorization"] = f"Bearer {secret}"
 
@@ -127,7 +127,7 @@ def _build_ollama_model(settings: LlmSettings, model: str) -> BaseChatModel:
     )
 
 
-def _build_user_agent_headers(settings: LlmSettings) -> dict[str, str] | None:
+def build_user_agent_headers(settings: LlmSettings) -> dict[str, str] | None:
     """把 ``LLM_USER_AGENT`` 配置转成可直接交给客户端的请求头。
 
     Args:
@@ -138,6 +138,8 @@ def _build_user_agent_headers(settings: LlmSettings) -> dict[str, str] | None:
 
     Notes:
         两个 provider 分支共用本函数，以免出现「换个 provider 就少发一个头」的不对称。
+        ``agent.model_catalog`` 也用它——启动时问「有哪些模型」必须和真正调模型时报同一个
+        身份，否则某些按 User-Agent 拦流量的中转站会让两者得出不同结论。
         为什么要能改 User-Agent 见 ``LlmSettings.user_agent`` 的字段说明。
     """
 
@@ -145,4 +147,4 @@ def _build_user_agent_headers(settings: LlmSettings) -> dict[str, str] | None:
     return {"User-Agent": user_agent} if user_agent else None
 
 
-__all__ = ["LlmConfigurationError", "build_chat_model"]
+__all__ = ["LlmConfigurationError", "build_chat_model", "build_user_agent_headers"]

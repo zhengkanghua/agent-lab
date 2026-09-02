@@ -13,6 +13,7 @@
 默认测试全部离线：假模型、假工具、``InMemorySaver``。
 """
 
+import logging
 from typing import Any
 from uuid import uuid4
 
@@ -21,7 +22,7 @@ import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from agent_lab.agent.context import AgentContext
-from agent_lab.agent.streaming import stream_agent_events
+from agent_lab.agent.streaming import _add_usage, stream_agent_events
 from agent_lab.config.llm import LangSmithSettings
 from agent_lab.schemas.agent_chat import (
     AgentChatEventEnvelope,
@@ -38,6 +39,7 @@ from tests.agent_helpers import (
     ScriptedChatModel,
     StreamingChatModel,
     build_offline_graph,
+    parallel_tool_call_message,
     run,
     tool_call_message,
 )
@@ -134,6 +136,60 @@ def test_the_tool_call_event_arrives_before_its_result() -> None:
 
     kinds = [type(each) for each in events]
     assert kinds.index(AgentToolCallEvent) < kinds.index(AgentToolResultEvent)
+
+
+def test_tool_call_and_result_events_carry_the_same_tool_call_id() -> None:
+    """调用事件与结果事件必须带同一个 ``tool_call_id``。
+
+    这是前端能精确配对的前提。少了 id，前端只能按工具名先来先配，而同一个工具在一轮里
+    并发调用多次时，结果的到达顺序没有保证——错配的表现是某条轨迹显示的检索词底下挂着
+    另一次调用的结果。
+    """
+
+    counter = CountingTool("search_news", result="检索到 1 篇相关新闻。")
+    model = ScriptedChatModel(
+        responses=[
+            tool_call_message("search_news", {"text": "央行降息"}),
+            AIMessage(content="确实降息了。"),
+        ]
+    )
+    events = collect(build_offline_graph(model, [counter.build()]))
+
+    calls = [each for each in events if isinstance(each, AgentToolCallEvent)]
+    results = [each for each in events if isinstance(each, AgentToolResultEvent)]
+    assert calls[0].tool_call_id == "call-search_news"
+    assert results[0].tool_call_id == calls[0].tool_call_id
+
+
+def test_parallel_calls_to_one_tool_get_distinct_ids() -> None:
+    """同一个工具并发调用两次时，两条轨迹各自的 id 不同且调用与结果按 id 对应。
+
+    这正是只按工具名配对会出错的场景：两次调用都叫 search_news，检索词不同。前端必须能
+    区分「哪个结果属于哪个检索词」，否则界面会把两者对调。
+    """
+
+    counter = CountingTool("search_news", result="检索结果。")
+    model = ScriptedChatModel(
+        responses=[
+            parallel_tool_call_message(
+                [
+                    ("call-1", "search_news", {"text": "央行降息"}),
+                    ("call-2", "search_news", {"text": "房贷利率"}),
+                ]
+            ),
+            AIMessage(content="两个角度都查过了。"),
+        ]
+    )
+    events = collect(build_offline_graph(model, [counter.build()]))
+
+    calls = [each for each in events if isinstance(each, AgentToolCallEvent)]
+    results = [each for each in events if isinstance(each, AgentToolResultEvent)]
+    assert {each.tool_call_id for each in calls} == {"call-1", "call-2"}
+    # 结果集合与调用集合按 id 一一对应；顺序不作要求，正是因为顺序不可靠才要有 id。
+    assert {each.tool_call_id for each in results} == {"call-1", "call-2"}
+    arguments_by_id = {each.tool_call_id: each.arguments for each in calls}
+    assert arguments_by_id["call-1"] == {"text": "央行降息"}
+    assert arguments_by_id["call-2"] == {"text": "房贷利率"}
 
 
 def test_a_failed_tool_is_marked_and_the_run_still_finishes() -> None:
@@ -440,3 +496,118 @@ def test_tool_messages_from_unknown_nodes_are_ignored() -> None:
     }
 
     assert _tool_events(update) == []
+
+
+# ---- token 用量：进结束日志，不进事件流 ----
+
+
+def usage(*, input_tokens: int, output_tokens: int) -> dict[str, int]:
+    """构造一份 provider 风格的 usage_metadata。"""
+
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+    }
+
+
+def test_usage_accumulates_across_model_calls() -> None:
+    """多次模型调用的用量要累加，不是只留最后一次。
+
+    一轮里每调一次工具就要再问一次模型，各报一份用量。取最后一份会把「查了三次资料的一轮」
+    报成只花了最后那次的钱，正好在成本最该被看见的场景下失真。
+    """
+
+    totals = {"input": 0, "output": 0, "total": 0}
+    _add_usage(totals, AIMessage(content="", usage_metadata=usage(input_tokens=100, output_tokens=20)))
+    _add_usage(totals, AIMessage(content="", usage_metadata=usage(input_tokens=300, output_tokens=50)))
+
+    assert totals == {"input": 400, "output": 70, "total": 470}
+
+
+def test_usage_ignores_chunks_without_metadata() -> None:
+    """不带用量的增量不影响合计。
+
+    绝大多数增量都不带 usage_metadata，只有每次调用的收尾那个带。这里要的是「跳过」，
+    而不是当成 0 去覆盖已经累加好的数。
+    """
+
+    totals = {"input": 5, "output": 5, "total": 10}
+    _add_usage(totals, AIMessageChunk(content="降"))
+
+    assert totals == {"input": 5, "output": 5, "total": 10}
+
+
+def test_usage_tolerates_partial_metadata() -> None:
+    """字段缺失或为 None 时按 0 计，不抛异常。
+
+    用量数字来自上游自报，不同 provider 报的字段并不齐。为一个可观测性日志把整轮对话搞崩
+    是不可接受的——用户会看到对话失败，而真正的原因只是某个字段没给。
+
+    这里刻意不用 ``AIMessage``：它会校验 ``usage_metadata``，缺字段根本构造不出来。但
+    ``_add_usage`` 是用 ``getattr`` 和 ``dict.get`` 取值的，防的就是「拿到的东西形状不合
+    预期」——只有替身能把它送到这条路径上。
+    """
+
+    class PartialUsage:
+        usage_metadata = {"input_tokens": None}
+
+    totals = {"input": 0, "output": 0, "total": 0}
+    _add_usage(totals, PartialUsage())  # type: ignore[arg-type]
+
+    assert totals == {"input": 0, "output": 0, "total": 0}
+
+
+def test_usage_lands_in_the_closing_log(caplog: pytest.LogCaptureFixture) -> None:
+    """一轮跑完后，用量和模型名出现在同一条结束日志里。
+
+    分开记就没法判断异常：单看「花了 30000 token」不知道正常不正常，得同时知道有没有出答案。
+    """
+
+    model = ScriptedChatModel(
+        responses=[AIMessage(content="降息了。", usage_metadata=usage(input_tokens=120, output_tokens=8))]
+    )
+
+    with caplog.at_level(logging.INFO, logger="agent_lab.agent.streaming"):
+        collect(build_offline_graph(model))
+
+    closing = [each for each in caplog.messages if "Agent 对话结束" in each]
+    assert len(closing) == 1
+    assert "tokens_input=120" in closing[0]
+    assert "tokens_output=8" in closing[0]
+    assert "tokens_total=128" in closing[0]
+
+
+def test_usage_is_reported_even_when_the_run_fails(caplog: pytest.LogCaptureFixture) -> None:
+    """失败的一轮也要报出已经烧掉的用量。
+
+    失控循环恰恰都以失败收尾（撞上调用次数上限或超时），那时候的用量最值得看。日志写在
+    finally 里就是为了这个。
+    """
+
+    model = FailingChatModel(error=openai.APIConnectionError(request=None))  # type: ignore[arg-type]
+
+    with caplog.at_level(logging.INFO, logger="agent_lab.agent.streaming"):
+        events = collect(build_offline_graph(model))
+
+    assert isinstance(events[-1], AgentErrorEvent)
+    assert any("Agent 对话结束" in each for each in caplog.messages)
+
+
+def test_usage_does_not_leak_into_the_event_stream() -> None:
+    """用量只进日志，不进 SSE 事件。
+
+    它是运维数据，不是产品功能。混进事件流就变成了对外契约，前端会开始依赖它，之后想改
+    口径就得动 OpenAPI。
+    """
+
+    model = ScriptedChatModel(
+        responses=[AIMessage(content="降息了。", usage_metadata=usage(input_tokens=120, output_tokens=8))]
+    )
+
+    events = collect(build_offline_graph(model))
+
+    assert all(not hasattr(each, "usage") for each in events)
+    assert "120" not in "".join(
+        each.text for each in events if isinstance(each, AgentTokenEvent)
+    )

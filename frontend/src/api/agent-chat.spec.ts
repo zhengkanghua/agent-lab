@@ -150,17 +150,34 @@ describe('streamAgentChat', () => {
 
   it('把 tool_call 与 tool_result 原样交给上层', async () => {
     const events = await collect([
-      frame({ event: 'tool_call', tool: 'search_news', arguments: { query: '利率' } }),
-      frame({ event: 'tool_result', tool: 'search_news', content: '找到 2 篇。', failed: false }),
+      frame({
+        event: 'tool_call',
+        tool_call_id: 'call-1',
+        tool: 'search_news',
+        arguments: { query: '利率' },
+      }),
+      frame({
+        event: 'tool_result',
+        tool_call_id: 'call-1',
+        tool: 'search_news',
+        content: '找到 2 篇。',
+        failed: false,
+      }),
       frame({ event: 'done', thread_id: THREAD_ID }),
     ])
 
     expect(events[0]).toEqual({
       event: 'tool_call',
+      tool_call_id: 'call-1',
       tool: 'search_news',
       arguments: { query: '利率' },
     })
-    expect(events[1]).toMatchObject({ event: 'tool_result', tool: 'search_news', failed: false })
+    expect(events[1]).toMatchObject({
+      event: 'tool_result',
+      tool_call_id: 'call-1',
+      tool: 'search_news',
+      failed: false,
+    })
   })
 
   it.each([
@@ -183,7 +200,19 @@ describe('streamAgentChat', () => {
       name: 'error 的 thread_id 不是 UUID',
       payload: { event: 'error', thread_id: 'not-a-uuid', code: 'x', detail: 'y', retryable: true },
     },
-    { name: 'tool_result 缺 content', payload: { event: 'tool_result', tool: 'search_news' } },
+    {
+      name: 'tool_result 缺 content',
+      payload: { event: 'tool_result', tool_call_id: 'call-1', tool: 'search_news' },
+    },
+    // 少了 tool_call_id 就没法把结果配到调用上，只能退回按工具名猜。宁可明确失败。
+    {
+      name: 'tool_call 缺 tool_call_id',
+      payload: { event: 'tool_call', tool: 'search_news', arguments: {} },
+    },
+    {
+      name: 'tool_result 缺 tool_call_id',
+      payload: { event: 'tool_result', tool: 'search_news', content: '结果' },
+    },
   ])('拒绝契约漂移：$name', async ({ payload }) => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([frame(payload)])))
 

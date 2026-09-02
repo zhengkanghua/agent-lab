@@ -7,6 +7,7 @@ import type { AgentToolTrace } from '../model/conversation'
 function trace(overrides: Partial<AgentToolTrace> = {}): AgentToolTrace {
   return {
     id: 'trace-1',
+    toolCallId: 'call-1',
     tool: 'search_news',
     arguments: { query: '央行利率' },
     content: '找到 2 篇。',

@@ -109,6 +109,34 @@ def _token_event(chunk: AIMessage) -> AgentTokenEvent | None:
     return AgentTokenEvent(text=text)
 
 
+def _add_usage(totals: dict[str, int], chunk: AIMessage) -> None:
+    """把一个输出增量带的 token 用量累加进本次运行的合计。
+
+    **为什么是累加而不是取最后一个值**：一轮对话里模型节点会被调用多次（每次工具调用之后
+    都要再问一次模型），每次调用各自报一份用量。取最后一份只能看到最后那次，而我们想知道的
+    是「这一轮总共烧了多少」。
+
+    **为什么只从 messages 流里取**：``updates`` 流里的 ``AIMessage`` 也带 ``usage_metadata``，
+    两边都取就会把每次调用算两遍。
+
+    Args:
+        totals: 就地累加的合计字典，键为 ``input``、``output``、``total``。
+        chunk: 模型节点产出的一个输出增量。没有 ``usage_metadata`` 时什么都不做——
+            大多数增量都不带，只有每次调用的收尾那个带。
+
+    Notes:
+        纯内存累加，不执行 I/O。数字来自上游 provider 的自报，不同 provider 的口径不完全
+        一致（有的把 prompt 缓存命中单独算），所以它适合看趋势和抓异常，不适合用来对账。
+    """
+
+    usage = getattr(chunk, "usage_metadata", None)
+    if not usage:
+        return
+    totals["input"] += usage.get("input_tokens") or 0
+    totals["output"] += usage.get("output_tokens") or 0
+    totals["total"] += usage.get("total_tokens") or 0
+
+
 def _tool_events(update: dict[str, Any]) -> list[AgentChatEvent]:
     """从一次节点状态更新里取出工具调用和工具结果事件。
 
@@ -121,6 +149,10 @@ def _tool_events(update: dict[str, Any]) -> list[AgentChatEvent]:
     Notes:
         纯内存转换，不执行 I/O。工具参数会原样带给前端作为调用轨迹展示——它们是模型
         生成的检索词，不含服务端凭据。
+
+        两类事件都带 ``tool_call_id``，前端据此精确配对。模型可以在一轮里并发调用同一个
+        工具多次（不同检索词），而结果的到达顺序没有保证，所以只发工具名会让前端把参数和
+        结果对调。id 由模型生成、本就在 ``tool_calls`` 和 ``ToolMessage`` 上，这里只是带下去。
     """
 
     events: list[AgentChatEvent] = []
@@ -133,6 +165,7 @@ def _tool_events(update: dict[str, Any]) -> list[AgentChatEvent]:
             for tool_call in getattr(message, "tool_calls", None) or ():
                 events.append(
                     AgentToolCallEvent(
+                        tool_call_id=tool_call.get("id") or "",
                         tool=tool_call["name"],
                         arguments=dict(tool_call.get("args") or {}),
                     )
@@ -142,6 +175,7 @@ def _tool_events(update: dict[str, Any]) -> list[AgentChatEvent]:
             if isinstance(message, ToolMessage):
                 events.append(
                     AgentToolResultEvent(
+                        tool_call_id=message.tool_call_id or "",
                         tool=message.name or "unknown",
                         content=str(message.content),
                         failed=message.status == "error",
@@ -186,6 +220,9 @@ async def stream_agent_events(
     client = _build_tracing_client(langsmith_settings)
     actual_model_name: str | None = None
     has_answer = False
+    # 本次运行的 token 合计。放在 try 外面，这样失败的那一轮也能在 finally 里报出已经
+    # 烧掉的量——失控循环恰恰都是以失败收尾的，那时候的用量最值得看。
+    usage_totals = {"input": 0, "output": 0, "total": 0}
     try:
         # 2、开一个「只管本次运行」的追踪范围。tracing_context 不写 os.environ，
         #    所以并发请求之间不会互相污染，也不需要在进程启动时就决定好。
@@ -213,6 +250,7 @@ async def stream_agent_events(
                         # 记录实际模型名：只记一次，从第一个 AIMessage 的 response_metadata 取。
                         if actual_model_name is None and hasattr(part, "response_metadata"):
                             actual_model_name = part.response_metadata.get("model_name")
+                        _add_usage(usage_totals, part)
                         token = _token_event(part)
                         if token is not None:
                             has_answer = True
@@ -243,12 +281,23 @@ async def stream_agent_events(
         )
         return
     finally:
-        # 记录对话结束，标记是否有回答内容、实际使用的模型。
+        # 记录对话结束，标记是否有回答内容、实际使用的模型和本轮 token 用量。
+        #
+        # 用量和模型名记在同一行是有意的：单看「这轮花了 30000 token」判断不出是否异常，
+        # 得知道是哪个模型、有没有出答案。三者凑在一起，「模型空转」（有用量、无答案）和
+        # 「失控循环」（用量远超同类请求）都能从这一行看出来，不必去翻别的日志。
+        #
+        # 不记提问和回答原文：这条日志的用途是看成本和异常，不是审计对话内容。
+        # 上游不报用量时三个数都是 0——那是「没拿到」，不是「没花」，不要据此断言免费。
         logger.info(
-            "Agent 对话结束 thread_id=%s has_answer=%s model=%s",
+            "Agent 对话结束 thread_id=%s has_answer=%s model=%s "
+            "tokens_input=%d tokens_output=%d tokens_total=%d",
             thread_id,
             has_answer,
             actual_model_name or "unknown",
+            usage_totals["input"],
+            usage_totals["output"],
+            usage_totals["total"],
         )
     # 7、正常收尾。done 带上 thread_id，前端拿它接着发下一轮。
     yield AgentDoneEvent(thread_id=thread_id)

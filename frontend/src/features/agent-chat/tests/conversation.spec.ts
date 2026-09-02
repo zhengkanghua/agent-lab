@@ -32,9 +32,10 @@ describe('conversation', () => {
   it('工具调用缺省参数时记成空对象，界面不必再判 undefined', () => {
     const turn = createTurn('问题')
 
-    appendToolCall(turn, { event: 'tool_call', tool: 'read_document' })
+    appendToolCall(turn, { event: 'tool_call', tool_call_id: 'call-1', tool: 'read_document' })
 
     expect(turn.traces[0]).toMatchObject({
+      toolCallId: 'call-1',
       tool: 'read_document',
       arguments: {},
       content: null,
@@ -42,29 +43,43 @@ describe('conversation', () => {
     })
   })
 
-  it('结果并进同名且未完成的最早一条', () => {
+  it('结果按 tool_call_id 配对，不按到达顺序', () => {
+    // 同一个工具在一轮里被并发调用两次（不同检索词），第二次的结果先返回。按工具名先来先配
+    // 会把「甲」那条轨迹配上乙的结果，界面上显示的检索词和结果就对不上了。
     const turn = createTurn('问题')
-    appendToolCall(turn, { event: 'tool_call', tool: 'search_news', arguments: { query: '甲' } })
-    appendToolCall(turn, { event: 'tool_call', tool: 'search_news', arguments: { query: '乙' } })
+    appendToolCall(turn, {
+      event: 'tool_call',
+      tool_call_id: 'call-1',
+      tool: 'search_news',
+      arguments: { query: '甲' },
+    })
+    appendToolCall(turn, {
+      event: 'tool_call',
+      tool_call_id: 'call-2',
+      tool: 'search_news',
+      arguments: { query: '乙' },
+    })
 
     applyToolResult(turn, {
       event: 'tool_result',
+      tool_call_id: 'call-2',
       tool: 'search_news',
-      content: '甲的结果',
+      content: '乙的结果',
       failed: false,
     })
 
-    expect(turn.traces[0]?.content).toBe('甲的结果')
-    expect(turn.traces[1]?.content).toBeNull()
+    expect(turn.traces[0]?.content).toBeNull()
+    expect(turn.traces[1]?.content).toBe('乙的结果')
   })
 
   it('不同工具的结果不会串到别的工具上', () => {
     const turn = createTurn('问题')
-    appendToolCall(turn, { event: 'tool_call', tool: 'search_news' })
-    appendToolCall(turn, { event: 'tool_call', tool: 'read_document' })
+    appendToolCall(turn, { event: 'tool_call', tool_call_id: 'call-1', tool: 'search_news' })
+    appendToolCall(turn, { event: 'tool_call', tool_call_id: 'call-2', tool: 'read_document' })
 
     applyToolResult(turn, {
       event: 'tool_result',
+      tool_call_id: 'call-2',
       tool: 'read_document',
       content: '全文。',
       failed: false,
@@ -79,6 +94,7 @@ describe('conversation', () => {
 
     applyToolResult(turn, {
       event: 'tool_result',
+      tool_call_id: 'call-unknown',
       tool: 'search_news',
       content: '孤立结果',
       failed: false,
@@ -89,12 +105,37 @@ describe('conversation', () => {
     expect(turn.traces[0]).toMatchObject({ content: '孤立结果', arguments: {} })
   })
 
-  it('收尾只动还在执行中的轨迹，已完成的保持原样', () => {
+  it('id 对不上的结果不会覆盖已有的待完成轨迹', () => {
+    // 补轨迹这个兜底不能建立在「抢走别人的位置」之上：id 不匹配就该另起一条，而不是塞进
+    // 恰好还空着的那一条。
     const turn = createTurn('问题')
-    appendToolCall(turn, { event: 'tool_call', tool: 'search_news' })
-    appendToolCall(turn, { event: 'tool_call', tool: 'read_document' })
+    appendToolCall(turn, {
+      event: 'tool_call',
+      tool_call_id: 'call-1',
+      tool: 'search_news',
+      arguments: { query: '甲' },
+    })
+
     applyToolResult(turn, {
       event: 'tool_result',
+      tool_call_id: 'call-other',
+      tool: 'search_news',
+      content: '别处的结果',
+      failed: false,
+    })
+
+    expect(turn.traces).toHaveLength(2)
+    expect(turn.traces[0]).toMatchObject({ arguments: { query: '甲' }, content: null })
+    expect(turn.traces[1]).toMatchObject({ toolCallId: 'call-other', content: '别处的结果' })
+  })
+
+  it('收尾只动还在执行中的轨迹，已完成的保持原样', () => {
+    const turn = createTurn('问题')
+    appendToolCall(turn, { event: 'tool_call', tool_call_id: 'call-1', tool: 'search_news' })
+    appendToolCall(turn, { event: 'tool_call', tool_call_id: 'call-2', tool: 'read_document' })
+    applyToolResult(turn, {
+      event: 'tool_result',
+      tool_call_id: 'call-1',
       tool: 'search_news',
       content: '查到了。',
       failed: false,
@@ -200,6 +241,15 @@ describe('conversation', () => {
       )
 
       expect(turn?.traces[0]?.arguments).toEqual({})
+    })
+
+    it('回放的轨迹不带 toolCallId：调用和结果已经合成一条，没有待配对的东西', () => {
+      const [turn] = turnsFromReplay(
+        [{ question: '查', answer: '答', traces: [{ tool: 'search_news', content: 'ok' }] }],
+        '未送达。',
+      )
+
+      expect(turn?.traces[0]?.toolCallId).toBeNull()
     })
 
     it('空历史得到空数组', () => {

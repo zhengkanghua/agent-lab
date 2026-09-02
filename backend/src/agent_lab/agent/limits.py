@@ -52,9 +52,23 @@ MAX_USER_MESSAGE_CHARS = 4000
 SEARCH_TOOL_MAX_DOCUMENTS = 5
 SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT = 2
 
+# search_news 的 within_days 上限。365 天不是「语料库最多存一年」，而是「再往回问就等于
+# 不限时间」——超过一年的窗口对排序几乎没有影响，却让模型有机会填出 99999 这种它自己也
+# 说不清的值。给个明确上限，模型填超了会被参数校验挡下并看到范围说明，比默默接受更好。
+SEARCH_TOOL_MAX_WITHIN_DAYS = 365
+
 # read_document 返回的正文字符上限。超过则截断并在末尾标注被截断——这里截断是对的，
 # 因为正文是数据不是指令，缺尾部只是信息不全，不会让模型误解任务。
 READ_DOCUMENT_MAX_CHARS = 6000
+
+
+# ---- 启动自检 ----
+
+# 启动时向上游拉模型列表的超时秒数。刻意远小于 LLM_REQUEST_TIMEOUT_SECONDS（默认 60）：
+# 那个约束的是「模型思考多久」，这个约束的是「启动多等多久」。列一下有哪些模型是个极轻的
+# 请求，5 秒拿不到就说明上游此刻不健康，那种情况下继续等只是延迟服务上线——校验拿不到
+# 结果时是放过而不是拒绝，所以等下去也换不来别的结论。
+MODEL_CATALOG_TIMEOUT_SECONDS = 5.0
 
 
 # ---- 流式传输 ----
@@ -68,11 +82,13 @@ __all__ = [
     "MAX_SYSTEM_PROMPT_CHARS",
     "MAX_USER_MESSAGE_CHARS",
     "MODEL_CALL_RUN_LIMIT",
+    "MODEL_CATALOG_TIMEOUT_SECONDS",
     "MODEL_RETRY_MAX",
     "READ_DOCUMENT_MAX_CHARS",
     "RETRY_INITIAL_DELAY_SECONDS",
     "SEARCH_TOOL_MAX_DOCUMENTS",
     "SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT",
+    "SEARCH_TOOL_MAX_WITHIN_DAYS",
     "SSE_HEARTBEAT_INTERVAL_SECONDS",
     "SUMMARIZATION_KEEP_MESSAGES",
     "SUMMARIZATION_TRIGGER_MESSAGES",

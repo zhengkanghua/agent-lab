@@ -112,6 +112,7 @@ describe('AgentTurnCard', () => {
       traces: [
         {
           id: 'trace-1',
+          toolCallId: 'call-1',
           tool: 'search_news',
           arguments: { query: '利率' },
           content: '找到 2 篇。',

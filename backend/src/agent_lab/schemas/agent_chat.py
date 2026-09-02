@@ -122,6 +122,12 @@ class AgentToolCallEvent(BaseModel):
     """
 
     event: Literal["tool_call"] = "tool_call"
+    tool_call_id: str = Field(
+        description=(
+            "本次调用的唯一 id，由模型给出。前端用它把随后到达的 tool_result 精确配到"
+            "这一条调用上，不依赖到达顺序。"
+        ),
+    )
     tool: str = Field(description="被调用的工具名，如 search_news、read_document。")
     arguments: dict[str, object] = Field(
         default_factory=dict,
@@ -140,9 +146,17 @@ class AgentToolResultEvent(BaseModel):
 
     ``failed`` 为真时 ``content`` 是查表得到的安全文案，不是异常文本——异常细节只进日志，
     见 ``agent/middleware.py`` 的 ``sanitize_tool_error``。
+
+    ``tool_call_id`` 让它和对应的 ``tool_call`` 事件精确配对。工具名不足以定位：模型可以在
+    一轮里用不同检索词并发调用同一个工具多次，而多个工具的结果到达顺序没有保证，只按名字
+    先来先配会把两条轨迹的参数和结果对调。回放那条路一直是按这个 id 配的
+    （见 ``agent/replay.py`` 的 ``_tool_result_index``），流式这条路与它对齐。
     """
 
     event: Literal["tool_result"] = "tool_result"
+    tool_call_id: str = Field(
+        description="对应 tool_call 事件的 id；前端据此定位是哪一次调用的结果。",
+    )
     tool: str = Field(description="返回结果的工具名。")
     content: str = Field(
         repr=False,

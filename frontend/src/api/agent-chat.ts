@@ -231,9 +231,16 @@ function isAgentChatEvent(value: unknown): value is AgentChatEvent {
     case 'token':
       return typeof value.text === 'string'
     case 'tool_call':
-      return hasText(value.tool) && (value.arguments === undefined || isRecord(value.arguments))
+      // tool_call_id 是必需的：少了它，工具结果就只能按名字先来先配，同一个工具在一轮里
+      // 并发调用多次时会把两条轨迹的参数和结果对调。
+      return (
+        hasText(value.tool_call_id) &&
+        hasText(value.tool) &&
+        (value.arguments === undefined || isRecord(value.arguments))
+      )
     case 'tool_result':
       return (
+        hasText(value.tool_call_id) &&
         hasText(value.tool) &&
         typeof value.content === 'string' &&
         (value.failed === undefined || typeof value.failed === 'boolean')

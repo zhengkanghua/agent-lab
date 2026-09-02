@@ -503,9 +503,9 @@ export interface components {
          *     与 SSE 的 ``tool_call``/``tool_result`` 两个事件相比，这里调用和结果已经合成一条：回放时
          *     两者都是既成事实，没有「已经开始查、还没查完」的中间态。
          *
-         *     配对精度也比流式那边高：checkpointer 里的 ``ToolMessage`` 带 ``tool_call_id``，所以调用与结果
-         *     是精确对应的；而 SSE 的 ``tool_result`` 事件不带 id，前端只能按「同名且还没结果的最早那条」
-         *     近似配对（见 ``frontend/src/features/agent-chat/model/conversation.ts``）。
+         *     配对方式与流式一致：两边都按 ``tool_call_id`` 精确对应，所以同一轮的轨迹在「对话时」和
+         *     「刷新后回放」看到的是同一份。这里合成时 id 已经用掉、不再对外暴露；SSE 那两个事件仍带着它，
+         *     因为前端要靠它把先后到达的调用和结果接起来。
          */
         AgentReplayTrace: {
             /**
@@ -694,6 +694,11 @@ export interface components {
              */
             event: "tool_call";
             /**
+             * Tool Call Id
+             * @description 本次调用的唯一 id，由模型给出。前端用它把随后到达的 tool_result 精确配到这一条调用上，不依赖到达顺序。
+             */
+            tool_call_id: string;
+            /**
              * Tool
              * @description 被调用的工具名，如 search_news、read_document。
              */
@@ -712,6 +717,11 @@ export interface components {
          *
          *     ``failed`` 为真时 ``content`` 是查表得到的安全文案，不是异常文本——异常细节只进日志，
          *     见 ``agent/middleware.py`` 的 ``sanitize_tool_error``。
+         *
+         *     ``tool_call_id`` 让它和对应的 ``tool_call`` 事件精确配对。工具名不足以定位：模型可以在
+         *     一轮里用不同检索词并发调用同一个工具多次，而多个工具的结果到达顺序没有保证，只按名字
+         *     先来先配会把两条轨迹的参数和结果对调。回放那条路一直是按这个 id 配的
+         *     （见 ``agent/replay.py`` 的 ``_tool_result_index``），流式这条路与它对齐。
          */
         AgentToolResultEvent: {
             /**
@@ -719,6 +729,11 @@ export interface components {
              * @enum {string}
              */
             event: "tool_result";
+            /**
+             * Tool Call Id
+             * @description 对应 tool_call 事件的 id；前端据此定位是哪一次调用的结果。
+             */
+            tool_call_id: string;
             /**
              * Tool
              * @description 返回结果的工具名。

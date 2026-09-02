@@ -78,9 +78,9 @@ class AgentReplayTrace(BaseModel):
     与 SSE 的 ``tool_call``/``tool_result`` 两个事件相比，这里调用和结果已经合成一条：回放时
     两者都是既成事实，没有「已经开始查、还没查完」的中间态。
 
-    配对精度也比流式那边高：checkpointer 里的 ``ToolMessage`` 带 ``tool_call_id``，所以调用与结果
-    是精确对应的；而 SSE 的 ``tool_result`` 事件不带 id，前端只能按「同名且还没结果的最早那条」
-    近似配对（见 ``frontend/src/features/agent-chat/model/conversation.ts``）。
+    配对方式与流式一致：两边都按 ``tool_call_id`` 精确对应，所以同一轮的轨迹在「对话时」和
+    「刷新后回放」看到的是同一份。这里合成时 id 已经用掉、不再对外暴露；SSE 那两个事件仍带着它，
+    因为前端要靠它把先后到达的调用和结果接起来。
     """
 
     tool: str = Field(description="被调用的工具名。")

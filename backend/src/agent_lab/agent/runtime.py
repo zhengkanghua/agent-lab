@@ -161,6 +161,9 @@ class AgentRuntime:
             middleware=build_agent_middleware(
                 fallback_model=fallback_model,
                 summarization_model=primary_model,
+                # 工具名从刚建好的工具列表算，不写常量：写死会出现「加了工具忘了加名字」，
+                # 而那个错误的表现是新工具一调就被守卫拦下，看起来像新工具本身坏了。
+                tool_names=frozenset(each.name for each in tools),
                 retry_initial_delay=retry_initial_delay,
             ),
             context_schema=AgentContext,

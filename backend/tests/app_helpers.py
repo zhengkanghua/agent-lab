@@ -74,6 +74,17 @@ class OfflineAgentRuntime:
         self.closed = True
 
 
+async def skip_model_catalog_check() -> None:
+    """跳过启动时的模型名校验，不发任何 HTTP 请求。
+
+    生产实现会向 ``LLM_BASE_URL`` 发一次「列模型」的 GET。测试注入的模型是假的，那个校验
+    既无意义又会真的联网，所以这里换成空操作。要测校验本身的用例传自己的实现覆盖它，
+    见 ``tests/test_model_catalog.py``。
+    """
+
+    return None
+
+
 def offline_agent_runtime_factory(_service: Any) -> OfflineAgentRuntime:
     """忽略检索 Service，返回不做 I/O 的 Agent Runtime 替身。
 
@@ -199,9 +210,12 @@ def create_offline_app(**overrides: Any) -> FastAPI:
     from agent_lab.main import create_app
 
     # 1、先铺离线默认值，再让调用方的 overrides 覆盖，保证「漏写=安全」而不是「漏写=连真库」。
+    #    model_catalog_check 也在其中：它的生产实现会向 .env 里那个真实 base_url 发 GET，
+    #    漏写的话每个走 lifespan 的测试都要等一次连接超时（本文件开头那段历史正是这么来的）。
     defaults: dict[str, Any] = {
         "agent_runtime_factory": offline_agent_runtime_factory,
         "environment_admin_sync": skip_environment_admin_sync,
+        "model_catalog_check": skip_model_catalog_check,
     }
     app = create_app(**{**defaults, **overrides})  # type: ignore[arg-type]
 
@@ -249,6 +263,7 @@ def create_agent_app(
     *,
     superuser: bool = True,
     agent_build_error: Exception | None = None,
+    model_catalog_error: Exception | None = None,
 ) -> tuple[FastAPI, FakeSearchRuntime]:
     """创建装着**真实** ``AgentRuntime`` 的离线应用。
 
@@ -260,6 +275,9 @@ def create_agent_app(
         model: 注入的假聊天模型。
         superuser: 为 ``False`` 时只覆盖普通用户依赖，保留真实超级用户检查，用来测权限拒绝。
         agent_build_error: 非空时让 Agent 工厂抛这个异常，模拟装配失败。
+        model_catalog_error: 非空时让启动时的模型名校验抛这个异常，模拟「配置的模型不在上游列表里」。
+            它和 ``agent_build_error`` 走的是 lifespan 里同一个 ``try``，对外表现应当完全一致
+            （``/agent/*`` 返回 503、检索照常），传这个参数就是为了证明这一点。
 
     Returns:
         ``(应用, 假检索 Runtime)``。检索 Runtime 用来断言关闭顺序，或在装配失败时当只读探针。
@@ -288,11 +306,16 @@ def create_agent_app(
             retry_initial_delay=0.0,
         )
 
+    async def catalog_check() -> None:
+        if model_catalog_error is not None:
+            raise model_catalog_error
+
     grant = allow_superuser if superuser else allow_reader
     app = grant(
         create_offline_app(
             runtime_factory=lambda: search_runtime,
             agent_runtime_factory=agent_factory,
+            model_catalog_check=catalog_check,
         )
     )
     return app, search_runtime
@@ -370,4 +393,5 @@ __all__ = [
     "offline_agent_runtime_factory",
     "seed_owned_thread",
     "send",
+    "skip_model_catalog_check",
 ]

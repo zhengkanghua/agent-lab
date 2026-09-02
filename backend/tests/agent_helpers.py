@@ -128,6 +128,28 @@ def tool_call_message(tool_name: str, arguments: dict[str, Any]) -> AIMessage:
     )
 
 
+def parallel_tool_call_message(calls: Sequence[tuple[str, str, dict[str, Any]]]) -> AIMessage:
+    """构造一条「模型一次发起多个工具调用」的消息。
+
+    ``tool_call_message`` 的 id 是按工具名生成的，同一个工具调两次会撞成同一个 id，没法用来
+    验证按 id 配对。这里让调用方显式给出每个 id。
+
+    Args:
+        calls: ``(tool_call_id, 工具名, 调用参数)`` 三元组序列，按模型给出的顺序。
+
+    Returns:
+        带多条 ``tool_calls`` 的 ``AIMessage``；``content`` 为空，与真实 provider 一致。
+    """
+
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {"name": tool_name, "args": arguments, "id": call_id}
+            for call_id, tool_name, arguments in calls
+        ],
+    )
+
+
 class CountingTool:
     """记录调用次数的假工具工厂。
 
@@ -209,6 +231,7 @@ def build_offline_graph(
         middleware=build_agent_middleware(
             fallback_model=fallback_model or model,
             summarization_model=model,
+            tool_names=frozenset(each.name for each in tools),
             retry_initial_delay=retry_initial_delay,
         ),
         context_schema=AgentContext,

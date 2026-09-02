@@ -7,9 +7,9 @@
 3. 注册一个「按请求创建」的写 Runtime 工厂，只有超级用户调用 Pipeline 才真正构造；
 4. 应用关闭时统一释放搜索客户端和 SQLAlchemy 连接池。
 
-启动阶段只访问 PostgreSQL 同步环境托管管理员，不探测 FreshRSS、Ollama 或 Qdrant；
-真正的新闻同步、Collection 生命周期和索引发生在手动 POST 时。本模块不实现自动调度、
-后台任务、LLM 或 RAG。
+启动阶段访问 PostgreSQL（同步环境托管管理员、建 Agent checkpointer 连接），并向生成式模型
+上游发一次「列模型」的 GET 校验配置的模型名；不探测 FreshRSS、Ollama Embedding 或 Qdrant。
+真正的新闻同步、Collection 生命周期和索引发生在手动 POST 时。本模块不实现自动调度或后台任务。
 """
 
 import logging
@@ -21,6 +21,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from agent_lab.agent.errors import AgentError
+from agent_lab.agent.model_catalog import verify_configured_models
 from agent_lab.agent.runtime import AgentRuntime
 from agent_lab.api.agent_chat import router as agent_chat_router
 from agent_lab.api.agent_threads import router as agent_threads_router
@@ -159,6 +160,26 @@ def build_agent_runtime(search_service: VectorSearchService) -> AgentRuntime:
     )
 
 
+async def verify_configured_llm_models() -> None:
+    """启动时问一次上游「有哪些模型」，确认配置的两个模型名真的在列表里。
+
+    为什么值得在启动路径上多花一次请求：模型名配错不会在启动时报错，也不会在第一次调用时
+    报出一句好懂的话——曾经把 ``LLM_MODEL`` 配成 ``auto``（那是某些中转站的自动路由开关，
+    按每次 HTTP 调用挑上游），症状是「查完资料不给回答」和「模型声称要调用没注册的工具」，
+    排查方向被带到前端和流式管道上。一次极轻的 GET 换掉那种排查，是划算的。
+
+    Raises:
+        LlmModelNotListedError: 上游给出了非空列表，且配置的模型不在其中。由 lifespan 接住，
+            结果是只关掉 ``/agent/*``。
+
+    Notes:
+        执行一次 HTTP GET（列模型，不产生 token 消耗），不写数据库、不碰 Qdrant。
+        拉不到列表时静默放过——判据是「有没有证据说配置错了」，不是「上游健不健康」。
+    """
+
+    await verify_configured_models(get_llm_settings())
+
+
 def build_pipeline_write_runtime() -> PipelineWriteRuntime:
     """从当前配置组装「一次请求独占」的写入 Runtime（只构造对象，不连接服务）。
 
@@ -198,6 +219,7 @@ def create_app(
     environment_admin_sync: Callable[
         [], Awaitable[EnvironmentAdminSyncResult]
     ] = sync_configured_environment_admin,
+    model_catalog_check: Callable[[], Awaitable[None]] = verify_configured_llm_models,
 ) -> FastAPI:
     """创建 Agent Lab 的 FastAPI 应用（ASGI 应用）。
 
@@ -214,14 +236,17 @@ def create_app(
             离线测试注入 fake 以证明 HTTP 层不访问真实大模型。
         environment_admin_sync: 启动时同步环境托管管理员的异步函数；生产使用 PostgreSQL
             实现，离线 HTTP 测试注入无 I/O fake。
+        model_catalog_check: 启动时校验 ``LLM_MODEL`` 与 ``LLM_FALLBACK_MODEL`` 是否真的存在于
+            上游模型列表的异步函数；生产会发一次 GET，离线测试注入无 I/O fake。它抛异常等于
+            「配置的模型不存在」，和 Agent 装配失败同样处理——只关掉 ``/agent/*``。
 
     Returns:
         已挂载登录、健康检查、受保护只读搜索、Agent 对话和受超级用户保护 Pipeline 的应用。
 
     Notes:
         创建应用对象本身不执行外部 I/O。lifespan 先访问 PostgreSQL 同步环境管理员，
-        再构造 Search Runtime（不 ``ensure_ready``）和 Agent Runtime（会建 checkpointer
-        连接）；写 Runtime 首次 POST 前不调用。
+        再构造 Search Runtime（不 ``ensure_ready``），然后校验模型名（一次列模型 GET）
+        并装配 Agent Runtime（会建 checkpointer 连接）；写 Runtime 首次 POST 前不调用。
     """
 
     @asynccontextmanager
@@ -237,6 +262,9 @@ def create_app(
         搜索和流水线照常服务，只有 ``/agent/*`` 返回 503。反过来（启动直接崩）会让一个
         缺失的模型 API Key 把整个只读系统一起拖下线，那不是合理的失败半径。
 
+        模型名校验（``model_catalog_check``）刻意放在同一个 ``try`` 里，走同一条失败路径：
+        「模型不存在」和「Agent 装配失败」对用户是同一件事——Agent 用不了，别的照用。
+
         Args:
             application: 当前 FastAPI 实例，用 ``state`` 暴露 Runtime 给依赖函数。
 
@@ -248,9 +276,10 @@ def create_app(
                 异常为根因并通过 exception note 记录其余的类型。
 
         Notes:
-            启动为环境管理员执行 PostgreSQL 认证表 I/O，并为 Agent checkpointer 建
-            PostgreSQL 连接，不访问新闻表、Ollama、Qdrant 或大模型；数据库 migration 与
-            ``init-checkpointer`` 必须先完成。关闭只释放 Runtime 和连接池。
+            启动为环境管理员执行 PostgreSQL 认证表 I/O、为 Agent checkpointer 建 PostgreSQL
+            连接，并向生成式模型上游发一次「列模型」的 GET（不产生 token 消耗）；不访问新闻表、
+            Ollama Embedding 或 Qdrant；数据库 migration 与 ``init-checkpointer`` 必须先完成。
+            关闭只释放 Runtime 和连接池。
         """
 
         runtime: VectorSearchRuntime | None = None
@@ -264,6 +293,7 @@ def create_app(
             # 2、Agent 复用上面那个检索 Service，所以必须排在它之后。
             application.state.agent_runtime = None
             try:
+                await model_catalog_check()
                 agent_runtime = agent_runtime_factory(runtime.service)
                 await agent_runtime.open()
             except Exception as exc:
