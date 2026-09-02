@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { authSession } from '../features/auth/auth-session'
+import AdminShell from '../layouts/AdminShell.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -47,10 +48,28 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
-      path: '/admin/users',
-      name: 'user-admin',
-      component: () => import('../pages/UserAdminPage.vue'),
+      /*
+       * 后台控制台：父路由挂 AdminShell（固定侧边栏 + 内容区），摆在它下面的都是后台
+       * 页。权限守卫 requiresAuth + requiresSuperuser 挂在父路由上，新加的后台子页面
+       * 自动继承「后台只给超管」，不必重复声明。父路由自身不渲染页面，/admin 直接重定向
+       * 到第一个后台页（账号管理）。
+       */
+      path: '/admin',
+      component: AdminShell,
       meta: { requiresAuth: true, requiresSuperuser: true },
+      children: [
+        {
+          path: 'users',
+          name: 'user-admin',
+          component: () => import('../pages/UserAdminPage.vue'),
+          /* title / subtitle 供 AdminShell 顶栏渲染当前页标题与分区。 */
+          meta: { title: '账号管理', subtitle: '访问控制' },
+        },
+        /* 后台加新页面：在此加一条 child（带 meta.title / meta.subtitle），并在
+           AdminShell 的 adminMenuItems 加一项即可。未知后台地址落回账号管理。 */
+        { path: '', redirect: { name: 'user-admin' } },
+        { path: ':pathMatch(.*)*', redirect: { name: 'user-admin' } },
+      ],
     },
     {
       path: '/:pathMatch(.*)*',
