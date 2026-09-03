@@ -187,7 +187,8 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
 </template>
 
 <style scoped>
-/* 整页占满「视口 - 顶栏」；单列检索流用阅读宽度居中，比 agent 页略宽一点容纳结果卡。 */
+/* 整页占满「视口 - 顶栏」；单列检索流用检索流宽度居中，比 agent 页的阅读宽度
+   宽一档容纳结果卡的混合排版（令牌取舍见 tokens.css 与 ADR 0016）。 */
 .workspace {
   display: flex;
   flex-direction: column;
@@ -200,7 +201,7 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
 }
 
 .composer-dock {
-  width: min(100%, calc(var(--reading-width) + 80px));
+  width: min(100%, calc(var(--stream-width) + 80px));
   margin: 0 auto;
   padding: 16px 0 14px;
   background: var(--surface-base);
@@ -208,7 +209,7 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
   transition:
     border-bottom-color var(--duration-normal) var(--ease-out-smooth),
     background-color var(--duration-normal) var(--ease-out-smooth);
-  z-index: 8;
+  z-index: var(--z-dock);
 }
 
 .composer-dock.is-sticky {
@@ -223,7 +224,7 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
 .stream {
   display: grid;
   gap: 12px;
-  width: min(100%, calc(var(--reading-width) + 80px));
+  width: min(100%, calc(var(--stream-width) + 80px));
   margin: 0 auto;
   padding: 4px 0 90px;
 }
