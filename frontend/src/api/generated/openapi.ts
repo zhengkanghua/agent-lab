@@ -38,6 +38,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/me/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 修改当前账号密码
+         * @description 校验当前密码后替换为新密码，并撤销该账号在其他设备上的登录；本次请求使用的登录Cookie 保持有效。
+         */
+        post: operations["change_own_password_auth_me_password_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/me": {
         parameters: {
             query?: never;
@@ -242,6 +262,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/scheduled-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 列出全部定时任务
+         * @description 返回任务配置、下次计划执行时间（UTC；调度器未启动或任务停用为空）与最近一次执行摘要。列表不含任何正文、凭据或异常文本。
+         */
+        get: operations["list_jobs_scheduled_jobs_get"];
+        put?: never;
+        /**
+         * 创建定时任务
+         * @description 校验任务类型、cron 与参数后创建任务；创建成功即按 enabled 状态注册进调度器。key 与已存在任务重复返回 409；类型、cron 或参数不合法返回 422。
+         */
+        post: operations["create_job_scheduled_jobs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scheduled-jobs/validate-cron": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 校验 cron 表达式并预览未来执行时间
+         * @description 按服务端解释时区（SCHEDULER_TIMEZONE，默认上海）解析 5 段式 cron，返回未来 3 次执行的 UTC 时刻与本地展示时刻；解析失败返回 422。
+         */
+        post: operations["validate_cron_scheduled_jobs_validate_cron_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scheduled-jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 查询单个定时任务
+         * @description 返回单个任务的完整视图。
+         */
+        get: operations["get_job_scheduled_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * 删除定时任务
+         * @description 删除任务配置；执行历史随数据库级联删除，调度器条目同步摘除。
+         */
+        delete: operations["delete_job_scheduled_jobs__job_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * 修改定时任务的 cron、参数或启停状态
+         * @description 只修改请求中出现的字段；key 与任务类型不可修改。修改成功后调度器立即生效，无需重启服务。
+         */
+        patch: operations["update_job_scheduled_jobs__job_id__patch"];
+        trace?: never;
+    };
+    "/scheduled-jobs/{job_id}/trigger": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 手动立即执行一次定时任务
+         * @description 在后台按任务当前配置执行一轮（与 cron 到点同一执行包装器），立即返回受理回执；上一轮尚未结束时返回 409，不排队。执行结果通过执行历史查询。
+         */
+        post: operations["trigger_job_scheduled_jobs__job_id__trigger_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scheduled-jobs/{job_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 查询定时任务的执行历史
+         * @description 按开始时间新→旧返回执行记录（含被跳过的记录），默认 20 条、上限 100 条。
+         */
+        get: operations["list_job_runs_scheduled_jobs__job_id__runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agent/chat": {
         parameters: {
             query?: never;
@@ -352,6 +484,53 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AccountErrorResponse
+         * @description 账号自助操作的稳定、脱敏错误结构。
+         *
+         *     字段与其他链路的错误响应同构（``code``/``detail``/``retryable``），前端按 ``code``
+         *     取文案，不解析 ``detail``。
+         */
+        AccountErrorResponse: {
+            /**
+             * Code
+             * @description 供前端稳定识别的错误代码。
+             */
+            code: string;
+            /**
+             * Detail
+             * @description 不含密码、Hash、Token 或数据库异常文本的安全说明。
+             */
+            detail: string;
+            /**
+             * Retryable
+             * @description 相同请求稍后重试是否可能成功。
+             */
+            retryable: boolean;
+        };
+        /**
+         * AccountPasswordChangeRequest
+         * @description 当前登录账号修改自己密码的请求。
+         *
+         *     两个字段都是必填的明文密码，只在单次请求内存在：旧密码用于校验身份，新密码校验强度后
+         *     立即 Hash。都不写日志、不进异常消息、不回显。
+         *
+         *     ``current_password`` 不设 ``min_length``：它是「用户当时设的那个密码」，不是新策略的
+         *     校验对象。给它加长度下限会让历史上用短密码建的账号连改密入口都进不去——校验旧密码只该
+         *     问「对不对」，不该问「合不合现在的规矩」。
+         */
+        AccountPasswordChangeRequest: {
+            /**
+             * Current Password
+             * @description 账号当前的登录密码；仅用于本次请求的身份校验，不落库、不回显。
+             */
+            current_password: string;
+            /**
+             * New Password
+             * @description 账号的新密码；通过强度校验后立即 Hash，明文不落库、不回显。
+             */
+            new_password: string;
+        };
         /**
          * AgentChatErrorResponse
          * @description Agent 链路以 HTTP 状态码返回失败时的响应体（固定三字段）。
@@ -788,6 +967,12 @@ export interface components {
              * @description 账号是否由服务端 AUTH_ADMIN_EMAIL/AUTH_ADMIN_PASSWORD 托管。
              */
             is_environment_admin: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             * @description 账号在 PostgreSQL 中首次写入的时间。
+             */
+            created_at: string;
         };
         /** Body_auth_cookie_login_auth_login_post */
         Body_auth_cookie_login_auth_login_post: {
@@ -812,6 +997,33 @@ export interface components {
              * Format: password
              */
             client_secret?: string | null;
+        };
+        /**
+         * CronValidateRequest
+         * @description cron 预览请求：只带一个待校验的表达式。
+         */
+        CronValidateRequest: {
+            /**
+             * Cron Expr
+             * @description 5 段式 cron 表达式（分 时 日 月 周），例如 *\/10 * * * *。
+             */
+            cron_expr: string;
+        };
+        /**
+         * CronValidateResponse
+         * @description cron 预览结果：校验通过时给出的未来执行时间。
+         */
+        CronValidateResponse: {
+            /**
+             * Next Run Times
+             * @description 未来 3 次执行时间（UTC ISO8601），供前端换算展示。
+             */
+            next_run_times: string[];
+            /**
+             * Next Run Times Local
+             * @description 未来 3 次执行时间在服务端解释时区（SCHEDULER_TIMEZONE，默认上海）下的 ISO8601 字符串，前端可直接展示或自行换算。
+             */
+            next_run_times_local: string[];
         };
         /**
          * DocumentDetailResponse
@@ -1050,6 +1262,57 @@ export interface components {
             database: "ok";
         };
         /**
+         * JobRunResponse
+         * @description 一条任务执行记录：只含脱敏统计，不含正文、身份或异常文本。
+         */
+        JobRunResponse: {
+            /**
+             * Id
+             * Format: uuid
+             * @description 执行记录 id。
+             */
+            id: string;
+            /**
+             * Job Id
+             * Format: uuid
+             * @description 所属定时任务 id。
+             */
+            job_id: string;
+            /**
+             * Trigger Type
+             * @description 触发方式：scheduled（cron 到点）或 manual（手动触发）。
+             */
+            trigger_type: string;
+            /**
+             * Status
+             * @description 执行状态：running、succeeded、failed 或 skipped。
+             */
+            status: string;
+            /**
+             * Started At
+             * Format: date-time
+             * @description 开始（或跳过判定发生）时刻，UTC。
+             */
+            started_at: string;
+            /**
+             * Finished At
+             * @description 结束时刻，UTC；running 与 skipped 状态下为空。
+             */
+            finished_at: string | null;
+            /**
+             * Stats
+             * @description 脱敏统计：数量与按异常类型的聚合计数；skipped 记录含 reason 字段。
+             */
+            stats: {
+                [key: string]: unknown;
+            };
+            /**
+             * Error Type
+             * @description 批次级失败的异常类名（只含类型名，无异常文本）；成功与跳过时为空。
+             */
+            error_type: string | null;
+        };
+        /**
          * PipelineErrorResponse
          * @description 批次级失败的稳定、脱敏 HTTP 错误响应。
          */
@@ -1227,6 +1490,165 @@ export interface components {
              * @default []
              */
             failures: components["schemas"]["PipelineFailureType"][];
+        };
+        /**
+         * ScheduledJobCreateRequest
+         * @description 创建定时任务的请求体。
+         */
+        ScheduledJobCreateRequest: {
+            /**
+             * Key
+             * @description 业务唯一键：小写字母数字与短横线组成，创建后不可修改。
+             */
+            key: string;
+            /**
+             * Task Type
+             * @description 任务类型，可选取值见 GET /scheduled-jobs 返回的 task_types（目前为 freshrss_sync、index_pending）。
+             */
+            task_type: string;
+            /**
+             * Cron Expr
+             * @description 5 段式 cron 表达式；按服务端解释时区（默认上海）理解，存储与执行均为 UTC。
+             */
+            cron_expr: string;
+            /**
+             * Params
+             * @description 任务参数（JSON 对象），形状随任务类型：freshrss_sync 为 {limit_per_source}，index_pending 为 {batch_size, stale_after_minutes}；缺省字段用默认值。
+             */
+            params?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Enabled
+             * @description 创建后是否立即参与 cron 调度。
+             * @default true
+             */
+            enabled: boolean;
+        };
+        /**
+         * ScheduledJobErrorResponse
+         * @description 定时任务管理 API 的稳定、脱敏错误结构。
+         */
+        ScheduledJobErrorResponse: {
+            /**
+             * Code
+             * @description 供前端稳定识别的错误代码。
+             */
+            code: string;
+            /**
+             * Detail
+             * @description 不含异常文本、凭据或内部路径的安全说明。
+             */
+            detail: string;
+            /**
+             * Retryable
+             * @description 相同请求稍后重试是否可能成功。
+             */
+            retryable: boolean;
+        };
+        /**
+         * ScheduledJobResponse
+         * @description 一条定时任务的完整视图：配置 + 调度状态 + 最近一次执行摘要。
+         */
+        ScheduledJobResponse: {
+            /**
+             * Id
+             * Format: uuid
+             * @description 定时任务 id。
+             */
+            id: string;
+            /**
+             * Key
+             * @description 业务唯一键，创建后不可修改。
+             */
+            key: string;
+            /**
+             * Task Type
+             * @description 任务类型（freshrss_sync 或 index_pending）。
+             */
+            task_type: string;
+            /**
+             * Cron Expr
+             * @description 5 段式 cron 表达式原样字符串。
+             */
+            cron_expr: string;
+            /**
+             * Params
+             * @description 任务参数（已按类型规范化的 JSON 对象）。
+             */
+            params: {
+                [key: string]: unknown;
+            };
+            /**
+             * Enabled
+             * @description 是否参与 cron 调度。
+             */
+            enabled: boolean;
+            /**
+             * Next Run At
+             * @description 下次计划执行时间（UTC）；调度器未启动（SCHEDULER_ENABLED=false）或任务停用/未注册时为空。
+             */
+            next_run_at: string | null;
+            /** @description 最近一次执行记录；尚无历史时为空。 */
+            last_run: components["schemas"]["JobRunResponse"] | null;
+            /**
+             * Created At
+             * Format: date-time
+             * @description 创建时间，UTC。
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             * @description 最近一次配置修改时间，UTC。
+             */
+            updated_at: string;
+        };
+        /**
+         * ScheduledJobTriggerResponse
+         * @description 手动触发的受理回执：执行已在后台开始，结果通过执行历史查询。
+         */
+        ScheduledJobTriggerResponse: {
+            /**
+             * Job Id
+             * Format: uuid
+             * @description 被触发的定时任务 id。
+             */
+            job_id: string;
+            /**
+             * Run Id
+             * Format: uuid
+             * @description 新创建的执行记录 id，可凭它到执行历史里跟踪。
+             */
+            run_id: string;
+            /**
+             * Status
+             * @description 受理时的执行状态，固定为 running。
+             */
+            status: string;
+        };
+        /**
+         * ScheduledJobUpdateRequest
+         * @description 修改定时任务的请求体；未提供的字段保持不变。key 与任务类型不可修改。
+         */
+        ScheduledJobUpdateRequest: {
+            /**
+             * Cron Expr
+             * @description 新的 5 段式 cron 表达式；不传表示不修改。
+             */
+            cron_expr?: string | null;
+            /**
+             * Params
+             * @description 新的任务参数（整体替换并重新校验）；不传（null）表示不修改，传空对象表示清空为该类型默认值。
+             */
+            params?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Enabled
+             * @description 是否参与 cron 调度；不传表示不修改。
+             */
+            enabled?: boolean | null;
         };
         /**
          * UserAdminCreateRequest
@@ -1686,6 +2108,55 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    change_own_password_auth_me_password_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountPasswordChangeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountErrorResponse"];
+                };
             };
         };
     };
@@ -2212,6 +2683,377 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserAdminErrorResponse"];
+                };
+            };
+        };
+    };
+    list_jobs_scheduled_jobs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobResponse"][];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+        };
+    };
+    create_job_scheduled_jobs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduledJobCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+        };
+    };
+    validate_cron_scheduled_jobs_validate_cron_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CronValidateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CronValidateResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+        };
+    };
+    get_job_scheduled_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_job_scheduled_jobs__job_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+        };
+    };
+    update_job_scheduled_jobs__job_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduledJobUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+        };
+    };
+    trigger_job_scheduled_jobs__job_id__trigger_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobTriggerResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+        };
+    };
+    list_job_runs_scheduled_jobs__job_id__runs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRunResponse"][];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
                 };
             };
         };

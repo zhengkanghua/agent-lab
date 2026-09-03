@@ -35,6 +35,9 @@ function makeRouter(): Router {
             component: PAGE,
             meta: { title: '账号管理', subtitle: '访问控制' },
           },
+          /* 外壳菜单新增了「定时任务」项；本地路由表必须能解析它，
+             否则 RouterLink 在 vue-router 5 下直接抛 No match。 */
+          { path: 'scheduled-jobs', name: 'scheduled-jobs', component: PAGE },
         ],
       },
     ],

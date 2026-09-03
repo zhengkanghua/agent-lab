@@ -116,4 +116,22 @@ describe('application router authentication guard', () => {
     await superuserRouter.isReady()
     expect(superuserRouter.currentRoute.value.name).toBe('user-admin')
   })
+
+  it('allows only superusers to enter scheduled job management', async () => {
+    // /admin 子路由的守卫挂在父路由上，新页面自动继承；这条测试锁住「新页面没有
+    // 意外绕过父路由权限」——后端 /scheduled-jobs 同样只对超级用户开放。
+    auth.status.value = 'authenticated'
+    auth.user.value = { is_superuser: false }
+    const regularRouter = await freshRouter()
+
+    await regularRouter.push('/admin/scheduled-jobs')
+    await regularRouter.isReady()
+    expect(regularRouter.currentRoute.value.name).toBe('search')
+
+    auth.user.value = { is_superuser: true }
+    const superuserRouter = await freshRouter()
+    await superuserRouter.push('/admin/scheduled-jobs')
+    await superuserRouter.isReady()
+    expect(superuserRouter.currentRoute.value.name).toBe('scheduled-jobs')
+  })
 })

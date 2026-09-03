@@ -65,6 +65,12 @@ const router = createRouter({
           /* title / subtitle 供 AdminShell 顶栏渲染当前页标题与分区。 */
           meta: { title: '账号管理', subtitle: '访问控制' },
         },
+        {
+          path: 'scheduled-jobs',
+          name: 'scheduled-jobs',
+          component: () => import('../pages/ScheduledJobsPage.vue'),
+          meta: { title: '定时任务', subtitle: '数据自动化' },
+        },
         /* 后台加新页面：在此加一条 child（带 meta.title / meta.subtitle），并在
            AdminShell 的 adminMenuItems 加一项即可。未知后台地址落回账号管理。 */
         { path: '', redirect: { name: 'user-admin' } },

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ArrowLeft, LogOut, Menu, ShieldCheck, UsersRound, X } from '@lucide/vue'
+import { ArrowLeft, CalendarClock, LogOut, Menu, ShieldCheck, UsersRound, X } from '@lucide/vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 import { authSession, useLogout } from '@/features/auth'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
@@ -24,7 +24,10 @@ const route = useRoute()
 const headingTitle = computed(() => (route.meta.title as string | undefined) ?? '管理控制台')
 const headingSubtitle = computed(() => route.meta.subtitle as string | undefined)
 
-const adminMenuItems = [{ to: { name: 'user-admin' }, label: '账号管理', icon: UsersRound }]
+const adminMenuItems = [
+  { to: { name: 'user-admin' }, label: '账号管理', icon: UsersRound },
+  { to: { name: 'scheduled-jobs' }, label: '定时任务', icon: CalendarClock },
+]
 
 const { loggingOut, logoutError, logout } = useLogout()
 
