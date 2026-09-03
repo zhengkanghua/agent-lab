@@ -203,7 +203,6 @@ jobs:
           # 密码通过 envs 传成远端的环境变量，不写进 script 的命令行——命令行会进
           # 服务器的进程列表和 shell history。
           envs: ACR_PASSWORD,ACR_REGISTRY,ACR_USERNAME,DEPLOY_DIR
-          script_stop: true
           script: |
             set -euo pipefail
             cd "$DEPLOY_DIR"
