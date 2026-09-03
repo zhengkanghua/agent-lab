@@ -79,5 +79,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    volumes:
+      - ./data:/data
     # 使用调度器入口启动
     command: ["python", "-m", "agent_lab.scheduler_main"]
