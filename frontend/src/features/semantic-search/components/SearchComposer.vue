@@ -205,7 +205,7 @@ defineExpose({ focusInput })
 }
 
 .query-input::placeholder {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-weight: 400;
 }
 
@@ -220,7 +220,7 @@ defineExpose({ focusInput })
 .character-count {
   display: block;
   text-align: right;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-family: var(--mono-font);
   font-size: 0.67rem;
   letter-spacing: 0;
@@ -261,7 +261,7 @@ defineExpose({ focusInput })
 }
 
 .control-label svg {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 .result-limit-control select,
@@ -309,7 +309,7 @@ defineExpose({ focusInput })
 }
 
 .clear-button :deep(svg) {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 .search-submit {

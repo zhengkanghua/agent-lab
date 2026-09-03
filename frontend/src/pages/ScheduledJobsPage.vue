@@ -167,7 +167,7 @@ function openCreate(): void {
   align-items: center;
   gap: 7px;
   margin-top: 14px;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.72rem;
 }
 

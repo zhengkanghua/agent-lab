@@ -157,8 +157,9 @@ function requestFullText(event: MouseEvent): void {
   background: transparent;
   box-shadow: none;
   transition:
-    transform 150ms ease,
-    background-color 150ms ease;
+    transform var(--duration-fast) var(--ease-out-smooth),
+    background-color var(--duration-fast) var(--ease-out-smooth),
+    box-shadow var(--duration-normal) var(--ease-out-smooth);
 }
 
 .result-card:last-child {
@@ -170,6 +171,7 @@ function requestFullText(event: MouseEvent): void {
   /* 淡染一层 sunken：卡片底是透明的（页面底 --surface-base），30% 的 sunken
      正好比底色深半档。用 color-mix 保持「极淡」的意图，不引入裸色值。 */
   background: color-mix(in srgb, var(--surface-sunken) 30%, transparent);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
 
 .document-locator {
@@ -200,7 +202,7 @@ function requestFullText(event: MouseEvent): void {
 }
 
 .document-locator small {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-family: var(--body-font);
   font-size: 0.62rem;
 }
@@ -260,7 +262,7 @@ function requestFullText(event: MouseEvent): void {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-family: var(--mono-font);
   font-size: 0.66rem;
 }
@@ -269,7 +271,7 @@ function requestFullText(event: MouseEvent): void {
 .related-matches p {
   max-width: 82ch;
   overflow-wrap: anywhere;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   font-size: 0.92rem;
   line-height: 1.76;
   white-space: pre-line;
@@ -293,6 +295,13 @@ function requestFullText(event: MouseEvent): void {
   background: transparent;
   font-size: 0.76rem;
   font-weight: 720;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out-smooth);
+}
+
+.text-button:hover,
+.related-toggle:hover {
+  color: var(--accent-hover);
 }
 
 .text-button {
@@ -305,7 +314,7 @@ function requestFullText(event: MouseEvent): void {
 
 .text-button svg,
 .related-toggle > svg {
-  transition: transform 150ms ease;
+  transition: transform var(--duration-normal) var(--ease-out-smooth);
 }
 
 .text-button svg.is-open,
@@ -382,9 +391,37 @@ function requestFullText(event: MouseEvent): void {
   text-decoration: none;
 }
 
+.result-actions a {
+  transition:
+    border-color var(--duration-fast) var(--ease-out-smooth),
+    color var(--duration-fast) var(--ease-out-smooth),
+    transform var(--duration-fast) var(--ease-out-smooth);
+}
+
 .result-actions a:hover {
   border-color: var(--accent);
   color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.result-actions a:active {
+  transform: scale(0.98);
+  transition-duration: calc(var(--duration-fast) / 2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .result-card {
+    transition-property: background-color, box-shadow;
+  }
+
+  .result-actions a {
+    transition-property: border-color, color;
+  }
+
+  .result-actions a:hover,
+  .result-actions a:active {
+    transform: none;
+  }
 }
 
 @container (max-width: 680px) {

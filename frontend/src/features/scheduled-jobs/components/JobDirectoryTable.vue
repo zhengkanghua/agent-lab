@@ -187,7 +187,7 @@ function editFormFor(job: ScheduledJobDto): UseJobFormReturn | null {
   align-items: center;
   gap: 10px;
   padding: 26px 12px;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.8rem;
 }
 
@@ -206,7 +206,7 @@ function editFormFor(job: ScheduledJobDto): UseJobFormReturn | null {
     auto;
   gap: 18px;
   padding: 10px;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.66rem;
   font-weight: 720;
   letter-spacing: 0.04em;

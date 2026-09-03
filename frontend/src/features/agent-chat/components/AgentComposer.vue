@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { MessageSquarePlus, Send, Settings2, Square } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
@@ -31,8 +31,6 @@ const emit = defineEmits<{
   cancel: []
   'new-conversation': []
 }>()
-
-const promptOpen = ref(false)
 
 const draft = computed({
   get: () => props.modelValue,
@@ -90,17 +88,15 @@ function useDefaultPrompt(): void {
         <div class="bar-left">
           <!-- 系统提示词从 <details> 改成齿轮浮层（Q8）：它是这一档的次要设置，
                摊开在输入框下面会把主操作挤下去。 -->
-          <BasePopover v-model:open="promptOpen" label="自定义系统提示词" placement="top-start">
-            <template #trigger="{ toggle, attrs }">
+          <BasePopover side="top" align="start">
+            <template #trigger>
               <!-- 角标是齿轮的兄弟而不是子节点：BaseIconButton 没有 position，
                    放进去会定位到更外层的 .base-popover 上，跑到整个浮层的角上。
                    包一层 relative 的 span，定位职责留在本组件里，不去改共享组件。 -->
               <span class="prompt-trigger">
                 <BaseIconButton
-                  v-bind="attrs"
                   :label="promptOverridden ? '自定义系统提示词（已覆盖）' : '自定义系统提示词'"
                   size="md"
-                  @click="toggle"
                 >
                   <Settings2 :size="17" aria-hidden="true" />
                 </BaseIconButton>
@@ -204,8 +200,8 @@ function useDefaultPrompt(): void {
   background: var(--surface-raised);
   box-shadow: var(--shadow-soft);
   transition:
-    border-color 150ms ease,
-    box-shadow 150ms ease;
+    border-color var(--duration-fast) var(--ease-out-smooth),
+    box-shadow var(--duration-fast) var(--ease-out-smooth);
 }
 
 /* 焦点环画在外框上而不是文本域上：视觉上这一整块是一个输入控件。
@@ -238,7 +234,7 @@ function useDefaultPrompt(): void {
 }
 
 .message-input::placeholder {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 .composer-bar {
@@ -275,14 +271,15 @@ function useDefaultPrompt(): void {
 }
 
 .character-count {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-family: var(--mono-font);
   font-size: 0.67rem;
   white-space: nowrap;
+  transition: color var(--duration-normal) var(--ease-out-smooth);
 }
 
-/* 只有临近与超出上界时才需要被看见，那两档自带语气色。默认那档是纯参考信息，
-   --text-muted 在这个字号上对比度不足，所以平时不显示，聚焦时才出现。 */
+/* 只有临近与超出上界时才需要被看见,那两档自带语气色。默认那档是纯参考信息,
+   --text-tertiary 在这个字号上对比度不足,所以平时不显示,聚焦时才出现。 */
 .agent-composer:not(:focus-within) .character-count {
   visibility: hidden;
 }
@@ -330,12 +327,12 @@ function useDefaultPrompt(): void {
   font-size: 0.78rem;
   line-height: 1.6;
   transition:
-    border-color 150ms ease,
-    box-shadow 150ms ease;
+    border-color var(--duration-fast) var(--ease-out-smooth),
+    box-shadow var(--duration-fast) var(--ease-out-smooth);
 }
 
 .prompt-input::placeholder {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 .prompt-input:focus {

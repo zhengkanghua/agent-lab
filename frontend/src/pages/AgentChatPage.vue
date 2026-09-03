@@ -277,7 +277,7 @@ async function chooseExample(value: string): Promise<void> {
 
 .thread-state {
   padding: 6px 2px 12px;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.85rem;
 }
 
@@ -312,7 +312,7 @@ async function chooseExample(value: string): Promise<void> {
   padding: 8px 11px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   background: var(--surface-sunken);
   font-size: 0.75rem;
   line-height: 1.55;

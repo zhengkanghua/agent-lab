@@ -40,7 +40,7 @@
 
 :root {
   /* 4、语义层——表面。 */
-  --surface-base: var(--neutral-100);
+  --surface-base: #fafbfb;
   --surface-raised: #ffffff;
   --surface-sunken: var(--neutral-200);
   /* 次要按钮的悬停底：比 --surface-sunken 再深一档。少了它，静态与悬停会撞成同色。 */
@@ -59,42 +59,49 @@
   --surface-error: var(--brick-100);
   --surface-success: var(--teal-100);
 
-  /* 5、语义层——文字。 */
-  --text-primary: var(--neutral-900);
-  --text-secondary: var(--neutral-700);
-  --text-muted: var(--neutral-500);
+  /* 5、语义层——文字。
+     primary: 标题、正文、关键信息（对比度 ≥ 7:1，WCAG AAA）
+     secondary: 辅助说明、标签、元数据（对比度 ≥ 4.5:1，WCAG AA）
+     tertiary: 禁用状态、占位符、极小字号（对比度 ≥ 3:1）
+     用法：正文内容（paragraph/excerpt/description）只用 primary
+          元数据（meta/label/timestamp）用 secondary
+          placeholder/disabled 用 tertiary */
+  --text-primary: #1a1d1c;
+  --text-secondary: #3e4745;
+  --text-tertiary: #6b7479;
   --text-on-accent: #ffffff;
   --text-on-inverse: var(--neutral-50);
   --text-error: var(--brick-600);
   --text-success: var(--teal-700);
 
   /* 6、语义层——描边。 */
-  --border-subtle: var(--neutral-300);
-  --border-strong: var(--neutral-400);
+  --border-subtle: #e5e7e8;
+  --border-strong: #d1d5d7;
 
   /* 7、语义层——强调与状态。 */
-  --accent: var(--teal-600);
-  --accent-primary: var(--teal-600); /* 别名，语义更明确 */
-  --accent-hover: var(--teal-700);
-  --accent-soft: var(--teal-100);
-  --accent-ring: rgb(15 110 99 / 38%);
+  --accent: #0d9488;
+  --accent-primary: #0d9488; /* 别名，语义更明确 */
+  --accent-hover: #0f766e;
+  --accent-soft: #f0fdfa;
+  --accent-ring: rgb(13 148 136 / 24%);
+  --success: var(--teal-600);
   --danger: var(--brick-600);
   --danger-soft: var(--brick-100);
   --warning: var(--amber-600);
   --warning-soft: var(--amber-100);
 
   /* 8、阴影带颜色，所以留在语义层：深色模式里投影要换算法（提亮而非压暗）。 */
-  --shadow-soft: 0 14px 34px rgb(20 24 26 / 7%);
-  --shadow-card: 0 6px 20px rgb(20 24 26 / 3.5%);
-  --shadow-raised: 0 1px 5px rgb(20 24 26 / 9%);
+  --shadow-soft: 0 14px 34px rgb(20 24 26 / 9%);
+  --shadow-card: 0 6px 20px rgb(20 24 26 / 5%);
+  --shadow-raised: 0 1px 5px rgb(20 24 26 / 12%);
   --shadow-inset-chip: 0 1px 3px rgb(20 24 26 / 25%);
-  --shadow-drawer: -18px 0 48px rgb(20 24 26 / 18%);
+  --shadow-drawer: -18px 0 48px rgb(20 24 26 / 22%);
 
   /* 9、非颜色 token 不分层：它们没有主题维度，多一层只是多一次跳转。 */
   /* 圆角 */
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 14px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
   --radius-pill: 999px;
   --radius-full: var(--radius-pill); /* 别名，语义更明确 */
 
@@ -126,4 +133,178 @@
         滚动条和 date/select 弹窗会仍然是白的。加深色模式时，重映射语义层的那个块里
         要一并写 color-scheme: dark——它属于「这一层」，不是组件的事。 */
   color-scheme: light;
+
+  /* 11、缓动曲线 */
+  --ease-out-smooth: cubic-bezier(0.33, 1, 0.68, 1); /* 元素入场：快入慢出 */
+  --ease-in-out-back: cubic-bezier(0.68, -0.6, 0.32, 1.6); /* 交互反馈：微弹跳 */
+  --ease-elastic: cubic-bezier(0.68, -0.55, 0.265, 1.55); /* 成功动效：轻微弹性 */
+
+  /* 12、动画时长 */
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
+}
+
+/* ========== 深色模式 ========== */
+
+/* 深色模式：系统偏好 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* 1、色阶层：反转明度 */
+    --neutral-50: #14181a;
+    --neutral-100: #1f2523;
+    --neutral-200: #2f3634;
+    --neutral-300: #4d5654;
+    --neutral-400: #5c6663;
+    --neutral-500: #7b8481;
+    --neutral-600: #b4bbb9;
+    --neutral-700: #d8dcdb;
+    --neutral-800: #e9ebea;
+    --neutral-900: #f4f5f5;
+    --neutral-950: #fbfbfa;
+
+    /* 2、强调色：深色下需要提亮 */
+    --teal-100: #0b574e;
+    --teal-400: #4fb3a3;
+    --teal-600: #5fc9ba;
+    --teal-700: #7dd4c7;
+
+    /* 3、状态色：深色下提亮 */
+    --brick-100: #5c1f1f;
+    --brick-600: #e86060;
+    --amber-100: #5c4a1f;
+    --amber-600: #d9a43d;
+
+    /* 4、语义层——表面：覆盖写死的浅色代码 */
+    --surface-base: var(--neutral-50);
+    --surface-raised: var(--neutral-100);
+    --surface-sunken: var(--neutral-200);
+    --surface-sunken-hover: var(--neutral-300);
+    --surface-overlay: rgb(20 24 26 / 80%);
+    --surface-scrim: rgb(20 24 26 / 80%);
+    --surface-inverse: var(--neutral-900);
+    --surface-secondary: var(--neutral-100);
+    --surface-tertiary: var(--neutral-200);
+    --surface-hover: var(--neutral-200);
+    --surface-error: var(--brick-100);
+    --surface-success: var(--teal-100);
+
+    /* 5、语义层——文字：覆盖写死的浅色代码 */
+    --text-primary: var(--neutral-950);
+    --text-secondary: var(--neutral-700);
+    --text-tertiary: var(--neutral-500);
+    --text-on-accent: var(--neutral-50);
+    --text-on-inverse: var(--neutral-950);
+    --text-error: var(--brick-600);
+    --text-success: var(--teal-700);
+    
+    /* 6、语义层——描边：覆盖写死的浅色代码 */
+    --border-subtle: var(--neutral-300);
+    --border-strong: var(--neutral-400);
+    
+    /* 7、语义层——强调与状态 */
+    --accent: var(--teal-600);
+    --accent-primary: var(--teal-600);
+    --accent-hover: var(--teal-400);
+    --accent-soft: var(--teal-100);
+    --accent-ring: rgb(95 201 186 / 24%);
+    --success: var(--teal-600);
+    --danger: var(--brick-600);
+    --danger-soft: var(--brick-100);
+    --warning: var(--amber-600);
+    --warning-soft: var(--amber-100);
+
+    /* 8、阴影：深色模式下投影要提亮边缘 */
+    --shadow-soft: 0 14px 34px rgb(0 0 0 / 50%);
+    --shadow-card: 0 6px 20px rgb(0 0 0 / 30%);
+    --shadow-raised: 0 1px 5px rgb(0 0 0 / 40%);
+    --shadow-inset-chip: 0 1px 3px rgb(0 0 0 / 60%);
+    --shadow-drawer: -18px 0 48px rgb(0 0 0 / 60%);
+
+    /* 10、告知浏览器使用深色滚动条 */
+    color-scheme: dark;
+  }
+}
+
+/* 用户手动切换：强制深色 */
+[data-theme='dark'] {
+  /* 1、色阶层：同上深色映射 */
+  --neutral-50: #14181a;
+  --neutral-100: #1f2523;
+  --neutral-200: #2f3634;
+  --neutral-300: #4d5654;
+  --neutral-400: #5c6663;
+  --neutral-500: #7b8481;
+  --neutral-600: #b4bbb9;
+  --neutral-700: #d8dcdb;
+  --neutral-800: #e9ebea;
+  --neutral-900: #f4f5f5;
+  --neutral-950: #fbfbfa;
+
+  /* 2、强调色：深色下需要提亮 */
+  --teal-100: #0b574e;
+  --teal-400: #4fb3a3;
+  --teal-600: #5fc9ba;
+  --teal-700: #7dd4c7;
+
+  /* 3、状态色：深色下提亮 */
+  --brick-100: #5c1f1f;
+  --brick-600: #e86060;
+  --amber-100: #5c4a1f;
+  --amber-600: #d9a43d;
+
+  /* 4、语义层——表面：覆盖写死的浅色代码 */
+  --surface-base: var(--neutral-50);
+  --surface-raised: var(--neutral-100);
+  --surface-sunken: var(--neutral-200);
+  --surface-sunken-hover: var(--neutral-300);
+  --surface-overlay: rgb(20 24 26 / 80%);
+  --surface-scrim: rgb(20 24 26 / 80%);
+  --surface-inverse: var(--neutral-900);
+  --surface-secondary: var(--neutral-100);
+  --surface-tertiary: var(--neutral-200);
+  --surface-hover: var(--neutral-200);
+  --surface-error: var(--brick-100);
+  --surface-success: var(--teal-100);
+
+  /* 5、语义层——文字：覆盖写死的浅色代码 */
+  --text-primary: var(--neutral-950);
+  --text-secondary: var(--neutral-700);
+  --text-tertiary: var(--neutral-500);
+  --text-on-accent: var(--neutral-50);
+  --text-on-inverse: var(--neutral-950);
+  --text-error: var(--brick-600);
+  --text-success: var(--teal-700);
+  
+  /* 6、语义层——描边：覆盖写死的浅色代码 */
+  --border-subtle: var(--neutral-300);
+  --border-strong: var(--neutral-400);
+  
+  /* 7、语义层——强调与状态 */
+  --accent: var(--teal-600);
+  --accent-primary: var(--teal-600);
+  --accent-hover: var(--teal-400);
+  --accent-soft: var(--teal-100);
+  --accent-ring: rgb(95 201 186 / 24%);
+  --success: var(--teal-600);
+  --danger: var(--brick-600);
+  --danger-soft: var(--brick-100);
+  --warning: var(--amber-600);
+  --warning-soft: var(--amber-100);
+
+  /* 8、阴影：深色模式下投影要提亮边缘 */
+  --shadow-soft: 0 14px 34px rgb(0 0 0 / 50%);
+  --shadow-card: 0 6px 20px rgb(0 0 0 / 30%);
+  --shadow-raised: 0 1px 5px rgb(0 0 0 / 40%);
+  --shadow-inset-chip: 0 1px 3px rgb(0 0 0 / 60%);
+  --shadow-drawer: -18px 0 48px rgb(0 0 0 / 60%);
+
+  /* 10、告知浏览器使用深色滚动条 */
+  color-scheme: dark;
+}
+
+/* 用户手动切换：强制浅色（覆盖系统深色偏好） */
+[data-theme='light'] {
+  color-scheme: light;
+  /* 保持原有浅色色阶，无需重新声明 */
 }

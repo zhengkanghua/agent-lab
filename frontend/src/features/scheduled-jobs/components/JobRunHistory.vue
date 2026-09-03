@@ -150,7 +150,7 @@ function refresh(): void {
   align-items: center;
   gap: 9px;
   margin-top: 13px;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.76rem;
 }
 
@@ -222,7 +222,7 @@ function refresh(): void {
 }
 
 .run-stats {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.71rem;
 }
 </style>

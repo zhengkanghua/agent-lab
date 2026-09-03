@@ -4,6 +4,7 @@ import { LogOut, UserRound } from '@lucide/vue'
 import { RouterLink, type RouteLocationRaw } from 'vue-router'
 import { authSession } from '@/features/auth'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
+import ThemeToggle from '@/shared/ui/ThemeToggle.vue'
 
 /* 登录后三页共用的外壳：跳转链接、顶栏、页脚。
  *
@@ -123,6 +124,8 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
             >
               <component :is="link.icon" :size="17" aria-hidden="true" />
             </RouterLink>
+
+            <ThemeToggle />
 
             <RouterLink
               v-if="authSession.user.value"
@@ -262,9 +265,9 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
   color: var(--text-secondary);
   text-decoration: none;
   transition:
-    border-color 150ms ease,
-    color 150ms ease,
-    background-color 150ms ease;
+    border-color var(--duration-fast) var(--ease-out-smooth),
+    color var(--duration-fast) var(--ease-out-smooth),
+    background-color var(--duration-fast) var(--ease-out-smooth);
 }
 
 .topbar-nav-link:hover {
@@ -280,8 +283,8 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
   font-size: 0.75rem;
   text-decoration: none;
   transition:
-    color 150ms ease,
-    background-color 150ms ease;
+    color var(--duration-fast) var(--ease-out-smooth),
+    background-color var(--duration-fast) var(--ease-out-smooth);
   padding: 6px 10px;
   border-radius: var(--radius-sm);
 }
@@ -316,7 +319,7 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
   background: var(--surface-raised);
 }
 
-/* 两处原本是 --text-muted：它在这两个底色上都只有 3.85:1，正文字号不到 AA 的 4.5。
+/* 两处原本是 --text-tertiary：它在这两个底色上都只有 3.85:1，正文字号不到 AA 的 4.5。
    --text-secondary 是 7.57:1。mode-detail 与页脚右侧都是真内容而非装饰，所以改色。 */
 .footer-inner {
   display: flex;

@@ -236,7 +236,7 @@ function checkedOf(event: Event): boolean {
 .user-copy small,
 .created-cell small,
 .status-cell small {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.66rem;
 }
 

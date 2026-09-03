@@ -134,7 +134,7 @@ const hasTracesOnly = computed(() => isUnanswered.value && props.turn.traces.len
   align-items: center;
   gap: 8px;
   margin-bottom: 6px;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.7rem;
   font-weight: 720;
 }
@@ -147,7 +147,7 @@ const hasTracesOnly = computed(() => isUnanswered.value && props.turn.traces.len
 /* 提问保持 pre-wrap 的纯文本：它是用户原文，换行按他敲的来。
    答案正文的排版与流式光标都归 MarkdownAnswer，这里不再有 .answer-text。 */
 .question-text {
-  color: var(--text-secondary);
+  color: var(--text-primary);
   font-size: 0.92rem;
   line-height: 1.75;
   white-space: pre-wrap;
@@ -155,13 +155,13 @@ const hasTracesOnly = computed(() => isUnanswered.value && props.turn.traces.len
 }
 
 .thinking {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.85rem;
 }
 
 /* 与 .thinking 同一档视觉重量：两者都是「这里本该有内容」的中性说明，不该比真实回答更显眼。 */
 .unanswered {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.85rem;
   font-style: italic;
 }
@@ -169,7 +169,7 @@ const hasTracesOnly = computed(() => isUnanswered.value && props.turn.traces.len
 .trace-hint {
   display: block;
   margin-top: 4px;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.8rem;
 }
 

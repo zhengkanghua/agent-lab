@@ -74,9 +74,10 @@ defineExpose({ focus })
   background: transparent;
   cursor: pointer;
   transition:
-    border-color 150ms ease,
-    color 150ms ease,
-    background-color 150ms ease;
+    border-color var(--duration-fast) var(--ease-out-smooth),
+    color var(--duration-fast) var(--ease-out-smooth),
+    background-color var(--duration-fast) var(--ease-out-smooth),
+    transform var(--duration-fast) var(--ease-in-out-back);
 }
 
 .is-lg {
@@ -98,6 +99,12 @@ defineExpose({ focus })
   border-color: var(--border-subtle);
   color: var(--accent);
   background: var(--surface-base);
+  transform: translateY(-1px);
+}
+
+.base-icon-button:active:not(:disabled) {
+  transform: scale(0.95);
+  transition-duration: calc(var(--duration-fast) / 2);
 }
 
 .base-icon-button:disabled {
@@ -107,5 +114,16 @@ defineExpose({ focus })
 
 .is-busy-cursor:disabled {
   cursor: wait;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .base-icon-button {
+    transition-property: border-color, color, background-color;
+  }
+
+  .base-icon-button:hover:not(:disabled),
+  .base-icon-button:active:not(:disabled) {
+    transform: none;
+  }
 }
 </style>

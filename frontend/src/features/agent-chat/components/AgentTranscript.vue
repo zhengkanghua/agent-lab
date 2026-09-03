@@ -135,7 +135,7 @@ function isLast(index: number): boolean {
 
 .example-button svg {
   flex: 0 0 auto;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   transition: color 150ms ease;
 }
 

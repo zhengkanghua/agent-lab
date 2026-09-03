@@ -430,12 +430,12 @@ function handleKeydown(event: KeyboardEvent): void {
 
 .reader-enter-active,
 .reader-leave-active {
-  transition: opacity 180ms ease;
+  transition: opacity var(--duration-normal) var(--ease-out-smooth);
 }
 
 .reader-enter-active .reader-panel,
 .reader-leave-active .reader-panel {
-  transition: transform 220ms ease;
+  transition: transform var(--duration-normal) var(--ease-out-smooth);
 }
 
 .reader-enter-from,

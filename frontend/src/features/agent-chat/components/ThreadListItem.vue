@@ -127,7 +127,7 @@ const exactTime = computed(() => {
 }
 
 .time {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.68rem;
 }
 

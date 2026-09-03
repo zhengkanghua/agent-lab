@@ -212,7 +212,9 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
   padding: 16px 0 14px;
   background: var(--surface-base);
   border-bottom: 1px solid transparent;
-  transition: all 300ms ease;
+  transition:
+    border-bottom-color var(--duration-normal) var(--ease-out-smooth),
+    background-color var(--duration-normal) var(--ease-out-smooth);
   z-index: 8;
 }
 
@@ -281,15 +283,20 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
   font-size: 0.88rem;
   text-align: center;
   transition:
-    border-color 150ms ease,
-    color 150ms ease,
-    transform 150ms ease;
+    border-color var(--duration-fast) var(--ease-out-smooth),
+    color var(--duration-fast) var(--ease-out-smooth),
+    transform var(--duration-fast) var(--ease-in-out-back);
 }
 
 .example-list button:hover {
   border-color: var(--accent);
   color: var(--accent);
   transform: translateY(-1px);
+}
+
+.example-list button:active {
+  transform: translateY(0) scale(0.98);
+  transition-duration: calc(var(--duration-fast) / 2);
 }
 
 .sr-only {
@@ -318,6 +325,17 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
 
   .empty-lead h2 {
     font-size: 1.5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .example-list button {
+    transition-property: border-color, color;
+  }
+
+  .example-list button:hover,
+  .example-list button:active {
+    transform: none;
   }
 }
 </style>

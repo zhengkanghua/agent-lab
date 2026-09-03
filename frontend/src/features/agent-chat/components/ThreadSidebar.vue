@@ -119,7 +119,7 @@ const emit = defineEmits<{
   display: flex;
   align-items: center;
   gap: 7px;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.7rem;
   font-weight: 720;
   letter-spacing: 0.04em;
@@ -139,7 +139,7 @@ const emit = defineEmits<{
   align-items: center;
   gap: 7px;
   padding: 6px 4px;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.78rem;
   line-height: 1.6;
 }

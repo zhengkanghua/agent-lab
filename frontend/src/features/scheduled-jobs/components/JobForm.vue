@@ -305,7 +305,7 @@ function onSubmit(): void {
 
 .field-control input:disabled,
 .field-control select:disabled {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   background: var(--surface-base);
 }
 
@@ -316,7 +316,7 @@ function onSubmit(): void {
 }
 
 .field-control small {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.67rem;
   font-weight: 450;
 }
@@ -352,7 +352,7 @@ function onSubmit(): void {
 }
 
 .check-control small {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.67rem;
   font-weight: 450;
 }

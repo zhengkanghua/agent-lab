@@ -111,9 +111,11 @@ async function mountPage() {
 }
 
 /* 系统提示词从输入框下的 <details> 改成了底部齿轮浮层（Q8），面板只在展开时进 DOM。
-   要碰 .prompt-input / .prompt-actions 的用例先过这里。 */
+   要碰 .prompt-input / .prompt-actions 的用例先过这里打开浮层，
+   然后用 document.querySelector 查询 Portal 里的元素。 */
 async function openPromptPanel(wrapper: VueWrapper): Promise<void> {
   await wrapper.get('.prompt-trigger button').trigger('click')
+  await wrapper.vm.$nextTick()
 }
 
 describe('AgentChatPage', () => {
@@ -169,7 +171,9 @@ describe('AgentChatPage', () => {
     await openPromptPanel(wrapper)
 
     expect(api.fetchAgentDefaultPrompt).toHaveBeenCalledOnce()
-    expect(wrapper.get('.prompt-actions button').attributes('disabled')).toBeUndefined()
+    const fillButton = document.querySelector('.prompt-actions button') as HTMLButtonElement
+    expect(fillButton).not.toBeNull()
+    expect(fillButton.disabled).toBe(false)
     wrapper.unmount()
   })
 
@@ -179,7 +183,9 @@ describe('AgentChatPage', () => {
     await openPromptPanel(wrapper)
 
     // 不传 system_prompt 时后端用同一份默认值，所以这次失败不该阻断对话。
-    expect(wrapper.get('.prompt-actions button').attributes('disabled')).toBeDefined()
+    const fillButton = document.querySelector('.prompt-actions button') as HTMLButtonElement
+    expect(fillButton).not.toBeNull()
+    expect(fillButton.disabled).toBe(true)
 
     await wrapper.get('.message-input').setValue('央行利率')
     await wrapper.get('.agent-form').trigger('submit')
@@ -354,7 +360,12 @@ describe('AgentChatPage', () => {
     const { wrapper } = await mountPage()
     await openPromptPanel(wrapper)
 
-    await wrapper.get('.prompt-input').setValue('你是财经记者。')
+    const promptInput = document.querySelector('.prompt-input') as HTMLTextAreaElement
+    expect(promptInput).not.toBeNull()
+    promptInput.value = '你是财经记者。'
+    promptInput.dispatchEvent(new Event('input', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+
     await wrapper.get('.message-input').setValue('问题')
     await wrapper.get('.agent-form').trigger('submit')
     await flushPromises()

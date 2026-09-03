@@ -237,7 +237,7 @@ function toggle(): void {
 .record-meta {
   flex: 1 1 auto;
   min-width: 0;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.72rem;
   white-space: nowrap;
   text-align: right;
@@ -245,7 +245,7 @@ function toggle(): void {
 
 .record-chevron {
   flex: 0 0 auto;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   transition: transform 150ms ease;
 }
 
@@ -341,7 +341,7 @@ function toggle(): void {
   align-items: center;
   gap: 7px;
   margin: 4px 0 0;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.7rem;
 }
 
