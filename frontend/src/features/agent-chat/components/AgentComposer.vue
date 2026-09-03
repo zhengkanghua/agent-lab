@@ -300,6 +300,9 @@ function useDefaultPrompt(): void {
 
 .prompt-panel {
   width: min(420px, calc(100vw - 60px));
+  background: var(--surface-raised);
+  position: relative;
+  z-index: 100;
 }
 
 .prompt-title {

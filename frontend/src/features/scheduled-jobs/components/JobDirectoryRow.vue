@@ -316,7 +316,7 @@ function onDeleteClick(): void {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 4px;
 }
 

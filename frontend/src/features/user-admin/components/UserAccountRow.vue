@@ -317,6 +317,7 @@ function checkedOf(event: Event): boolean {
 .row-actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 7px;
 }
 

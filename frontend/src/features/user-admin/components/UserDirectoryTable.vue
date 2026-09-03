@@ -94,7 +94,7 @@ function resetPasswordFor(user: UserAdminDto): string | null {
         <span role="columnheader">使用状态</span>
         <span role="columnheader">管理权限</span>
         <span role="columnheader">创建时间</span>
-        <span role="columnheader" class="align-right">安全操作</span>
+        <span role="columnheader" class="align-center">安全操作</span>
       </div>
 
       <UserAccountRow
@@ -202,6 +202,10 @@ function resetPasswordFor(user: UserAdminDto): string | null {
 
 .align-right {
   text-align: right;
+}
+
+.align-center {
+  text-align: center;
 }
 
 @container (max-width: 1040px) {
