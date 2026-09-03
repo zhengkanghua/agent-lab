@@ -186,7 +186,7 @@ function formatArguments(args: Record<string, unknown>): string {
   font-weight: 720;
 }
 
-/* 原来是 --text-muted：它在 --surface-base 上只有 3.85:1，这个字号不到 AA 的 4.5。
+/* 原来是 --text-tertiary：它在 --surface-base 上只有 3.85:1，这个字号不到 AA 的 4.5。
    「执行中 / 未成功」是状态信息不是装饰，改用 7.57:1 的 --text-secondary。 */
 .trace-state {
   color: var(--text-secondary);

@@ -91,10 +91,10 @@ const spinnerSize = computed(() => (props.size === 'md' ? 18 : 15))
   text-decoration: none;
   cursor: pointer;
   transition:
-    background-color 150ms ease,
-    border-color 150ms ease,
-    color 150ms ease,
-    transform 150ms ease;
+    background-color var(--duration-fast) var(--ease-out-smooth),
+    border-color var(--duration-fast) var(--ease-out-smooth),
+    color var(--duration-fast) var(--ease-out-smooth),
+    transform var(--duration-fast) var(--ease-out-smooth);
 }
 
 .base-button:disabled {
@@ -154,10 +154,15 @@ const spinnerSize = computed(() => (props.size === 'md' ? 18 : 15))
   background: var(--accent);
 }
 
-.is-primary:hover:not(:disabled) {
+.is-primary:hover:not(:disabled):not(.is-loading) {
   border-color: var(--accent-hover);
   background: var(--accent-hover);
   transform: translateY(-1px);
+}
+
+.is-primary:active:not(:disabled):not(.is-loading) {
+  transform: scale(0.98);
+  transition-duration: calc(var(--duration-fast) / 2);
 }
 
 .is-secondary {
@@ -165,9 +170,15 @@ const spinnerSize = computed(() => (props.size === 'md' ? 18 : 15))
   background: var(--surface-sunken);
 }
 
-.is-secondary:hover:not(:disabled) {
+.is-secondary:hover:not(:disabled):not(.is-loading) {
   color: var(--text-primary);
   background: var(--surface-sunken-hover);
+  transform: translateY(-1px);
+}
+
+.is-secondary:active:not(:disabled):not(.is-loading) {
+  transform: scale(0.98);
+  transition-duration: calc(var(--duration-fast) / 2);
 }
 
 .is-danger {
@@ -175,8 +186,14 @@ const spinnerSize = computed(() => (props.size === 'md' ? 18 : 15))
   background: var(--danger-soft);
 }
 
-.is-danger:hover:not(:disabled) {
+.is-danger:hover:not(:disabled):not(.is-loading) {
   border-color: var(--danger);
+  transform: translateY(-1px);
+}
+
+.is-danger:active:not(:disabled):not(.is-loading) {
+  transform: scale(0.98);
+  transition-duration: calc(var(--duration-fast) / 2);
 }
 
 .is-outline {
@@ -185,10 +202,16 @@ const spinnerSize = computed(() => (props.size === 'md' ? 18 : 15))
   background: var(--surface-raised);
 }
 
-.is-outline:hover:not(:disabled) {
+.is-outline:hover:not(:disabled):not(.is-loading) {
   border-color: var(--accent-hover);
   color: var(--text-on-accent);
   background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
+.is-outline:active:not(:disabled):not(.is-loading) {
+  transform: scale(0.98);
+  transition-duration: calc(var(--duration-fast) / 2);
 }
 
 .is-ghost {
@@ -196,8 +219,13 @@ const spinnerSize = computed(() => (props.size === 'md' ? 18 : 15))
   background: transparent;
 }
 
-.is-ghost:hover:not(:disabled) {
+.is-ghost:hover:not(:disabled):not(.is-loading) {
   color: var(--accent-hover);
+}
+
+.is-ghost:active:not(:disabled):not(.is-loading) {
+  transform: scale(0.98);
+  transition-duration: calc(var(--duration-fast) / 2);
 }
 
 /* 禁用与加载。加载中不压暗到禁用那么狠：内容仍要可读。 */
@@ -207,10 +235,6 @@ const spinnerSize = computed(() => (props.size === 'md' ? 18 : 15))
 
 .is-loading {
   opacity: 0.82;
-}
-
-.base-button:active:not(:disabled) {
-  transform: translateY(1px);
 }
 
 /* 悬停位移与按下位移在 reduce 下都撤掉，只留颜色变化。 */

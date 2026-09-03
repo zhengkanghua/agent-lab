@@ -42,7 +42,8 @@ describe('SearchComposer', () => {
 
     expect(wrapper.find('.mode-switch').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('按片段')
-    expect(wrapper.text()).toContain('搜索新闻')
+    // Submit button no longer has text, so we check aria-label instead
+    expect(wrapper.get('.search-submit').attributes('aria-label')).toBe('搜索新闻')
   })
 
   it('shows the clear-stream button only after there are records', async () => {
@@ -63,7 +64,7 @@ describe('SearchComposer', () => {
     expect(wrapper.emitted('clear')).toHaveLength(1)
   })
 
-  it('Enter sends while composing is ignored and shift+enter does not send', async () => {
+  it('Enter sends while composing is ignored and shift+enter does not send', async () => {    
     const wrapper = mountComposer()
     const textarea = wrapper.get<HTMLTextAreaElement>('.query-input')
 
@@ -71,7 +72,7 @@ describe('SearchComposer', () => {
     expect(wrapper.emitted('submit')).toHaveLength(1)
 
     // 输入法组合期间 Enter 不提交。
-    const imeEvent = { key: 'Enter', isComposing: true, shiftKey: false } as KeyboardEvent
+    const imeEvent = { key: 'Enter', isComposing: true, shiftKey: false } as KeyboardEvent    
     await textarea.trigger('keydown', imeEvent)
     expect(wrapper.emitted('submit')).toHaveLength(1)
   })
@@ -82,7 +83,6 @@ describe('SearchComposer', () => {
 
     expect(submit.element.disabled).toBe(true)
     expect(wrapper.get('form').attributes('aria-busy')).toBe('true')
-    expect(wrapper.text()).toContain('正在搜索')
   })
 
   it('input error is announced and marked aria-invalid', () => {

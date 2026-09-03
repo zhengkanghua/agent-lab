@@ -183,7 +183,7 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
 }
 
 .check-control small {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.67rem;
   font-weight: 450;
 }

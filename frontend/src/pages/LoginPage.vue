@@ -222,7 +222,7 @@ async function retrySessionCheck(): Promise<void> {
 }
 
 .access-label {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-family: var(--mono-font);
   font-size: 0.7rem;
 }
@@ -282,7 +282,7 @@ async function retrySessionCheck(): Promise<void> {
 }
 
 .register-heading span {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-family: var(--mono-font);
   font-size: 0.65rem;
 }
@@ -393,12 +393,12 @@ async function retrySessionCheck(): Promise<void> {
 }
 
 .login-input::placeholder {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 .login-input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: 0 0 0 4px var(--accent-soft);
 }
 
 .password-control {
@@ -426,7 +426,7 @@ async function retrySessionCheck(): Promise<void> {
 
 .account-note {
   margin-top: 22px;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.72rem;
 }
 

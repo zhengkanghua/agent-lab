@@ -52,7 +52,7 @@ defineProps<{ stats: DirectoryStats }>()
 
 .summary-note {
   margin-left: auto;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 @container (max-width: 720px) {

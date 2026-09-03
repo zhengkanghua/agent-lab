@@ -170,7 +170,7 @@ function resetPasswordFor(user: UserAdminDto): string | null {
   gap: 10px;
   border-top: 1px solid var(--border-subtle);
   border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.82rem;
 }
 
@@ -194,7 +194,7 @@ function resetPasswordFor(user: UserAdminDto): string | null {
   gap: 18px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-family: var(--mono-font);
   font-size: 0.65rem;
   text-transform: uppercase;

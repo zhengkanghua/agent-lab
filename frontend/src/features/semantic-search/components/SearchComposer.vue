@@ -74,30 +74,10 @@ defineExpose({ focusInput })
 </script>
 
 <template>
-  <section class="composer" aria-label="语义检索输入条" style="container-type: inline-size">
+  <section class="composer" aria-label="语义检索输入条" style="container-type: inline-size">  
     <form class="search-form" :aria-busy="loading" @submit.prevent="emit('submit')">
-      <BaseField id="search-query" label="研究内容" :error="inputError ?? undefined">
-        <template #default="{ control }">
-          <textarea
-            ref="textareaRef"
-            v-bind="control"
-            v-model="draft"
-            class="query-input"
-            name="query"
-            rows="2"
-            :maxlength="MAX_QUERY_CHARACTERS"
-            placeholder="输入一个新闻研究问题或主题，Enter 搜索，Shift + Enter 换行"
-            @keydown.enter="onEnter"
-          ></textarea>
-        </template>
-        <template #hint>
-          <span class="character-count" :class="counterTone">
-            还可输入 {{ remainingCharacters.toLocaleString('zh-CN') }} 个字符
-          </span>
-        </template>
-      </BaseField>
-
-      <div class="composer-toolbar">
+      <!-- Top configuration row -->
+      <div class="composer-toolbar-top">
         <label class="result-limit-control">
           <span class="control-label">
             <ListFilter :size="16" aria-hidden="true" />
@@ -135,8 +115,31 @@ defineExpose({ focusInput })
             </select>
           </label>
         </BaseDisclosure>
+      </div>
 
-        <div class="composer-actions">
+      <!-- Unified Input Area -->
+      <div class="query-container" :class="{ 'has-error': !!inputError }">
+        <BaseField id="search-query" label="研究内容" :error="inputError ?? undefined" class="query-field">
+          <template #default="{ control }">
+            <textarea
+              ref="textareaRef"
+              v-bind="control"
+              v-model="draft"
+              class="query-input"
+              name="query"
+              rows="1"
+              :maxlength="MAX_QUERY_CHARACTERS"
+              placeholder="输入一个新闻研究问题或主题..."
+              @keydown.enter="onEnter"
+            ></textarea>
+          </template>
+        </BaseField>
+
+        <div class="query-actions">
+          <span class="character-count" :class="counterTone" aria-hidden="true">
+            {{ remainingCharacters.toLocaleString('zh-CN') }}
+          </span>
+
           <BaseButton
             v-if="hasRecords"
             class="clear-button"
@@ -148,7 +151,6 @@ defineExpose({ focusInput })
             @click="emit('clear')"
           >
             <template #icon><Eraser :size="16" aria-hidden="true" /></template>
-            清空
           </BaseButton>
 
           <BaseButton
@@ -156,11 +158,12 @@ defineExpose({ focusInput })
             variant="primary"
             size="sm"
             type="submit"
+            aria-label="搜索新闻"
+            title="搜索新闻"
             :loading="loading"
             :disabled="!draft.trim() && !loading"
           >
             <template #icon><Search :size="16" stroke-width="2.4" aria-hidden="true" /></template>
-            <span>{{ loading ? '正在搜索' : '搜索新闻' }}</span>
           </BaseButton>
         </div>
       </div>
@@ -170,79 +173,24 @@ defineExpose({ focusInput })
 
 <style scoped>
 .composer {
-  padding: 14px 16px 12px;
+  padding: 14px 16px 16px;
   background: transparent;
   transition: all 150ms ease;
 }
 
-.composer:focus-within {
-  /* No outer focus ring, input handles its own focus */
-}
-
 .search-form {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
-/* 字段标签与字数说明的接线归 BaseField。输入框留在这里：高度、resize、聚焦态是本页专有的。 */
-.query-input {
-  display: block;
-  width: 100%;
-  min-height: 52px;
-  resize: vertical;
-  padding: 12px 0 8px;
-  border: none;
-  border-bottom: 2px solid var(--border-subtle);
-  border-radius: 0;
-  outline: none;
-  box-shadow: none;
-  color: var(--text-primary);
-  background: transparent;
-  font-size: 1.15rem;
-  line-height: 1.65;
-  transition:
-    border-color 200ms ease,
-    background-color 200ms ease;
-}
-
-.query-input::placeholder {
-  color: var(--text-muted);
-  font-weight: 400;
-}
-
-.query-input:focus,
-.query-input:focus-visible {
-  outline: none;
-  box-shadow: none;
-  border-bottom: 2px solid var(--accent);
-  background: transparent;
-}
-
-.character-count {
-  display: block;
-  text-align: right;
-  color: var(--text-muted);
-  font-family: var(--mono-font);
-  font-size: 0.67rem;
-  letter-spacing: 0;
-}
-
-.character-count.is-near {
-  color: var(--warning);
-}
-
-.character-count.is-over {
-  color: var(--danger);
-}
-
-.composer-toolbar {
+/* 顶部工具栏：筛选、高级设置 */
+.composer-toolbar-top {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   column-gap: 22px;
   row-gap: 10px;
-  margin-top: 2px;
-  padding-top: 12px;
-  border-top: 1px solid var(--surface-sunken);
 }
 
 .result-limit-control {
@@ -261,13 +209,13 @@ defineExpose({ focusInput })
 }
 
 .control-label svg {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 .result-limit-control select,
 .advanced-options select {
   width: 88px;
-  height: 36px;
+  height: 32px;
   padding: 0 8px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
@@ -275,15 +223,17 @@ defineExpose({ focusInput })
   color: var(--text-primary);
   background: var(--surface-raised);
   font-weight: 700;
+  font-size: 0.8rem;
 }
 
 .advanced-options {
-  border: 1px solid var(--border-subtle);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
 }
 
 .advanced-options :deep(.disclosure-summary) {
-  padding: 0 10px;
+  padding: 0 8px;
+  height: 32px;
 }
 
 .advanced-options label {
@@ -291,29 +241,128 @@ defineExpose({ focusInput })
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 44px;
-  padding: 6px 12px 12px;
+  min-height: 40px;
+  padding: 8px 12px;
   color: var(--text-secondary);
   font-size: 0.78rem;
 }
 
-.composer-actions {
+/* 底部输入框容器 */
+.query-container {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-soft);
+  transition:
+    border-color var(--duration-fast) ease,
+    box-shadow var(--duration-fast) ease;
+}
+
+.query-container:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+.query-container.has-error {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+
+.query-field {
+  flex: 1;
+}
+
+/* 隐藏视觉标签，仅为读屏保留 */
+.query-field :deep(.field-label) {
+  border: 0;
+  clip: rect(0 0 0 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  width: 1px;
+}
+
+/* 我们已经在右侧手动放了字数，隐藏 BaseField 默认的 hint */
+.query-field :deep(.field-hint) {
+  display: none;
+}
+
+.query-field :deep(.field-error) {
+  position: absolute;
+  bottom: -22px;
+  left: 0;
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+.query-input {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  max-height: 150px;
+  resize: vertical;
+  padding: 8px 0;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  color: var(--text-primary);
+  background: transparent;
+  font-size: 1.1rem;
+  line-height: 1.5;
+  font-family: inherit;
+}
+
+.query-input::placeholder {
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.query-actions {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
+  padding-bottom: 4px;
+}
+
+.character-count {
+  color: var(--text-tertiary);
+  font-family: var(--mono-font);
+  font-size: 0.75rem;
+  padding-right: 4px;
+}
+
+.character-count.is-near {
+  color: var(--warning);
+}
+
+.character-count.is-over {
+  color: var(--danger);
 }
 
 .clear-button {
   color: var(--text-secondary);
+  border-radius: var(--radius-lg);
 }
 
 .clear-button :deep(svg) {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 .search-submit {
-  min-width: 132px;
+  min-width: 44px; /* Icon button style since text is removed */
+  border-radius: var(--radius-lg);
+  padding: 0;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 @container (max-width: 600px) {
@@ -325,19 +374,9 @@ defineExpose({ focusInput })
     min-height: 58px;
   }
 
-  /* 窄屏隐藏字数和「每篇片段」次级设置，主行只留数量 + 操作，保证提交键可见。 */
   .character-count,
   .advanced-options {
     display: none;
-  }
-
-  .composer-actions {
-    width: 100%;
-  }
-
-  .search-submit {
-    flex: 1;
-    min-width: 0;
   }
 }
 </style>

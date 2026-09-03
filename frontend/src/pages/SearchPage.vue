@@ -143,15 +143,8 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
         />
       </div>
 
-      <!-- 空态：还没有任何检索记录。居中一句引导 + 示例，点一下直接搜。 -->
+      <!-- 空态：还没有任何检索记录。只有示例，点一下直接搜。 -->
       <div v-if="!hasRecords" class="empty-state">
-        <div class="empty-lead">
-          <h2>从一个研究问题开始</h2>
-          <p>
-            输入要研究的新闻主题，结果会按新闻分组返回原始片段。每次搜索都会往下追加成一条记录，刷新后清空。
-          </p>
-        </div>
-
         <div class="example-list" aria-label="示例检索">
           <button
             v-for="example in SEARCH_EXAMPLES"
@@ -212,7 +205,9 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
   padding: 16px 0 14px;
   background: var(--surface-base);
   border-bottom: 1px solid transparent;
-  transition: all 300ms ease;
+  transition:
+    border-bottom-color var(--duration-normal) var(--ease-out-smooth),
+    background-color var(--duration-normal) var(--ease-out-smooth);
   z-index: 8;
 }
 
@@ -243,22 +238,6 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
   text-align: center;
 }
 
-.empty-lead h2 {
-  color: var(--text-primary);
-  font-size: 1.72rem;
-  font-weight: 780;
-  line-height: 1.2;
-  letter-spacing: -0.01em;
-}
-
-.empty-lead p {
-  max-width: 52ch;
-  margin-top: 12px;
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-  line-height: 1.7;
-}
-
 .example-list {
   display: grid;
   gap: 8px;
@@ -281,15 +260,20 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
   font-size: 0.88rem;
   text-align: center;
   transition:
-    border-color 150ms ease,
-    color 150ms ease,
-    transform 150ms ease;
+    border-color var(--duration-fast) var(--ease-out-smooth),
+    color var(--duration-fast) var(--ease-out-smooth),
+    transform var(--duration-fast) var(--ease-in-out-back);
 }
 
 .example-list button:hover {
   border-color: var(--accent);
   color: var(--accent);
   transform: translateY(-1px);
+}
+
+.example-list button:active {
+  transform: translateY(0) scale(0.98);
+  transition-duration: calc(var(--duration-fast) / 2);
 }
 
 .sr-only {
@@ -318,6 +302,17 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
 
   .empty-lead h2 {
     font-size: 1.5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .example-list button {
+    transition-property: border-color, color;
+  }
+
+  .example-list button:hover,
+  .example-list button:active {
+    transform: none;
   }
 }
 </style>

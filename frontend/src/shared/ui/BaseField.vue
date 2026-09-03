@@ -105,7 +105,7 @@ defineExpose({ controlId })
 
 .field-hint {
   margin-top: 8px;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.72rem;
   line-height: 1.55;
 }

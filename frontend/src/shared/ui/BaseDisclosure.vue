@@ -115,7 +115,7 @@ function onToggle(event: Event): void {
 
 .disclosure-chevron {
   flex: none;
-  transition: transform 150ms ease;
+  transition: transform var(--duration-normal) var(--ease-out-smooth);
 }
 
 /* 箭头和图标位始终是强调色：它们是「这行能点开」的提示，与标签的语气无关。
@@ -134,7 +134,7 @@ function onToggle(event: Event): void {
 }
 
 /* meta 常常是用户自己设过的值（条数、耗时），不是可以眼扫过去的装饰，
-   所以用 --text-secondary；--text-muted 在这个字号下对比度不够。 */
+   所以用 --text-secondary；--text-tertiary 在这个字号下对比度不够。 */
 .disclosure-meta {
   margin-left: auto;
   color: var(--text-secondary);

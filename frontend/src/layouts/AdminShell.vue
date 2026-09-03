@@ -4,6 +4,7 @@ import { ArrowLeft, CalendarClock, LogOut, Menu, ShieldCheck, UsersRound, X } fr
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 import { authSession, useLogout } from '@/features/auth'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
+import ThemeToggle from '@/shared/ui/ThemeToggle.vue'
 
 /* 后台控制台布局：固定左侧导航 + 右侧内容区。它作为 /admin 父路由的组件挂在路由上，
  * 内容区用 <RouterView> 承载子页面（账号管理等）。
@@ -105,6 +106,8 @@ function closeDrawer(): void {
         </div>
 
         <div class="topbar-actions">
+          <ThemeToggle />
+
           <RouterLink
             v-if="authSession.user.value"
             :to="{ name: 'account' }"
@@ -223,7 +226,7 @@ function closeDrawer(): void {
 
 .menu-group-label {
   padding: 16px 12px 7px;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.68rem;
   font-weight: 720;
   letter-spacing: 0.06em;
@@ -375,11 +378,24 @@ function closeDrawer(): void {
   .admin-sidebar {
     transform: translateX(-100%);
     box-shadow: var(--shadow-drawer);
-    transition: transform 200ms ease;
+    transition: transform var(--duration-normal) var(--ease-out-smooth);
   }
 
   .admin-sidebar.is-open {
     transform: translateX(0);
+  }
+
+  .sidebar-overlay {
+    animation: overlayFadeIn var(--duration-normal) var(--ease-out-smooth);
+  }
+
+  @keyframes overlayFadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
 
   .menu-toggle {

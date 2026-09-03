@@ -26,7 +26,7 @@
   .author-line {
     max-width: 240px;
     overflow: hidden;
-    color: var(--text-muted);
+    color: var(--text-tertiary);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -51,7 +51,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 14px;
-    color: var(--text-muted);
+    color: var(--text-tertiary);
     font-family: var(--mono-font);
     font-size: 0.66rem;
   }
@@ -120,8 +120,31 @@
     font-weight: 760;
   }
 
+  .read-button {
+    transition:
+      background-color var(--duration-fast) var(--ease-out-smooth),
+      transform var(--duration-fast) var(--ease-out-smooth);
+  }
+
   .read-button:hover {
     background: var(--accent-hover);
+    transform: translateY(-1px);
+  }
+
+  .read-button:active {
+    transform: scale(0.98);
+    transition-duration: calc(var(--duration-fast) / 2);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .read-button {
+      transition-property: background-color;
+    }
+
+    .read-button:hover,
+    .read-button:active {
+      transform: none;
+    }
   }
 
   @container (max-width: 680px) {

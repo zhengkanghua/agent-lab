@@ -242,7 +242,7 @@ function onDeleteClick(): void {
 }
 
 .job-type {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.68rem;
   font-weight: 640;
 }
@@ -289,7 +289,7 @@ function onDeleteClick(): void {
 
 .schedule-line small {
   flex: 0 0 auto;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: 0.64rem;
   font-weight: 720;
 }
