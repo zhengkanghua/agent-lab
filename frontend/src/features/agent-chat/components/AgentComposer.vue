@@ -2,7 +2,6 @@
 import { computed } from 'vue'
 import { MessageSquarePlus, Send, Settings2, Square } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
-import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 import BaseDisclosure from '@/shared/ui/BaseDisclosure.vue'
 import { MAX_MESSAGE_CHARACTERS, MAX_SYSTEM_PROMPT_CHARACTERS } from '../model/agent-validation'
 
