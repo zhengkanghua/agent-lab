@@ -20,35 +20,59 @@ function getFieldError(field: string): string | undefined {
     </div>
 
     <div class="form-fields">
+      <!-- 控件由本组件经插槽渲染：BaseField 只管外壳与 aria 接线（见其注释）。
+           之前把 v-model/type 直接传给 BaseField，插槽没内容，页面上只剩三个
+           标签、没有输入框，表单整个不可用。 -->
       <BaseField
         id="current-password"
-        v-model="form.currentPassword"
+        v-slot="{ control }"
         label="当前密码"
-        type="password"
         :error="getFieldError('currentPassword')"
-        :disabled="isPending"
-        autocomplete="current-password"
-      />
+      >
+        <input
+          v-bind="control"
+          v-model="form.currentPassword"
+          class="account-input"
+          type="password"
+          name="current-password"
+          autocomplete="current-password"
+          :disabled="isPending"
+        />
+      </BaseField>
 
       <BaseField
         id="new-password"
-        v-model="form.newPassword"
+        v-slot="{ control }"
         label="新密码"
-        type="password"
         :error="getFieldError('newPassword')"
-        :disabled="isPending"
-        autocomplete="new-password"
-      />
+      >
+        <input
+          v-bind="control"
+          v-model="form.newPassword"
+          class="account-input"
+          type="password"
+          name="new-password"
+          autocomplete="new-password"
+          :disabled="isPending"
+        />
+      </BaseField>
 
       <BaseField
         id="confirm-password"
-        v-model="form.confirmPassword"
+        v-slot="{ control }"
         label="确认新密码"
-        type="password"
         :error="getFieldError('confirmPassword')"
-        :disabled="isPending"
-        autocomplete="new-password"
-      />
+      >
+        <input
+          v-bind="control"
+          v-model="form.confirmPassword"
+          class="account-input"
+          type="password"
+          name="confirm-password"
+          autocomplete="new-password"
+          :disabled="isPending"
+        />
+      </BaseField>
     </div>
 
     <div v-if="errorMessage" class="message message-error" role="alert">
@@ -97,6 +121,38 @@ function getFieldError(field: string): string | undefined {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+}
+
+/* 输入框样式与登录页 .login-input 同款：输入框没抽成基础组件（type/autocomplete
+   属性面差别太大），各页面自带样式是仓库现状，见 LoginPage.vue 同名注释。 */
+.account-input {
+  width: 100%;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  font-size: 0.84rem;
+  font-weight: 450;
+  outline: none;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.account-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.account-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.account-input:disabled {
+  color: var(--text-tertiary);
+  background: var(--surface-sunken);
 }
 
 .message {

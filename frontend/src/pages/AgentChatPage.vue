@@ -338,6 +338,16 @@ async function chooseExample(value: string): Promise<void> {
   padding-bottom: 8px;
 }
 
+/* 视口不够高时（手机竖屏、横屏、矮窗口）空态内容会超出剩余高度，flex-end 把
+   建议卡压到底部、滑进 sticky 输入坞（z-index:5）的下面，第 2、3 条建议被盖住
+   （2026-09 移动端审查实测）。矮视口改回自然流向：内容从顶部开始，页面多出的
+   几十像素交给文档滚动，「贴住输入区」的视线设计只在放得下时才有意义。 */
+@media (max-width: 560px), (max-height: 700px) {
+  .transcript-region.is-empty {
+    justify-content: flex-start;
+  }
+}
+
 /* 高度为 0 的锚点：它只用来给 scrollIntoView 一个落点，不占布局。
    flex: 0 0 auto 拦住 flex 容器给它分配高度。 */
 .scroll-anchor {
@@ -350,7 +360,7 @@ async function chooseExample(value: string): Promise<void> {
    顶部那道渐变是让滚上来的内容在贴近输入区时淡出，而不是被一条硬边裁断。 */
 .composer-dock {
   position: sticky;
-  z-index: 5;
+  z-index: var(--z-dock);
   bottom: 0;
   padding: 12px 0 10px;
   background: linear-gradient(to bottom, transparent, var(--surface-base) 22%);

@@ -196,7 +196,11 @@ function editFormFor(job: ScheduledJobDto): UseJobFormReturn | null {
 }
 
 .job-table {
-  --job-row-columns: minmax(150px, 1.1fr) minmax(96px, 0.7fr) minmax(96px, 0.6fr) minmax(210px, 1.3fr) minmax(245px, 1.3fr);
+  /* 列宽分配跟着内容走：执行状态是两行文案的主内容列，多给；操作列收紧到
+     按钮组的实际宽度（250px），让按钮组贴着自己的列居中、不再悬在大片空白
+     右侧（2026-09 审查的「操作列居右」观感来自最后一列过宽 + 前列留白）。 */
+  --job-row-columns: minmax(150px, 1.1fr) minmax(96px, 0.7fr) minmax(96px, 0.6fr)
+    minmax(210px, 1.5fr) minmax(250px, 1.1fr);
   border-top: 1px solid var(--border-subtle);
 }
 

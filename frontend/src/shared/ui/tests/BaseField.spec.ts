@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import BaseField from '@/shared/ui/BaseField.vue'
 
 /* 重点全在 aria 接线上：那部分原来在每个字段里手写，漏了不报错、
@@ -114,5 +114,31 @@ describe('BaseField', () => {
     const wrapper = mountField({ label: '密码', id: 'login-password', error: '不对' })
     expect(wrapper.get('input.probe').attributes('id')).toBe('login-password')
     expect(wrapper.get('.field-error').attributes('id')).toBe('login-password-error')
+  })
+})
+
+describe('BaseField 防呆警告（仅开发期）', () => {
+  it('传了控件属性却没给默认插槽时警告，避免表单静默失效', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      mount(BaseField, {
+        props: { label: '当前密码' },
+        attrs: { type: 'password', modelValue: '' },
+      })
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(String(warn.mock.calls[0]?.[0])).toContain('[BaseField]')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('给了默认插槽就不警告', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      mountField({ label: '当前密码' })
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { MessageSquarePlus, Send, Settings2, Square } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseDisclosure from '@/shared/ui/BaseDisclosure.vue'
@@ -49,6 +49,21 @@ const counterTone = computed(() => {
 
 const promptOverridden = computed(() => props.systemPrompt.trim().length > 0)
 
+const messageInputRef = ref<HTMLTextAreaElement | null>(null)
+
+/* 输入框随内容长高，到 CSS 的 max-height（40vh）后转为框内滚动。
+   固定 62px 时多行文字在框里滚动，被切半的最后一行紧贴无边框底边，
+   视觉上和下面的控件行糊在一起（2026-09 审查的「自定义 Prompt 重叠」）。 */
+function autoGrow(): void {
+  const el = messageInputRef.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = `${el.scrollHeight}px`
+}
+
+watch(draft, () => nextTick(autoGrow))
+onMounted(autoGrow)
+
 /**
  * Enter 发送、Shift+Enter 换行。
  *
@@ -72,6 +87,7 @@ function useDefaultPrompt(): void {
       <label class="sr-only" for="agent-message">这一轮的问题</label>
       <textarea
         id="agent-message"
+        ref="messageInputRef"
         v-model="draft"
         class="message-input"
         name="message"
@@ -80,6 +96,7 @@ function useDefaultPrompt(): void {
         placeholder="问点什么，Agent 会自己去查。Enter 发送，Shift + Enter 换行"
         :aria-invalid="Boolean(inputError)"
         :aria-describedby="inputError ? 'agent-message-error' : 'agent-message-count'"
+        @input="autoGrow"
         @keydown.enter="onEnter"
       ></textarea>
 

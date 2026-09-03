@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, useId } from 'vue'
+import { computed, useAttrs, useId, useSlots } from 'vue'
 
 /* 表单字段的外壳：标签、说明、错误，以及把它们连起来的 aria 关系。
  *
@@ -31,6 +31,22 @@ const generatedId = useId()
 const controlId = computed(() => props.id ?? `field-${generatedId}`)
 const errorId = computed(() => `${controlId.value}-error`)
 const hintId = computed(() => `${controlId.value}-hint`)
+
+/* 防呆（仅开发期）：控件必须经默认插槽由调用方提供。曾有调用方把 v-model/type
+   直接传给本组件、插槽空着，页面上只剩标签没有输入框，且无任何报错——表单整个
+   静默失效。attrs 上出现控件属性而插槽为空时立刻提醒（PasswordChangeForm 踩过）。 */
+if (import.meta.env.DEV) {
+  const attrs = useAttrs()
+  const slots = useSlots()
+  const controlAttrNames = ['modelValue', 'type', 'placeholder', 'autocomplete', 'inputmode']
+  if (controlAttrNames.some((name) => name in attrs) && !slots.default) {
+    console.warn(
+      '[BaseField] 检测到控件属性（modelValue/type/...）但没有默认插槽内容：' +
+        'BaseField 只渲染标签/错误/说明外壳，控件要经 #default="{ control }" ' +
+        '以 <input v-bind="control"> 渲染，传到本组件上的控件属性会被丢弃。',
+    )
+  }
+}
 
 const slots = defineSlots<{
   default: (props: { control: Record<string, unknown>; controlId: string }) => unknown

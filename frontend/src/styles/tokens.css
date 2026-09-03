@@ -80,7 +80,9 @@
 
   /* 7、语义层——强调与状态。 */
   --accent: #0d9488;
-  --accent-primary: #0d9488; /* 别名，语义更明确 */
+  /* 已弃用别名（2026-09，决策见 docs/adr/0007 追加节）：src/ 下已无使用方，
+     仅为外部遗留引用保留过渡期，新代码禁止引用，删时连同深浅两个覆盖块一起删。 */
+  --accent-primary: #0d9488;
   --accent-hover: #0f766e;
   --accent-soft: #f0fdfa;
   --accent-ring: rgb(13 148 136 / 24%);
@@ -103,7 +105,8 @@
   --radius-md: 12px;
   --radius-lg: 16px;
   --radius-pill: 999px;
-  --radius-full: var(--radius-pill); /* 别名，语义更明确 */
+  /* 已弃用别名（2026-09，同 --accent-primary）：与 --radius-pill 完全重名重复。 */
+  --radius-full: var(--radius-pill);
 
   /* 间距（基于 4px 网格，以 rem 为单位适配字号缩放） */
   --space-2: 0.5rem; /* 8px */
@@ -124,6 +127,11 @@
   /* 单列正文的阅读宽度。--content-width 是给检索页两栏结果用的，拿它排一列正文，
      一行会有 140+ 字符，眼睛要来回扫。760px 在 0.92rem 下约 68 字符。 */
   --reading-width: 760px;
+  /* 检索页检索流（时间线 + 结果卡）的列宽。比 --reading-width 宽一档：结果卡是
+     「标签 + 标题 + 片段」的混合排版，不是纯正文，960px（约 60～65 字/行）读起来
+     仍然舒服，还能少浪费宽屏的左右空白。Agent 对话是纯正文，继续用 --reading-width。
+     决策记录见 docs/adr/0016-search-page-stream-width.md。 */
+  --stream-width: 960px;
   --body-font:
     system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', 'Microsoft YaHei',
     sans-serif;
@@ -143,6 +151,21 @@
   --duration-fast: 150ms;
   --duration-normal: 250ms;
   --duration-slow: 400ms;
+
+  /* 13、z-index 层级表：全局只有这一份，组件引用令牌、不写裸值。间隔故意拉开，
+     插新层时不用重排邻层。名字说「它在哪一层」，不说数字。
+     例外：style.css 里 ::view-transition-old/new(root) 的 1/2 是视图切换伪元素的
+     动画层级，不属于 DOM 层叠，保持裸值。 */
+  --z-local: 1; /* 组件内局部叠放：时间线节点、阅读页内的小浮层 */
+  --z-dock: 8; /* 贴边吸附的输入坞（检索/Agent 输入区） */
+  --z-topbar: 10; /* 应用顶栏 */
+  --z-admin-topbar: 20; /* 后台页头 */
+  --z-admin-overlay: 35; /* 后台窄屏抽屉遮罩 */
+  --z-admin-sidebar: 40; /* 后台侧栏 */
+  --z-popover: 50; /* Portal 弹层：盖过输入坞与后台侧栏，让位阅读层 */
+  --z-reader: 80; /* 全屏阅读层 */
+  --z-skip: 100; /* 无障碍跳转链接 */
+  --z-toast: 9999; /* 全局通知，永远最高 */
 }
 
 /* ========== 深色模式 ========== */
@@ -194,14 +217,16 @@
     --text-secondary: var(--neutral-700);
     --text-tertiary: var(--neutral-500);
     --text-on-accent: var(--neutral-50);
-    --text-on-inverse: var(--neutral-950);
+    /* 反转块在深色下是浅底，字必须跟着翻成深色：--neutral-950 在深色
+       映射里是白，用它会出现白字白底（品牌标识块就是这么被写没的）。 */
+    --text-on-inverse: var(--neutral-50);
     --text-error: var(--brick-600);
     --text-success: var(--teal-700);
-    
+
     /* 6、语义层——描边：覆盖写死的浅色代码 */
     --border-subtle: var(--neutral-300);
     --border-strong: var(--neutral-400);
-    
+
     /* 7、语义层——强调与状态 */
     --accent: var(--teal-600);
     --accent-primary: var(--teal-600);
@@ -272,14 +297,15 @@
   --text-secondary: var(--neutral-700);
   --text-tertiary: var(--neutral-500);
   --text-on-accent: var(--neutral-50);
-  --text-on-inverse: var(--neutral-950);
+  /* 同上：深色下反转块是浅底，字用深色端。 */
+  --text-on-inverse: var(--neutral-50);
   --text-error: var(--brick-600);
   --text-success: var(--teal-700);
-  
+
   /* 6、语义层——描边：覆盖写死的浅色代码 */
   --border-subtle: var(--neutral-300);
   --border-strong: var(--neutral-400);
-  
+
   /* 7、语义层——强调与状态 */
   --accent: var(--teal-600);
   --accent-primary: var(--teal-600);

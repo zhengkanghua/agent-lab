@@ -222,7 +222,9 @@ async function retrySessionCheck(): Promise<void> {
 }
 
 .access-label {
-  color: var(--text-tertiary);
+  /* 页面角的常驻状态字，不是「可看可不看」的 tertiary：深色下 tertiary 对比度
+     不足会糊进顶栏，用 secondary 保住 4.5:1。 */
+  color: var(--text-secondary);
   font-family: var(--mono-font);
   font-size: 0.7rem;
 }
