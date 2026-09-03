@@ -189,26 +189,31 @@ defineExpose({ focusInput })
   width: 100%;
   min-height: 52px;
   resize: vertical;
-  padding: 8px 0;
+  padding: 12px 0 8px;
   border: none;
   border-bottom: 2px solid var(--border-subtle);
   border-radius: 0;
   outline: none;
+  box-shadow: none;
   color: var(--text-primary);
   background: transparent;
-  font-size: 1.1rem;
+  font-size: 1.15rem;
   line-height: 1.65;
   transition:
-    border-color 150ms ease,
-    background-color 150ms ease;
+    border-color 200ms ease,
+    background-color 200ms ease;
 }
 
 .query-input::placeholder {
   color: var(--text-muted);
+  font-weight: 400;
 }
 
-.query-input:focus {
-  border-bottom-color: var(--accent);
+.query-input:focus,
+.query-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border-bottom: 2px solid var(--accent);
   background: transparent;
 }
 
