@@ -157,14 +157,19 @@ def upgrade() -> None:
     # 种子任务的 cron 与参数默认值老板已确认（见 docs/specs/0001-scheduled-task-module.md）；
     # enabled=true：部署完成即开始自动同步与索引，不想自动跑可在管理端停用或关闭
     # SCHEDULER_ENABLED 总开关。
+    #
+    # 参数必须显式 CAST 成 uuid/jsonb：bindparams 从 Python 字符串值推断出 String 类型时，
+    # psycopg 会把占位符渲染成 %(sync_id)s::VARCHAR，直接插 uuid 列会报 DatatypeMismatch
+    # （真实部署抓到过一次；离线 --sql 渲染会把参数内联成字面量，查不出这类问题）。
+    # 显式 CAST(varchar AS uuid/jsonb) 与参数类型无关，怎么渲染都成立。
     seed_sql = sa.text(
         """
         INSERT INTO scheduled_jobs (id, key, task_type, cron_expr, params, enabled)
         VALUES
-            (:sync_id, 'freshrss-sync', 'freshrss_sync', '*/10 * * * *',
-             :sync_params, true),
-            (:index_id, 'index-pending', 'index_pending', '*/5 * * * *',
-             :index_params, true)
+            (CAST(:sync_id AS uuid), 'freshrss-sync', 'freshrss_sync', '*/10 * * * *',
+             CAST(:sync_params AS jsonb), true),
+            (CAST(:index_id AS uuid), 'index-pending', 'index_pending', '*/5 * * * *',
+             CAST(:index_params AS jsonb), true)
         ON CONFLICT (key) DO NOTHING
         """
     )
