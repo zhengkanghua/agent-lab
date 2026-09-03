@@ -74,7 +74,7 @@ defineExpose({ focusInput })
 </script>
 
 <template>
-  <section class="composer" aria-label="语义检索输入条" style="container-type: inline-size">  
+  <section class="composer" aria-label="语义检索输入条" style="container-type: inline-size">
     <form class="search-form" :aria-busy="loading" @submit.prevent="emit('submit')">
       <!-- Top configuration row -->
       <div class="composer-toolbar-top">
@@ -95,10 +95,7 @@ defineExpose({ focusInput })
           </select>
         </label>
 
-        <BasePopover
-          side="bottom"
-          align="start"
-        >
+        <BasePopover side="bottom" align="start">
           <template #trigger>
             <div
               class="advanced-options-trigger"
@@ -113,7 +110,7 @@ defineExpose({ focusInput })
               <span class="trigger-meta">每篇 {{ matchesPerDocument }} 条相关片段</span>
             </div>
           </template>
-          
+
           <div class="advanced-options-content">
             <label>
               <span>每篇新闻最多保留的相关片段</span>
@@ -132,7 +129,12 @@ defineExpose({ focusInput })
 
       <!-- Unified Input Area -->
       <div class="query-container" :class="{ 'has-error': !!inputError }">
-        <BaseField id="search-query" label="研究内容" :error="inputError ?? undefined" class="query-field">
+        <BaseField
+          id="search-query"
+          label="研究内容"
+          :error="inputError ?? undefined"
+          class="query-field"
+        >
           <template #default="{ control }">
             <textarea
               ref="textareaRef"

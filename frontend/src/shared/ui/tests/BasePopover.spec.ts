@@ -29,8 +29,8 @@ describe('BasePopover', () => {
       wrapper = null
     }
     // 清理 Radix Popover 的 Portal 残留
-    document.querySelectorAll('[data-radix-popper-content-wrapper]').forEach(el => el.remove())
-    document.querySelectorAll('.content-panel').forEach(el => el.remove())
+    document.querySelectorAll('[data-radix-popper-content-wrapper]').forEach((el) => el.remove())
+    document.querySelectorAll('.content-panel').forEach((el) => el.remove())
   })
 
   it('初始状态浮层不存在', () => {

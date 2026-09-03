@@ -64,7 +64,7 @@ describe('SearchComposer', () => {
     expect(wrapper.emitted('clear')).toHaveLength(1)
   })
 
-  it('Enter sends while composing is ignored and shift+enter does not send', async () => {    
+  it('Enter sends while composing is ignored and shift+enter does not send', async () => {
     const wrapper = mountComposer()
     const textarea = wrapper.get<HTMLTextAreaElement>('.query-input')
 
@@ -72,7 +72,7 @@ describe('SearchComposer', () => {
     expect(wrapper.emitted('submit')).toHaveLength(1)
 
     // 输入法组合期间 Enter 不提交。
-    const imeEvent = { key: 'Enter', isComposing: true, shiftKey: false } as KeyboardEvent    
+    const imeEvent = { key: 'Enter', isComposing: true, shiftKey: false } as KeyboardEvent
     await textarea.trigger('keydown', imeEvent)
     expect(wrapper.emitted('submit')).toHaveLength(1)
   })

@@ -213,7 +213,11 @@ function onDeleteClick(): void {
 
 .job-row {
   display: grid;
-  grid-template-columns: var(--job-row-columns, minmax(150px, 1.1fr) minmax(96px, 0.7fr) minmax(96px, 0.6fr) minmax(210px, 1.3fr) minmax(245px, 1.3fr));
+  grid-template-columns: var(
+    --job-row-columns,
+    minmax(150px, 1.1fr) minmax(96px, 0.7fr) minmax(96px, 0.6fr) minmax(210px, 1.3fr)
+      minmax(245px, 1.3fr)
+  );
   align-items: center;
   gap: 18px;
   padding: 14px 10px;

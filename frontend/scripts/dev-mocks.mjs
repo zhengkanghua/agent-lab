@@ -141,6 +141,21 @@ export function matchApi(url, authed) {
   if (suffix === '/auth/logout') return { status: 204, contentType: 'text/plain', body: '' }
   if (suffix === '/admin/users') return json([ENV_ADMIN, REGULAR_USER])
   if (suffix === '/document-search') return json([DOCUMENT_RESULT])
+  if (suffix === '/scheduled-jobs')
+    return json([
+      {
+        id: '40000000-0000-4000-8000-000000000001',
+        key: 'sync_news',
+        task_type: 'freshrss_sync',
+        cron_expr: '0 * * * *',
+        params: {},
+        enabled: true,
+        next_run_at: '2026-08-20T09:00:00Z',
+        last_run: null,
+        created_at: '2026-08-17T00:00:00Z',
+        updated_at: '2026-08-17T00:00:00Z',
+      },
+    ])
   if (suffix === '/vector-search') return json([CHUNK_RESULT])
   if (suffix === '/agent/default-prompt')
     return json({ system_prompt: '你是新闻语义检索助手，请基于检索到的原文作答。' })

@@ -114,7 +114,7 @@ async function mountPage() {
    要碰 .prompt-input / .prompt-actions 的用例先过这里打开浮层，
    然后用 document.querySelector 查询 Portal 里的元素。 */
 async function openPromptPanel(wrapper: VueWrapper): Promise<void> {
-  await wrapper.get('.prompt-trigger button').trigger('click')
+  await wrapper.get('.disclosure-summary').trigger('click')
   await wrapper.vm.$nextTick()
 }
 

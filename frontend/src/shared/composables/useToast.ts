@@ -20,7 +20,7 @@ export function useToast() {
       description?: string
       variant?: ToastVariant
       duration?: number
-    }
+    },
   ) {
     const id = `toast-${++idCounter}`
     const duration = options?.duration ?? 3000

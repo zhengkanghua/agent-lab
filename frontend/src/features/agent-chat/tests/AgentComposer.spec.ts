@@ -44,8 +44,8 @@ describe('AgentComposer', () => {
       wrapper = null
     }
     // 清理所有 Radix Popover 残留的 Portal 内容
-    document.querySelectorAll('[data-radix-popper-content-wrapper]').forEach(el => el.remove())
-    document.querySelectorAll('.prompt-panel').forEach(el => el.remove())
+    document.querySelectorAll('[data-radix-popper-content-wrapper]').forEach((el) => el.remove())
+    document.querySelectorAll('.prompt-panel').forEach((el) => el.remove())
   })
   it('两个输入框的上界与校验常量同源', async () => {
     wrapper = await openPromptPanel(mountComposer())
@@ -177,8 +177,6 @@ describe('AgentComposer', () => {
     expect(wrapper.find('.prompt-badge').exists()).toBe(true)
     expect(trigger().find('.disclosure-title').text()).toBe('自定义系统提示词（已覆盖）')
   })
-
-
 
   it('校验错误挂到输入框的 aria-describedby 上', async () => {
     wrapper = mountComposer({ inputError: '请输入想问 Agent 的问题。' })
