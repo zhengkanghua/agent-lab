@@ -203,7 +203,7 @@ function handleKeydown(event: KeyboardEvent): void {
 <style scoped>
 .reader-backdrop {
   position: fixed;
-  z-index: 80;
+  z-index: var(--z-reader);
   inset: 0;
   display: flex;
   justify-content: flex-end;
@@ -227,7 +227,7 @@ function handleKeydown(event: KeyboardEvent): void {
 
 .reader-signal {
   position: absolute;
-  z-index: 2;
+  z-index: var(--z-local);
   inset: 0 auto 0 0;
   width: 4px;
   background: var(--accent);

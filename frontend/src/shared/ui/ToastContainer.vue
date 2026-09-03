@@ -56,7 +56,7 @@ const variantIcons = {
   gap: var(--space-2);
   padding: var(--space-4);
   max-width: 420px;
-  z-index: 9999;
+  z-index: var(--z-toast);
 }
 
 .toast {
@@ -69,7 +69,7 @@ const variantIcons = {
   background: var(--surface-raised);
   border: 1px solid var(--border-subtle);
   box-shadow: var(--shadow-soft);
-  
+
   /* Inherit typography since ToastViewport mounts outside the main app container */
   font-family: var(--body-font);
   color: var(--text-primary);

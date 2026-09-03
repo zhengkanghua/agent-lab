@@ -183,7 +183,7 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
 
 .topbar {
   position: sticky;
-  z-index: 10;
+  z-index: var(--z-topbar);
   top: 0;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface-scrim);

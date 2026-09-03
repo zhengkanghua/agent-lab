@@ -193,7 +193,7 @@ function toggle(): void {
   color: transparent;
   background: var(--accent);
   box-shadow: 0 0 0 4px var(--surface-base);
-  z-index: 1;
+  z-index: var(--z-local);
 }
 
 .record-mark svg {

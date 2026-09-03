@@ -143,7 +143,7 @@ function closeDrawer(): void {
 .admin-sidebar {
   position: fixed;
   inset: 0 auto 0 0;
-  z-index: 40;
+  z-index: var(--z-admin-sidebar);
   display: flex;
   flex-direction: column;
   width: 244px;
@@ -270,7 +270,7 @@ function closeDrawer(): void {
 .sidebar-overlay {
   position: fixed;
   inset: 0;
-  z-index: 35;
+  z-index: var(--z-admin-overlay);
   border: 0;
   background: var(--surface-overlay);
 }
@@ -284,7 +284,7 @@ function closeDrawer(): void {
 .admin-topbar {
   position: sticky;
   top: 0;
-  z-index: 20;
+  z-index: var(--z-admin-topbar);
   display: flex;
   align-items: center;
   gap: 16px;
