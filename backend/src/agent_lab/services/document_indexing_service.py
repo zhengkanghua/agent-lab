@@ -11,6 +11,7 @@ Qdrant Collection 和 Alias 的生命周期由单独的 lifecycle 组件负责�
 避免在等待网络时一直占着数据库事务连接。
 """
 
+import asyncio
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -206,8 +207,11 @@ class DocumentIndexingService:
             )
 
         try:
-            # 2、切分：ORM 文档 → LangChain Chunk（纯内存）
-            chunks = self._chunk_pipeline.build_chunks(record)
+            # 2、切分：ORM 文档 → LangChain Chunk。切块是纯 CPU 计算（解析 HTML、
+            #    按 token 长度切分），直接在事件循环里算会让并发的 SSE 流式响应卡顿
+            #    几百毫秒到几秒；丢给线程池执行，事件循环立刻空出来继续服务其他请求
+            #    （build_chunks 是纯函数，无共享状态，线程池执行无副作用）。
+            chunks = await asyncio.to_thread(self._chunk_pipeline.build_chunks, record)
             if not chunks:
                 raise ValueError("文档分块流水线针对非空内容未返回任何分块。")
             # 3、向量化：逐批调 Ollama，返回与 Chunks 一一对应的向量

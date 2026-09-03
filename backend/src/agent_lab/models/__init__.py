@@ -2,6 +2,7 @@
 
 from agent_lab.models.agent_thread import AgentThreadRecord
 from agent_lab.models.document import DocumentRecord
+from agent_lab.models.scheduled_job import JobRunRecord, ScheduledJobRecord
 from agent_lab.models.source import SourceRecord
 from agent_lab.models.user import AccessTokenRecord, UserRecord
 
@@ -9,6 +10,8 @@ __all__ = [
     "AccessTokenRecord",
     "AgentThreadRecord",
     "DocumentRecord",
+    "JobRunRecord",
+    "ScheduledJobRecord",
     "SourceRecord",
     "UserRecord",
 ]

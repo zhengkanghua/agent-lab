@@ -1,4 +1,4 @@
-"""离线 HTTP 测试的应用工厂：把 ``create_app`` 的三个真实工厂一次性换成不做 I/O 的替身。
+"""离线 HTTP 测试的应用工厂：把 ``create_app`` 的四个真实工厂一次性换成不做 I/O 的替身。
 
 为什么需要这个模块：``create_app`` 的每个工厂参数都有**生产默认值**，测试漏掉哪个，
 lifespan 就会拿真实的那个去连真实服务。这不是理论风险——``agent_runtime_factory``
@@ -83,6 +83,48 @@ async def skip_model_catalog_check() -> None:
     """
 
     return None
+
+
+class OfflineSchedulerRunner:
+    """只满足 lifespan ``start``/``close`` 契约的定时任务调度器替身。
+
+    刻意不带 ``apply_job``/``trigger_now`` 等真实方法：本替身给的是「不测定时任务的
+    文件」用的。缺属性意味着一旦有测试绕过 ``get_scheduled_job_service`` 直接摸调度器，
+    会明确炸在缺属性上，而不是拿到一个「看起来能用」的假调度器。要测管理 API，用
+    ``dependency_overrides`` 替换 ``get_scheduled_job_service``（照 user-admin 的做法）。
+
+    Attributes:
+        started: 是否被 lifespan 启动过（``SCHEDULER_ENABLED`` 关闭时为 False）。
+        closed: 是否被 lifespan 关闭过。
+    """
+
+    def __init__(self) -> None:
+        self.started = False
+        self.closed = False
+
+    async def start(self) -> None:
+        """记录已启动，不启动 APScheduler、不访问数据库。"""
+
+        self.started = True
+
+    async def close(self) -> None:
+        """记录已关闭，不执行外部 I/O。"""
+
+        self.closed = True
+
+
+def offline_scheduler_runner_builder(_pipeline_runtime_factory: Any) -> OfflineSchedulerRunner:
+    """忽略写 Runtime 工厂，返回不做 I/O 的调度器替身。
+
+    Args:
+        _pipeline_runtime_factory: ``create_app`` 传入的写 Runtime 工厂；替身不需要它，
+            留参数只为匹配工厂签名。
+
+    Returns:
+        全新的 ``OfflineSchedulerRunner``。
+    """
+
+    return OfflineSchedulerRunner()
 
 
 def offline_agent_runtime_factory(_service: Any) -> OfflineAgentRuntime:
@@ -216,6 +258,7 @@ def create_offline_app(**overrides: Any) -> FastAPI:
         "agent_runtime_factory": offline_agent_runtime_factory,
         "environment_admin_sync": skip_environment_admin_sync,
         "model_catalog_check": skip_model_catalog_check,
+        "scheduler_runner_builder": offline_scheduler_runner_builder,
     }
     app = create_app(**{**defaults, **overrides})  # type: ignore[arg-type]
 
@@ -388,9 +431,11 @@ __all__ = [
     "FakeSearchService",
     "InMemoryAgentThreadService",
     "OfflineAgentRuntime",
+    "OfflineSchedulerRunner",
     "create_agent_app",
     "create_offline_app",
     "offline_agent_runtime_factory",
+    "offline_scheduler_runner_builder",
     "seed_owned_thread",
     "send",
     "skip_model_catalog_check",

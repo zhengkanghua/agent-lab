@@ -429,6 +429,21 @@ USER_ADMIN_ERROR_RULES: tuple[ErrorContractRule, ...] = (
     ),
 )
 
+# 定时任务管理链路（/scheduled-jobs）的错误表。与账号管理同构：基础设施失败只有数据库
+# 一类；领域错误（任务不存在、cron 无效、正在运行中冲突等）自带稳定 code 与安全中文
+# detail，由路由的 _domain_error 映射成 404/409/422，不进本表。
+# code 刻意与 user_admin / pipeline 的数据库不可用都不相同：三张表管的是不同的功能面，
+# 日志和前端文案要能一眼区分是哪条链路的数据库故障。
+SCHEDULED_JOB_ERROR_RULES: tuple[ErrorContractRule, ...] = (
+    ErrorContractRule(
+        exceptions=(SQLAlchemyError,),
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="scheduled_job_database_unavailable",
+        detail="定时任务存储当前不可用。",
+        retryable=True,
+    ),
+)
+
 
 AgentChatErrorCode = Literal[
     "agent_runtime_unavailable",
@@ -835,6 +850,28 @@ def build_user_admin_error_response(error: BaseException) -> JSONResponse:
     )
 
 
+def build_scheduled_job_error_response(error: BaseException) -> JSONResponse:
+    """把定时任务管理的基础设施异常按类型映射成稳定 503。
+
+    Args:
+        error: 定时任务接口捕获的数据库异常；只读其类型。
+
+    Returns:
+        含稳定 ``code/detail/retryable`` 的 JSONResponse。
+
+    Notes:
+        不读异常文本，因此连接串、SQL 和任务配置不会进入响应；不执行任何 I/O。
+    """
+
+    rule = resolve_error_contract(error, SCHEDULED_JOB_ERROR_RULES)
+    return build_error_response(
+        rule.status_code,
+        rule.code,
+        rule.detail,
+        retryable=rule.retryable,
+    )
+
+
 class SanitizedValidationRoute(APIRoute):
     """让路由自己把请求校验失败转成稳定 ``invalid_request`` 响应的 APIRoute。
 
@@ -884,6 +921,7 @@ __all__ = [
     "AGENT_TOOL_ERROR_RULES",
     "INVALID_REQUEST_RULE",
     "PIPELINE_ERROR_RULES",
+    "SCHEDULED_JOB_ERROR_RULES",
     "SEARCH_UPSTREAM_EXCEPTIONS",
     "UNCLASSIFIED_ERROR_RULE",
     "USER_ADMIN_ERROR_RULES",
@@ -896,6 +934,7 @@ __all__ = [
     "build_agent_chat_error_response",
     "build_error_response",
     "build_pipeline_error_response",
+    "build_scheduled_job_error_response",
     "build_user_admin_error_response",
     "build_vector_search_error_response",
     "resolve_error_contract",

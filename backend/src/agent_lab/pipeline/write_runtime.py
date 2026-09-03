@@ -121,20 +121,76 @@ class PipelineWriteRuntime:
         """
 
         # 1、同步：FreshRSS → PostgreSQL（不做向量化，只入库并标 pending）
-        sync_result = await self.executor.sync_news(
-            self.import_service,
-            limit_per_source=limit_per_source,
-        )
-        # 2、显式准备 Qdrant：创建/校验物理 Collection 与 current Alias
-        await self.indexing_runtime.ensure_ready()
-        # 3、索引：领取待处理文档，切分 → 向量化 → 写入 Qdrant
-        index_result = await self.executor.index_pending(
-            self.indexing_runtime.service,
+        sync_result = await self.sync_only(limit_per_source=limit_per_source)
+        # 2、索引：准备 Qdrant Alias → 领取待处理文档 → 切分/向量化/写入
+        index_result = await self.index_only(
             batch_size=batch_size,
             stale_after=stale_after,
         )
         # 两个子结果拼成一个响应载体；失败了由 API/CLI 层转成统计或错误
         return PipelineRunOnceExecutionResult(sync=sync_result, index=index_result)
+
+    async def sync_only(self, *, limit_per_source: int) -> NewsSyncExecutionResult:
+        """只执行「FreshRSS → PostgreSQL」增量同步，不触碰 Qdrant。
+
+        手动流水线（``run_once``）和定时任务 ``freshrss_sync`` 共用这一步，保证两条
+        入口的同步行为完全一致。
+
+        Args:
+            limit_per_source: 每个白名单来源本次最多持久化的新闻数。
+
+        Returns:
+            来源、文档、游标推进与失败类型组成的安全汇总。
+
+        Raises:
+            ValueError: ``limit_per_source`` 小于一。
+            Exception: FreshRSS 订阅列表或 PostgreSQL 批次操作的批次级失败。
+
+        Notes:
+            本方法执行 FreshRSS 只读网络 I/O 和 PostgreSQL 业务写入；不生成 Embedding、
+            不访问 Qdrant。
+        """
+
+        return await self.executor.sync_news(
+            self.import_service,
+            limit_per_source=limit_per_source,
+        )
+
+    async def index_only(
+        self,
+        *,
+        batch_size: int,
+        stale_after: timedelta,
+    ) -> PendingIndexExecutionResult:
+        """只执行「PostgreSQL 待索引文档 → Qdrant」批次，不做 FreshRSS 同步。
+
+        定时任务 ``index_pending`` 与手动流水线的索引步骤共用这里；同步频率和索引频率
+        可以各自独立配置，互不拖拽。
+
+        Args:
+            batch_size: 本次最多领取的 ``pending/failed`` 文档数。
+            stale_after: ``processing`` 任务可回收前必须超过的正时长。
+
+        Returns:
+            候选、回收、成功、竞争跳过和安全失败明细组成的批次结果。
+
+        Raises:
+            ValueError: 边界参数不合法。
+            Exception: Qdrant lifecycle 或索引链路无法隔离到单篇的失败。
+
+        Notes:
+            本方法显式准备 Qdrant current Alias，再执行 PostgreSQL/Ollama/Qdrant 索引
+            I/O；不访问 FreshRSS，也不执行 Vector Search。
+        """
+
+        # 1、显式准备 Qdrant：创建/校验物理 Collection 与 current Alias
+        await self.indexing_runtime.ensure_ready()
+        # 2、索引：领取待处理文档，切分 → 向量化 → 写入 Qdrant
+        return await self.executor.index_pending(
+            self.indexing_runtime.service,
+            batch_size=batch_size,
+            stale_after=stale_after,
+        )
 
     async def close(self) -> None:
         """关闭 Ollama 与 Qdrant 写入 client，不修改任何远程业务数据。
