@@ -87,7 +87,6 @@
     line-height: 1.65;
   }
 
-
   .content-wrap {
     width: min(calc(100% - 48px), var(--content-width));
     margin: 0 auto;

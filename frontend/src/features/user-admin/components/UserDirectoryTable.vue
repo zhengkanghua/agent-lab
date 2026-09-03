@@ -81,7 +81,14 @@ function resetPasswordFor(user: UserAdminDto): string | null {
       当前还没有可管理账号。
     </div>
 
-    <TransitionGroup v-else name="list" tag="div" class="user-table" role="table" aria-label="平台账号列表">
+    <TransitionGroup
+      v-else
+      name="list"
+      tag="div"
+      class="user-table"
+      role="table"
+      aria-label="平台账号列表"
+    >
       <div key="table-head" class="user-table-head" role="row">
         <span role="columnheader">账号</span>
         <span role="columnheader">使用状态</span>

@@ -55,7 +55,8 @@ const layerBoundaries = [
             ...crossLayerRelativeImport.patterns,
             {
               group: ['@/features/*/*/**'],
-              message: '禁止深度导入 Feature 内部模块。请通过 Feature 根目录 (index.ts) 的公开 API 引入。',
+              message:
+                '禁止深度导入 Feature 内部模块。请通过 Feature 根目录 (index.ts) 的公开 API 引入。',
             },
           ],
         },
@@ -73,10 +74,11 @@ const layerBoundaries = [
             ...pagesRelativeImport.patterns,
             {
               group: ['@/features/*/*/**'],
-              message: '禁止深度导入 Feature 内部模块。请通过 Feature 根目录 (index.ts) 的公开 API 引入。',
+              message:
+                '禁止深度导入 Feature 内部模块。请通过 Feature 根目录 (index.ts) 的公开 API 引入。',
             },
           ],
-        }
+        },
       ],
     },
   },
@@ -113,7 +115,8 @@ const layerBoundaries = [
             },
             {
               group: ['@/features/*'],
-              message: 'Feature 之间禁止相互导入，保持完全解耦。如需交互请在 pages 层组合，或将逻辑下沉至 shared/。',
+              message:
+                'Feature 之间禁止相互导入，保持完全解耦。如需交互请在 pages 层组合，或将逻辑下沉至 shared/。',
             },
           ],
         },

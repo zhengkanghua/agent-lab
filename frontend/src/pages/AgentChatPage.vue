@@ -11,7 +11,7 @@ import {
   useAgentChat,
   useAgentDefaultPrompt,
   useThreadList,
-  AGENT_EXAMPLES
+  AGENT_EXAMPLES,
 } from '@/features/agent-chat'
 import type { AgentThreadSummaryDto } from '@/api/agent-threads'
 

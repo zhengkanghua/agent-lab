@@ -48,7 +48,7 @@ function mountHarness(currentUserId: string | undefined = environmentAdmin.id) {
   })
   const Harness = defineComponent({
     setup() {
-      composable = useUserDirectory({ currentUserId: () => currentUserId, onSelfDowngraded }) 
+      composable = useUserDirectory({ currentUserId: () => currentUserId, onSelfDowngraded })
       return () => h('div')
     },
   })

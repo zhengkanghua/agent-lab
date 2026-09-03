@@ -97,7 +97,7 @@ async function mountPage() {
   const router = testRouter()
   await router.push('/agent')
   await router.isReady()
-  
+
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
@@ -444,11 +444,11 @@ describe('AgentChatPage', () => {
       const router = testRouter()
       await router.push(`/agent/${threadId}`)
       await router.isReady()
-      
+
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
       })
-      
+
       const wrapper = mount(AgentChatPage, {
         attachTo: document.body,
         global: { plugins: [router, [VueQueryPlugin, { queryClient }]] },
@@ -520,11 +520,11 @@ describe('AgentChatPage', () => {
       await router.isReady()
       const replace = vi.spyOn(router, 'replace')
       const push = vi.spyOn(router, 'push')
-      
+
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
       })
-      
+
       const wrapper = mount(AgentChatPage, {
         attachTo: document.body,
         global: { plugins: [router, [VueQueryPlugin, { queryClient }]] },

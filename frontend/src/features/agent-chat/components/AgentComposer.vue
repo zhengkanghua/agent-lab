@@ -203,7 +203,9 @@ function useDefaultPrompt(): void {
   border-radius: var(--radius-lg);
   background: var(--surface-raised);
   box-shadow: var(--shadow-soft);
-  transition: border-color 150ms ease, box-shadow 150ms ease;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
 }
 
 /* 焦点环画在外框上而不是文本域上：视觉上这一整块是一个输入控件。

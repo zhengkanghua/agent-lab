@@ -108,7 +108,12 @@ function handleKeydown(event: KeyboardEvent): void {
 <template>
   <Teleport to="body">
     <Transition name="reader" @after-leave="emit('closed')">
-      <div v-if="open && result" class="reader-backdrop" style="container-type: inline-size" @click.self="emit('close')">
+      <div
+        v-if="open && result"
+        class="reader-backdrop"
+        style="container-type: inline-size"
+        @click.self="emit('close')"
+      >
         <aside
           ref="panel"
           class="reader-panel"

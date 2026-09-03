@@ -9,7 +9,7 @@ import {
   UserDirectorySummary,
   UserDirectoryTable,
   useAccountCreateForm,
-  useUserDirectory
+  useUserDirectory,
 } from '@/features/user-admin'
 
 /* 账号管理页：作为 /admin 的子路由渲染在 AdminShell 的内容区（RouterView）里。

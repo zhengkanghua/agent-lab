@@ -156,7 +156,9 @@ function requestFullText(event: MouseEvent): void {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  transition: transform 150ms ease, background-color 150ms ease;
+  transition:
+    transform 150ms ease,
+    background-color 150ms ease;
 }
 
 .result-card:last-child {
@@ -165,7 +167,9 @@ function requestFullText(event: MouseEvent): void {
 
 .result-card:hover {
   transform: none;
-  background: rgba(var(--surface-sunken-rgb), 0.3); /* 若无 rgb 变量可直接写一个极淡颜色 */
+  /* 淡染一层 sunken：卡片底是透明的（页面底 --surface-base），30% 的 sunken
+     正好比底色深半档。用 color-mix 保持「极淡」的意图，不引入裸色值。 */
+  background: color-mix(in srgb, var(--surface-sunken) 30%, transparent);
 }
 
 .document-locator {

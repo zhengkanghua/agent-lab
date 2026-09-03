@@ -11,7 +11,7 @@ import {
   useDocumentReader,
   useSearchStream,
   type NewsReadableResult,
-  type SearchRecord
+  type SearchRecord,
 } from '@/features/semantic-search'
 
 /* 语义检索页（Q1–Q15 的落地）。
@@ -221,7 +221,8 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
   top: var(--app-topbar-height, 69px);
   border-bottom-color: var(--surface-sunken);
   backdrop-filter: blur(12px);
-  background: rgba(var(--surface-base-rgb), 0.85); /* 假设有RGB变量，或者直接用带透明度的颜色，目前退配为 surface-base 配合模糊 */
+  /* 半透明表面 + 模糊 = --surface-scrim 的本职（AdminShell 顶栏同款）。 */
+  background: var(--surface-scrim);
 }
 
 .stream {

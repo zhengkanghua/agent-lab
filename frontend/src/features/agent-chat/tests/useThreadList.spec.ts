@@ -37,29 +37,29 @@ import { createApp } from 'vue'
 function build(options: Partial<Parameters<typeof useThreadList>[0]> = {}) {
   const onActiveThreadDeleted = options.onActiveThreadDeleted ?? vi.fn()
   const activeThreadId = options.activeThreadId ?? (() => null)
-  
+
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
-  
+
   let result: ReturnType<typeof useThreadList> | undefined
 
   const app = createApp({
     setup() {
       result = useThreadList({ onActiveThreadDeleted, activeThreadId })
       return () => null
-    }
+    },
   })
   app.use(VueQueryPlugin, { queryClient })
-  
+
   const container = document.createElement('div')
   app.mount(container)
-  
-  return { 
-    list: result!, 
-    scope: { stop: () => app.unmount() }, 
+
+  return {
+    list: result!,
+    scope: { stop: () => app.unmount() },
     onActiveThreadDeleted,
-    queryClient
+    queryClient,
   }
 }
 

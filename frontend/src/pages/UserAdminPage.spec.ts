@@ -76,7 +76,7 @@ async function mountPage() {
   const router = testRouter()
   await router.push('/admin/users')
   await router.isReady()
-  
+
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })

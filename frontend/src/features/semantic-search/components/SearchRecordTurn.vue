@@ -45,7 +45,11 @@ function toggle(): void {
 </script>
 
 <template>
-  <article class="record" :class="[`is-${record.status}`, { 'is-collapsed': !expanded }]" style="container-type: inline-size">
+  <article
+    class="record"
+    :class="[`is-${record.status}`, { 'is-collapsed': !expanded }]"
+    style="container-type: inline-size"
+  >
     <!-- 头：检索词是这条记录的识别主信息。展开态也放，让每条记录自带归属；latest 不提供折叠。 -->
     <header class="record-head" :aria-expanded="expanded ? 'true' : 'false'">
       <span class="record-mark" aria-hidden="true"><Search :size="15" /></span>
@@ -123,7 +127,12 @@ function toggle(): void {
         </div>
       </div>
 
-      <TransitionGroup v-else-if="record.status === 'success'" name="list" tag="div" class="result-list">
+      <TransitionGroup
+        v-else-if="record.status === 'success'"
+        name="list"
+        tag="div"
+        class="result-list"
+      >
         <SearchResultCard
           v-for="(result, index) in record.results"
           :key="result.documentId"

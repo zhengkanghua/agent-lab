@@ -48,7 +48,7 @@ export function useThreadList(options: UseThreadListOptions) {
       return page
     },
     // 列表保持一定的存活时间，防止切页面回来立刻白屏刷新
-    staleTime: 5000, 
+    staleTime: 5000,
   })
 
   const threads = computed(() => query.data.value?.items ?? [])
@@ -103,11 +103,12 @@ export function useThreadList(options: UseThreadListOptions) {
       if (cause instanceof ApiError && cause.status === 404) {
         queryClient.invalidateQueries({ queryKey: agentChatKeys.threads() })
       }
-    }
+    },
   })
 
   async function remove(thread: AgentThreadSummaryDto): Promise<void> {
-    if (deleteMutation.isPending.value && deleteMutation.variables.value === thread.thread_id) return
+    if (deleteMutation.isPending.value && deleteMutation.variables.value === thread.thread_id)
+      return
     if (!window.confirm(`删除会话「${thread.title}」？对话历史会一起清除，且无法恢复。`)) return
 
     listErrorOverride.value = null
@@ -123,15 +124,19 @@ export function useThreadList(options: UseThreadListOptions) {
     if (offset.value !== 0) return
 
     // Optimistic Update: 直接修改 Vue Query 的缓存
-    queryClient.setQueryData([...agentChatKeys.threads(), offset.value], (oldData: { items: AgentThreadSummaryDto[], total: number } | undefined) => {
-      if (!oldData) return { items: [thread], total: 1 }
-      if (oldData.items.some((existing) => existing.thread_id === thread.thread_id)) return oldData
-      return {
-        ...oldData,
-        items: [thread, ...oldData.items].slice(0, THREAD_PAGE_SIZE),
-        total: oldData.total + 1
-      }
-    })
+    queryClient.setQueryData(
+      [...agentChatKeys.threads(), offset.value],
+      (oldData: { items: AgentThreadSummaryDto[]; total: number } | undefined) => {
+        if (!oldData) return { items: [thread], total: 1 }
+        if (oldData.items.some((existing) => existing.thread_id === thread.thread_id))
+          return oldData
+        return {
+          ...oldData,
+          items: [thread, ...oldData.items].slice(0, THREAD_PAGE_SIZE),
+          total: oldData.total + 1,
+        }
+      },
+    )
   }
 
   function isDeleting(threadId: string): boolean {

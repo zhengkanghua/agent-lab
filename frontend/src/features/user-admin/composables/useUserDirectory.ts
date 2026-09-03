@@ -53,7 +53,7 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
       const loadedUsers = await listUsers(signal)
       return sortUsers(loadedUsers)
     },
-    staleTime: 10_000
+    staleTime: 10_000,
   })
 
   const users = computed(() => query.data.value ?? [])
@@ -66,7 +66,8 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
 
   const loadError = computed(() => {
     if (loadErrorOverride.value) return loadErrorOverride.value
-    if (query.error.value) return presentAdminError(query.error.value, '暂时无法读取账号列表，请稍后重试。')
+    if (query.error.value)
+      return presentAdminError(query.error.value, '暂时无法读取账号列表，请稍后重试。')
     return ''
   })
 
@@ -86,18 +87,20 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
   }
 
   const updateMutation = useMutation({
-    mutationFn: ({ user, change }: { user: UserAdminDto, change: { isActive?: boolean; isSuperuser?: boolean } }) => 
-      updateUser({ userId: user.id, ...change }),
+    mutationFn: ({
+      user,
+      change,
+    }: {
+      user: UserAdminDto
+      change: { isActive?: boolean; isSuperuser?: boolean }
+    }) => updateUser({ userId: user.id, ...change }),
     onSuccess: (updated) => {
       replaceUser(updated)
       feedback.value = `已更新账号 ${updated.email}。`
-      if (
-        updated.id === options.currentUserId() &&
-        (!updated.is_active || !updated.is_superuser)
-      ) {
+      if (updated.id === options.currentUserId() && (!updated.is_active || !updated.is_superuser)) {
         options.onSelfDowngraded()
       }
-    }
+    },
   })
 
   async function updateAccount(
@@ -131,12 +134,13 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
   }
 
   const resetPasswordMutation = useMutation({
-    mutationFn: ({ userId, password }: { userId: string, password: string }) => resetUserPassword({ userId, password }),
+    mutationFn: ({ userId, password }: { userId: string; password: string }) =>
+      resetUserPassword({ userId, password }),
     onSuccess: (updated) => {
       replaceUser(updated)
       cancelPasswordReset()
       feedback.value = `已重置 ${updated.email} 的密码，并撤销该账号的全部会话。`
-    }
+    },
   })
 
   async function submitPasswordReset(user: UserAdminDto): Promise<void> {
@@ -165,7 +169,7 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
    * 撤销一个账号的全部会话。
    */
   const revokeSessionsMutation = useMutation({
-    mutationFn: (userId: string) => revokeUserSessions(userId)
+    mutationFn: (userId: string) => revokeUserSessions(userId),
   })
 
   async function revokeSessions(user: UserAdminDto): Promise<void> {

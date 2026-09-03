@@ -21,7 +21,12 @@ function isLast(index: number): boolean {
 </script>
 
 <template>
-  <section class="transcript" aria-labelledby="transcript-title" :aria-busy="streaming" style="container-type: inline-size">
+  <section
+    class="transcript"
+    aria-labelledby="transcript-title"
+    :aria-busy="streaming"
+    style="container-type: inline-size"
+  >
     <h2 id="transcript-title" class="sr-only">对话记录</h2>
 
     <!-- 空态只有一句标题 + 建议卡（Q9）。原来那个圆形图标是装饰性品牌元素，撤掉了：
