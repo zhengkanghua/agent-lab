@@ -29,3 +29,4 @@ npm run build
 2. 渲染后端返回的正文用 Vue 文本插值，不用 `v-html`。当前 `src/` 下没有任何 `v-html`，保持这个状态。
 3. `src/pages` 只做路由级组合，不直接执行 `fetch`；请求收敛在 `src/api`，状态收敛在 `src/features/*`。
 4. Playwright route mock 只用于隔离验证前端状态，不能作为后端已更新或部署成功的依据。
+5. **凡挂到组件树之外的内容（radix-vue 的 Portal/Teleport、手动 `position: fixed` 到 `body`），样式一律写全局（不 scoped 的 `<style>` 块或 `:global()`），层级写在 radix 的定位 wrapper（`[data-radix-popper-content-wrapper]`）上而不是内容元素上。** scoped 规则靠 `data-v-*` 属性匹配，Portal 的内容元素拿不到这个属性，整条规则会静默失配——表现是「元素在 DOM 里、就是看不见」（2026-09「更多设置打不开」的根因）。同理，wrapper 是 `fixed + transform` 自成层叠上下文，内容元素上的 `z-index` 出不了 wrapper。
