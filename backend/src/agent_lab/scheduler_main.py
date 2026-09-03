@@ -10,6 +10,18 @@
 import asyncio
 import signal
 import sys
+import os
+
+# Windows 控制台编码兼容：强制 UTF-8 输出
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        # Python < 3.7 或其他情况下的降级处理
+        import codecs
+        sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
+        sys.stderr = codecs.getwriter("utf-8")(sys.stderr.detach())
 
 from agent_lab.config.scheduler import get_scheduler_settings
 from agent_lab.db.session import async_session_factory, engine
@@ -99,7 +111,20 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        # Windows 兼容：使用 SelectorEventLoop 而不是 ProactorEventLoop
+        # Psycopg 异步驱动要求 SelectorEventLoop
+        if sys.platform == "win32":
+            import selectors
+            # 手动创建和设置事件循环，因为 asyncio.run() 会创建新的循环
+            selector = selectors.SelectSelector()
+            loop = asyncio.SelectorEventLoop(selector)
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(main())
+            finally:
+                loop.close()
+        else:
+            asyncio.run(main())
     except KeyboardInterrupt:
         print("\n调度器已终止")
     except Exception as e:
