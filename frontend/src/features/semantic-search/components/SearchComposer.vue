@@ -100,15 +100,18 @@ defineExpose({ focusInput })
           align="start"
         >
           <template #trigger>
-            <button
-              type="button"
+            <div
               class="advanced-options-trigger"
+              role="button"
+              tabindex="0"
               aria-label="更多设置"
+              @keydown.enter.prevent
+              @keydown.space.prevent
             >
               <Layers3 :size="15" aria-hidden="true" />
               <span class="trigger-label">更多设置</span>
               <span class="trigger-meta">每篇 {{ matchesPerDocument }} 条相关片段</span>
-            </button>
+            </div>
           </template>
           
           <div class="advanced-options-content">

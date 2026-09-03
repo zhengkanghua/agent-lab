@@ -22,12 +22,9 @@ function mountComposer(overrides: Partial<ComposerProps> = {}) {
   })
 }
 
-/* 系统提示词从 <details> 改成齿轮浮层（Q8）后，浮层内容只在展开时存在于 DOM 里。
-   下面这些用例先点齿轮，再取里面的控件。
-   Radix Vue 的 PopoverPortal 把内容传送到 document.body，不在组件的 wrapper 里，
-   所以要从 document 取选择器。 */
+/* 恢复为 BaseDisclosure。 */
 async function openPromptPanel(wrapper: ReturnType<typeof mountComposer>) {
-  await wrapper.get('.prompt-trigger button').trigger('click')
+  await wrapper.get('.disclosure-summary').trigger('click')
   await wrapper.vm.$nextTick()
   return wrapper
 }
@@ -156,9 +153,9 @@ describe('AgentComposer', () => {
     await wrapper.vm.$nextTick()
 
     // 重新打开浮层获取更新后的按钮状态
-    await wrapper.get('.prompt-trigger button').trigger('click')
+    await wrapper.get('.disclosure-summary').trigger('click')
     await wrapper.vm.$nextTick()
-    await wrapper.get('.prompt-trigger button').trigger('click')
+    await wrapper.get('.disclosure-summary').trigger('click')
     await wrapper.vm.$nextTick()
 
     const updatedButtons = document.querySelectorAll('.prompt-actions button')
@@ -170,30 +167,18 @@ describe('AgentComposer', () => {
     /* 浮层收起后，齿轮上的角标是唯一能看出「提示词被改过」的地方，所以判断口径
        必须和原来 <details> 摘要里那个「已覆盖 / 用默认」一致：纯空白算没改。 */
     wrapper = mountComposer({ systemPrompt: '   ' })
-    const trigger = () => wrapper!.get('.prompt-trigger button')
+    const trigger = () => wrapper!.get('.disclosure-summary')
 
     expect(wrapper.find('.prompt-badge').exists()).toBe(false)
-    expect(trigger().attributes('aria-label')).toBe('自定义系统提示词')
+    expect(trigger().find('.disclosure-title').text()).toBe('自定义系统提示词')
 
     await wrapper.setProps({ systemPrompt: '你是财经记者。' })
 
     expect(wrapper.find('.prompt-badge').exists()).toBe(true)
-    expect(trigger().attributes('aria-label')).toBe('自定义系统提示词（已覆盖）')
+    expect(trigger().find('.disclosure-title').text()).toBe('自定义系统提示词（已覆盖）')
   })
 
-  it('齿轮能开合浮层，关上后面板从 DOM 里撤掉', async () => {
-    wrapper = mountComposer()
 
-    expect(document.querySelector('.prompt-panel')).toBeNull()
-
-    await wrapper.get('.prompt-trigger button').trigger('click')
-    await wrapper.vm.$nextTick()
-    expect(document.querySelector('.prompt-panel')).not.toBeNull()
-
-    await wrapper.get('.prompt-trigger button').trigger('click')
-    await wrapper.vm.$nextTick()
-    expect(document.querySelector('.prompt-panel')).toBeNull()
-  })
 
   it('校验错误挂到输入框的 aria-describedby 上', async () => {
     wrapper = mountComposer({ inputError: '请输入想问 Agent 的问题。' })

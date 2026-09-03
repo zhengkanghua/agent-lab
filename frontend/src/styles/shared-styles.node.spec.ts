@@ -133,6 +133,7 @@ describe('颜色 token 分层', () => {
   const PUBLISHED_BY_COMPONENTS: Readonly<Record<string, string>> = {
     '--app-topbar-height': 'layouts/AppShell.vue',
     '--user-row-columns': 'features/user-admin/components/UserDirectoryTable.vue',
+    '--job-row-columns': 'features/scheduled-jobs/components/JobDirectoryTable.vue',
   }
 
   it('引用到的 token 都在 tokens.css 里有定义', () => {

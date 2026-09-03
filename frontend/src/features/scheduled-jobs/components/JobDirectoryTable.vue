@@ -196,14 +196,13 @@ function editFormFor(job: ScheduledJobDto): UseJobFormReturn | null {
 }
 
 .job-table {
+  --job-row-columns: minmax(150px, 1.1fr) minmax(96px, 0.7fr) minmax(96px, 0.6fr) minmax(210px, 1.3fr) minmax(245px, 1.3fr);
   border-top: 1px solid var(--border-subtle);
 }
 
 .job-table-head {
   display: grid;
-  grid-template-columns:
-    minmax(150px, 1.1fr) minmax(96px, 0.7fr) minmax(96px, 0.6fr) minmax(210px, 1.3fr)
-    auto;
+  grid-template-columns: var(--job-row-columns);
   gap: 18px;
   padding: 10px;
   color: var(--text-tertiary);

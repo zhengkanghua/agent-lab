@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { MessageSquarePlus, Send, Settings2, Square } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
-import BasePopover from '@/shared/ui/BasePopover.vue'
+import BaseDisclosure from '@/shared/ui/BaseDisclosure.vue'
 import { MAX_MESSAGE_CHARACTERS, MAX_SYSTEM_PROMPT_CHARACTERS } from '../model/agent-validation'
 
 /* 贴在页面底部的输入区。
@@ -88,25 +88,18 @@ function useDefaultPrompt(): void {
         <div class="bar-left">
           <!-- 系统提示词从 <details> 改成齿轮浮层（Q8）：它是这一档的次要设置，
                摊开在输入框下面会把主操作挤下去。 -->
-          <BasePopover side="top" align="start">
-            <template #trigger>
-              <!-- 角标是齿轮的兄弟而不是子节点：BaseIconButton 没有 position，
-                   放进去会定位到更外层的 .base-popover 上，跑到整个浮层的角上。
-                   包一层 relative 的 span，定位职责留在本组件里，不去改共享组件。 -->
+          <BaseDisclosure
+            :summary="promptOverridden ? '自定义系统提示词（已覆盖）' : '自定义系统提示词'"
+            size="sm"
+            tone="plain"
+          >
+            <template #icon>
               <span class="prompt-trigger">
-                <BaseIconButton
-                  :label="promptOverridden ? '自定义系统提示词（已覆盖）' : '自定义系统提示词'"
-                  size="md"
-                >
-                  <Settings2 :size="17" aria-hidden="true" />
-                </BaseIconButton>
-                <!-- 已覆盖时点一个角标：浮层收起后，这是唯一能看出「提示词被改过」的地方。 -->
+                <Settings2 :size="15" aria-hidden="true" />
                 <span v-if="promptOverridden" class="prompt-badge" aria-hidden="true"></span>
               </span>
             </template>
-
             <div class="prompt-panel">
-              <p class="prompt-title">自定义系统提示词</p>
               <p class="prompt-note">
                 留空表示使用服务端内置的默认提示词。只影响之后发出的轮次，不会被保存。
               </p>
@@ -115,7 +108,7 @@ function useDefaultPrompt(): void {
                 v-model="promptDraft"
                 class="prompt-input"
                 name="system_prompt"
-                rows="6"
+                rows="4"
                 :maxlength="MAX_SYSTEM_PROMPT_CHARACTERS"
                 aria-label="自定义系统提示词"
                 placeholder="留空即使用默认提示词"
@@ -139,7 +132,7 @@ function useDefaultPrompt(): void {
                 </BaseButton>
               </div>
             </div>
-          </BasePopover>
+          </BaseDisclosure>
 
           <BaseButton
             v-if="hasHistory"
@@ -262,11 +255,10 @@ function useDefaultPrompt(): void {
   display: inline-flex;
 }
 
-/* 角标不拦指针事件：它压在齿轮的右上角，能点中的话那一小块就点不开浮层了。 */
 .prompt-badge {
   position: absolute;
-  top: 4px;
-  right: 4px;
+  top: -2px;
+  right: -4px;
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -299,10 +291,7 @@ function useDefaultPrompt(): void {
 }
 
 .prompt-panel {
-  width: min(420px, calc(100vw - 60px));
-  background: var(--surface-raised);
-  position: relative;
-  z-index: 100;
+  width: 100%;
 }
 
 .prompt-title {
