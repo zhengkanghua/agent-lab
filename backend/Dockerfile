@@ -57,6 +57,10 @@ WORKDIR /app
 COPY --from=builder --chown=agentlab:agentlab /app/.venv /app/.venv
 COPY --chown=agentlab:agentlab src/ ./src/
 
+# 拷贝启动脚本（支持 WORKER_COUNT 环境变量）
+COPY --chown=agentlab:agentlab entrypoint.sh ./
+RUN chmod +x entrypoint.sh
+
 # alembic/ 与 alembic.ini 必须进镜像：部署时用 `docker compose run --rm backend
 # alembic upgrade head` 迁移，跑的就是这个镜像。alembic.ini 里 sqlalchemy.url 是空的，
 # alembic/env.py 直接 from agent_lab.config.settings 读连接串，所以它依赖上面装好的包。
@@ -72,4 +76,4 @@ EXPOSE 8000
 #
 # Linux 默认事件循环可直接用；README 里那个 --loop agent_lab.runtime:selector_loop_factory
 # 只在 Windows 本地开发需要（Psycopg 异步驱动不支持 Proactor loop），容器里不要加。
-CMD ["uvicorn", "agent_lab.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["./entrypoint.sh"]

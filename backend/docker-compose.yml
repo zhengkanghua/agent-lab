@@ -43,6 +43,10 @@ services:
       # 只影响容器内日志时间戳的显示，不影响数据库时区（那个由 .env 的
       # DATABASE_TIMEZONE=UTC 决定，两者互不干涉）。
       TZ: ${TZ:-Asia/Shanghai}
+      # 强制禁用 API worker 的调度器（防止多 worker 环境下任务重复执行）
+      SCHEDULER_ENABLED: "false"
+      # 从 .env 读取 worker 数量，entrypoint.sh 会使用
+      WORKER_COUNT: ${WORKER_COUNT:-2}
     networks:
     - 1panel-network
     # Docker 默认的 json-file 驱动不限制日志大小，跑久了能把磁盘写满——那台机器上
@@ -54,3 +58,26 @@ services:
         max-file: "3"
     volumes:
       - ./data:/data
+
+  # 调度器服务（独立进程执行定时任务）
+  scheduler:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE 未设置：检查本文件同目录的 .env}
+    container_name: agent-lab-scheduler
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # 调度器进程启用定时任务
+      SCHEDULER_ENABLED: "true"
+    # 调度器不需要暴露端口（无 HTTP 服务）
+    # 不依赖 backend 服务（两者并行启动）
+    networks:
+      - 1panel-network
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # 使用调度器入口启动
+    command: ["python", "-m", "agent_lab.scheduler_main"]
