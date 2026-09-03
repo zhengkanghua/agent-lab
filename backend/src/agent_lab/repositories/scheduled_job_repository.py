@@ -92,6 +92,11 @@ class ScheduledJobRepository:
 
         await self._session.commit()
 
+    async def refresh(self, record: ScheduledJobRecord) -> None:
+        """刷新 ORM 对象，重新从数据库加载所有字段（含服务器端自动更新的时间戳）。"""
+
+        await self._session.refresh(record)
+
     async def delete_job(self, record: ScheduledJobRecord) -> None:
         """删除任务；执行历史由数据库级联删除。"""
 

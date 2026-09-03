@@ -58,6 +58,9 @@ services:
         max-file: "3"
     volumes:
       - ./data:/data
+      # 挂载 .env 文件到容器内，让 pydantic-settings 能直接读取
+      # 这是额外保险：即使 env_file 注入的环境变量失效，容器内也能读到文件
+      - ./.env:/app/.env:ro
 
   # 调度器服务（独立进程执行定时任务）
   scheduler:
@@ -81,5 +84,8 @@ services:
         max-file: "3"
     volumes:
       - ./data:/data
+      # 挂载 .env 文件到容器内，让 pydantic-settings 能直接读取
+      # 这是额外保险：即使 env_file 注入的环境变量失效，容器内也能读到文件
+      - ./.env:/app/.env:ro
     # 使用调度器入口启动
     command: ["python", "-m", "agent_lab.scheduler_main"]

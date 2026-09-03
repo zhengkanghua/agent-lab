@@ -100,6 +100,9 @@ class ScheduledJobService:
             params=normalized_params,
             enabled=enabled,
         )
+        # commit 后 refresh，确保服务器端设置的 created_at/updated_at 已加载，
+        # 避免后续同步访问时触发 MissingGreenlet 错误。
+        await self._repository.refresh(record)
         self._runner.apply_job(record)
         return await self._build_view(record)
 
@@ -127,6 +130,9 @@ class ScheduledJobService:
         if enabled is not None:
             record.enabled = enabled
         await self._repository.commit()
+        # commit 后 refresh，确保服务器端更新的 updated_at 已加载，
+        # 避免后续同步访问时触发 MissingGreenlet 错误。
+        await self._repository.refresh(record)
         self._runner.apply_job(record)
         return await self._build_view(record)
 
