@@ -138,36 +138,57 @@ function toggle(): void {
 
 <style scoped>
 .record {
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-card);
-  overflow: hidden;
-  transition: box-shadow 200ms ease, background-color 200ms ease, border-color 200ms ease;
+  position: relative;
+  padding-left: 32px;
+  background: transparent;
+  transition: opacity 200ms ease;
 }
 
-/* 折叠态记录更沉静：弱化边框，像一条可点开的历史，而不是一整块内容。 */
+.record::before {
+  content: '';
+  position: absolute;
+  top: 26px;
+  bottom: -12px;
+  left: 6px;
+  width: 2px;
+  background: var(--surface-sunken);
+  border-radius: 1px;
+}
+
+.record:last-child::before {
+  bottom: 0;
+}
+
+/* 折叠态记录更沉静：弱化透明度等。 */
 .record.is-collapsed {
-  box-shadow: none;
+  opacity: 0.8;
 }
 
-.record.is-error {
-  border-color: var(--danger-soft);
+.record.is-error::before {
+  background: var(--danger-soft);
 }
 
 .record-head {
   display: flex;
   align-items: center;
-  min-height: 52px;
+  min-height: 44px;
 }
 
 .record-mark {
-  display: grid;
-  place-items: center;
-  align-self: stretch;
-  flex: 0 0 42px;
-  color: var(--accent);
-  background: var(--accent-soft);
+  position: absolute;
+  left: 0;
+  top: 14px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  color: transparent;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--surface-base);
+  z-index: 1;
+}
+
+.record-mark svg {
+  display: none;
 }
 
 .record-toggle {
@@ -224,8 +245,7 @@ function toggle(): void {
 }
 
 .record-body {
-  padding: 4px 16px 18px;
-  border-top: 1px solid var(--surface-sunken);
+  padding: 4px 0 24px;
 }
 
 .state-panel {
@@ -326,12 +346,20 @@ function toggle(): void {
 }
 
 @container (max-width: 600px) {
+  .record {
+    padding-left: 20px;
+  }
+  .record::before {
+    left: 4px;
+  }
   .record-mark {
-    flex-basis: 34px;
+    width: 10px;
+    height: 10px;
+    top: 16px;
   }
 
   .record-body {
-    padding: 2px 10px 14px;
+    padding: 2px 0 14px;
   }
 
   .record-toggle {

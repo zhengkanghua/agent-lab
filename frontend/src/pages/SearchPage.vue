@@ -122,11 +122,11 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
   >
     <template #brand-icon><Search :size="19" stroke-width="2.2" /></template>
 
-    <main id="search-workspace" class="workspace">
+    <main id="search-workspace" class="workspace" :class="{ 'is-empty': !hasRecords }">
       <h1 class="sr-only">新闻语义检索</h1>
 
       <!-- 顶部常驻输入条。检索页不渲染页脚：底部要让位给向下长的检索流。 -->
-      <div class="composer-dock">
+      <div class="composer-dock" :class="{ 'is-sticky': hasRecords }">
         <SearchComposer
           ref="composerRef"
           v-model="stream.draft.value"
@@ -202,15 +202,26 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
   min-height: calc(100dvh - var(--app-topbar-height, 69px));
 }
 
+.workspace.is-empty {
+  justify-content: center;
+}
+
 .composer-dock {
-  position: sticky;
-  z-index: 8;
-  top: var(--app-topbar-height, 69px);
   width: min(100%, calc(var(--reading-width) + 80px));
   margin: 0 auto;
   padding: 16px 0 14px;
-  background: var(--surface-scrim);
+  background: var(--surface-base);
+  border-bottom: 1px solid transparent;
+  transition: all 300ms ease;
+  z-index: 8;
+}
+
+.composer-dock.is-sticky {
+  position: sticky;
+  top: var(--app-topbar-height, 69px);
+  border-bottom-color: var(--surface-sunken);
   backdrop-filter: blur(12px);
+  background: rgba(var(--surface-base-rgb), 0.85); /* 假设有RGB变量，或者直接用带透明度的颜色，目前退配为 surface-base 配合模糊 */
 }
 
 .stream {
@@ -228,7 +239,6 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
   align-items: center;
   width: min(100%, var(--reading-width));
   margin: 0 auto;
-  padding: 64px 0 0;
   text-align: center;
 }
 
@@ -303,7 +313,6 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
 
   .empty-state {
     width: calc(100% - 24px);
-    padding-top: 34px;
   }
 
   .empty-lead h2 {

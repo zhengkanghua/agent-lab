@@ -171,18 +171,12 @@ defineExpose({ focusInput })
 <style scoped>
 .composer {
   padding: 14px 16px 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-soft);
-  transition: border-color 150ms ease, box-shadow 150ms ease;
+  background: transparent;
+  transition: all 150ms ease;
 }
 
 .composer:focus-within {
-  border-color: var(--accent);
-  box-shadow:
-    0 0 0 4px var(--accent-soft),
-    var(--shadow-soft);
+  /* No outer focus ring, input handles its own focus */
 }
 
 .search-form {
@@ -193,19 +187,19 @@ defineExpose({ focusInput })
 .query-input {
   display: block;
   width: 100%;
-  min-height: 62px;
+  min-height: 52px;
   resize: vertical;
-  padding: 8px 9px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  padding: 8px 0;
+  border: none;
+  border-bottom: 2px solid var(--border-subtle);
+  border-radius: 0;
   outline: none;
   color: var(--text-primary);
-  background: var(--surface-base);
-  font-size: 0.95rem;
+  background: transparent;
+  font-size: 1.1rem;
   line-height: 1.65;
   transition:
     border-color 150ms ease,
-    box-shadow 150ms ease,
     background-color 150ms ease;
 }
 
@@ -214,9 +208,8 @@ defineExpose({ focusInput })
 }
 
 .query-input:focus {
-  border-color: var(--accent);
-  background: var(--surface-raised);
-  box-shadow: 0 0 0 4px var(--accent-soft);
+  border-bottom-color: var(--accent);
+  background: transparent;
 }
 
 .character-count {

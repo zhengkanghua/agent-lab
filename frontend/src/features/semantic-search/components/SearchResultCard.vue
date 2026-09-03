@@ -150,21 +150,22 @@ function requestFullText(event: MouseEvent): void {
   display: grid;
   grid-template-columns: 50px minmax(0, 1fr);
   gap: 18px;
-  padding: 22px 22px 20px 18px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-card);
-  transition:
-    border-color 150ms ease,
-    box-shadow 150ms ease,
-    transform 150ms ease;
+  padding: 32px 0 28px;
+  border: none;
+  border-bottom: 1px solid var(--surface-sunken);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  transition: transform 150ms ease, background-color 150ms ease;
+}
+
+.result-card:last-child {
+  border-bottom: none;
 }
 
 .result-card:hover {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-soft);
-  transform: translateY(-1px);
+  transform: none;
+  background: rgba(var(--surface-sunken-rgb), 0.3); /* 若无 rgb 变量可直接写一个极淡颜色 */
 }
 
 .document-locator {
@@ -386,7 +387,7 @@ function requestFullText(event: MouseEvent): void {
   .result-card {
     grid-template-columns: 38px minmax(0, 1fr);
     gap: 12px;
-    padding: 18px 14px 17px 11px;
+    padding: 24px 0 20px;
   }
 
   .document-locator {
