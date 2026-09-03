@@ -194,8 +194,58 @@ defineExpose({ focusInput })
   gap: 12px;
 }
 
-/* 顶部工具栏：筛选、高级设置 */
-.composer-toolbar-top {
+/* 字段标签与字数说明的接线归 BaseField。输入框留在这里：高度、resize、聚焦态是本页专有的。 */
+.query-input {
+  display: block;
+  width: 100%;
+  min-height: 52px;
+  resize: vertical;
+  padding: 12px 0 8px;
+  border: none;
+  border-bottom: 2px solid var(--border-subtle);
+  border-radius: 0;
+  outline: none;
+  box-shadow: none;
+  color: var(--text-primary);
+  background: transparent;
+  font-size: 1.15rem;
+  line-height: 1.65;
+  transition:
+    border-color 200ms ease,
+    background-color 200ms ease;
+}
+
+.query-input::placeholder {
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.query-input:focus,
+.query-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border-bottom: 2px solid var(--accent);
+  background: transparent;
+}
+
+.character-count {
+  display: block;
+  text-align: right;
+  color: var(--text-tertiary);
+  font-family: var(--mono-font);
+  font-size: 0.67rem;
+  letter-spacing: 0;
+}
+
+.character-count.is-near {
+  color: var(--warning);
+}
+
+.character-count.is-over {
+  color: var(--danger);
+}
+
+.composer-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
