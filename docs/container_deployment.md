@@ -113,7 +113,7 @@ CRLF 行尾，而 `.env` 不经过 Git（`.gitattributes` 管不到它），`\r`
 URL、API Key 后面多一个看不见的字符。这类故障很难查：日志里的报错看起来像密码错或地址错，
 但值「看上去」完全正确。
 
-填写时注意四点：
+填写时注意五点：
 
 1. `AUTH_COOKIE_SECURE=true`（生产走 HTTPS，必须）。
 2. `DATABASE_URL` 指远程库。**不要**写 `localhost`——容器里的 `localhost` 指容器自己，
@@ -122,6 +122,10 @@ URL、API Key 后面多一个看不见的字符。这类故障很难查：日志
    邮箱相同。模板里的尖括号是占位符，必须替换。
 4. **不要写 `LLM_CHECKPOINT_POOL_SIZE`**。它在 `config/llm.py` 里声明为 `strict=True`，
    而 compose 的 `env_file` 注入的一律是字符串，配上会让容器启动即 `ValidationError`。
+5. **`SCHEDULER_ENABLED=true`（要定时同步就必须写）**。默认 false，忘写的表现是「服务
+   一切正常，但定时任务永远不跑」。cron 与启停在管理端（`scheduled_jobs` 表）配置，
+   这个变量只管进程要不要启动 cron 循环（见
+   [ADR 0014](adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md)）。
 
 ### 4. 让 deploy 用户能写静态站目录
 

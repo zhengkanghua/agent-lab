@@ -21,13 +21,20 @@
 | 读取单篇文档 | `/`（检索流某条记录内展开） | `GET /documents/{document_id}` | `api/documents.py` → `repositories/document_repository.py`；前端 `api/documents.ts`、`features/semantic-search/composables/useDocumentReader.ts` | `tests/test_documents_api.py`、`src/api/documents.spec.ts` |
 | 用户管理（增删改、改密、踢会话） | `/admin/users` | `GET /admin/users`、`POST /admin/users`、`PATCH /admin/users/{user_id}`、`POST /admin/users/{user_id}/password`、`DELETE /admin/users/{user_id}/sessions` | `api/user_admin.py` → `services/user_admin_service.py`；前端 `api/user-admin.ts`、`pages/UserAdminPage.vue` | `tests/test_user_admin.py`、`src/api/user-admin.spec.ts`、`src/pages/UserAdminPage.spec.ts` |
 | 手工触发同步加索引 | 无页面 | `POST /pipeline/run-once` | `api/pipeline.py` → `services/news_pipeline_execution_service.py` | `tests/test_pipeline_api.py`、`tests/test_news_pipeline_execution.py` |
+| 定时任务管理（配置 cron 与参数、启停、立即执行、看执行历史；cron 到点自动同步/索引） | 无页面（后端先行，前端待接） | `GET /scheduled-jobs`、`POST /scheduled-jobs`、`GET/PATCH/DELETE /scheduled-jobs/{job_id}`、`POST /scheduled-jobs/{job_id}/trigger`、`GET /scheduled-jobs/{job_id}/runs`、`POST /scheduled-jobs/validate-cron` | `api/scheduled_jobs.py` → `services/scheduled_job_service.py`、`services/scheduler_runner.py`、`services/scheduled_task_registry.py`、`repositories/scheduled_job_repository.py` | `tests/test_scheduled_jobs_api.py`、`tests/test_scheduler_runner.py`、`tests/test_scheduled_task_registry.py`、`tests/test_scheduler_postgres_integration.py`（真库真上游，默认跳过） |
 | Agent 对话（模型自己调检索工具再作答，SSE 流式） | `/agent` | `POST /agent/chat` | `api/agent_chat.py` → `agent/runtime.py`、`agent/streaming.py`、`agent/tools/`；前端 `api/agent-chat.ts`、`features/agent-chat/`、`pages/AgentChatPage.vue` | `tests/test_agent_chat_api.py`、`tests/test_agent_streaming.py`、`tests/test_agent_tools.py`、`tests/test_agent_middleware.py`、`src/api/agent-chat.spec.ts`、`src/features/agent-chat/tests/`、`src/pages/AgentChatPage.spec.ts` |
 | 读取 Agent 默认系统提示词 | `/agent`（提示词编辑器内） | `GET /agent/default-prompt` | `api/agent_chat.py` → `agent/prompts.py`；前端 `features/agent-chat/composables/useAgentDefaultPrompt.ts` | `tests/test_agent_chat_api.py`、`src/features/agent-chat/tests/useAgentDefaultPrompt.spec.ts` |
 | 会话记录（列出自己的会话、点进去看历史并接着聊、删除） | `/agent`（侧栏）、`/agent/:threadId` | `GET /agent/threads`、`GET /agent/threads/{thread_id}/messages`、`DELETE /agent/threads/{thread_id}` | `api/agent_threads.py` → `services/agent_thread_service.py`、`agent/replay.py`、`models/agent_thread.py`；前端 `api/agent-threads.ts`、`features/agent-chat/composables/useThreadList.ts`、`components/ThreadSidebar.vue` | `tests/test_agent_threads_api.py`、`tests/test_agent_thread_service.py`、`tests/test_agent_replay.py`、`tests/test_agent_thread_ownership_integration.py`（真库，默认跳过）、`src/api/agent-threads.spec.ts`、`src/features/agent-chat/tests/useThreadList.spec.ts` |
 | 健康检查 | 无 | `GET /health` | `api/health.py` | `tests/test_error_contract.py` |
 
-`/vector-search`、`/document-search`、`/documents` 要求登录；`/pipeline`、`/admin/users`、`/agent`
-要求超级用户。挂载点和依赖在 `backend/src/agent_lab/main.py` 的 `include_router` 处。
+`/vector-search`、`/document-search`、`/documents` 要求登录；`/pipeline`、`/admin/users`、
+`/scheduled-jobs`、`/agent` 要求超级用户。挂载点和依赖在 `backend/src/agent_lab/main.py` 的
+`include_router` 处。
+
+定时任务到点自动执行受 `SCHEDULER_ENABLED` 总开关控制，默认关闭，生产 `.env` 必须显式开；
+任务清单存在 PostgreSQL 的 `scheduled_jobs` 表，是调度器的事实来源。进程内调度、单实例约束
+和运行策略见
+[`adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md`](adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md)。
 
 检索页重构后去掉了「按片段」模式，前端只走 `POST /document-search`（按新闻分组）并在页内做
 多轮累积（检索流）；后端 `/vector-search` 接口与后端单测仍保留，只是前端不再调用它，因此

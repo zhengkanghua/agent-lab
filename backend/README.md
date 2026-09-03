@@ -61,9 +61,15 @@ langgraph-checkpoint-postgres 3.1.2、langsmith 0.10.18。这里的版本号都�
 第 1 步不到位时 ``/agent/*`` 会返回 503（``agent_thread_database_unavailable``）而不是崩溃：
 归属记录读不出来就不让对话开始，避免在没有归属的情况下写下一段谁都管不了的历史。
 
-应用启动**只**访问 PostgreSQL 同步环境托管管理员，不探测 FreshRSS、Ollama 或 Qdrant，
-也不创建 Collection 或 Alias。真正的 Embedding 与 current Alias query 只在收到请求时
-执行；新闻同步与索引只在手动 CLI 或 ``POST /pipeline/run-once`` 时发生。
+应用启动**只**访问 PostgreSQL（同步环境托管管理员；``SCHEDULER_ENABLED=true`` 时调度器还会
+读一次定时任务清单），不探测 FreshRSS、Ollama 或 Qdrant，也不创建 Collection 或 Alias。
+真正的 Embedding 与 current Alias query 只在收到请求时执行；新闻同步与索引只在手动 CLI、
+``POST /pipeline/run-once`` 或调度器到点触发时发生（调度器与手动入口共用同一套写 Runtime
+生命周期，取舍见 ``docs/adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md``）。
+
+**定时任务调度器是进程内的**：它要求部署保持单 uvicorn worker、单实例。改成多 worker 或
+多实例之前，必须先把调度器迁到独立进程（或给任务执行加数据库租约），否则同一任务会被重复
+调度。生产忘了配 ``SCHEDULER_ENABLED=true`` 的表现是「服务一切正常，但定时任务永远不跑」。
 
 Agent Runtime 的装配是**非致命**的：LLM 配置缺失或会话记忆连不上时，只记异常类型（配置和
 连接串里都有凭据，异常文本可能带出来），把 ``app.state.agent_runtime`` 留成 ``None``，进程
@@ -83,6 +89,10 @@ AUTH_ADMIN_EMAIL        保底超级管理员，必须与 AUTH_ADMIN_PASSWORD �
 AUTH_ADMIN_PASSWORD     留成 AUTH_ADMIN_EMAIL= 这样的空值会因邮箱格式校验直接启动失败。
                         密码 12 到 128 字符，且不能等于邮箱。
 FRESHRSS_SYNC_CATEGORIES  分类白名单，JSON 数组。不配就同步不到任何东西。
+SCHEDULER_ENABLED         默认 false。生产要定时同步必须在 .env 里显式 true；
+                          关闭时定时任务管理 API 仍可用（可手动触发），只是不到点自动执行。
+SCHEDULER_TIMEZONE        cron 表达式的解释时区，默认 Asia/Shanghai。只影响「0 9 * * *」
+                          翻译成哪个时刻；数据库存储一律 UTC，不受影响。
 QDRANT_DISTANCE         改这个或维度必须新建 Schema/Collection，不能原地改。
 LLM_API_KEY             LLM_PROVIDER=openai_compatible 时必须非空，否则 /agent/* 全部 503；
                         provider=ollama 时允许为空。检索接口不受影响。
@@ -289,6 +299,14 @@ $env:RUN_QDRANT_REMOTE_INTEGRATION_TEST="1"
 uv run pytest -q tests/test_qdrant_remote_integration.py
 ```
 
+真实 PostgreSQL + FreshRSS + Ollama + Qdrant 的定时任务端到端：验证迁移种子任务、并用
+可回滚事务真实执行 ``freshrss_sync`` 与 ``index_pending`` 各一轮（历史不残留）：
+
+```powershell
+$env:RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST="1"
+uv run pytest -q tests/test_scheduler_postgres_integration.py
+```
+
 按主题挑选离线测试：
 
 ```powershell
@@ -313,6 +331,10 @@ uv run pytest -q tests/test_auth.py tests/test_user_admin.py
 # 手动写入链路：CLI、批次执行 Service 与流水线 API
 uv run pytest -q tests/test_cli.py tests/test_news_pipeline_execution.py `
   tests/test_pipeline_api.py
+
+# 定时任务：类型注册表与 cron 预览、调度器包装器、管理 API 契约（假 Store/Runtime，不连库）
+uv run pytest -q tests/test_scheduled_task_registry.py tests/test_scheduler_runner.py `
+  tests/test_scheduled_jobs_api.py
 
 # 增量同步与正文质量
 uv run pytest -q tests/test_freshrss_incremental_sync.py tests/test_content_quality.py

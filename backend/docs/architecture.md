@@ -26,11 +26,19 @@ POST   /admin/users                       创建账号（超级用户）
 PATCH  /admin/users/{user_id}             改启用状态与超级用户位（超级用户）
 POST   /admin/users/{user_id}/password    重置密码（超级用户）
 DELETE /admin/users/{user_id}/sessions    撤销该账号全部登录会话（超级用户）
+GET    /scheduled-jobs                    定时任务列表，含下次执行时间与最近一次执行（超级用户）
+POST   /scheduled-jobs                    创建定时任务（超级用户）
+GET    /scheduled-jobs/{job_id}           单个任务详情（超级用户）
+PATCH  /scheduled-jobs/{job_id}           改 cron、参数或启停（超级用户）
+DELETE /scheduled-jobs/{job_id}           删除任务及其执行历史（超级用户）
+POST   /scheduled-jobs/{job_id}/trigger   手动立即执行一次（超级用户）
+GET    /scheduled-jobs/{job_id}/runs      任务执行历史（超级用户）
+POST   /scheduled-jobs/validate-cron      校验 cron 并预览未来 3 次执行时间（超级用户）
 ```
 
 除 ``/health`` 和 ``/auth/login`` 外都需要有效登录 Cookie。搜索与全文要求普通启用
-账号，``/pipeline/run-once``、``/admin/users`` 与 ``/agent`` 要求 ``is_superuser=true``。
-**没有 ``/auth/register``**，账号只能由超级用户或 CLI 创建。
+账号，``/pipeline/run-once``、``/admin/users``、``/scheduled-jobs`` 与 ``/agent`` 要求
+``is_superuser=true``。**没有 ``/auth/register``**，账号只能由超级用户或 CLI 创建。
 
 ``/agent`` 定成超级用户不是因为它有写权限（它没有，见 ADR 0003），而是因为每次对话都是
 真金白银的模型调用，且自定义系统提示词等于让调用方直接改模型行为。放宽容易、收紧难。
@@ -610,6 +618,38 @@ indexed/skipped/failed 数量以及按 ``error_type`` 聚合的失败，不返�
 
 每次命令或请求只处理一个有界批次，不暗中循环等待新任务。
 
+## 定时任务与进程内调度器
+
+定时任务模块（[ADR 0014](../../docs/adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md)）
+在现有 backend 进程内用 APScheduler 3.x（``AsyncIOScheduler`` + 内存 job store）按 cron 到点
+执行两类任务：``freshrss_sync``（FreshRSS → PostgreSQL）与 ``index_pending``（PostgreSQL 待
+索引文档 → Qdrant）。类型清单由代码注册表（``services/scheduled_task_registry.py``）定义，
+不是数据库数据——新增类型等于改代码。
+
+职责切分：
+
+- **PostgreSQL 是唯一事实来源**。``scheduled_jobs`` 存任务配置（key 唯一、cron 原样字符串、
+  params JSONB、启停），``scheduled_job_runs`` 存执行历史（running/succeeded/failed/skipped、
+  脱敏统计、error_type）。进程启动时由 lifespan 从表里加载启用任务注册进调度器；管理 API
+  写库成功后立即同步调度状态，不需要重启。
+- **调度器只是执行机构**（``services/scheduler_runner.py``）。cron 到点与手动触发走同一个
+  ``_execute`` 包装器：参数防御性重验 → 按次新建写 Runtime（与手动流水线同一工厂）→ 只跑
+  对应步骤 → finally 关闭 → 写终态 → 裁剪历史（每任务保留最近 50 条，可配）。
+- **运行策略**：同一任务上一轮未结束，到点触发记一条 ``skipped`` 后放弃（进程内
+  ``asyncio.Lock`` 判定，APScheduler ``max_instances=1`` 兜底）；错过执行点给
+  ``SCHEDULER_MISFIRE_GRACE_SECONDS``（默认 600 秒）宽限补跑；失败不自动重试，由下一轮
+  cron 或手动触发兜底。
+- **开关与边界**：``SCHEDULER_ENABLED`` 默认 false，关闭时调度器不启动，但管理 API 与手动
+  触发照常可用（``next_run_at`` 为空）。调度器**要求单 uvicorn worker 单实例**：多进程部署
+  前必须先迁独立调度进程或加数据库租约，否则同一任务会被重复调度。每次部署重启会打断正在
+  执行的任务——可接受，执行是有界且可恢复的（来源 checkpoint、索引超时回收）。
+- **cron 时区**：``SCHEDULER_TIMEZONE``（默认 Asia/Shanghai）只用于把 cron 字符串翻译成
+  具体时刻；数据库存储一律 UTC，不新增时区不一致。
+
+写路径的 CPU 段（HTML 解析、切块、tiktoken 计数）由 ``DocumentIndexingService`` 通过
+``asyncio.to_thread`` 移出事件循环执行——该步骤是纯计算、无共享状态；手动与定时两条入口
+同时受益，定时执行期间 SSE 流式响应不再被切块计算卡顿。
+
 ## 模块边界
 
 ```text
@@ -640,11 +680,11 @@ api（HTTP 校验、按请求 Runtime、错误契约；不实现 Embedding/Qdran
 
 ``api/`` 内部再分一层：``dependencies.py`` 与 ``error_contract.py`` 是基础设施，
 ``vector_search.py``、``document_search.py``、``documents.py``、``pipeline.py``、
-``user_admin.py``、``auth.py``、``health.py``、``agent_chat.py`` 是平级特性路由，彼此不互相
-import；``main.py`` 是唯一的装配根。``dependencies.py`` 里 ``AgentRuntime`` 只在
-``TYPE_CHECKING`` 下导入——运行时导入会成环（``dependencies`` → ``agent.runtime`` →
-``agent.middleware`` → ``api.error_contract`` → ``dependencies``），而本模块只从 ``app.state``
-取现成对象、从不构造也不 ``isinstance``。
+``user_admin.py``、``scheduled_jobs.py``、``auth.py``、``health.py``、``agent_chat.py`` 是平级
+特性路由，彼此不互相 import；``main.py`` 是唯一的装配根。``dependencies.py`` 里
+``AgentRuntime`` 只在 ``TYPE_CHECKING`` 下导入——运行时导入会成环（``dependencies`` →
+``agent.runtime`` → ``agent.middleware`` → ``api.error_contract`` → ``dependencies``），而本模块
+只从 ``app.state`` 取现成对象、从不构造也不 ``isinstance``。
 
 ``FreshRSSImportService`` 只编排抓取、映射和事务，不处理 Chunk；``DocumentBuilder`` 只做 ORM 到
 RAG Document 的内存转换；``DocumentChunker`` 只负责切分。调用方依赖 Pipeline 门面，不在业务代码
@@ -658,6 +698,9 @@ documents        清洗正文、来源关联、当前处理状态，以及 Qdran
 users            内部登录邮箱、Argon2 密码 Hash、启用/超级用户状态和唯一环境托管标记
 access_tokens    浏览器登录产生的可撤销随机 Token、创建时间和所属用户
 agent_threads    Agent 会话的账号归属、标题与最后活跃时间；不含任何消息内容
+scheduled_jobs   定时任务配置：key 唯一、任务类型、cron 原样字符串、params JSONB 与启停
+scheduled_job_runs  任务执行历史：触发方式、状态、起止时间、脱敏统计与 error_type；
+                    随任务删除级联删除，每次执行收尾只保留最近 N 条
 alembic_version  由 Alembic 维护当前迁移版本
 
 以下四张由 langgraph-checkpoint-postgres 自建自迁移，Alembic 既不生成也不删除（ADR 0004）：
