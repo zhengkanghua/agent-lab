@@ -92,7 +92,7 @@ function editFormFor(job: ScheduledJobDto): UseJobFormReturn | null {
         <span role="columnheader">节奏</span>
         <span role="columnheader">启停</span>
         <span role="columnheader">执行状态</span>
-        <span role="columnheader">操作</span>
+        <span role="columnheader" class="align-right">操作</span>
       </div>
 
       <JobDirectoryRow
@@ -210,6 +210,10 @@ function editFormFor(job: ScheduledJobDto): UseJobFormReturn | null {
   font-size: 0.66rem;
   font-weight: 720;
   letter-spacing: 0.04em;
+}
+
+.align-right {
+  text-align: right;
 }
 
 @media (max-width: 1080px) {

@@ -248,6 +248,7 @@ function onDeleteClick(): void {
 }
 
 .job-cron {
+  min-width: 0;
   padding: 4px 8px;
   border-radius: var(--radius-sm);
   color: var(--accent);
@@ -260,6 +261,7 @@ function onDeleteClick(): void {
 }
 
 .job-toggle {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -295,6 +297,7 @@ function onDeleteClick(): void {
 }
 
 .schedule-line span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

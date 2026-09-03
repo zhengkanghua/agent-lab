@@ -233,6 +233,10 @@ function useDefaultPrompt(): void {
   line-height: 1.65;
 }
 
+.message-input:focus-visible {
+  box-shadow: none;
+}
+
 .message-input::placeholder {
   color: var(--text-tertiary);
 }

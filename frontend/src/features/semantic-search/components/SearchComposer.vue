@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { Eraser, Layers3, ListFilter, Search } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
-import BaseDisclosure from '@/shared/ui/BaseDisclosure.vue'
+import BasePopover from '@/shared/ui/BasePopover.vue'
 import BaseField from '@/shared/ui/BaseField.vue'
 import { MAX_QUERY_CHARACTERS } from '../model/search-validation'
 
@@ -95,26 +95,36 @@ defineExpose({ focusInput })
           </select>
         </label>
 
-        <BaseDisclosure
-          class="advanced-options"
-          summary="更多设置"
-          size="sm"
-          tone="plain"
-          :meta="`每篇 ${matchesPerDocument} 条相关片段`"
+        <BasePopover
+          side="bottom"
+          align="start"
         >
-          <template #icon><Layers3 :size="15" aria-hidden="true" /></template>
-          <label>
-            <span>每篇新闻最多保留的相关片段</span>
-            <select
-              v-model.number="matchesPerDocument"
-              aria-label="每篇新闻最多显示的相关片段数（影响之后所有检索）"
+          <template #trigger>
+            <button
+              type="button"
+              class="advanced-options-trigger"
+              aria-label="更多设置"
             >
-              <option :value="1">1 条</option>
-              <option :value="3">3 条</option>
-              <option :value="5">5 条</option>
-            </select>
-          </label>
-        </BaseDisclosure>
+              <Layers3 :size="15" aria-hidden="true" />
+              <span class="trigger-label">更多设置</span>
+              <span class="trigger-meta">每篇 {{ matchesPerDocument }} 条相关片段</span>
+            </button>
+          </template>
+          
+          <div class="advanced-options-content">
+            <label>
+              <span>每篇新闻最多保留的相关片段</span>
+              <select
+                v-model.number="matchesPerDocument"
+                aria-label="每篇新闻最多显示的相关片段数（影响之后所有检索）"
+              >
+                <option :value="1">1 条</option>
+                <option :value="3">3 条</option>
+                <option :value="5">5 条</option>
+              </select>
+            </label>
+          </div>
+        </BasePopover>
       </div>
 
       <!-- Unified Input Area -->
@@ -213,7 +223,7 @@ defineExpose({ focusInput })
 }
 
 .result-limit-control select,
-.advanced-options select {
+.advanced-options-content select {
   width: 88px;
   height: 32px;
   padding: 0 8px;
@@ -226,23 +236,43 @@ defineExpose({ focusInput })
   font-size: 0.8rem;
 }
 
-.advanced-options {
+.advanced-options-trigger {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 8px;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: color var(--duration-fast) ease;
 }
 
-.advanced-options :deep(.disclosure-summary) {
-  padding: 0 8px;
-  height: 32px;
+.advanced-options-trigger svg {
+  color: var(--accent);
 }
 
-.advanced-options label {
+.advanced-options-trigger:hover {
+  color: var(--accent-hover);
+}
+
+.advanced-options-trigger .trigger-meta {
+  margin-left: 8px;
+  color: var(--text-secondary);
+  font-family: var(--mono-font);
+  font-size: 0.68rem;
+  font-weight: 400;
+}
+
+.advanced-options-content label {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 40px;
-  padding: 8px 12px;
   color: var(--text-secondary);
   font-size: 0.78rem;
 }
