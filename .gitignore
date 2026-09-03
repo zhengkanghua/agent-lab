@@ -73,7 +73,10 @@ $RECYCLE.BIN/
 !.vscode/launch.json
 
 # ---------- Agent 工具 ----------
-# .claude/ 与 .codex/ 的技能定义和共享配置有意提交，便于多设备同步。
+# .claude/、.codex/、.gemini/、.zcode/ 的技能定义和共享配置有意提交，便于多设备同步。
+# 不同 harness 平台各自读取自己的目录，所以 skills 需要多份拷贝。
 # 仅忽略确定与单机绑定、无法跨设备复用的运行时产物。
 .claude/**/cache/
 .codex/**/cache/
+.gemini/**/cache/
+.zcode/**/cache/
