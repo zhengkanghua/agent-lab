@@ -10,10 +10,10 @@
 | --- | --- | --- | --- | --- |
 | 中新网时政新闻 | `https://www.chinanews.com.cn/rss/china.xml` | 摘要 | `.left_zw` | 在 FreshRSS 中启用原文获取 |
 | 彭博中国 | `https://www.bloombergchina.com/feed/` | `content:encoded` 已包含中文长正文 | 备用：`.article__content` | 已加入“财经”分类，不强制回源 |
-| 国家统计局最新发布 | `https://rsshub.example.com/gov/stats/sj/zxfb` | RSSHub 已包含正文和附件 | 不需要 | 已加入“宏观数据”分类 |
+| 国家统计局最新发布 | `{RSSHUB_BASE}/gov/stats/sj/zxfb` | RSSHub 已包含正文和附件 | 不需要 | 已加入“宏观数据”分类 |
 | 联合早报 | `https://feedx.net/rss/zaobao.xml` | FeedX 已包含中文正文 | 不需要 | 已加入“新闻”分类 |
 | 经济日报电子版 | `https://feedx.net/rss/jingjiribao.xml` | FeedX 已包含中文正文 | 不需要 | 已加入“财经”分类 |
-| 界面新闻财经 | `https://rsshub.example.com/jiemian/lists/800` | RSSHub 已包含正文 | 不需要 | 已加入“财经”分类 |
+| 界面新闻财经 | `{RSSHUB_BASE}/jiemian/lists/800` | RSSHub 已包含正文 | 不需要 | 已加入“财经”分类 |
 
 ### 同步分类白名单
 
@@ -148,7 +148,7 @@ FreshRSS 前还必须从自建 RSSHub 实例验证一次响应、时间、正文
 
 公共 `rsshub.app` 对华尔街见闻宏观日历、国家统计局、人民银行政策研究、金十
 重要快讯和金十美国经济数据均返回 HTTP 403，并明确说明公共实例只用于测试。
-项目现已使用自建实例 `https://rsshub.example.com` 进行实际路由验证。
+项目现已使用自建实例 `{RSSHUB_BASE}`（地址见上文第 88 行约定）进行实际路由验证。
 
 - 华尔街见闻宏观日历底层 API 当天返回 35 条，包含发布时间、实际值、预期值、
   前值、单位和重要度，确认仍在更新。
