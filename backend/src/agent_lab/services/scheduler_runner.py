@@ -379,6 +379,29 @@ class ScheduledJobRunner:
                     failure.error_type for failure in result.failures
                 ),
             }
+        if task_type == "prune_old_documents":
+            # prune_old_documents 任务需要独立的 Session 和组件
+            from agent_lab.services.document_retention_service import DocumentRetentionService
+            from agent_lab.repositories.document_repository import DocumentRepository
+            from agent_lab.db.session import async_session_factory
+
+            # 创建独立 Session
+            async with async_session_factory() as session:
+                document_repo = DocumentRepository(session)
+                qdrant_store = runtime.indexing_runtime.service.qdrant_store
+
+                retention_service = DocumentRetentionService(
+                    session=session,
+                    document_repo=document_repo,
+                    qdrant_store=qdrant_store,
+                )
+
+                result = await retention_service.prune_old_documents(
+                    retention_days=int(params["retention_days"]),
+                    dry_run=bool(params["dry_run"]),
+                )
+
+            return result.to_job_run_stats()
         raise ScheduledJobUnknownTypeError()
 
     async def _safe_finish(
