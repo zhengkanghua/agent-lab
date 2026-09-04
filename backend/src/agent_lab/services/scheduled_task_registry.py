@@ -59,6 +59,23 @@ class IndexPendingTaskParams(BaseModel):
     )
 
 
+class PruneOldDocumentsTaskParams(BaseModel):
+    """``prune_old_documents`` 任务的执行参数：删除超过保留期的旧新闻。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    retention_days: int = Field(
+        default=180,
+        ge=30,
+        le=730,
+        description="保留天数，发布时间早于该天数的文档将被删除。",
+    )
+    dry_run: bool = Field(
+        default=True,
+        description="预演模式：True 时只统计不删除，查看执行记录确认后再关闭。",
+    )
+
+
 class TaskTypeSpec:
     """一个任务类型的注册项：类型名、给人看的描述和参数模型。
 
@@ -114,6 +131,11 @@ TASK_TYPE_SPECS: dict[str, TaskTypeSpec] = {
             description="向量索引：把 PostgreSQL 里待索引的文档切块、向量化并写入 Qdrant。",
             params_model=IndexPendingTaskParams,
         ),
+        TaskTypeSpec(
+            task_type="prune_old_documents",
+            description="数据保留策略：删除发布时间超过保留期的旧新闻及其向量索引（默认预演模式）。",
+            params_model=PruneOldDocumentsTaskParams,
+        ),
     )
 }
 
@@ -127,6 +149,7 @@ def get_task_type_spec(task_type: str) -> TaskTypeSpec | None:
 __all__ = [
     "FreshRssSyncTaskParams",
     "IndexPendingTaskParams",
+    "PruneOldDocumentsTaskParams",
     "TASK_TYPE_SPECS",
     "TaskTypeSpec",
     "get_task_type_spec",

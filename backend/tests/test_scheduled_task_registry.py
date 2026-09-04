@@ -16,6 +16,7 @@ from agent_lab.services.scheduled_task_registry import (
     TASK_TYPE_SPECS,
     FreshRssSyncTaskParams,
     IndexPendingTaskParams,
+    PruneOldDocumentsTaskParams,
     get_task_type_spec,
 )
 from agent_lab.services.scheduler_runner import ScheduledJobRunner
@@ -28,10 +29,10 @@ def run(coroutine: Any) -> Any:
 
 
 class TestTaskTypeRegistry:
-    def test_registry_has_exactly_the_two_v1_types(self) -> None:
+    def test_registry_has_exactly_the_three_v1_types(self) -> None:
         # 类型清单是代码契约：多一个没实现的类型会让管理端出现「选了就执行失败」的选项，
         # 少一个则种子任务无法加载。这条测试就是注册表的形状锁。
-        assert set(TASK_TYPE_SPECS) == {"freshrss_sync", "index_pending"}
+        assert set(TASK_TYPE_SPECS) == {"freshrss_sync", "index_pending", "prune_old_documents"}
 
     def test_get_task_type_spec_returns_none_for_unknown(self) -> None:
         assert get_task_type_spec("no_such_type") is None
@@ -55,6 +56,18 @@ class TestTaskTypeRegistry:
             IndexPendingTaskParams.model_validate({"batch_size": 0})
         with pytest.raises(ValidationError):
             IndexPendingTaskParams.model_validate({"stale_after_minutes": 0})
+
+    def test_prune_old_documents_params_defaults_and_bounds(self) -> None:
+        params = PruneOldDocumentsTaskParams.model_validate({})
+        assert params.retention_days == 180
+        assert params.dry_run is True  # 默认预演模式
+        with pytest.raises(ValidationError):
+            PruneOldDocumentsTaskParams.model_validate({"retention_days": 29})
+        with pytest.raises(ValidationError):
+            PruneOldDocumentsTaskParams.model_validate({"retention_days": 731})
+        # 边界值应该合法
+        PruneOldDocumentsTaskParams.model_validate({"retention_days": 30})
+        PruneOldDocumentsTaskParams.model_validate({"retention_days": 730})
 
     def test_validate_params_fills_defaults_and_rejects_unknowns(self) -> None:
         spec = get_task_type_spec("index_pending")
