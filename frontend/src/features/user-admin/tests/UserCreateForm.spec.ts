@@ -1,7 +1,7 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import UserCreateForm from '../components/UserCreateForm.vue'
-import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '../model/admin-validation'
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/shared/model/password'
 
 function mountForm(props: Partial<InstanceType<typeof UserCreateForm>['$props']> = {}) {
   return mount(UserCreateForm, {

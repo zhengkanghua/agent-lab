@@ -6,7 +6,8 @@
 2. 创建进程级只读搜索 Runtime（Ollama + Qdrant 客户端），供搜索请求共享；
 3. 注册一个「按请求创建」的写 Runtime 工厂，只有超级用户调用 Pipeline 才真正构造；
 4. 按配置装配进程内定时任务调度器（``SCHEDULER_ENABLED`` 开启时在 lifespan 启动 cron
-   循环；见 docs/adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md）；
+   循环；该模式要求单 worker 单实例，生产容器的独立调度进程见
+   docs/adr/0017-scheduler-runs-in-a-dedicated-process.md）；
 5. 应用关闭时统一释放调度器、搜索客户端和 SQLAlchemy 连接池。
 
 启动阶段访问 PostgreSQL（同步环境托管管理员、建 Agent checkpointer 连接、调度器加载

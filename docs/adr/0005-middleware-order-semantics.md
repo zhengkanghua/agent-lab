@@ -3,18 +3,8 @@
 `create_agent(middleware=[...])` 列表里**越靠后的中间件越内层、越先执行**。也就是说重试类中间件必须排在
 兜底类之后，否则兜底会在内层先把异常吞掉，外层的重试永远收不到异常、静静地不工作。
 
-由此固定 `agent/middleware.py` 的顺序为：
-
-```text
-dynamic_prompt
-ModelFallbackMiddleware
-ModelRetryMiddleware
-SummarizationMiddleware
-ModelCallLimitMiddleware
-ToolCallLimitMiddleware
-ToolErrorMiddleware      # 外层：把异常翻成安全文案
-ToolRetryMiddleware      # 内层：先重试，重试尽了才抛给外层
-```
+完整清单会随功能增长（后来就插入了 `UnknownToolGuardMiddleware`），不在这里复制；当前组装顺序以
+`agent/middleware.py` 的 `create_agent(...)` 调用为真源，本文只固定语义与下面的配套约束。
 
 两侧都实测过。工具侧（`max_retries=2`，工具每次抛异常）：`[ToolRetry, ToolError]` 工具只被调用 1 次，
 重试完全没发生；`[ToolError, ToolRetry]` 被调用 3 次（首次 + 2 次重试），兜底文案照样生成。模型侧同理：
@@ -39,8 +29,8 @@ ToolRetryMiddleware      # 内层：先重试，重试尽了才抛给外层
 
 ## Consequences
 
-新增中间件时先判断它属于「重试/降级」还是「兜底/改写结果」，再决定插在哪。判断不了就照着上面那份列表的
-相对位置放，别凭直觉。
+新增中间件时先判断它属于「重试/降级」还是「兜底/改写结果」，再决定插在哪。判断不了就照着
+`agent/middleware.py` 里现有相邻对的相对位置放，别凭直觉。
 
 针对这类中间件的测试必须断言**底层被调用的次数**，不能只断言最终返回的文案。只断言文案的测试无法区分
 两种顺序，会让顺序错误一路通过 CI。

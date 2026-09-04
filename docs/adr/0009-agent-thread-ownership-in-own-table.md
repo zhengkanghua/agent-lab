@@ -6,7 +6,7 @@
 
 原来没有这张表，`POST /agent/chat` 是 `thread_id = chat_request.thread_id or uuid4()`：前端给什么 id
 就用什么 id，而 checkpointer 只按 id 取历史、不问是谁。今天靠 `Depends(current_superuser)` 兜着，
-超级用户之间互相能读，超级用户以外进不来；但放宽权限本来就在计划里（`api/agent_chat.py` 里那条注释写着），
+超级用户之间互相能读，超级用户以外进不来；但放宽权限本来就在计划里（`main.py` 挂载 agent 路由处的注释写着），
 一旦放宽，猜到或抄到一个 UUID 就能读别人的完整对话，也能接着别人的会话继续聊。
 
 ## Considered Options

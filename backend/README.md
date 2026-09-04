@@ -2,8 +2,8 @@
 
 本服务把 FreshRSS 新闻同步成 PostgreSQL 业务事实，用 LangChain 切分成 Chunk、经
 Ollama ``bge-m3:567m`` 生成 Embedding 写入 Qdrant，并对外提供受登录保护的**只读**语义
-检索接口。写入链路只有显式手动入口（CLI 与一个同步 HTTP 接口），没有调度器、常驻
-Worker 或后台任务。
+检索接口。写入链路是显式手动入口（CLI 与一个同步 HTTP 接口），另有定时任务调度器按
+cron 自动触发同一套执行器（进程内或独立进程两种运行形态，见下文）。
 
 在检索之上还有一条 Agent 对话链路（``POST /agent/chat``，SSE）：一个 LangGraph 工具调用
 Agent 把上面的检索能力当工具用，由生成式 LLM 组织答案。它对业务数据同样只读，唯一的写入
@@ -27,8 +27,8 @@ Agent 把上面的检索能力当工具用，由生成式 LLM 组织答案。它
 服务自身不可独立运行，需要四个外部依赖，用 Agent 对话时还要第五个：
 
 ```text
-PostgreSQL   业务事实、账号与登录 Token。独立 Database news_vector_lc，
-             migration head c3f8a1b6e492。必须先执行 alembic upgrade head。
+PostgreSQL   业务事实、账号与登录 Token。独立 Database news_vector_lc。
+             必须先执行 alembic upgrade head（当前 head 用 ``alembic heads`` 查看）。
              Agent 会话的归属与列表元信息在 agent_threads 表（由 Alembic 管）；
              会话历史内容在 checkpointer 自己的四张表，不由 Alembic 管（见下面「Alembic」）。
 FreshRSS     唯一的新闻来源。动态网页回源和站点 CSS selector 由它负责，
@@ -67,9 +67,15 @@ langgraph-checkpoint-postgres 3.1.2、langsmith 0.10.18。这里的版本号都�
 ``POST /pipeline/run-once`` 或调度器到点触发时发生（调度器与手动入口共用同一套写 Runtime
 生命周期，取舍见 ``docs/adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md``）。
 
-**定时任务调度器是进程内的**：它要求部署保持单 uvicorn worker、单实例。改成多 worker 或
-多实例之前，必须先把调度器迁到独立进程（或给任务执行加数据库租约），否则同一任务会被重复
-调度。生产忘了配 ``SCHEDULER_ENABLED=true`` 的表现是「服务一切正常，但定时任务永远不跑」。
+**定时任务调度器有两种运行形态**（取舍见 [ADR
+0017](../docs/adr/0017-scheduler-runs-in-a-dedicated-process.md)）：
+
+- 裸进程部署（本地开发）：``SCHEDULER_ENABLED=true`` 时调度器在 uvicorn 进程内启动。此形态
+  必须保持单 uvicorn worker、单实例，否则同一任务会被重复调度。
+- 生产容器部署：调度跑在同镜像的独立 ``scheduler`` 容器（``python -m agent_lab.scheduler_main``），
+  backend 容器由 compose 强制 ``SCHEDULER_ENABLED="false"``；``WORKER_COUNT``（默认 2）只影响
+  API worker 数，与调度器无关。``.env`` 里的 ``SCHEDULER_ENABLED`` 在容器部署下被 compose 覆盖，
+  对 backend 容器不生效。
 
 Agent Runtime 的装配是**非致命**的：LLM 配置缺失或会话记忆连不上时，只记异常类型（配置和
 连接串里都有凭据，异常文本可能带出来），把 ``app.state.agent_runtime`` 留成 ``None``，进程
@@ -151,7 +157,7 @@ http://127.0.0.1:8000/health
 
 ## 手动写入命令
 
-六个 CLI 子命令（``agent-lab``）都是显式、一次性、有界的：
+七个 CLI 子命令（``agent-lab``）都是显式、一次性、有界的：
 
 ```powershell
 # 交互式创建内部登录账号；密码在终端隐藏输入，不进命令历史
@@ -173,10 +179,16 @@ uv run agent-lab init-checkpointer
 # 清掉没有归属记录的会话历史。默认只报数不删，看清数字再加 --yes
 uv run agent-lab prune-orphan-threads
 uv run agent-lab prune-orphan-threads --yes
+
+# 清掉最后活跃时间早于 N 天前的会话（checkpointer 历史与归属记录一起删）。
+# 默认只报数不删，看清数字再加 --yes
+uv run agent-lab prune-old-threads --before-days 90
+uv run agent-lab prune-old-threads --before-days 90 --yes
 ```
 
-``prune-orphan-threads`` 是唯一一个会**不可恢复地删除用户数据**的子命令，所以默认是预演：
-不加 ``--yes`` 只报告有多少孤儿会话、一条都不删。它必须在 ``alembic upgrade head`` 之后跑——
+``prune-orphan-threads`` 与 ``prune-old-threads`` 都会**不可恢复地删除用户数据**，所以默认都是
+预演：不加 ``--yes`` 只报告将删除的会话数量、一条都不删。它们必须在 ``alembic upgrade head``
+之后跑——
 ``agent_threads`` 表还不存在时，**所有**会话都会被判成孤儿。「孤儿」指 checkpointer 里有历史、
 业务表里没有归属记录的会话，来源有三种：归属功能上线之前留下的历史、迁移被回滚过、
 以及删除会话时「清历史成功、删归属记录失败」的残余。它们在网页上既列不出来也删不掉。
@@ -274,7 +286,7 @@ uv run pytest -q
 发现。想验证离线，把 ``DATABASE_URL`` 临时指到 ``192.0.2.1`` 这类不可达地址再跑一遍，耗时不变
 才算真离线。
 
-只有 3 个测试受环境变量门控，默认跳过。仅在明确允许访问当前 ``.env`` 指向的服务时启用；
+只有 5 个测试文件受环境变量门控，默认跳过。仅在明确允许访问当前 ``.env`` 指向的服务时启用；
 它们只发送短小、无敏感信息的中文文本，不打印密钥或完整向量。
 
 真实 PostgreSQL 的环境管理员同步与账号管理 Service 行为；使用随机临时记录并自动清理：
@@ -305,6 +317,14 @@ uv run pytest -q tests/test_qdrant_remote_integration.py
 ```powershell
 $env:RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST="1"
 uv run pytest -q tests/test_scheduler_postgres_integration.py
+```
+
+真实 PostgreSQL 的会话归属过滤与旧会话清理（验证归属只匹配自己的行；需已跑过
+``alembic upgrade head``）：
+
+```powershell
+$env:RUN_POSTGRES_AGENT_THREAD_INTEGRATION_TEST="1"
+uv run pytest -q tests/test_agent_thread_ownership_integration.py
 ```
 
 按主题挑选离线测试：
@@ -385,7 +405,7 @@ checkpointer 表时必须同步 ``CHECKPOINTER_TABLE_NAMES``，漏改就会在�
 
 生产必须使用 HTTPS 与 Secure Cookie，并在网关限制登录频率、请求体大小、并发和 timeout
 ——服务本身不做这些。部署步骤见平台根目录
-[`docs/vps_deployment.md`](../docs/vps_deployment.md)。
+[`docs/container_deployment.md`](../docs/container_deployment.md)。
 
 数据库迁移不能放进每个 FastAPI Worker 的启动流程：部署时先由单独步骤执行
 ``alembic upgrade head``，成功后再启动应用。要提供 Agent 对话则在同一阶段追加一次

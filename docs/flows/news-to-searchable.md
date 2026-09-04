@@ -53,6 +53,6 @@ Session、取索引候选、**回收超时卡在 processing 的任务**、逐篇
 
 ## 边界
 
-- 没有常驻 Worker、定时调度和后台自动重试。每一轮都是外部显式触发。
+- 没有后台自动重试。cron 到点与手动触发都会发起执行（见 ADR 0014/0017 的定时任务调度器），但每一轮仍是有界批次，失败靠下一轮 cron 或人工兜底。
 - Chunk 和向量不落 PostgreSQL，只在 Qdrant。
 - Qdrant Collection 和 Alias 的创建切换归 `qdrant/lifecycle.py`，不在本链路里。

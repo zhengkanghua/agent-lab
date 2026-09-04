@@ -15,9 +15,9 @@ agent-lab/
 
 当前产品提供两条链路，都只读：只读新闻语义检索，以及一个会自己调用检索工具再作答的
 Agent 对话。浏览器默认使用相对路径
-`POST /api/document-search` 获取按新闻分组的相关片段，也可切换到“按片段”模式，通过
-`POST /api/vector-search` 原样查看 Qdrant 返回的 Chunk 命中；该模式不会去重或重排。
-两种模式都只在用户打开阅读视图时调用 `GET /api/documents/{document_id}` 读取
+`POST /api/document-search` 获取按新闻分组的相关片段；检索页没有「按片段」模式切换，
+取舍见 `docs/adr/0013-search-page-multi-round-record-stream.md`。
+阅读视图打开时调用 `GET /api/documents/{document_id}` 读取
 PostgreSQL 完整正文。检索链路本身不调用生成式 LLM。
 
 Agent 对话走 `POST /api/agent/chat`，以 SSE 返回模型输出与工具调用轨迹；会话历史由
@@ -33,6 +33,9 @@ LangGraph checkpointer 存在 PostgreSQL 的四张 `checkpoint*` 表里。Agent 
 Agent 对话与手动 Pipeline 权限，CLI 只保留为恢复入口。
 
 ## 本地启动
+
+前置：需要一个可连接的 PostgreSQL（独立 Database `news_vector_lc`，表结构由 Alembic 迁移建），
+`DATABASE_URL` 指向它；Qdrant 与 Ollama 的安装和配置见 `backend/README.md` 的「外部依赖」。
 
 先启动后端：
 
@@ -59,4 +62,4 @@ npm run dev
 
 浏览器访问 <http://127.0.0.1:5173>，使用 `.env` 中的保底管理员登录，再从顶部账号管理
 入口添加其他用户。详细前端命令见 `frontend/README.md`，生产发布步骤见
-`docs/vps_deployment.md`，当前能力清单见 `docs/FEATURE_MAP.md`。
+`docs/container_deployment.md`，当前能力清单见 `docs/FEATURE_MAP.md`。

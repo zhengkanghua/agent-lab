@@ -1,35 +1,27 @@
 # 容器化部署：GitHub Actions + 阿里云 ACR + 甲骨文
 
 本文是当前部署方式的操作手册：后端跑在容器里，前端是纯静态文件。取舍理由见
-[ADR 0008](adr/0008-backend-in-image-frontend-as-static-files.md)。
-
-上一代部署方式（宿主机 uv + systemd + Nginx 发 dist）记录在
-[`vps_deployment.md`](vps_deployment.md)。**那份文档没有废弃**：它有几节内容与部署方式
-无关，本文不复制、只引用，见下面「本文不重复的内容」。
+[ADR 0008](adr/0008-backend-in-image-frontend-as-static-files.md)。与容器化无关的
+Cloudflare 与账号管理内容收在本文第五节。
 
 ```text
 浏览器
   → Cloudflare
   → OpenResty（TLS、反代、限流、静态站）        ← 自行配置，本文不提供配置
       ├─ /        → <WEB_ROOT>   dist 静态文件
-      └─ /api/*   → 127.0.0.1:18000（去掉 /api 前缀）        后端容器
+      └─ /api/*   → 127.0.0.1:18000（去掉 /api 前缀）        backend 容器
+                                                      scheduler 容器（无端口，只跑定时任务）
                       → 远程 PostgreSQL / Ollama / Qdrant / FreshRSS
 ```
 
-前端没有容器：`dist` 是静态文件，不运行、无依赖、无需隔离。后端一个容器。
+前端没有容器：`dist` 是静态文件，不运行、无依赖、无需隔离。后端是**两个容器**（同镜像）：
+`backend` 服务 HTTP（worker 数由 `WORKER_COUNT` 控制），`scheduler` 只跑定时任务调度进程
+（`python -m agent_lab.scheduler_main`）——多 worker 下进程内调度器会重复执行任务，所以调度
+拆成独立进程，取舍见 [ADR 0017](adr/0017-scheduler-runs-in-a-dedicated-process.md)。
 
-## 本文不重复的内容
+## 与容器化无关的内容
 
-以下几节与「进程怎么跑起来」无关，容器化没有改变它们。请直接读
-[`vps_deployment.md`](vps_deployment.md) 对应小节，本文不复制，以免两处说法不一致：
-
-| 内容 | 位置 |
-|---|---|
-| Cloudflare DNS / Proxy / SSL 模式（必须 Full strict，不能用 Flexible） | `vps_deployment.md` 第 1 节 |
-| 首次登录与日常账号管理 | `vps_deployment.md` 第 7 节 |
-| `AUTH_ADMIN_*` 轮换规则、CLI 恢复入口 | `vps_deployment.md` 第 8 节 |
-
-网关侧要求（登录限流、请求体大小、SSE 读超时）见
+Cloudflare 与账号管理收在本文第五节；网关侧要求（登录限流、请求体大小、SSE 读超时）见
 [`backend/README.md`](../backend/README.md) 的「生产前置要求」一节——服务本身不做这些，
 需要在 OpenResty 侧落实。
 
@@ -122,10 +114,10 @@ URL、API Key 后面多一个看不见的字符。这类故障很难查：日志
    邮箱相同。模板里的尖括号是占位符，必须替换。
 4. **不要写 `LLM_CHECKPOINT_POOL_SIZE`**。它在 `config/llm.py` 里声明为 `strict=True`，
    而 compose 的 `env_file` 注入的一律是字符串，配上会让容器启动即 `ValidationError`。
-5. **`SCHEDULER_ENABLED=true`（要定时同步就必须写）**。默认 false，忘写的表现是「服务
-   一切正常，但定时任务永远不跑」。cron 与启停在管理端（`scheduled_jobs` 表）配置，
-   这个变量只管进程要不要启动 cron 循环（见
-   [ADR 0014](adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md)）。
+5. `SCHEDULER_ENABLED` 不用写：容器部署下它由 compose 覆盖——backend 容器强制 false，
+   定时任务由独立的 `scheduler` 容器执行（见
+   [ADR 0017](adr/0017-scheduler-runs-in-a-dedicated-process.md)）。cron 与启停在管理端
+   （`scheduled_jobs` 表）配置。
 
 ### 4. 让 deploy 用户能写静态站目录
 
@@ -290,9 +282,10 @@ CI 的完整顺序在 [`.github/workflows/deploy.yml`](../.github/workflows/depl
 
 ```bash
 cd /opt/agent-lab
-docker compose logs --tail 100 backend      # 最近 100 行
+docker compose logs --tail 100 backend      # backend 最近 100 行
+docker compose logs --tail 100 scheduler    # 调度器最近 100 行（定时任务不跑先看这里）
 docker compose logs -f backend              # 跟踪
-docker compose ps                           # 容器状态
+docker compose ps                           # 容器状态，应有 backend 与 scheduler 两个
 ```
 
 日志上限 10MB × 3 份（compose 里配的）。Docker 默认不限大小，那会慢慢写满磁盘。
@@ -390,8 +383,57 @@ docker compose run --rm backend agent-lab create-user --email recovery@example.c
 # 重启
 docker compose restart backend
 
+# 改动调度相关配置或代码后重启调度器
+docker compose restart scheduler
+
 # 停止（不会被 restart 策略自动拉起）
 docker compose stop backend
+docker compose stop scheduler
 ```
 
 `run --rm` 起的是一次性容器，用完即删，不影响正在服务的那个。
+
+## 五、与容器化无关：Cloudflare 与账号管理
+
+### 5.1 Cloudflare 与源站防护
+
+1. Cloudflare DNS 的 A/AAAA 记录指向服务器，并按需要开启 Proxy。
+2. Cloudflare SSL/TLS 模式选择 **Full (strict)**，源站安装可信证书（例如 Certbot
+   Let's Encrypt）。不要使用 Flexible，否则浏览器到 Cloudflare 与 Cloudflare 到源站
+   的协议不一致，且生产 Cookie 不应退回非 HTTPS。
+3. 若站点只允许经 Cloudflare 访问，应把源站 80/443 限制到 Cloudflare 官方 IP 段，或
+   启用 Authenticated Origin Pulls；仅隐藏源站 IP 不是访问控制。
+4. 防火墙只开放 SSH、80 和 443；不要把后端 18000、PostgreSQL 5432、Ollama 11434 或
+   Qdrant 端口暴露到公网。
+
+### 5.2 首次登录与日常账号管理
+
+1. 访问 `https://<域名>/login`。
+2. 使用 `AUTH_ADMIN_EMAIL` 和 `AUTH_ADMIN_PASSWORD` 登录；服务启动同步会在数据库中创建
+   该账号，无需先运行 CLI。
+3. 从搜索页顶部的“账号管理”进入 `/admin/users`。
+4. 创建普通用户或其他超级用户；启用/停用、授权、重置密码和撤销会话都在页面完成。
+5. 普通用户不会看到管理入口；即使手动访问 URL，后端也会返回 403。
+
+页面不会显示、保存或回显任何密码。账号停用、密码重置和主动撤销会话会删除
+`access_tokens`，旧浏览器下一次请求立即失效。
+
+### 5.3 环境管理员的轮换与恢复规则
+
+修改 `<DEPLOY_DIR>/.env` 后执行 `docker compose up -d`（env 变化会让 compose 重建容器、
+重新注入变量）：
+
+- 修改 `AUTH_ADMIN_PASSWORD`：启动同步 Argon2 Hash；若密码真的变化，撤销该账号所有
+  现有会话。新密码可立即登录。
+- 修改 `AUTH_ADMIN_EMAIL`：新邮箱被创建/同步为唯一环境管理员；旧邮箱账号保留其密码、
+  active 和 superuser 状态，仍可由新管理员在网页管理，不会被删除或自动降权。
+- 删除 `AUTH_ADMIN_EMAIL` 和 `AUTH_ADMIN_PASSWORD` 两行：启动释放环境托管标记，但不删
+  除、不降级旧账号；它仍按数据库中的普通超级用户规则存在。
+- 只删除其中一项：配置校验失败，服务不会以半配置状态启动；请同时恢复两项或同时移除。
+
+推荐的轮换顺序是：先确认新 Secret 已写入并备份，再执行迁移（如版本有变化），最后
+`docker compose up -d`，随后检查 `/health`、登录和 `docker compose logs`。不要把密码写进
+命令行参数、shell history、截图或工单。
+
+CLI 恢复只在网页无法进入时使用（见「四、手动运维命令」的 `create-user`）；恢复后应尽快
+登录网页创建/修复账号，并按需要撤销恢复账号会话。CLI 不用于把所有账号配置塞进 `.env`。

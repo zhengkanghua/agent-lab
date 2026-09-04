@@ -28,7 +28,7 @@ LangGraph 会话记忆的四张表（`checkpoints`、`checkpoint_blobs`、`check
 ## Consequences
 
 部署多一步，且顺序不能反：先 `alembic upgrade head`，再 `agent-lab init-checkpointer`。顺序写进
-`backend/README.md` 的部署一节和 `docs/vps_deployment.md`。
+`backend/README.md` 的部署一节和 `docs/container_deployment.md`。
 
 `include_object` 是一层保护性配置，删掉不会立刻报错，只会让下一次 autogenerate 生成删表迁移。它在
 `alembic/env.py` 里必须带注释说明后果，不能只留一个函数名。

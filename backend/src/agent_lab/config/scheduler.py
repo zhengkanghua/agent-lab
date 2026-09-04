@@ -15,9 +15,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class SchedulerSettings(BaseSettings):
     """定时任务调度器的运行配置。
 
-    ``enabled`` 默认 False：开发、测试环境默认不带自动调度，生产由服务器
-    ``.env`` 显式打开。忘开的表现是「一切正常但任务不跑」，所以部署文档必须
-    列出这个变量。
+    ``enabled`` 默认 False：开发、测试环境默认不带自动调度。生产容器部署下
+    该值由 docker-compose 覆盖（backend 容器强制 false，调度器容器强制 true），
+    见 docs/adr/0017-scheduler-runs-in-a-dedicated-process.md；它只对非容器的
+    裸进程部署有意义。
     """
 
     enabled: bool = Field(

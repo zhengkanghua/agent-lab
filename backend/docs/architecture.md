@@ -593,7 +593,7 @@ last_processing_error
 
 ## 手动写入入口
 
-四个 CLI 子命令（``agent-lab``）都是显式、一次性、有界的，命令用法见
+七个 CLI 子命令（``agent-lab``）都是显式、一次性、有界的，命令用法见
 [`../README.md`](../README.md) 的「手动写入命令」。
 
 CLI 与 HTTP 共用 ``pipeline/limits.py`` 的有界参数：
@@ -618,10 +618,11 @@ indexed/skipped/failed 数量以及按 ``error_type`` 聚合的失败，不返�
 
 每次命令或请求只处理一个有界批次，不暗中循环等待新任务。
 
-## 定时任务与进程内调度器
+## 定时任务与调度器
 
-定时任务模块（[ADR 0014](../../docs/adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md)）
-在现有 backend 进程内用 APScheduler 3.x（``AsyncIOScheduler`` + 内存 job store）按 cron 到点
+定时任务模块（[ADR 0014](../../docs/adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md)、
+[ADR 0017](../../docs/adr/0017-scheduler-runs-in-a-dedicated-process.md)）
+用 APScheduler 3.x（``AsyncIOScheduler`` + 内存 job store）按 cron 到点
 执行两类任务：``freshrss_sync``（FreshRSS → PostgreSQL）与 ``index_pending``（PostgreSQL 待
 索引文档 → Qdrant）。类型清单由代码注册表（``services/scheduled_task_registry.py``）定义，
 不是数据库数据——新增类型等于改代码。
@@ -630,7 +631,7 @@ indexed/skipped/failed 数量以及按 ``error_type`` 聚合的失败，不返�
 
 - **PostgreSQL 是唯一事实来源**。``scheduled_jobs`` 存任务配置（key 唯一、cron 原样字符串、
   params JSONB、启停），``scheduled_job_runs`` 存执行历史（running/succeeded/failed/skipped、
-  脱敏统计、error_type）。进程启动时由 lifespan 从表里加载启用任务注册进调度器；管理 API
+  脱敏统计、error_type）。调度进程启动时从表里加载启用任务注册进调度器（进程内模式由 lifespan、独立进程模式由 ``scheduler_main`` 完成）；管理 API
   写库成功后立即同步调度状态，不需要重启。
 - **调度器只是执行机构**（``services/scheduler_runner.py``）。cron 到点与手动触发走同一个
   ``_execute`` 包装器：参数防御性重验 → 按次新建写 Runtime（与手动流水线同一工厂）→ 只跑
@@ -640,8 +641,9 @@ indexed/skipped/failed 数量以及按 ``error_type`` 聚合的失败，不返�
   ``SCHEDULER_MISFIRE_GRACE_SECONDS``（默认 600 秒）宽限补跑；失败不自动重试，由下一轮
   cron 或手动触发兜底。
 - **开关与边界**：``SCHEDULER_ENABLED`` 默认 false，关闭时调度器不启动，但管理 API 与手动
-  触发照常可用（``next_run_at`` 为空）。调度器**要求单 uvicorn worker 单实例**：多进程部署
-  前必须先迁独立调度进程或加数据库租约，否则同一任务会被重复调度。每次部署重启会打断正在
+  触发照常可用（``next_run_at`` 为空）。进程内模式**要求单 uvicorn worker 单实例**，否则同一
+  任务会被重复调度；生产容器部署走独立调度进程（同镜像第二个 compose 服务，backend 容器由
+  compose 强制关闭进程内调度，见 ADR 0017），多 worker 只影响 API。每次部署重启会打断正在
   执行的任务——可接受，执行是有界且可恢复的（来源 checkpoint、索引超时回收）。
 - **cron 时区**：``SCHEDULER_TIMEZONE``（默认 Asia/Shanghai）只用于把 cron 字符串翻译成
   具体时刻；数据库存储一律 UTC，不新增时区不一致。

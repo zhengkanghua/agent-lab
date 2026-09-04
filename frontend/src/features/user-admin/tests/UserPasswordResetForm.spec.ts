@@ -1,7 +1,7 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import UserPasswordResetForm from '../components/UserPasswordResetForm.vue'
-import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '../model/admin-validation'
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/shared/model/password'
 
 function mountForm(props: Partial<InstanceType<typeof UserPasswordResetForm>['$props']> = {}) {
   return mount(UserPasswordResetForm, {

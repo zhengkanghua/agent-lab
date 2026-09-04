@@ -14,6 +14,7 @@
 - 解释方案和沟通时，多用大白话，对于专业名词和逻辑多用解释，方便与老板的沟通。
 - 老板说某处「是有意的」时，不要绕开它继续干，也不要默默改成别的写法：先说清这个有意的选择会带来什么后果（谁会踩到、表现是什么），再让老板决定是保留、改设计还是在文档里写明限制。绕开等于把判断权拿走了。
 - 用中文沟通：回复、报告，以及规格、设计、需求文档和 ADR 都用中文写。代码标识符、命令、文件路径和工具原始输出保持原样，不翻译。ADR 文件名用 ASCII kebab-case，正文用中文。
+- 在设计或者实现完成时，做一个消融实验，去掉不必要的设计或者实现。
 
 ## 信息源与导航
 
@@ -32,14 +33,11 @@
 ## 仓库约定
 
 1. `backend/` 与 `frontend/` 分别管理依赖、构建、测试和运行命令，不跨运行时导入模块。
-2. skill 以 `.codex/skills/` 为唯一源，`.claude/skills/` 是它的副本。改完源必须同步副本，两份内容保持一致；只改一侧会让 Codex 和 Claude Code 读到不同版本的同名 skill。同步与校验（`diff` 无输出即一致）：
-    ```bash
-    # <name> 为 skill 目录名
-    rm -rf .claude/skills/<name> && cp -r .codex/skills/<name> .claude/skills/<name>
-    diff -r .codex/skills/<name> .claude/skills/<name>
-    ```
+2. skill 以 `.codex/skills/` 为唯一源，`.claude/`、`.zcode/`、`.gemini/` 下的 `skills/` 是它的三份副本，各工具只读自己目录里的那份。改完源（或增删 skill）必须跑同步脚本，四份内容保持一致；只改一侧会让不同工具读到不同版本的同名 skill：
 
-    新增 skill 时两侧一起建。删除 skill 时两侧一起删。
+    ```bash
+    bash scripts/sync-skills.sh    # 全量镜像 + diff 校验，输出「已同步」即成功
+    ```
 3. 探索代码前先读仓库根 `CONTEXT.md`（术语表）和 `docs/adr/`（决策记录）。两者都不存在就直接跳过，不要提示缺失、也不要提议预先创建——它们由 `/grill-with-docs` 在术语或决策真正落地时懒创建。输出里提到领域概念时沿用 `CONTEXT.md` 的既定说法，不要换同义词。若结论与某条 ADR 冲突，显式指出是哪条，不要静默绕过。
 4. `CONTEXT.md` 只是术语表：一个词条一句定义，不放实现细节、需求、规范或待办。决策和取舍写进`docs/adr/`，文件名 `NNNN-slug.md`，编号扫目录内最大号 +1。混着写会让它退化成第二份`AGENTS.md`，两份都没人信。
 5. 术语表和决策记录都在仓库根各一份，不按运行时拆。当前是一个业务领域（新闻语义检索）被 `frontend/` 和 `backend/` 两个运行时切开，两侧说的是同一套词——Document、Chunk、score、content_hash 贯穿前后端，前端类型由后端 `/openapi.json` 生成，所以前后端分离是技术边界、不是词汇边界。而且这套词在边界上还会改名、收窄或同名不同义（前端把 `page_content` 改叫 `excerpt`；后端两个版本号只暴露一个 `revision`；`content_hash` 在检索结果和全文详情里指的是不同正文版本），正因如此才需要根 `CONTEXT.md` 给出唯一定义，而不是各运行时各记一份。接入词汇会撞名的第二个业务领域时再重新判断要不要拆成 `CONTEXT-MAP.md` 加分目录 `CONTEXT.md`；触发条件是词汇冲突，不是目录变多。

@@ -59,9 +59,9 @@ AST 到 `h()` 的映射——后者等于把上面那张表里的每一格都自
 **以后不要装 `rehype-raw`。** 如果某天真需要让模型输出的 HTML 生效（例如渲染表格以外的富结构），那是一次
 独立的安全决策，要重新走一遍上面那张表并更新本文，不能作为「补个依赖」处理。
 
-Agent 页的构建产物因此涨到约 175kB（gzip 约 55kB），比其余页面高一档，全部来自 unified/remark/rehype 管道。
-它已经是独立 chunk，只在进 `/agent` 时加载，暂不优化；如果哪天首屏时间成问题，第一个选项是把
-`MarkdownAnswer` 改成异步组件（库本身也导出 `VueMarkdownAsync`），而不是换渲染方案。
+渲染管道让 Agent 页的构建产物比其余页面高一档（unified/remark/rehype 的代价）。它已经是独立 chunk，
+只在进 `/agent` 时加载，暂不优化；如果哪天首屏时间成问题，第一个选项是把 `MarkdownAnswer` 改成
+异步组件（库本身也导出 `VueMarkdownAsync`），而不是换渲染方案。
 
 GFM 支持来自 `remark-gfm`，这是随本决策一起进来的第二个依赖。表格和删除线属于模型的常用输出，缺了它们
 会以原始符号显形。加插件是安全的：`remark` 阶段处理的是 Markdown 语法，不引入 HTML 通道。

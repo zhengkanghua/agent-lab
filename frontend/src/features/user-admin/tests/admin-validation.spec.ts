@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import {
-  PASSWORD_MAX_LENGTH,
-  PASSWORD_MIN_LENGTH,
-  validateCredentials,
-  validatePassword,
-} from '../model/admin-validation'
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/shared/model/password'
+import { validateCredentials, validatePassword } from '../model/admin-validation'
 
 describe('admin-validation', () => {
   it('两个长度上下界与后端的 Field 约束对齐', () => {

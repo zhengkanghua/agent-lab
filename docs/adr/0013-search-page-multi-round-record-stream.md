@@ -26,17 +26,16 @@
 历史后端，做它等于新开一个后端能力域 + 写库，成本和范围远大于本轮目标，故不做。
 
 **关于按片段：** 提供一个和按新闻几乎同构的 Chunk 级展示需要持续维护两套结果组件与两套状态。老板
-选择「直接去掉按片段」，前端随之删除 `useChunkSearch` / `SearchResults` / `ChunkResultCard` /
-`useSearchRequest` / `api/vector-search.ts` 及其 spec；后端 `/vector-search` 契约与单测保留。
+选择「直接去掉按片段」，前端按片段组件与状态代码全部删除；后端 `/vector-search` 契约与单测保留。
 
 ## Consequences
 
-**改动集中在 `frontend/`，纯前端重构。** 新增 `SearchRecord` 模型与 `useSearchStream`（多轮累积、单活动
-请求、陈旧响应守卫、清空），`SearchComposer` 改为顶部常驻输入条（去模式切换、全局数量参数 + 清空入口），
-新增 `SearchRecordTurn`（单条记录的折叠/展开与 loading/空/错/结果四态），`SearchPage` 改为「最新贴顶、
-旧记录折叠」渲染；`DocumentReader` 与 `SearchResultCard` 复用。搜索仍走既有 `/document-search`，接口与
-OpenAPI 契约不变，不新增后端能力。按片段相关前端文件与 spec 删除，`shared-styles.node.spec.ts` 与
-`result-card.css` 注释同步。
+**改动集中在 `frontend/`，纯前端重构。** 组件与文件清单以 git 历史为准，链路终态见
+`docs/flows/one-search.md`、能力入口见 `docs/FEATURE_MAP.md`。搜索仍走既有 `/document-search`，
+接口与 OpenAPI 契约不变，不新增后端能力。
+
+**视觉按时间线形态落地。** 输入坞空态居中/有记录后吸附顶部、左侧垂直时间线、无界排版这些持久视觉
+语义记录在 `CONTEXT.md` 的「检索流 / 时间线」「输入坞」「知识片段」词条和检索页组件注释里，不在本文展开。
 
 **可见行为变化是有意的。** 原来搜第二次会替换第一次的结果；现在多次搜索累积成可回看的检索流。
 这份历史仅存在于当前页面会话，刷新即清空——和 Agent 那种服务端持久化会话是两回事，避免用户误以为

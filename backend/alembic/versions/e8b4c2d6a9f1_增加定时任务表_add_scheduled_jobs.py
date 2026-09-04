@@ -154,7 +154,7 @@ def upgrade() -> None:
         unique=False,
     )
 
-    # 种子任务的 cron 与参数默认值老板已确认（见 docs/specs/0001-scheduled-task-module.md）；
+    # 种子任务的 cron 与参数默认值老板已确认；
     # enabled=true：部署完成即开始自动同步与索引，不想自动跑可在管理端停用或关闭
     # SCHEDULER_ENABLED 总开关。
     #

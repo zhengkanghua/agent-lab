@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { Check } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
-import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '../model/admin-validation'
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/shared/model/password'
 
 /* 展开在某一行下方的密码重置表单。
  *

@@ -507,7 +507,7 @@ AGENT_CHAT_ERROR_RULES: tuple[ErrorContractRule, ...] = (
     # 为什么只挂 OperationalError 而不是 psycopg.Error：ProgrammingError 也是 psycopg.Error
     # 的子类，而「漏跑 init-checkpointer 导致表不存在」正是它——那个要留在兜底里报
     # agent_internal_error，不能被说成「连接中断、稍后重试」，否则运维会一直重试一个永远
-    # 好不了的东西（见 docs/vps_deployment.md 第 4 节）。
+    # 好不了的东西（见 docs/container_deployment.md 「三、排查」的前两节）。
     #
     # 注意这是**原生 psycopg** 的异常，不是 sqlalchemy.exc.OperationalError：checkpointer
     # 按 ADR 0004 走独立的 psycopg 池，不经过 SQLAlchemy，所以 SQLAlchemyError 那几条规则

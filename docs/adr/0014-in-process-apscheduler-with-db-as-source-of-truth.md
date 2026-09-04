@@ -1,5 +1,11 @@
 # 定时任务：进程内 APScheduler，数据库为唯一事实来源
 
+> **状态（2026-09）**：部署形态已被 [ADR 0017](0017-scheduler-runs-in-a-dedicated-process.md)
+> 取代——生产容器部署下调度器跑独立进程、backend 已多 worker 化，本文的「单进程硬前提」只对
+> 保留的本地开发进程内模式继续成立，「生产 `.env` 必须写 `SCHEDULER_ENABLED=true`」随之失效
+> （容器部署下由 compose 覆盖）。其余决策（内存 job store、两张表、数据库为唯一事实来源、
+> 任务类型注册、运行策略）仍然有效。
+
 后端需要一个定时任务模块：FreshRSS 增量同步进 PostgreSQL、PostgreSQL 待索引文档写进 Qdrant，
 都要按 cron 周期自动执行；cron 和参数由超级用户在前端管理端配置。此前 `main.py` 明确声明
 「不实现自动调度或后台任务」，本 ADR 记录推翻这一立场的原因和新边界。

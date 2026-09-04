@@ -1,14 +1,11 @@
 /**
- * 账号管理表单的本地校验。纯常量与纯函数，不做任何网络请求。
+ * 账号管理表单的本地校验。纯函数，不做任何网络请求。
  *
- * 两个上界与后端 `UserAdminCreateRequest` / `UserAdminPasswordRequest` 的 Field 约束一一
- * 对应，只用于在提交前给出即时提示。密码策略的其余部分（例如不得与邮箱相同）只由后端判定，
- * 前端读 `invalid_password` 的文案，不在这里重复实现——重复实现会在后端调整策略时
- * 静默产生两套口径。
+ * 密码长度常量统一定义在 `shared/model/password.ts`（账号自助改密与管理端镜像的是
+ * 同一套后端 Field 约束），本文件只保留管理端表单自己的校验函数。
  */
 
-export const PASSWORD_MIN_LENGTH = 12
-export const PASSWORD_MAX_LENGTH = 128
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/shared/model/password'
 
 /** 目录的三种加载态。ready 之外的两种都不渲染表格。 */
 export type DirectoryLoadState = 'loading' | 'ready' | 'error'

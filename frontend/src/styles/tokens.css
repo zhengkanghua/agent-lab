@@ -7,7 +7,7 @@
  * 分层的理由是深色模式：单层写法把「浅色」焊进了名字里——旧的 --ink（墨=深）在深色
  * 模式下要变成浅色，名字会撒谎，于是每个组件的 CSS 都得重读一遍才知道该换成哪个。
  * 语义层的 --text-primary 在两套主题下都名副其实，切主题只改下面那一段映射，
- * 组件 CSS 一行不动。详见 docs/adr/0007-semantic-tokens-and-ui-primitives.md。
+ * 组件 CSS 一行不动。详见 docs/adr/0007-two-layer-color-tokens.md。
  */
 
 :root {
