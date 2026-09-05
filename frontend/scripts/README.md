@@ -29,12 +29,28 @@ Signal Desk 的检索 / Agent / 后台页面都要登录，而登录依赖后端
    `%LOCALAPPDATA%\ms-playwright`，不进仓库。
 3. **不需要启动后端**（本工具的意义就在这里）；后端起了也不会干扰，route mock 会抢先命中。
 
+## 想自己在浏览器里点一遍（mock API 服务器）
+
+`dev:shots` / `dev:audit` 是自动截图与审计，人不能交互。想亲手操作时，把同一套 mock
+数据（`dev-mocks.mjs`）包成本地 HTTP 服务（`dev-mock-server.mjs`），让 Vite 代理指向它：
+
+```powershell
+npm run dev:mock-api                                          # 终端一：mock API，127.0.0.1:8788
+$env:BACKEND_PROXY_TARGET='http://127.0.0.1:8788'; npm run dev  # 终端二：前端，5173
+```
+
+浏览器开 <http://localhost:5173>：初始是未登录态（会被送去登录页），**任意邮箱 + 任意密码**
+即可登录为超管 `admin@example.com`，之后检索、Agent 对话、设置中心、后台各页都能真实点击；
+退出登录会真的回到登录页。边界与 route mock 相同：数据是假的、SSE 整段到达（不代表真实
+流式节奏），不能作为后端已更新或部署成功的依据。想连真实后端时不设 `BACKEND_PROXY_TARGET`
+（默认代理到 `127.0.0.1:8000`）即可。
+
 ## 怎么跑（两种）
 
 都请在 `frontend/` 下执行，且 dev server 先跑着。
 
 ```powershell
-# 方式一：逐页截图到 .devshots/（登录、检索·待输入/结果、Agent、账号、后台桌面/移动、检索移动）
+# 方式一：逐页截图到 .devshots/（登录、检索·待输入/结果、Agent、设置中心三分区、后台桌面/移动、检索移动）
 npm run dev:shots
 
 # 方式二：程序化布局审计（无横向溢出、侧栏与内容不重叠、关键元素在、数据渲染、控制台报错）

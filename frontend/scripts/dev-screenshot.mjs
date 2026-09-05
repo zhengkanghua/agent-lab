@@ -84,9 +84,17 @@ try {
   await page.goto(`${BASE}/agent`, { waitUntil: 'domcontentloaded' })
   await shot(page, '04-agent', '.composer-dock')
 
-  // 5) 账号设置页
-  await page.goto(`${BASE}/account`, { waitUntil: 'domcontentloaded' })
-  await shot(page, '05-account', '.page-title')
+  // 5) 设置中心 · 账号分区（旧 /account 已重定向并入 /settings）
+  await page.goto(`${BASE}/settings/account`, { waitUntil: 'domcontentloaded' })
+  await shot(page, '05-settings-account', '#account-heading')
+
+  // 5b) 设置中心 · 检索偏好
+  await page.goto(`${BASE}/settings/search`, { waitUntil: 'domcontentloaded' })
+  await shot(page, '05b-settings-search', '#search-prefs-heading')
+
+  // 5c) 设置中心 · Agent 偏好
+  await page.goto(`${BASE}/settings/agent`, { waitUntil: 'domcontentloaded' })
+  await shot(page, '05c-settings-agent', '#agent-prefs-heading')
 
   // 6) 后台 · 账号管理（桌面）
   await page.goto(`${BASE}/admin/users`, { waitUntil: 'domcontentloaded' })

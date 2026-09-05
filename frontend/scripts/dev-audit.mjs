@@ -107,23 +107,30 @@ console.log(
   await page.locator('.thread-rail [role="listitem"], .thread-rail li').count(),
 )
 
-// 5) 账号设置页
-await audit('账号设置页', `${BASE}/account`)
+// 5) 设置中心（旧 /account 已重定向并入）：三个分区各查一眼关键元素
+await audit('设置中心·账号分区', `${BASE}/settings/account`)
 console.log(
-  '  管理员功能卡片可见:',
+  '  账号分区标题可见:',
   await page
-    .getByText('管理员功能')
-    .first()
+    .locator('#account-heading')
     .isVisible()
     .catch(() => false),
 )
+console.log('  改密表单字段数:', await page.locator('.password-form input').count())
+
+await audit('设置中心·检索偏好', `${BASE}/settings/search`)
 console.log(
-  '  前往账号管理链接 href:',
+  '  偏好下拉数:',
+  await page.locator('#search-prefs-heading ~ * select, .field-group select').count(),
+)
+
+await audit('设置中心·Agent 偏好', `${BASE}/settings/agent`)
+console.log(
+  '  提示词编辑器可见:',
   await page
-    .locator('.admin-link')
-    .first()
-    .getAttribute('href')
-    .catch(() => null),
+    .locator('.prompt-editor')
+    .isVisible()
+    .catch(() => false),
 )
 
 // 6) 后台·桌面
