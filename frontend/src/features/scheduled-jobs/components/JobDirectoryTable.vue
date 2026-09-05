@@ -56,15 +56,17 @@ function editFormFor(job: ScheduledJobDto): UseJobFormReturn | null {
         <p>任务目录</p>
         <h2 id="directory-title">当前的定时任务</h2>
       </div>
-      <button
-        class="refresh-button"
-        type="button"
+      <BaseButton
+        variant="ghost"
+        size="sm"
         :disabled="loadState === 'loading'"
         @click="emit('refresh')"
       >
-        <RefreshCw :class="{ spin: loadState === 'loading' }" :size="15" aria-hidden="true" />
+        <template #icon>
+          <RefreshCw :class="{ spin: loadState === 'loading' }" :size="15" aria-hidden="true" />
+        </template>
         刷新
-      </button>
+      </BaseButton>
     </div>
 
     <div v-if="loadState === 'loading'" class="directory-state" role="status">
@@ -148,39 +150,8 @@ function editFormFor(job: ScheduledJobDto): UseJobFormReturn | null {
   font-weight: 760;
 }
 
-.refresh-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 11px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  background: var(--surface-raised);
-  font-size: 0.74rem;
-  font-weight: 640;
-  cursor: pointer;
-}
-
-.refresh-button:hover:not(:disabled) {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
-.refresh-button:disabled {
-  cursor: wait;
-  opacity: 0.7;
-}
-
-.refresh-button .spin {
-  animation: directory-spin 900ms linear infinite;
-}
-
-@keyframes directory-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
+/* 刷新键走 BaseButton（ghost），与账号目录、执行历史同款；转动用共享 .spin，
+   不再私有一份 keyframes。 */
 
 .directory-state {
   display: flex;

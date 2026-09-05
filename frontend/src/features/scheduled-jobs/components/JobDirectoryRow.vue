@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { History, Pencil, Play, Trash2 } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import type { JobRunDto, ScheduledJobDto, ScheduledJobTaskType } from '@/api/scheduled-jobs'
 import type { UseJobFormReturn } from '../composables/useJobForm'
 import { formatBeijingTime, formatLastRunSummary, taskTypeLabel } from '../model/job-copy'
@@ -147,9 +148,9 @@ function onDeleteClick(): void {
             <template #icon><Trash2 :size="13" aria-hidden="true" /></template>
             确认删除
           </BaseButton>
-          <button class="delete-cancel" type="button" @click="confirmingDelete = false">
+          <BaseButton variant="ghost" size="xs" :disabled="busy" @click="confirmingDelete = false">
             取消
-          </button>
+          </BaseButton>
         </span>
         <BaseButton
           v-else
@@ -165,7 +166,7 @@ function onDeleteClick(): void {
       </div>
     </div>
 
-    <p v-if="error" class="job-error" role="alert">{{ error }}</p>
+    <BaseCallout v-if="error" class="job-error" tone="danger" :description="error" />
 
     <JobForm
       v-if="isEditOpen && editForm !== null"
@@ -328,28 +329,8 @@ function onDeleteClick(): void {
   gap: 4px;
 }
 
-.delete-cancel {
-  padding: 5px 8px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  background: transparent;
-  font-size: 0.72rem;
-  cursor: pointer;
-}
-
-.delete-cancel:hover {
-  color: var(--text-primary);
-  background: var(--surface-hover);
-}
-
 .job-error {
   margin: 0 10px 12px;
-  padding: 8px 11px;
-  border-left: 3px solid var(--danger);
-  color: var(--danger);
-  background: var(--danger-soft);
-  font-size: 0.72rem;
 }
 
 @media (max-width: 1080px) {

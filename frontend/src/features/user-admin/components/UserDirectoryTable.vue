@@ -51,15 +51,17 @@ function resetPasswordFor(user: UserAdminDto): string | null {
         <p>账号目录</p>
         <h2 id="directory-title">当前访问成员</h2>
       </div>
-      <button
-        class="refresh-button"
-        type="button"
+      <BaseButton
+        variant="ghost"
+        size="sm"
         :disabled="loadState === 'loading'"
         @click="emit('refresh')"
       >
-        <RefreshCw :class="{ spin: loadState === 'loading' }" :size="15" aria-hidden="true" />
+        <template #icon>
+          <RefreshCw :class="{ spin: loadState === 'loading' }" :size="15" aria-hidden="true" />
+        </template>
         刷新
-      </button>
+      </BaseButton>
     </div>
 
     <div v-if="loadState === 'loading'" class="directory-state" role="status">
@@ -143,24 +145,9 @@ function resetPasswordFor(user: UserAdminDto): string | null {
   font-weight: 760;
 }
 
-.refresh-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 9px;
-  border: 0;
-  color: var(--text-secondary);
-  background: transparent;
-  font-size: 0.73rem;
-  font-weight: 680;
-}
-
-.refresh-button:hover:not(:disabled) {
-  color: var(--accent);
-}
-
-/* 刷新键上那圈转动用共享的 .spin（styles/components/motion.css）：
-   转的是 RefreshCw 图标本身，不是另外冒出一个转圈，所以没走 BaseSpinner。 */
+/* 刷新键走 BaseButton（ghost），三处目录/历史面板同款。刷新键上那圈转动用共享的
+   .spin（styles/components/motion.css）：转的是 RefreshCw 图标本身，不是另外冒出
+   一个转圈，所以没走 BaseSpinner。 */
 
 .directory-state {
   display: flex;

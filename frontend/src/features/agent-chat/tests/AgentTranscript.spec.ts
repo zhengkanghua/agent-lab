@@ -22,14 +22,14 @@ describe('AgentTranscript', () => {
        都成立，只挂在空态等于答案出现后就不再提醒。那两条现在由
        AgentChatPage.spec.ts 盯。 */
     expect(wrapper.get('.empty-state h3').text()).toBe('今天想查什么？')
-    expect(wrapper.findAll('.example-button')).toHaveLength(EXAMPLES.length)
+    expect(wrapper.findAll('.suggestion-button')).toHaveLength(EXAMPLES.length)
     expect(wrapper.find('.empty-icon').exists()).toBe(false)
   })
 
   it('点示例问题把原文交给上层', async () => {
     const wrapper = mountTranscript()
 
-    await wrapper.findAll('.example-button')[1]?.trigger('click')
+    await wrapper.findAll('.suggestion-button')[1]?.trigger('click')
 
     expect(wrapper.emitted('choose-example')?.[0]).toEqual([EXAMPLES[1]])
   })

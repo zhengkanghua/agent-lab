@@ -146,6 +146,9 @@ function requestFullText(event: MouseEvent): void {
 </template>
 
 <style scoped>
+/* 全部样式收在组件内：styles/components/result-card.css 原是「按片段」卡片与本文
+   件共享的层，重构去掉按片段后只剩这一个使用方，共享层反而多了一跳。折叠（消融）
+   回组件，跳转与文件数各少一份。 */
 .result-card {
   display: grid;
   grid-template-columns: 50px minmax(0, 1fr);
@@ -190,8 +193,10 @@ function requestFullText(event: MouseEvent): void {
   letter-spacing: 0;
 }
 
-/* 几何属性见 styles/components/result-card.css；这里只给文档的强调色。 */
 .locator-line {
+  width: 1px;
+  min-height: 24px;
+  margin: 8px 0;
   background: linear-gradient(var(--accent), var(--border-subtle));
 }
 
@@ -235,11 +240,47 @@ function requestFullText(event: MouseEvent): void {
   font-size: 0.73rem;
 }
 
-/* .source-name、.meta-item、.author-line 见 styles/components/result-card.css。 */
+.source-name {
+  max-width: 260px;
+  overflow: hidden;
+  padding: 3px 7px;
+  border-radius: 4px;
+  color: var(--accent-hover);
+  background: var(--accent-soft);
+  font-weight: 740;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-/* 其余属性见 styles/components/result-card.css；这里只给文档的强调色。 */
+.meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.author-line {
+  max-width: 240px;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .score-block {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
+  min-width: 76px;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
+  background: var(--surface-base);
+  font-family: var(--mono-font);
+  font-size: 0.8rem;
+  font-weight: 700;
 }
 
 .result-title {
@@ -256,7 +297,23 @@ function requestFullText(event: MouseEvent): void {
   margin-top: 14px;
 }
 
-/* .match-heading 见 styles/components/result-card.css；这里只留同组的 .related-heading。 */
+/* 「匹配位置」标题自己的颜色，与卡片强调色无关。 */
+.match-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  color: var(--text-tertiary);
+  font-family: var(--mono-font);
+  font-size: 0.66rem;
+}
+
+.match-heading span:first-child {
+  color: var(--accent-hover);
+  font-family: var(--body-font);
+  font-weight: 760;
+}
+
 .related-heading {
   display: flex;
   align-items: center;
@@ -265,6 +322,11 @@ function requestFullText(event: MouseEvent): void {
   color: var(--text-tertiary);
   font-family: var(--mono-font);
   font-size: 0.66rem;
+}
+
+.related-heading span:last-child {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
 }
 
 .result-excerpt,
@@ -359,12 +421,28 @@ function requestFullText(event: MouseEvent): void {
   font-size: 0.86rem;
 }
 
-.related-heading span:last-child {
-  flex: 0 0 auto;
-  color: var(--text-secondary);
+.label-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0;
+  margin: 15px 0 0;
+  list-style: none;
 }
 
-/* .label-list 见 styles/components/result-card.css。 */
+.label-list li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 3px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  background: var(--surface-base);
+  font-size: 0.68rem;
+}
 
 .result-actions {
   display: flex;
@@ -376,7 +454,36 @@ function requestFullText(event: MouseEvent): void {
   border-top: 1px solid var(--surface-sunken);
 }
 
-/* .read-button 见 styles/components/result-card.css；这里只留同组的链接样式。 */
+.read-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 7px 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  color: var(--text-on-accent);
+  background: var(--accent);
+  font-size: 0.76rem;
+  font-weight: 740;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out-smooth),
+    transform var(--duration-fast) var(--ease-out-smooth);
+}
+
+.read-button:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
+.read-button:active {
+  transform: scale(0.98);
+  transition-duration: calc(var(--duration-fast) / 2);
+}
+
 .result-actions a {
   display: inline-flex;
   align-items: center;
@@ -391,9 +498,6 @@ function requestFullText(event: MouseEvent): void {
   font-size: 0.76rem;
   font-weight: 740;
   text-decoration: none;
-}
-
-.result-actions a {
   transition:
     border-color var(--duration-fast) var(--ease-out-smooth),
     color var(--duration-fast) var(--ease-out-smooth),
@@ -416,10 +520,13 @@ function requestFullText(event: MouseEvent): void {
     transition-property: background-color, box-shadow;
   }
 
+  .read-button,
   .result-actions a {
-    transition-property: border-color, color;
+    transition-property: background-color, border-color, color;
   }
 
+  .read-button:hover,
+  .read-button:active,
   .result-actions a:hover,
   .result-actions a:active {
     transform: none;
@@ -443,8 +550,20 @@ function requestFullText(event: MouseEvent): void {
     gap: 9px;
   }
 
-  /* .score-block、.match-heading、.read-button 的窄屏覆盖见
-     styles/components/result-card.css。 */
+  .score-block {
+    min-height: 29px;
+    padding: 3px 7px;
+  }
+
+  .match-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .read-button {
+    flex: 1 1 132px;
+  }
 
   .result-title {
     margin-top: 10px;

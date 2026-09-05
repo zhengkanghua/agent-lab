@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { KeyRound, RefreshCw, ShieldCheck, UserRound } from '@lucide/vue'
+import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import type { UserAdminDto } from '@/api/user-admin'
 import { formatCreatedAt } from '../model/user-account'
 import UserPasswordResetForm from './UserPasswordResetForm.vue'
@@ -150,7 +151,7 @@ function checkedOf(event: Event): boolean {
       @cancel="emit('cancel-reset')"
     />
 
-    <p v-if="error" class="row-error" role="alert">{{ error }}</p>
+    <BaseCallout v-if="error" class="row-error" tone="danger" :description="error" />
   </article>
 </template>
 
@@ -350,14 +351,6 @@ function checkedOf(event: Event): boolean {
 .row-reset,
 .row-error {
   grid-column: 1 / -1;
-}
-
-.row-error {
-  padding: 8px 10px;
-  border-left: 3px solid var(--danger);
-  color: var(--danger);
-  background: var(--danger-soft);
-  font-size: 0.73rem;
 }
 
 @container (max-width: 1040px) {

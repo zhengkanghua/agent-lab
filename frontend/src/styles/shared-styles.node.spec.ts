@@ -165,18 +165,12 @@ describe('颜色 token 分层', () => {
 
 /* 共享类在组件 scoped 块里的顶层重声明。
  *
- * 允许的重声明只有三处，每处都是「刻意留在本地的那一条声明」：
- * 两个卡片的强调色，和 UserAdminPage 刻意不同的 800ms 计时。
- * 其余共享类一旦在 scoped 顶层重新出现，就说明提取被回退了。
+ * 当前没有任何允许的重声明：result-card.css 的最后两个条目（locator-line、score-block）
+ * 随该文件折叠回 SearchResultCard 而删除——类不再属于共享层，本地怎么写都不算回退。
+ * 以后往 styles/components/ 加共享类时，如果某个组件需要刻意覆盖一条，
+ * 在这里登记文件与类名，并补一条「为什么是这一条」的说明。
  */
-/* spin 曾有一条：UserAdminPage 用 800ms 覆盖共享的 900ms。收编转圈到 BaseSpinner 时
-   那处只剩刷新键一个使用者，计时也统一回 900ms，条目随之删除。
-   locator-line 与 score-block 仍然成立：它们属于检索结果卡片；按片段已随重构移除，
-   现在只有按新闻的 SearchResultCard 一个使用方。 */
-const LOCAL_OVERRIDES: Record<string, string[]> = {
-  'locator-line': ['features/semantic-search/components/SearchResultCard.vue'],
-  'score-block': ['features/semantic-search/components/SearchResultCard.vue'],
-}
+const LOCAL_OVERRIDES: Record<string, string[]> = {}
 
 /** 按大括号配对删掉 @media 块：断点覆盖不算回退，两页断点本就不同。 */
 function stripMediaBlocks(css: string): string {
@@ -228,7 +222,9 @@ describe('共享类未被组件重新声明', () => {
   const vueFiles = listVueFiles(SRC).map((path) => path.slice(SRC.length + 1).replace(/\\/g, '/'))
 
   it('取到了共享类与组件清单', () => {
-    expect(sharedClasses.length).toBeGreaterThanOrEqual(12)
+    /* result-card.css 折叠回 SearchResultCard 后共享文件只剩 topbar 与 motion 两个，
+       加上检索流宽度等纯声明，这里的下限相应下调；再往共享层加文件时应同步上调。 */
+    expect(sharedClasses.length).toBeGreaterThanOrEqual(8)
     // 不锁总数，只确认遍历真的走到了参与提取的五个文件——它们是断言的实际对象。
     expect(vueFiles).toEqual(
       expect.arrayContaining([

@@ -32,6 +32,23 @@
     animation: spin 900ms linear infinite;
   }
 
+  /* 骨架屏占位条：皮肤与节奏在这里统一（曾以 .skeleton-line / .reader-skeleton
+     两个名字各写一份渐变），组件只声明自己的宽高变体。 */
+  .skeleton-line {
+    display: block;
+    width: 94%;
+    height: 13px;
+    border-radius: 3px;
+    background: linear-gradient(
+      90deg,
+      var(--surface-sunken),
+      var(--surface-raised),
+      var(--surface-sunken)
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+
   /* Vue TransitionGroup .list-* */
   .list-move,
   .list-enter-active,

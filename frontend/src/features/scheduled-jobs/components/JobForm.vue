@@ -2,7 +2,10 @@
 import { computed } from 'vue'
 import { Check, X } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
+import BaseInput from '@/shared/ui/BaseInput.vue'
+import BaseSelect from '@/shared/ui/BaseSelect.vue'
 import {
   SCHEDULED_JOB_TASK_TYPES,
   type ScheduledJobDto,
@@ -58,6 +61,10 @@ const emit = defineEmits<{
 const keyDraft = computed({
   get: () => props.keyValue,
   set: (value: string) => emit('update:keyValue', value),
+})
+const taskTypeDraft = computed({
+  get: () => props.taskType,
+  set: (value: string) => emit('update:taskType', value as ScheduledJobTaskType),
 })
 const cronDraft = computed({
   get: () => props.cronExpr,
@@ -126,31 +133,20 @@ function onSubmit(): void {
     <form class="job-form" novalidate @submit.prevent="onSubmit">
       <label class="field-control">
         <span>任务类型</span>
-        <select
-          v-if="isCreate"
-          :value="taskType"
-          :disabled="submitting"
-          @change="
-            emit(
-              'update:taskType',
-              ($event.target as HTMLSelectElement).value as ScheduledJobTaskType,
-            )
-          "
-        >
+        <BaseSelect v-if="isCreate" v-model="taskTypeDraft" :disabled="submitting">
           <option v-for="type in SCHEDULED_JOB_TASK_TYPES" :key="type" :value="type">
             {{ TASK_TYPE_LABEL[type] }}
           </option>
-        </select>
-        <input v-else :value="TASK_TYPE_LABEL[taskType]" type="text" disabled />
+        </BaseSelect>
+        <BaseInput v-else :model-value="TASK_TYPE_LABEL[taskType]" disabled />
         <small>{{ TASK_TYPE_DESCRIPTION[taskType] }}</small>
       </label>
 
       <label v-if="isCreate" class="field-control">
         <span>任务标识</span>
-        <input
+        <BaseInput
           v-model="keyDraft"
           name="job-key"
-          type="text"
           autocomplete="off"
           placeholder="freshrss-sync"
           :disabled="submitting"
@@ -161,15 +157,14 @@ function onSubmit(): void {
       </label>
       <label v-else class="field-control">
         <span>任务标识</span>
-        <input :value="job?.key ?? ''" type="text" disabled />
+        <BaseInput :model-value="job?.key ?? ''" disabled />
       </label>
 
       <label class="field-control cron-field">
         <span>执行节奏（cron）</span>
-        <input
+        <BaseInput
           v-model="cronDraft"
           name="job-cron"
-          type="text"
           autocomplete="off"
           placeholder="*/10 * * * *"
           :disabled="submitting"
@@ -185,8 +180,8 @@ function onSubmit(): void {
       <template v-if="taskType === 'freshrss_sync'">
         <label class="field-control">
           <span>每来源单轮上限</span>
-          <input
-            v-model.number="limitDraft"
+          <BaseInput
+            v-model="limitDraft"
             type="number"
             :min="LIMIT_PER_SOURCE_MIN"
             :max="LIMIT_PER_SOURCE_MAX"
@@ -201,8 +196,8 @@ function onSubmit(): void {
       <template v-if="taskType === 'index_pending'">
         <label class="field-control">
           <span>单轮索引篇数</span>
-          <input
-            v-model.number="batchDraft"
+          <BaseInput
+            v-model="batchDraft"
             type="number"
             :min="BATCH_SIZE_MIN"
             :max="BATCH_SIZE_MAX"
@@ -214,8 +209,8 @@ function onSubmit(): void {
         </label>
         <label class="field-control">
           <span>卡死回收阈值</span>
-          <input
-            v-model.number="staleDraft"
+          <BaseInput
+            v-model="staleDraft"
             type="number"
             :min="STALE_AFTER_MINUTES_MIN"
             :max="STALE_AFTER_MINUTES_MAX"
@@ -241,7 +236,7 @@ function onSubmit(): void {
         <template #icon><Check :size="17" aria-hidden="true" /></template>
         {{ submitting ? '正在保存' : isCreate ? '确认创建' : '确认修改' }}
       </BaseButton>
-      <p v-if="formError" class="editor-error" role="alert">{{ formError }}</p>
+      <BaseCallout v-if="formError" class="editor-error" tone="danger" :description="formError" />
     </form>
   </section>
 </template>
@@ -281,6 +276,7 @@ function onSubmit(): void {
   margin-top: 22px;
 }
 
+/* 输入框/下拉皮肤在 BaseInput / BaseSelect（全站一份）；这里只管外壳排版。 */
 .field-control {
   display: grid;
   align-content: start;
@@ -288,31 +284,6 @@ function onSubmit(): void {
   color: var(--text-secondary);
   font-size: 0.75rem;
   font-weight: 700;
-}
-
-.field-control input,
-.field-control select {
-  width: 100%;
-  height: 42px;
-  padding: 0 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  background: var(--surface-raised);
-  font-size: 0.84rem;
-  outline: none;
-}
-
-.field-control input:disabled,
-.field-control select:disabled {
-  color: var(--text-tertiary);
-  background: var(--surface-base);
-}
-
-.field-control input:focus,
-.field-control select:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .field-control small {
@@ -363,11 +334,6 @@ function onSubmit(): void {
 
 .editor-error {
   grid-column: 1 / -1;
-  padding: 9px 11px;
-  border-left: 3px solid var(--danger);
-  color: var(--danger);
-  background: var(--danger-soft);
-  font-size: 0.76rem;
 }
 
 @container (max-width: 720px) {

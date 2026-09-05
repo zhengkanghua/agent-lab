@@ -312,21 +312,8 @@ function toggle(): void {
   background: var(--surface-base);
 }
 
-.skeleton-line {
-  display: block;
-  width: 94%;
-  height: 13px;
-  border-radius: 3px;
-  background: linear-gradient(
-    90deg,
-    var(--surface-sunken),
-    var(--surface-raised),
-    var(--surface-sunken)
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.5s ease-in-out infinite;
-}
-
+/* 骨架条的皮肤（渐变、圆角、shimmer）在 motion.css 的共享 .skeleton-line 上，
+   这里只声明这张卡的宽高变体。 */
 .skeleton-line--title {
   width: 62%;
   height: 21px;
@@ -343,15 +330,6 @@ function toggle(): void {
   margin: 4px 0 0;
   color: var(--text-tertiary);
   font-size: 0.7rem;
-}
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
 }
 
 @container (max-width: 600px) {

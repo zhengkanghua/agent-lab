@@ -167,7 +167,7 @@ function handleKeydown(event: KeyboardEvent): void {
                 <strong>正在读取全文</strong>
                 <span>从新闻资料库载入当前版本</span>
               </div>
-              <span v-for="index in 7" :key="index" class="reader-skeleton"></span>
+              <span v-for="index in 7" :key="index" class="reader-skeleton skeleton-line"></span>
             </div>
 
             <div v-else-if="error" class="reader-error" role="alert">
@@ -359,20 +359,13 @@ function handleKeydown(event: KeyboardEvent): void {
   font-size: 0.74rem;
 }
 
+/* shimmer 皮肤来自 motion.css 的共享 .skeleton-line（模板上两个类并用），
+   这里只声明阅读层的摆放几何。 */
 .reader-skeleton {
   grid-column: 1 / -1;
   width: 100%;
   height: 12px;
   margin-top: 8px;
-  border-radius: 3px;
-  background: linear-gradient(
-    90deg,
-    var(--surface-sunken),
-    var(--surface-raised),
-    var(--surface-sunken)
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.5s ease-in-out infinite;
 }
 
 .reader-skeleton:nth-of-type(3n) {

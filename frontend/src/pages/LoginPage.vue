@@ -6,7 +6,9 @@ import { resolveErrorCopy } from '@/api/error-copy'
 import { queryClient } from '@/app/query-client'
 import { authSession } from '@/features/auth/auth-session'
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseField from '@/shared/ui/BaseField.vue'
+import BaseInput from '@/shared/ui/BaseInput.vue'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 
 const route = useRoute()
@@ -125,10 +127,9 @@ async function retrySessionCheck(): Promise<void> {
 
         <form class="login-form" novalidate @submit.prevent="submitLogin">
           <BaseField v-slot="{ control }" label="账号邮箱">
-            <input
+            <BaseInput
               v-bind="control"
               v-model="email"
-              class="login-input"
               name="username"
               type="email"
               autocomplete="username"
@@ -141,10 +142,9 @@ async function retrySessionCheck(): Promise<void> {
 
           <BaseField v-slot="{ control }" label="密码">
             <span class="password-control">
-              <input
+              <BaseInput
                 v-bind="control"
                 v-model="password"
-                class="login-input"
                 name="password"
                 :type="showPassword ? 'text' : 'password'"
                 autocomplete="current-password"
@@ -162,7 +162,12 @@ async function retrySessionCheck(): Promise<void> {
             </span>
           </BaseField>
 
-          <p v-if="loginError" class="login-error" role="alert">{{ loginError }}</p>
+          <BaseCallout
+            v-if="loginError"
+            class="login-error"
+            tone="danger"
+            :description="loginError"
+          />
 
           <BaseButton
             variant="primary"
@@ -373,42 +378,16 @@ async function retrySessionCheck(): Promise<void> {
   margin-top: 31px;
 }
 
-/* 标签、错误、说明与 aria 接线都归 BaseField；提交与重连按钮归 BaseButton；
-   显示密码归 BaseIconButton。留在本页的只有输入框本身的样式——输入框还没抽成
-   基础组件，因为 type / inputmode / autocomplete 这些属性面差别太大。
+/* 标签、错误、说明与 aria 接线都归 BaseField；输入框皮肤归 BaseInput（全站一份）。
    .password-toggle 的 34px 与输入框的 42px 是耦合的：上右各内缩 4px，
    4 + 34 + 4 = 42 才能正好嵌在输入框里，所以这里只调位置，不改尺寸。 */
-.login-input {
-  width: 100%;
-  height: 42px;
-  padding: 0 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  background: var(--surface-raised);
-  font-size: 0.84rem;
-  font-weight: 450;
-  outline: none;
-  transition:
-    border-color 140ms ease,
-    box-shadow 140ms ease;
-}
-
-.login-input::placeholder {
-  color: var(--text-tertiary);
-}
-
-.login-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 4px var(--accent-soft);
-}
-
 .password-control {
   position: relative;
   display: block;
 }
 
-.password-control .login-input {
+/* BaseInput 的圆角框在这里给显示密码键让位：只收右侧内边距。 */
+.password-control :deep(.base-input) {
   padding-right: 42px;
 }
 
@@ -419,11 +398,7 @@ async function retrySessionCheck(): Promise<void> {
 }
 
 .login-error {
-  padding: 11px 13px;
-  border-left: 3px solid var(--danger);
-  color: var(--danger);
-  background: var(--danger-soft);
-  font-size: 0.8rem;
+  margin-bottom: var(--space-2);
 }
 
 .account-note {

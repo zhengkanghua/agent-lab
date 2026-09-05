@@ -45,7 +45,7 @@ describe('UserDirectoryTable', () => {
     expect(wrapper.get('[role="status"]').text()).toContain('正在读取账号目录')
     expect(wrapper.find('[role="table"]').exists()).toBe(false)
     // 加载中禁用刷新键，避免连点叠出多个请求。
-    expect(wrapper.get('.refresh-button').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.directory-heading .base-button').attributes('disabled')).toBeDefined()
   })
 
   it('加载失败显示 alert 并给出重新加载', async () => {
@@ -119,7 +119,7 @@ describe('UserDirectoryTable', () => {
   it('刷新键发出 refresh', async () => {
     const wrapper = mountTable()
 
-    await wrapper.get('.refresh-button').trigger('click')
+    await wrapper.get('.directory-heading .base-button').trigger('click')
 
     expect(wrapper.emitted('refresh')).toHaveLength(1)
   })

@@ -8,7 +8,6 @@ import './styles/tokens.css'
 // style.css 先引入，由它的首行 @layer 语句确立层序；下面三个文件再并入 components 层。
 import './style.css'
 import './styles/components/topbar.css'
-import './styles/components/result-card.css'
 import './styles/components/motion.css'
 import App from './App.vue'
 

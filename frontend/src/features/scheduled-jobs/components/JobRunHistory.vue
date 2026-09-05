@@ -56,15 +56,12 @@ function refresh(): void {
   <section class="run-history" aria-label="执行历史">
     <div class="history-heading">
       <p>执行历史（最近 20 条）</p>
-      <button
-        class="refresh-button"
-        type="button"
-        :disabled="query.isFetching.value"
-        @click="refresh"
-      >
-        <RefreshCw :class="{ spin: query.isFetching.value }" :size="14" aria-hidden="true" />
+      <BaseButton variant="ghost" size="sm" :disabled="query.isFetching.value" @click="refresh">
+        <template #icon>
+          <RefreshCw :class="{ spin: query.isFetching.value }" :size="14" aria-hidden="true" />
+        </template>
         刷新
-      </button>
+      </BaseButton>
     </div>
 
     <div v-if="query.isPending.value" class="history-state" role="status">
@@ -116,34 +113,7 @@ function refresh(): void {
   font-weight: 760;
 }
 
-.refresh-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 9px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  background: transparent;
-  font-size: 0.72rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.refresh-button:hover {
-  color: var(--accent);
-  background: var(--surface-hover);
-}
-
-.refresh-button .spin {
-  animation: run-spin 900ms linear infinite;
-}
-
-@keyframes run-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
+/* 刷新键走 BaseButton（ghost），与两处目录同款；转动用共享 .spin（motion.css）。 */
 
 .history-state {
   display: flex;

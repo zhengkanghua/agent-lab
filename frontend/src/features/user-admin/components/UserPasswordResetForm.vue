@@ -2,6 +2,8 @@
 import { computed } from 'vue'
 import { Check } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseCallout from '@/shared/ui/BaseCallout.vue'
+import BaseInput from '@/shared/ui/BaseInput.vue'
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/shared/model/password'
 
 /* 展开在某一行下方的密码重置表单。
@@ -35,10 +37,10 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
   <form class="reset-editor" style="container-type: inline-size" @submit.prevent="emit('submit')">
     <label class="field-control">
       <span>为 {{ email }} 设置新密码</span>
-      <input
+      <BaseInput
         v-model="passwordDraft"
-        name="reset-password"
         type="password"
+        name="reset-password"
         autocomplete="new-password"
         :placeholder="passwordHint"
         :disabled="submitting"
@@ -48,8 +50,10 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
       <template #icon><Check :size="16" aria-hidden="true" /></template>
       确认重置
     </BaseButton>
-    <button class="cancel-command" type="button" @click="emit('cancel')">取消</button>
-    <p v-if="error" class="editor-error" role="alert">{{ error }}</p>
+    <BaseButton class="cancel-command" variant="secondary" size="md" @click="emit('cancel')">
+      取消
+    </BaseButton>
+    <BaseCallout v-if="error" class="editor-error" tone="danger" :description="error" />
   </form>
 </template>
 
@@ -73,50 +77,9 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
   font-weight: 700;
 }
 
-.field-control input {
-  width: 100%;
-  height: 42px;
-  padding: 0 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  background: var(--surface-raised);
-  font-size: 0.84rem;
-  outline: none;
-}
-
-.field-control input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-/* 提交键的高度归 BaseButton（44px）。取消键跟着它对齐，否则 align-items: end
-   的这一行两个按钮会差 2px。 */
-.cancel-command {
-  display: inline-flex;
-  align-items: center;
-  min-height: 44px;
-  padding: 0 13px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  background: var(--surface-raised);
-  font-size: 0.7rem;
-  font-weight: 650;
-}
-
-.cancel-command:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
+/* 输入框皮肤在 BaseInput；取消键走 BaseButton（secondary），与提交键同高同源。 */
 .editor-error {
   grid-column: 1 / -1;
-  padding: 9px 11px;
-  border-left: 3px solid var(--danger);
-  color: var(--danger);
-  background: var(--danger-soft);
-  font-size: 0.76rem;
 }
 
 @container (max-width: 720px) {

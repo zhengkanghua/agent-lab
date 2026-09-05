@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { CircleAlert, MessageSquarePlus, RotateCcw } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
 import type { AgentThreadSummaryDto } from '@/api/agent-threads'
 import type { AgentErrorPresentation } from '../model/agent-error'
@@ -48,17 +49,21 @@ const emit = defineEmits<{
       正在读取会话…
     </p>
 
-    <div v-else-if="listState === 'error'" class="sidebar-error" role="alert">
-      <p class="error-title">
-        <CircleAlert :size="15" aria-hidden="true" />
-        {{ listError?.title ?? '会话记录读取失败' }}
-      </p>
-      <p class="error-description">{{ listError?.description }}</p>
-      <BaseButton variant="outline" size="sm" class="retry" @click="emit('reload')">
-        <template #icon><RotateCcw :size="14" aria-hidden="true" /></template>
-        重试
-      </BaseButton>
-    </div>
+    <BaseCallout
+      v-else-if="listState === 'error'"
+      class="sidebar-error"
+      tone="danger"
+      :title="listError?.title ?? '会话记录读取失败'"
+      :description="listError?.description"
+    >
+      <template #icon><CircleAlert :size="15" aria-hidden="true" /></template>
+      <template #actions>
+        <BaseButton variant="outline" size="sm" class="retry" @click="emit('reload')">
+          <template #icon><RotateCcw :size="14" aria-hidden="true" /></template>
+          重试
+        </BaseButton>
+      </template>
+    </BaseCallout>
 
     <!-- 空态说明「怎么产生第一条」，不只说「没有数据」：这一列在新账号上必然是空的，
          一句「暂无会话」只是重复了用户已经看到的事实。 -->
@@ -153,26 +158,7 @@ const emit = defineEmits<{
 }
 
 .sidebar-error {
-  padding: 10px 11px;
-  border: 1px solid var(--danger-soft);
-  border-radius: var(--radius-sm);
-  background: var(--danger-soft);
-}
-
-.error-title {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--danger);
-  font-size: 0.78rem;
-  font-weight: 720;
-}
-
-.error-description {
-  margin-top: 4px;
-  color: var(--text-secondary);
-  font-size: 0.74rem;
-  line-height: 1.55;
+  margin-top: 10px;
 }
 
 .retry {

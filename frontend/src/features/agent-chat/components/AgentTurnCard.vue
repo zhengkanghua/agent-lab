@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { CircleAlert, RotateCcw, Sparkles, UserRound } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import type { AgentTurn } from '../model/conversation'
 import AgentToolTraceList from './AgentToolTraceList.vue'
 import MarkdownAnswer from './MarkdownAnswer.vue'
@@ -65,23 +66,27 @@ const hasTracesOnly = computed(() => isUnanswered.value && props.turn.traces.len
           <span v-if="hasTracesOnly" class="trace-hint">已执行的检索结果见上方。</span>
         </p>
 
-        <div v-if="turn.error" class="turn-error" role="alert">
-          <p class="error-title">
-            <CircleAlert :size="15" aria-hidden="true" />
-            {{ turn.error.title }}
-          </p>
-          <p class="error-description">{{ turn.error.description }}</p>
-          <BaseButton
-            v-if="turn.error.retryable && canRetry"
-            class="retry-button"
-            variant="outline"
-            size="sm"
-            @click="emit('retry')"
-          >
-            <template #icon><RotateCcw :size="15" aria-hidden="true" /></template>
-            重发这一轮
-          </BaseButton>
-        </div>
+        <BaseCallout
+          v-if="turn.error"
+          class="turn-error"
+          tone="danger"
+          :title="turn.error.title"
+          :description="turn.error.description"
+        >
+          <template #icon><CircleAlert :size="15" aria-hidden="true" /></template>
+          <template #actions>
+            <BaseButton
+              v-if="turn.error.retryable && canRetry"
+              class="retry-button"
+              variant="outline"
+              size="sm"
+              @click="emit('retry')"
+            >
+              <template #icon><RotateCcw :size="15" aria-hidden="true" /></template>
+              重发这一轮
+            </BaseButton>
+          </template>
+        </BaseCallout>
       </div>
     </div>
   </article>
@@ -173,28 +178,9 @@ const hasTracesOnly = computed(() => isUnanswered.value && props.turn.traces.len
   font-size: 0.8rem;
 }
 
+/* 错误面板本体归 BaseCallout；这里只留外边距。 */
 .turn-error {
   margin-top: 12px;
-  padding: 12px 13px;
-  border: 1px solid var(--danger-soft);
-  border-radius: var(--radius-sm);
-  background: var(--danger-soft);
-}
-
-.error-title {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--danger);
-  font-size: 0.82rem;
-  font-weight: 720;
-}
-
-.error-description {
-  margin-top: 5px;
-  color: var(--text-secondary);
-  font-size: 0.78rem;
-  line-height: 1.6;
 }
 
 /* 描边、字号、悬停填实都归 BaseButton 的 outline 变体——第二步就是从这个类

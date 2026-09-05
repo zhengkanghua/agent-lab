@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ArrowUpRight } from '@lucide/vue'
 import type { AgentTurn } from '../model/conversation'
 import AgentTurnCard from './AgentTurnCard.vue'
+import BaseSuggestionList from '@/shared/ui/BaseSuggestionList.vue'
 
 const props = defineProps<{
   turns: AgentTurn[]
@@ -38,14 +38,12 @@ function isLast(index: number): boolean {
       <h3>今天想查什么？</h3>
       <p class="empty-lead">Agent 会自己决定检索哪些新闻、要不要读全文，然后基于查到的内容作答。</p>
 
-      <ul class="example-list">
-        <li v-for="example in examples" :key="example">
-          <button type="button" class="example-button" @click="emit('choose-example', example)">
-            <span>{{ example }}</span>
-            <ArrowUpRight :size="15" aria-hidden="true" />
-          </button>
-        </li>
-      </ul>
+      <BaseSuggestionList
+        class="example-list"
+        :examples="examples"
+        aria-label="示例提问"
+        @select="emit('choose-example', $event)"
+      />
     </div>
 
     <TransitionGroup v-else name="list" tag="div" class="turn-list">
@@ -61,15 +59,6 @@ function isLast(index: number): boolean {
 </template>
 
 <style scoped>
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
 .turn-list {
   display: grid;
   gap: 16px;
@@ -97,50 +86,8 @@ function isLast(index: number): boolean {
   line-height: 1.7;
 }
 
-/* 建议卡改成整行式列表：三条文案长度不一，胶囊排布会在第二行留一个孤儿。
-   整行还给了每条更大的点击区。 */
 .example-list {
-  display: grid;
-  gap: 8px;
   margin-top: 26px;
-  padding: 0;
-  list-style: none;
-}
-
-.example-button {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-  padding: 14px 15px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  background: var(--surface-raised);
-  font-size: 0.88rem;
-  text-align: left;
-  transition:
-    border-color 150ms ease,
-    color 150ms ease,
-    background-color 150ms ease,
-    transform 150ms ease;
-}
-
-.example-button:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-  transform: translateY(-1px);
-}
-
-.example-button svg {
-  flex: 0 0 auto;
-  color: var(--text-tertiary);
-  transition: color 150ms ease;
-}
-
-.example-button:hover svg {
-  color: var(--accent);
 }
 
 @container (max-width: 560px) {
@@ -150,17 +97,6 @@ function isLast(index: number): boolean {
 
   .example-list {
     margin-top: 20px;
-  }
-
-  .example-button {
-    padding: 12px 13px;
-    font-size: 0.84rem;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .example-button:hover {
-    transform: none;
   }
 }
 </style>
