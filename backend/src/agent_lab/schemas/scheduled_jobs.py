@@ -106,7 +106,8 @@ class JobRunResponse(BaseModel):
     )
     stats: dict[str, Any] = Field(
         description=(
-            "脱敏统计：数量与按异常类型的聚合计数；skipped 记录含 reason 字段。"
+            "脱敏统计：数量与按异常类型的聚合计数；skipped 记录含 reason 字段，"
+            "批次级失败的记录含 error_reason（稳定失败原因枚举）。"
         ),
     )
     error_type: str | None = Field(

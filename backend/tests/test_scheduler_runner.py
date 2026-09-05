@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from agent_lab.config.scheduler import SchedulerSettings
+from agent_lab.ingestion.freshrss_client import FreshRSSAuthenticationError
 from agent_lab.models.scheduled_job import ScheduledJobRecord
 from agent_lab.services.scheduled_task_errors import ScheduledJobAlreadyRunningError
 from agent_lab.services.scheduler_runner import SKIPPED_PREVIOUS_RUNNING_REASON, ScheduledJobRunner
@@ -262,6 +263,29 @@ class TestUnifiedExecution:
             # 历史只记异常类名，不记异常文本（"boom" 不得出现）。
             assert record.error_type == "RuntimeError"
             assert record.stats == {}
+            assert runtime.closed is True
+
+        run(scenario())
+
+    def test_failure_with_reason_persists_error_reason_in_stats(self) -> None:
+        # FreshRSS 认证类异常自带脱敏 reason 枚举（见 FreshRSSError）；
+        # 调度器要把它写进执行记录 stats，管理页不查库也能看到失败阶段。
+        store, runtime = FakeStore(), FakeWriteRuntime(
+            sync_error=FreshRSSAuthenticationError(
+                "FreshRSS 拒绝了 API 凭据。",
+                reason="login_rejected",
+            )
+        )
+        runner = make_runner(store, runtime)
+        job = make_job(task_type="freshrss_sync")
+        store.jobs[job.id] = job
+
+        async def scenario() -> None:
+            run_id = await runner.trigger_now(job)
+            record = await wait_for_terminal(store, run_id)
+            assert record.status == "failed"
+            assert record.error_type == "FreshRSSAuthenticationError"
+            assert record.stats == {"error_reason": "login_rejected"}
             assert runtime.closed is True
 
         run(scenario())

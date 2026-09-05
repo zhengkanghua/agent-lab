@@ -245,9 +245,10 @@ class FreshRSSImportService:
                         )
                     )
                     logger.error(
-                        "FreshRSS 来源同步失败 source=%s error_type=%s",
+                        "FreshRSS 来源同步失败 source=%s error_type=%s error_reason=%s",
                         subscription.id,
                         error_type,
+                        getattr(exc, "reason", None) or "-",
                     )
                     continue
                 synchronized_count += len(records)

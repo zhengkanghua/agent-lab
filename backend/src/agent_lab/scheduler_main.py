@@ -8,6 +8,7 @@
     或本地测试: python -m agent_lab.scheduler_main
 """
 import asyncio
+import logging
 import signal
 import sys
 import os
@@ -22,6 +23,15 @@ if sys.platform == "win32":
         import codecs
         sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
         sys.stderr = codecs.getwriter("utf-8")(sys.stderr.detach())
+
+# 调度器是常驻进程：不配置 logging 时 Python 只输出 WARNING 以上且不带时间戳，
+# 「定时任务执行完成」等 INFO 日志会全部丢失，docker logs 无法对时间线。根级别压到
+# WARNING 避免第三方库刷屏，agent_lab 提到 INFO（与 CLI 入口 cli.py 同款口径）。
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logging.getLogger("agent_lab").setLevel(logging.INFO)
 
 from agent_lab.config.scheduler import get_scheduler_settings
 from agent_lab.db.session import async_session_factory, engine

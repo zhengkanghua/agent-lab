@@ -81,12 +81,32 @@ export function formatLastRunSummary(job: ScheduledJobDto): string {
   return `${status} · ${finished}`
 }
 
+/*
+ * 后端批次级失败时把 ``error_reason``（异常自带的稳定脱敏枚举，如 login_rejected）
+ * 写进 stats。这里给出人话文案；未知值原样展示，后端加枚举时前端不至于渲染出 undefined。
+ */
+const ERROR_REASON_LABEL: Readonly<Record<string, string>> = {
+  login_rejected: 'FreshRSS 登录被拒绝（API 凭据无效或被停用）',
+  login_no_token: 'FreshRSS 登录响应缺少令牌（可能被反代/WAF 拦截）',
+  request_rejected: 'FreshRSS API 请求被拒绝',
+  login_timeout: 'FreshRSS 登录超时',
+  request_timeout: 'FreshRSS 请求超时',
+  login_unreachable: '无法连接 FreshRSS（登录阶段）',
+  request_unreachable: '无法连接 FreshRSS（请求阶段）',
+  login_http_error: 'FreshRSS 登录返回异常状态',
+  request_http_error: 'FreshRSS 返回异常状态',
+}
+
+export function errorReasonLabel(reason: string): string {
+  return ERROR_REASON_LABEL[reason] ?? reason
+}
+
 /**
  * 一条任务执行的统计摘要。
  *
  * stats 是后端按手动流水线口径给的脱敏统计：数量字段 + 按异常类型聚合的 failures；
- * skipped 记录只有 reason。这里按字段名拼人话，不认识的字段忽略——后端加字段时
- * 前端不至于渲染出原始 JSON。
+ * skipped 记录只有 reason，批次级失败记录只有 error_reason。这里按字段名拼人话，
+ * 不认识的字段忽略——后端加字段时前端不至于渲染出原始 JSON。
  */
 export function formatRunStats(run: JobRunDto): string {
   if (run.status === 'skipped') {
@@ -94,6 +114,16 @@ export function formatRunStats(run: JobRunDto): string {
   }
   const stats = run.stats
   const fragments: string[] = []
+
+  if (run.status === 'failed') {
+    const reason = stats.error_reason
+    if (typeof reason === 'string') {
+      fragments.push(`失败原因：${errorReasonLabel(reason)}`)
+    }
+    if (fragments.length === 0) {
+      return '本轮执行失败（原因见 error_type）'
+    }
+  }
 
   if (typeof stats.synchronized_document_count === 'number') {
     fragments.push(`同步文档 ${stats.synchronized_document_count}`)

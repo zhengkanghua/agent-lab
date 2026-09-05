@@ -91,8 +91,9 @@ class JobRunRecord(Base):
     维护：开始执行前插入 ``running`` 行，结束后更新成败与统计；上一轮还没跑完时到点的
     触发只插一条 ``skipped`` 行（只有 started_at，没有 finished_at），不排队。
 
-    ``stats`` 与手动流水线响应同口径脱敏：只有数量和按异常类型聚合计数，绝不含正文、
-    文档身份、凭据或异常文本。历史不无界增长：每次执行收尾会把超出保留条数的旧记录裁掉。
+    ``stats`` 与手动流水线响应同口径脱敏：只有数量和按异常类型聚合计数；批次级失败时
+    会带 ``error_reason``（稳定的失败原因枚举，如 ``login_rejected``，无正文无凭据），
+    skipped 记录只有 reason。历史不无界增长：每次执行收尾会把超出保留条数的旧记录裁掉。
     """
 
     __tablename__ = "scheduled_job_runs"
@@ -137,7 +138,7 @@ class JobRunRecord(Base):
     stats: Mapped[dict] = mapped_column(
         JSONB,
         nullable=False,
-        comment="脱敏执行统计（数量与按异常类型的聚合计数），结构与手动流水线同口径。",
+        comment="脱敏执行统计（数量与按异常类型的聚合计数，失败记录含 error_reason 枚举），结构与手动流水线同口径。",
     )
     error_type: Mapped[str | None] = mapped_column(
         String(128),

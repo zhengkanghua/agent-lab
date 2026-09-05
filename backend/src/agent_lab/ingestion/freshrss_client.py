@@ -4,6 +4,7 @@
 写入 PostgreSQL 或修改 FreshRSS 中的已读状态。
 """
 
+import logging
 from collections.abc import Sequence
 from types import TracebackType
 from typing import Any, Self
@@ -19,8 +20,27 @@ from agent_lab.schemas.freshrss import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 class FreshRSSError(RuntimeError):
-    """FreshRSS 请求或响应无法继续处理时的基础异常。"""
+    """FreshRSS 请求或响应无法继续处理时的基础异常。
+
+    ``reason`` 是稳定的脱敏枚举（如 ``login_rejected``），供日志与执行历史区分
+    失败阶段；异常文本保持不进日志（可能含第三方响应内容），枚举值不携带任何
+    响应正文、凭据或 URL。协议类错误没有细分阶段，``reason`` 为 ``None``。
+    """
+
+    def __init__(self, message: str, *, reason: str | None = None) -> None:
+        """创建领域异常并可选地标记安全失败原因。
+
+        Args:
+            message: 面向人的错误描述；可能含第三方响应，禁止写进日志。
+            reason: 稳定失败原因枚举；未分类时为 ``None``。
+        """
+
+        super().__init__(message)
+        self.reason = reason
 
 
 class FreshRSSAuthenticationError(FreshRSSError):
@@ -135,18 +155,42 @@ class FreshRSSClient:
         except httpx.HTTPStatusError as exc:
             # 2、把 HTTP 状态分类成稳定领域异常（认证/超时/服务端），不泄露凭据
             if exc.response.status_code in {401, 403}:
+                # 状态码和 content-type 是结构化元数据，不含凭据与响应正文，可进日志：
+                # FreshRSS 拒凭据通常是纯文本，而反代/WAF 拦截常见 HTML 质询页，
+                # 靠 content-type 就能在线上直接区分这两种「认证失败」。
+                logger.error(
+                    "FreshRSS ClientLogin 被拒绝 status=%s content_type=%s",
+                    exc.response.status_code,
+                    exc.response.headers.get("content-type", "-"),
+                )
                 raise FreshRSSAuthenticationError(
-                    "FreshRSS 拒绝了 API 凭据。"
+                    "FreshRSS 拒绝了 API 凭据。",
+                    reason="login_rejected",
                 ) from exc
             if exc.response.status_code in {408, 504}:
-                raise FreshRSSTimeoutError("FreshRSS 登录请求超时。") from exc
+                raise FreshRSSTimeoutError(
+                    "FreshRSS 登录请求超时。",
+                    reason="login_timeout",
+                ) from exc
+            logger.error(
+                "FreshRSS ClientLogin 返回异常状态 status=%s content_type=%s",
+                exc.response.status_code,
+                exc.response.headers.get("content-type", "-"),
+            )
             raise FreshRSSServiceError(
-                f"FreshRSS 登录返回 HTTP {exc.response.status_code}。"
+                f"FreshRSS 登录返回 HTTP {exc.response.status_code}。",
+                reason="login_http_error",
             ) from exc
         except httpx.TimeoutException as exc:
-            raise FreshRSSTimeoutError("FreshRSS 登录请求超时。") from exc
+            raise FreshRSSTimeoutError(
+                "FreshRSS 登录请求超时。",
+                reason="login_timeout",
+            ) from exc
         except httpx.RequestError as exc:
-            raise FreshRSSConnectionError("无法连接到 FreshRSS。") from exc
+            raise FreshRSSConnectionError(
+                "无法连接到 FreshRSS。",
+                reason="login_unreachable",
+            ) from exc
 
         # 3、ClientLogin 用 key=value 文本行返回（非 JSON）；partition 能安全处理
         #    值里可能出现的 '='
@@ -160,8 +204,15 @@ class FreshRSSClient:
         # 4、从响应里取出 Auth token，用 SecretStr 包住（打印对象时不会泄露）
         auth_token = login_fields.get("Auth")
         if not auth_token:
+            # 返回 200 却拿不到 Auth=，最常见的是反代/WAF 返回了 HTML 页面：
+            # 打出 content-type 就能和「FreshRSS 明确拒凭据」区分开。
+            logger.error(
+                "FreshRSS ClientLogin 响应缺少 Auth 令牌 status=200 content_type=%s",
+                response.headers.get("content-type", "-"),
+            )
             raise FreshRSSAuthenticationError(
-                "FreshRSS 登录响应中没有 Auth 令牌。"
+                "FreshRSS 登录响应中没有 Auth 令牌。",
+                reason="login_no_token",
             )
 
         self._auth_token = SecretStr(auth_token)
@@ -550,18 +601,43 @@ class FreshRSSClient:
         except httpx.HTTPStatusError as exc:
             # 3、按 HTTP 状态分类成稳定领域异常，不让响应正文/凭据外泄
             if exc.response.status_code in {401, 403}:
+                # path 是固定 API 路径不含凭据；知道是哪个接口被拒有助于定位阶段。
+                logger.error(
+                    "FreshRSS API 请求被拒绝 method=%s path=%s status=%s",
+                    method,
+                    path,
+                    exc.response.status_code,
+                )
                 raise FreshRSSAuthenticationError(
-                    "FreshRSS API 身份验证被拒绝。"
+                    "FreshRSS API 身份验证被拒绝。",
+                    reason="request_rejected",
                 ) from exc
             if exc.response.status_code in {408, 504}:
-                raise FreshRSSTimeoutError("FreshRSS API 请求超时。") from exc
+                raise FreshRSSTimeoutError(
+                    "FreshRSS API 请求超时。",
+                    reason="request_timeout",
+                ) from exc
+            logger.error(
+                "FreshRSS API 请求异常 method=%s path=%s status=%s content_type=%s",
+                method,
+                path,
+                exc.response.status_code,
+                exc.response.headers.get("content-type", "-"),
+            )
             raise FreshRSSServiceError(
-                f"FreshRSS API 返回 HTTP {exc.response.status_code}。"
+                f"FreshRSS API 返回 HTTP {exc.response.status_code}。",
+                reason="request_http_error",
             ) from exc
         except httpx.TimeoutException as exc:
-            raise FreshRSSTimeoutError("FreshRSS API 请求超时。") from exc
+            raise FreshRSSTimeoutError(
+                "FreshRSS API 请求超时。",
+                reason="request_timeout",
+            ) from exc
         except httpx.RequestError as exc:
-            raise FreshRSSConnectionError("FreshRSS API 请求失败。") from exc
+            raise FreshRSSConnectionError(
+                "FreshRSS API 请求失败。",
+                reason="request_unreachable",
+            ) from exc
 
     @staticmethod
     def _read_json_object(response: httpx.Response) -> dict[str, Any]:

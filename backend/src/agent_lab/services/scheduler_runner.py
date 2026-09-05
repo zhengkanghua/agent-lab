@@ -309,12 +309,20 @@ class ScheduledJobRunner:
                 )
             except Exception as exc:
                 # 只记类型名：异常文本可能带凭据、正文或第三方响应（全项目统一口径）。
+                # reason 是异常自带的稳定脱敏枚举（见 FreshRSSError），可以进日志和
+                # 执行历史；没有该属性的异常显示 "-"。
                 error_type = type(exc).__name__
+                error_reason = getattr(exc, "reason", None)
+                if error_reason is not None:
+                    # 失败批次没有业务统计；把原因枚举写进执行记录，管理页和
+                    # scheduled_job_runs.stats 都能直接看到失败阶段。
+                    stats = {"error_reason": error_reason}
                 logger.error(
-                    "定时任务执行失败 job=%s trigger=%s error_type=%s",
+                    "定时任务执行失败 job=%s trigger=%s error_type=%s error_reason=%s",
                     job.key,
                     trigger_type,
                     error_type,
+                    error_reason or "-",
                 )
             finally:
                 if runtime is not None:

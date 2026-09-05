@@ -11,6 +11,7 @@ import {
 } from '@/api/scheduled-jobs'
 import { scheduledJobKeys } from '../constants/query-keys'
 import { presentJobError } from '../model/job-error'
+import { errorReasonLabel } from '../model/job-copy'
 import type { JobSubmitPayload } from './useJobForm'
 
 export type ScheduledJobLoadState = 'loading' | 'error' | 'ready'
@@ -186,7 +187,11 @@ export function useScheduledJobDirectory(options: UseScheduledJobDirectoryOption
     if (run.status === 'succeeded') {
       feedback.value = '手动执行完成：成功。'
     } else {
-      feedback.value = `手动执行完成：失败（${run.error_type ?? '未知原因'}）。`
+      // 批次级失败时后端把 error_reason（脱敏枚举）写进了 stats，有人话文案可带；
+      // 旧记录或非 FreshRSS 异常没有该字段，保持只显示类型名。
+      const reason = run.stats.error_reason
+      const reasonText = typeof reason === 'string' ? errorReasonLabel(reason) : ''
+      feedback.value = `手动执行完成：失败（${run.error_type ?? '未知原因'}${reasonText ? `：${reasonText}` : ''}）。`
     }
     const job = jobs.value.find((item) => item.id === jobId)
     if (job !== undefined) options.onRunFinished?.({ job, run })
