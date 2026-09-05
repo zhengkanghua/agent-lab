@@ -88,3 +88,7 @@ _Avoid_：卡片、区块、Item。
 **输入坞（Composer Dock）**：
 语义检索页接受用户输入的地方，根据有无检索历史，在“空态居中大尺寸（Focus Mode）”和“顶部吸附极简态（Timeline Mode）”之间平滑切换的区域。
 _Avoid_：输入框、搜索条、Header。
+
+**设置中心**：
+登录后查看自助信息与调整个人偏好的单一入口，分账号安全、检索偏好、Agent 偏好三个分区（`/settings/:section?`）。
+_Avoid_：配置页、控制台（那是后台 `/admin`，做的是管理动作）；旧称账号页（`/account` 已并入）。

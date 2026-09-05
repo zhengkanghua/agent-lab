@@ -19,7 +19,7 @@
 
 ```
 SearchPage.vue
-  ├─ SearchComposer.vue        顶部常驻输入条（全局数量参数）
+  ├─ SearchComposer.vue        顶部常驻输入条（数量参数的默认值在设置中心维护，入口图标链回设置）
   ├─ SearchRecordTurn.vue      单条检索记录（折叠标题行 + 展开内容）
   └─ useSearchStream           多轮累积、单活动请求、陈旧响应守卫
       └─ api/document-search.ts

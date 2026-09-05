@@ -16,20 +16,23 @@
 | --- | --- | --- | --- | --- |
 | 账号密码登录、退出 | `/login` | `POST /auth/login`、`POST /auth/logout` | `api/auth.py`（FastAPI Users Cookie backend）、`auth/`；前端 `api/auth.ts`、`features/auth/auth-session.ts` | `tests/test_auth.py`、`src/features/auth/auth-session.spec.ts`、`src/pages/LoginPage.spec.ts` |
 | 读取当前登录身份 | 无独立页面，路由守卫用 | `GET /auth/me` | `api/auth.py`、`schemas/auth.py`；前端 `features/auth/auth-session.ts`、`app/router.ts` | `tests/test_auth.py`、`src/features/auth/auth-session.spec.ts` |
-| 账号自助（看自己信息、改自己密码） | `/account` | `POST /auth/me/password` | `api/account.py` → `services/account_service.py`；前端 `api/account.ts`、`pages/AccountPage.vue`、`features/account/` | `tests/test_account.py` |
+| 账号自助（看自己信息、改自己密码） | `/settings/account`（`/account` 重定向并入） | `POST /auth/me/password` | `api/account.py` → `services/account_service.py`；前端 `api/account.ts`、`pages/SettingsPage.vue`、`features/settings/` | `tests/test_account.py`、`src/pages/SettingsPage.spec.ts` |
 | 语义检索（按新闻分组，检索页多轮累积的检索流） | `/` | `POST /document-search` | `api/document_search.py` → `services/vector_search_service.py`；前端 `api/document-search.ts`、`features/semantic-search/composables/useSearchStream.ts`、`components/SearchComposer.vue`、`components/SearchRecordTurn.vue`、`pages/SearchPage.vue` | `tests/test_document_search.py`、`src/api/document-search.spec.ts`、`src/features/semantic-search/tests/useSearchStream.spec.ts`、`SearchComposer.spec.ts`、`SearchRecordTurn.spec.ts`、`src/pages/SearchPage.spec.ts` |
 | 读取单篇文档 | `/`（检索流某条记录内展开） | `GET /documents/{document_id}` | `api/documents.py` → `repositories/document_repository.py`；前端 `api/documents.ts`、`features/semantic-search/composables/useDocumentReader.ts` | `tests/test_documents_api.py`、`src/api/documents.spec.ts` |
 | 用户管理（增删改、改密、踢会话） | `/admin/users` | `GET /admin/users`、`POST /admin/users`、`PATCH /admin/users/{user_id}`、`POST /admin/users/{user_id}/password`、`DELETE /admin/users/{user_id}/sessions` | `api/user_admin.py` → `services/user_admin_service.py`；前端 `api/user-admin.ts`、`pages/UserAdminPage.vue` | `tests/test_user_admin.py`、`src/api/user-admin.spec.ts`、`src/pages/UserAdminPage.spec.ts` |
 | 手工触发同步加索引 | 无页面 | `POST /pipeline/run-once` | `api/pipeline.py` → `services/news_pipeline_execution_service.py` | `tests/test_pipeline_api.py`、`tests/test_news_pipeline_execution.py` |
 | 定时任务管理（配置 cron 与参数、启停、立即执行、看执行历史；cron 到点自动同步/索引） | `/admin/scheduled-jobs`（超管） | `GET /scheduled-jobs`、`POST /scheduled-jobs`、`GET/PATCH/DELETE /scheduled-jobs/{job_id}`、`POST /scheduled-jobs/{job_id}/trigger`、`GET /scheduled-jobs/{job_id}/runs`、`POST /scheduled-jobs/validate-cron` | `api/scheduled_jobs.py` → `services/scheduled_job_service.py`、`services/scheduler_runner.py`、`services/scheduled_task_registry.py`、`repositories/scheduled_job_repository.py` | `tests/test_scheduled_jobs_api.py`、`tests/test_scheduler_runner.py`、`tests/test_scheduled_task_registry.py`、`tests/test_scheduler_postgres_integration.py`（真库真上游，默认跳过） |
 | Agent 对话（模型自己调检索工具再作答，SSE 流式） | `/agent` | `POST /agent/chat` | `api/agent_chat.py` → `agent/runtime.py`、`agent/streaming.py`、`agent/tools/`；前端 `api/agent-chat.ts`、`features/agent-chat/`、`pages/AgentChatPage.vue` | `tests/test_agent_chat_api.py`、`tests/test_agent_streaming.py`、`tests/test_agent_tools.py`、`tests/test_agent_middleware.py`、`src/api/agent-chat.spec.ts`、`src/features/agent-chat/tests/`、`src/pages/AgentChatPage.spec.ts` |
-| 读取 Agent 默认系统提示词 | `/agent`（提示词编辑器内） | `GET /agent/default-prompt` | `api/agent_chat.py` → `agent/prompts.py`；前端 `features/agent-chat/composables/useAgentDefaultPrompt.ts` | `tests/test_agent_chat_api.py`、`src/features/agent-chat/tests/useAgentDefaultPrompt.spec.ts` |
+| 检索偏好（数量参数的默认值，改动即生效，只存本浏览器） | `/settings/search`（检索输入条有直达入口） | 无后端参与 | 前端 `features/settings/`、`pages/SettingsPage.vue` | `src/features/settings/tests/`、`src/pages/SettingsPage.spec.ts` |
+| Agent 偏好（自定义系统提示词，仅超级用户，只存本浏览器） | `/settings/agent`（输入条徽章直达） | 无后端参与（编辑不落库；随每轮 `/agent/chat` 请求发送） | 前端 `features/settings/`、`pages/SettingsPage.vue` | `src/features/settings/tests/`、`src/pages/SettingsPage.spec.ts` |
+| 读取 Agent 默认系统提示词 | `/settings/agent`（提示词编辑器内） | `GET /agent/default-prompt` | `api/agent_chat.py` → `agent/prompts.py`；前端 `features/settings/composables/useDefaultAgentPrompt.ts` | `tests/test_agent_chat_api.py`、`src/features/settings/tests/useDefaultAgentPrompt.spec.ts` |
 | 会话记录（列出自己的会话、点进去看历史并接着聊、删除） | `/agent`（侧栏）、`/agent/:threadId` | `GET /agent/threads`、`GET /agent/threads/{thread_id}/messages`、`DELETE /agent/threads/{thread_id}` | `api/agent_threads.py` → `services/agent_thread_service.py`、`agent/replay.py`、`models/agent_thread.py`；前端 `api/agent-threads.ts`、`features/agent-chat/composables/useThreadList.ts`、`components/ThreadSidebar.vue` | `tests/test_agent_threads_api.py`、`tests/test_agent_thread_service.py`、`tests/test_agent_replay.py`、`tests/test_agent_thread_ownership_integration.py`（真库，默认跳过）、`src/api/agent-threads.spec.ts`、`src/features/agent-chat/tests/useThreadList.spec.ts` |
 | 健康检查 | 无 | `GET /health` | `api/health.py` | `tests/test_error_contract.py` |
 
 `/vector-search`、`/document-search`、`/documents` 要求登录；`/pipeline`、`/admin/users`、
 `/scheduled-jobs`、`/agent` 要求超级用户。挂载点和依赖在 `backend/src/agent_lab/main.py` 的
-`include_router` 处。
+`include_router` 处。设置中心的两个偏好分区是纯前端能力，只读已有接口
+（`GET /agent/default-prompt`），自己没有后端路由。
 
 定时任务到点自动执行受 `SCHEDULER_ENABLED` 总开关控制，默认关闭，生产 `.env` 必须显式开；
 任务清单存在 PostgreSQL 的 `scheduled_jobs` 表，是调度器的事实来源。进程内调度、单实例约束
@@ -50,6 +53,8 @@ Agent 那几行的能力边界见 [`adr/0003-agent-v1-is-read-only.md`](adr/0003
 
 用户管理这一行前后端两列写的都是 `/admin/users`，不是抄错：前端页面路由和后端 API 前缀刚好同名，
 浏览器实际请求 `/api/admin/users`。后端路由的 `tags=["user-admin"]` 只是 OpenAPI 分组标签，不是路径。
+后台在前端只有一条路由 `/admin/:section?`（users=账号管理、scheduled-jobs=定时任务），
+两个地址是同一条路由的分区，注册表见 `pages/AdminPage.vue`。
 
 ## 命令行能力
 
@@ -75,4 +80,5 @@ Agent 那几行的能力边界见 [`adr/0003-agent-v1-is-read-only.md`](adr/0003
 | 运行时装配 | `backend/src/agent_lab/runtime.py`、`qdrant/runtime.py`、`pipeline/write_runtime.py`、`agent/runtime.py` | 进程级资源的构造与复用 |
 | 错误契约 | `backend/src/agent_lab/api/error_contract.py` | 异常到 `code`/`status`/`retryable` 的映射规则，检索与 Agent 各一张表 |
 | 错误文案收敛 | `frontend/src/api/error-copy.ts` | 查表机制；文案表在各领域的 `model/*-error.ts` 里 |
+| 浏览器本地偏好 | `frontend/src/features/settings/composables/usePreferences.ts` | 数量参数与提示词的 localStorage 持久化；边界见 `docs/adr/0018-settings-hub-with-local-preferences.md` |
 | OpenAPI 类型 | `frontend/src/api/generated/openapi.ts` | 由后端 `/openapi.json` 生成，命令见 `frontend/README.md` |

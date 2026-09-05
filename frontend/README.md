@@ -19,14 +19,20 @@ Session Storage 保存密码和 Token。退出调用 `POST /auth/logout` 撤销�
 超级用户可进入 `/admin/users`：页面通过受后端权限保护的 `/admin/users` API 创建账号、
 启用/停用、授予/撤销超级用户权限、重置密码和撤销会话。由部署端
 `AUTH_ADMIN_EMAIL/AUTH_ADMIN_PASSWORD` 托管的保底管理员会以独立横线样式显示，网页
-不能停用、降级或重置其密码；这些值只能在服务端 `.env`/Secret 中修改。普通用户手动
+不能停用、降级或重置其密码；这些值只能写在服务端 `.env`/Secret 中。普通用户手动
 访问该路由会被前端送回搜索页，而真正的安全边界仍是后端 `current_superuser` 依赖。
+
+`/settings` 是设置中心（`/settings/:section?`，旧 `/account` 重定向并入）：账号安全
+（登录信息 + 改自己密码）、检索偏好（数量参数，改动即生效）与 Agent 偏好（自定义系统
+提示词，仅超级用户）。这些偏好只保存在当前浏览器的 localStorage，不进后端，也不含任何
+凭据；见 `docs/adr/0018-settings-hub-with-local-preferences.md`。
 
 ## 交互与数据边界
 
 - 检索页没有模式切换，只走按新闻分组：`document_limit` 控制一次检索的不同新闻数量
-  （下限 1、默认 10），`matches_per_document` 控制每篇新闻返回的相关片段数。两者是
-  全局一份，影响之后所有检索；分组由后端 Qdrant grouped query 完成，前端按返回顺序渲染。
+  （下限 1、默认 10），`matches_per_document` 控制每篇新闻返回的相关片段数。两者的
+  默认值在设置中心的「检索偏好」分区维护（持久在本浏览器），提交那一刻读到什么值
+  这一轮就用什么值；分组由后端 Qdrant grouped query 完成，前端按返回顺序渲染。
 - 每次搜索固化成一条“检索记录”，追加成向下长的检索流：最新一条顶在输入框正下方并完整
   展开，旧记录折叠成“检索词 + 命中数”的标题行，可点开回看；刷新或离开页面即清空，不做
   真会话、不落后端。
@@ -54,7 +60,9 @@ Session Storage 保存密码和 Token。退出调用 `POST /auth/logout` 撤销�
   RSS 抓来的外部内容。
 - 会话 id 由服务端在 `done` 事件里给出，前端不自己生成 UUID；“新会话”会同时丢掉它，否则
   模型还看得见用户以为已经删掉的历史。
-- 自定义系统提示词只影响之后发出的轮次，不做任何持久化。
+- 自定义系统提示词在设置中心的「Agent 偏好」分区编辑，保存在本浏览器的偏好里，
+  作用于之后发出的每一轮（任何会话）；清空即回到服务端默认。输入条只在覆盖生效时
+  亮一枚链回设置的徽章，不做编辑。
 - 取消一轮对话靠两道闸，`AbortController` 之外还有一个自增序号：事件已经拿在手里、`await`
   还没恢复的那个窗口里 abort 拦不住任何东西，只有比对序号能阻止一次已取消的运行往界面写字。
   取消后到达的 `done` 因此也不会写回会话 id。
@@ -115,10 +123,15 @@ npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated/o
 ## 目录边界
 
 - `src/api`：Cookie 登录、账号管理、HTTP 客户端、文档搜索/详情、Agent SSE 流、错误归一化
-  和生成类型；
+  和生成类型；数量参数与提示词上界的契约常量也在这里（`document-search.ts`、
+  `agent-chat.ts`），它们是请求契约的一部分；
 - `src/features/auth`：当前用户会话恢复、登录、退出和过期状态；
 - `src/features/semantic-search`：文档搜索状态（多轮检索流）、全文 Query、展示模型和
   检索流组件（输入条 / 单条记录 / 结果卡）；
 - `src/features/agent-chat`：多轮对话状态、工具轨迹配对、错误文案表和对话组件；
-- `src/pages`：登录、检索、Agent 对话与超级用户账号管理的路由级组合，不直接执行 `fetch`；
+- `src/features/settings`：设置中心（账号安全 / 检索偏好 / Agent 偏好）与浏览器本地
+  偏好 store；
+- `src/pages`：登录、检索、Agent 对话、设置中心与后台控制台（单路由
+  `/admin/:section?`，AdminPage 按分区组合账号管理与定时任务）的路由级组合，
+  不直接执行 `fetch`；
 - `src/styles`：设计令牌（`tokens.css`）；全局 reset/base/components 分层写在 `src/style.css`。
