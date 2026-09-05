@@ -1,4 +1,4 @@
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,6 +7,8 @@ import type { AgentChatEvent, StreamAgentChatOptions } from '@/api/agent-chat'
 const api = vi.hoisted(() => ({
   streamAgentChat: vi.fn(),
   fetchAgentDefaultPrompt: vi.fn(),
+  // 设置中心从这一模块读提示词上界；mock 里补齐，避免 undefined 参与运算。
+  MAX_SYSTEM_PROMPT_CHARACTERS: 4000,
 }))
 
 vi.mock('../api/agent-chat', () => api)
@@ -61,6 +63,7 @@ function resetAuthUser(): void {
 }
 
 import AgentChatPage from './AgentChatPage.vue'
+import { usePreferences } from '@/features/settings'
 
 const THREAD_ID = '30000000-0000-4000-8000-000000000001'
 
@@ -85,8 +88,12 @@ function testRouter() {
       // 顶栏的账号管理入口指向这条。少了它 RouterLink 解析不到目标，
       // 本文件所有用例都会在挂载时炸掉，而不只是与入口相关的那两条。
       { path: '/admin/users', name: 'user-admin', component: { template: '<div>admin</div>' } },
-      // 顶栏邮箱链接指向账号页面。
-      { path: '/account', name: 'account', component: { template: '<div>account</div>' } },
+      // 顶栏邮箱链接指向设置中心的账号分区。
+      {
+        path: '/settings/:section?',
+        name: 'settings',
+        component: { template: '<div>settings</div>' },
+      },
     ],
   })
 }
@@ -110,14 +117,6 @@ async function mountPage() {
   return { wrapper, router, queryClient }
 }
 
-/* 系统提示词从输入框下的 <details> 改成了底部齿轮浮层（Q8），面板只在展开时进 DOM。
-   要碰 .prompt-input / .prompt-actions 的用例先过这里打开浮层，
-   然后用 document.querySelector 查询 Portal 里的元素。 */
-async function openPromptPanel(wrapper: VueWrapper): Promise<void> {
-  await wrapper.get('.disclosure-summary').trigger('click')
-  await wrapper.vm.$nextTick()
-}
-
 describe('AgentChatPage', () => {
   beforeEach(() => {
     api.streamAgentChat.mockReset()
@@ -126,6 +125,8 @@ describe('AgentChatPage', () => {
     session.logout.mockReset()
     session.logout.mockResolvedValue(undefined)
     resetAuthUser()
+    // 偏好是应用级单例：上个用例写进去的提示词不能漏到这个用例。
+    usePreferences().preferences.agentSystemPrompt = ''
     threadsApi.listAgentThreads.mockReset()
     threadsApi.listAgentThreads.mockResolvedValue({ items: [], total: 0 })
     threadsApi.getAgentThreadMessages.mockReset()
@@ -150,8 +151,8 @@ describe('AgentChatPage', () => {
     const labels = wrapper.findAll('.topbar-nav-link').map((item) => item.attributes('aria-label'))
     expect(labels).toEqual(['语义检索'])
 
-    // 账号设置入口仍在右上角，管理后台从这里进入。
-    expect(wrapper.get('.account-identity').attributes('href')).toBe('/account')
+    // 账号与设置入口仍在右上角，管理后台从这里进入。
+    expect(wrapper.get('.account-identity').attributes('href')).toBe('/settings/account')
     wrapper.unmount()
   })
 
@@ -166,32 +167,11 @@ describe('AgentChatPage', () => {
     wrapper.unmount()
   })
 
-  it('进入页面时取默认提示词，让「填入默认提示词」可用', async () => {
+  it('自定义提示词归设置中心后，本页不再拉取默认提示词', async () => {
     const { wrapper } = await mountPage()
-    await openPromptPanel(wrapper)
-
-    expect(api.fetchAgentDefaultPrompt).toHaveBeenCalledOnce()
-    const fillButton = document.querySelector('.prompt-actions button') as HTMLButtonElement
-    expect(fillButton).not.toBeNull()
-    expect(fillButton.disabled).toBe(false)
-    wrapper.unmount()
-  })
-
-  it('默认提示词取不到时仍能进页面提问', async () => {
-    api.fetchAgentDefaultPrompt.mockRejectedValue(new Error('boom'))
-    const { wrapper } = await mountPage()
-    await openPromptPanel(wrapper)
-
-    // 不传 system_prompt 时后端用同一份默认值，所以这次失败不该阻断对话。
-    const fillButton = document.querySelector('.prompt-actions button') as HTMLButtonElement
-    expect(fillButton).not.toBeNull()
-    expect(fillButton.disabled).toBe(true)
-
-    await wrapper.get('.message-input').setValue('央行利率')
-    await wrapper.get('.agent-form').trigger('submit')
     await flushPromises()
 
-    expect(api.streamAgentChat).toHaveBeenCalledOnce()
+    expect(api.fetchAgentDefaultPrompt).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -217,7 +197,7 @@ describe('AgentChatPage', () => {
   it('点空态示例问题直接发出去', async () => {
     const { wrapper } = await mountPage()
 
-    await wrapper.get('.example-button').trigger('click')
+    await wrapper.get('.suggestion-button').trigger('click')
     await flushPromises()
 
     expect(api.streamAgentChat.mock.calls[0]?.[0]).toMatchObject({
@@ -356,15 +336,12 @@ describe('AgentChatPage', () => {
     wrapper.unmount()
   })
 
-  it('自定义系统提示词随下一轮发出', async () => {
+  it('设置中心保存的自定义系统提示词随下一轮发出', async () => {
     const { wrapper } = await mountPage()
-    await openPromptPanel(wrapper)
 
-    const promptInput = document.querySelector('.prompt-input') as HTMLTextAreaElement
-    expect(promptInput).not.toBeNull()
-    promptInput.value = '你是财经记者。'
-    promptInput.dispatchEvent(new Event('input', { bubbles: true }))
-    await wrapper.vm.$nextTick()
+    // 提示词是设置中心的持久偏好（应用级单例 store），发送时由页面注入给 useAgentChat。
+    const { preferences } = usePreferences()
+    preferences.agentSystemPrompt = '你是财经记者。'
 
     await wrapper.get('.message-input').setValue('问题')
     await wrapper.get('.agent-form').trigger('submit')
@@ -373,6 +350,10 @@ describe('AgentChatPage', () => {
     expect(api.streamAgentChat.mock.calls[0]?.[0]).toMatchObject({
       systemPrompt: '你是财经记者。',
     })
+
+    // 覆盖生效时输入条亮徽章，链回设置页。
+    const badge = wrapper.get('.prompt-badge-link')
+    expect(badge.attributes('href')).toBe('/settings/agent')
     wrapper.unmount()
   })
 

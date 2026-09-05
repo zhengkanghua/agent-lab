@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import SearchPage from '@/pages/SearchPage.vue'
 import { _resetRecordSequence } from '@/features/semantic-search'
 
@@ -32,6 +33,18 @@ function documentResult(title: string) {
   }
 }
 
+/** 页面里的顶栏与偏好入口都是 RouterLink，测试路由只放它们会去的地方。 */
+function makeRouter() {
+  return createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/', name: 'search', component: { template: '<div />' } },
+      { path: '/agent', name: 'agent-chat', component: { template: '<div />' } },
+      { path: '/settings/:section?', name: 'settings', component: { template: '<div />' } },
+    ],
+  })
+}
+
 describe('SearchPage search stream', () => {
   afterEach(() => {
     document.body.replaceChildren()
@@ -52,7 +65,9 @@ describe('SearchPage search stream', () => {
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mount(SearchPage, {
       attachTo: document.body,
-      global: { plugins: [[VueQueryPlugin, { queryClient: makeQueryClient() }]] },
+      global: {
+        plugins: [[VueQueryPlugin, { queryClient: makeQueryClient() }], makeRouter()],
+      },
     })
 
     expect(wrapper.find('.empty-state').exists()).toBe(true)
@@ -82,7 +97,9 @@ describe('SearchPage search stream', () => {
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mount(SearchPage, {
       attachTo: document.body,
-      global: { plugins: [[VueQueryPlugin, { queryClient: makeQueryClient() }]] },
+      global: {
+        plugins: [[VueQueryPlugin, { queryClient: makeQueryClient() }], makeRouter()],
+      },
     })
 
     // 第一轮
@@ -106,7 +123,9 @@ describe('SearchPage search stream', () => {
   it('removes chunk mode controls entirely (no switch in the composer)', async () => {
     const wrapper = mount(SearchPage, {
       attachTo: document.body,
-      global: { plugins: [[VueQueryPlugin, { queryClient: makeQueryClient() }]] },
+      global: {
+        plugins: [[VueQueryPlugin, { queryClient: makeQueryClient() }], makeRouter()],
+      },
     })
 
     expect(wrapper.find('.mode-switch').exists()).toBe(false)
@@ -126,7 +145,9 @@ describe('SearchPage search stream', () => {
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mount(SearchPage, {
       attachTo: document.body,
-      global: { plugins: [[VueQueryPlugin, { queryClient: makeQueryClient() }]] },
+      global: {
+        plugins: [[VueQueryPlugin, { queryClient: makeQueryClient() }], makeRouter()],
+      },
     })
 
     await wrapper.get('textarea').setValue('央行')

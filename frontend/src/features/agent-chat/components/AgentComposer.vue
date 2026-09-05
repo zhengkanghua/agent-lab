@@ -1,21 +1,25 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { MessageSquarePlus, Send, Settings2, Square } from '@lucide/vue'
+import { RouterLink } from 'vue-router'
 import BaseButton from '@/shared/ui/BaseButton.vue'
-import BaseDisclosure from '@/shared/ui/BaseDisclosure.vue'
-import { MAX_MESSAGE_CHARACTERS, MAX_SYSTEM_PROMPT_CHARACTERS } from '../model/agent-validation'
+import { MAX_MESSAGE_CHARACTERS } from '../model/agent-validation'
 
 /* 贴在页面底部的输入区。
  *
  * 形态是一个圆角框：上面是文本域，下面一行控件。它不再是侧栏里的一张卡片，
  * 所以标题「向 Agent 提问」和可见的字段标签都撤掉了——底部就一个输入框，
  * 再给它加标题是重复。字段标签改成 sr-only 保留给读屏。
+ *
+ * 自定义系统提示词不在这里：它是「改变模型行为」的配置，不是一条消息，归设置中心的
+ * 「Agent 偏好」分区（可发现、可持久、可恢复默认）。输入条只在覆盖生效时亮一枚徽章，
+ * 点它直达设置页——状态可见，编辑归位。
  */
 
 const props = defineProps<{
   modelValue: string
-  systemPrompt: string
-  defaultPrompt: string | null
+  /** 偏好里已保存非空提示词时为真：输入条亮出「已启用」徽章。 */
+  customPromptActive: boolean
   inputError: string | null
   remainingCharacters: number
   streaming: boolean
@@ -25,7 +29,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
-  'update:systemPrompt': [value: string]
   submit: []
   cancel: []
   'new-conversation': []
@@ -36,18 +39,11 @@ const draft = computed({
   set: (value: string) => emit('update:modelValue', value),
 })
 
-const promptDraft = computed({
-  get: () => props.systemPrompt,
-  set: (value: string) => emit('update:systemPrompt', value),
-})
-
 const counterTone = computed(() => {
   if (props.remainingCharacters < 0) return 'is-over'
   if (props.remainingCharacters < 200) return 'is-near'
   return ''
 })
-
-const promptOverridden = computed(() => props.systemPrompt.trim().length > 0)
 
 const messageInputRef = ref<HTMLTextAreaElement | null>(null)
 
@@ -75,10 +71,6 @@ function onEnter(event: KeyboardEvent): void {
   event.preventDefault()
   if (props.canSend) emit('submit')
 }
-
-function useDefaultPrompt(): void {
-  if (props.defaultPrompt !== null) emit('update:systemPrompt', props.defaultPrompt)
-}
 </script>
 
 <template>
@@ -102,53 +94,21 @@ function useDefaultPrompt(): void {
 
       <div class="composer-bar">
         <div class="bar-left">
-          <!-- 系统提示词从 <details> 改成齿轮浮层（Q8）：它是这一档的次要设置，
-               摊开在输入框下面会把主操作挤下去。 -->
-          <BaseDisclosure
-            :summary="promptOverridden ? '自定义系统提示词（已覆盖）' : '自定义系统提示词'"
-            size="sm"
-            tone="plain"
+          <!-- 覆盖生效时亮徽章，点它直达设置页。默认状态不打扰：没有可调的东西
+               就不该占一格。 -->
+          <RouterLink
+            v-if="customPromptActive"
+            class="prompt-badge-link"
+            :to="{ name: 'settings', params: { section: 'agent' } }"
+            aria-label="自定义提示词已启用，去设置页调整"
+            title="自定义提示词已启用，去设置页调整"
           >
-            <template #icon>
-              <span class="prompt-trigger">
-                <Settings2 :size="15" aria-hidden="true" />
-                <span v-if="promptOverridden" class="prompt-badge" aria-hidden="true"></span>
-              </span>
-            </template>
-            <div class="prompt-panel">
-              <p class="prompt-note">
-                留空表示使用服务端内置的默认提示词。只影响之后发出的轮次，不会被保存。
-              </p>
-              <textarea
-                id="agent-system-prompt"
-                v-model="promptDraft"
-                class="prompt-input"
-                name="system_prompt"
-                rows="4"
-                :maxlength="MAX_SYSTEM_PROMPT_CHARACTERS"
-                aria-label="自定义系统提示词"
-                placeholder="留空即使用默认提示词"
-              ></textarea>
-              <div class="prompt-actions">
-                <BaseButton
-                  variant="ghost"
-                  size="xs"
-                  :disabled="defaultPrompt === null"
-                  @click="useDefaultPrompt"
-                >
-                  填入默认提示词
-                </BaseButton>
-                <BaseButton
-                  variant="ghost"
-                  size="xs"
-                  :disabled="!systemPrompt"
-                  @click="emit('update:systemPrompt', '')"
-                >
-                  清空
-                </BaseButton>
-              </div>
-            </div>
-          </BaseDisclosure>
+            <span class="prompt-trigger">
+              <Settings2 :size="15" aria-hidden="true" />
+              <span class="prompt-badge" aria-hidden="true"></span>
+            </span>
+            <span class="prompt-badge-text">自定义提示词</span>
+          </RouterLink>
 
           <BaseButton
             v-if="hasHistory"
@@ -266,6 +226,28 @@ function useDefaultPrompt(): void {
   min-width: 0;
 }
 
+.prompt-badge-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 9px;
+  border: 1px solid var(--accent-soft);
+  border-radius: var(--radius-pill);
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+  transition:
+    color var(--duration-fast) var(--ease-out-smooth),
+    border-color var(--duration-fast) var(--ease-out-smooth);
+}
+
+.prompt-badge-link:hover {
+  color: var(--accent-hover);
+  border-color: var(--accent);
+}
+
 .prompt-trigger {
   position: relative;
   display: inline-flex;
@@ -306,59 +288,6 @@ function useDefaultPrompt(): void {
   visibility: visible;
 }
 
-.prompt-panel {
-  width: 100%;
-}
-
-.prompt-title {
-  color: var(--text-primary);
-  font-size: 0.84rem;
-  font-weight: 760;
-}
-
-.prompt-note {
-  margin-top: 5px;
-  color: var(--text-secondary);
-  font-size: 0.72rem;
-  line-height: 1.55;
-}
-
-.prompt-input {
-  display: block;
-  width: 100%;
-  resize: vertical;
-  min-height: 150px;
-  margin-top: 10px;
-  padding: 11px 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  outline: none;
-  color: var(--text-primary);
-  background: var(--surface-base);
-  font-family: var(--mono-font);
-  font-size: 0.78rem;
-  line-height: 1.6;
-  transition:
-    border-color var(--duration-fast) var(--ease-out-smooth),
-    box-shadow var(--duration-fast) var(--ease-out-smooth);
-}
-
-.prompt-input::placeholder {
-  color: var(--text-tertiary);
-}
-
-.prompt-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-.prompt-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 9px;
-}
-
 .field-error {
   padding: 7px 7px 2px;
   color: var(--danger);
@@ -371,6 +300,15 @@ function useDefaultPrompt(): void {
      手机上打到临近值的可能极低。临近/超出两档仍然由语气色显示。 */
   .character-count:not(.is-near):not(.is-over) {
     display: none;
+  }
+
+  /* 徽章收成纯图标：文字挤占输入行，图标 + 小圆点已足够表达状态。 */
+  .prompt-badge-text {
+    display: none;
+  }
+
+  .prompt-badge-link {
+    padding: 6px 8px;
   }
 }
 </style>

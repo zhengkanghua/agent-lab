@@ -3,6 +3,8 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { Bot, Search } from '@lucide/vue'
 import AppShell from '@/layouts/AppShell.vue'
 import { authSession, useLogout } from '@/features/auth'
+import { usePreferences } from '@/features/settings'
+import BaseSuggestionList from '@/shared/ui/BaseSuggestionList.vue'
 import {
   DocumentReader,
   SearchComposer,
@@ -27,7 +29,14 @@ import {
 
 const composerRef = ref<InstanceType<typeof SearchComposer> | null>(null)
 const reader = useDocumentReader()
-const stream = useSearchStream()
+
+// 数量参数是设置中心的持久偏好：提交那一刻读到什么值，这一轮就用什么值。
+const { preferences } = usePreferences()
+const stream = useSearchStream({
+  getDocumentLimit: () => preferences.documentLimit,
+  getMatchesPerDocument: () => preferences.matchesPerDocument,
+})
+
 const { loggingOut, logoutError, logout } = useLogout()
 
 /** 用户手动展开过的旧记录的 id（latest 不需要进这里，恒展开）。 */
@@ -37,6 +46,12 @@ const isSuperuser = computed(() => authSession.user.value?.is_superuser === true
 const navLinks = computed(() => [
   { to: { name: 'agent-chat' }, label: 'Agent 对话', icon: Bot, visible: isSuperuser.value },
 ])
+
+/** 悬停在输入条设置入口上时给的当前值摘要。 */
+const preferenceSummary = computed(
+  () =>
+    `每次检索 ${preferences.documentLimit} 篇 · 每篇 ${preferences.matchesPerDocument} 条（在设置中调整）`,
+)
 
 const hasRecords = computed(() => stream.records.value.length > 0)
 const latest = computed<SearchRecord | null>(() => stream.latestRecord.value)
@@ -130,14 +145,11 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
         <SearchComposer
           ref="composerRef"
           v-model="stream.draft.value"
-          :document-limit="stream.documentLimit.value"
-          :matches-per-document="stream.matchesPerDocument.value"
           :loading="stream.isSearching.value"
           :input-error="stream.inputError.value"
           :remaining-characters="stream.remainingCharacters.value"
           :has-records="hasRecords"
-          @update:document-limit="stream.documentLimit.value = $event"
-          @update:matches-per-document="stream.matchesPerDocument.value = $event"
+          :preference-summary="preferenceSummary"
           @submit="submitSearch"
           @clear="clearStream"
         />
@@ -145,16 +157,11 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
 
       <!-- 空态：还没有任何检索记录。只有示例，点一下直接搜。 -->
       <div v-if="!hasRecords" class="empty-state">
-        <div class="example-list" aria-label="示例检索">
-          <button
-            v-for="example in SEARCH_EXAMPLES"
-            :key="example"
-            type="button"
-            @click="chooseExample(example)"
-          >
-            <span>{{ example }}</span>
-          </button>
-        </div>
+        <BaseSuggestionList
+          :examples="SEARCH_EXAMPLES"
+          aria-label="示例检索"
+          @select="chooseExample"
+        />
       </div>
 
       <!-- 检索流：最新贴顶展开，旧记录折叠。 -->
@@ -216,8 +223,8 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
   position: sticky;
   top: var(--app-topbar-height, 69px);
   border-bottom-color: var(--surface-sunken);
-  backdrop-filter: blur(12px);
-  /* 半透明表面 + 模糊 = --surface-scrim 的本职（AdminShell 顶栏同款）。 */
+  /* 半透明表面用 --surface-scrim（96% 不透明）。不配 backdrop-filter：
+     那点模糊肉眼不可见，却会在主题切换时闪出一帧黑色矩形（Chromium 伪影）。 */
   background: var(--surface-scrim);
 }
 
@@ -229,64 +236,13 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
   padding: 4px 0 90px;
 }
 
-/* 空态沿用 agent 页的居中引导：标题 + 一句说明 + 示例词，不再是一张独立卡片。 */
+/* 空态沿用 agent 页的居中引导：示例建议卡收在阅读宽度内。 */
 .empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  width: min(100%, var(--reading-width));
+  width: min(100%, calc(var(--reading-width) - 140px));
   margin: 0 auto;
-  text-align: center;
 }
 
-.example-list {
-  display: grid;
-  gap: 8px;
-  width: 100%;
-  max-width: 620px;
-  margin-top: 28px;
-}
-
-.example-list button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  min-height: 46px;
-  padding: 10px 14px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  background: var(--surface-raised);
-  font-size: 0.88rem;
-  text-align: center;
-  transition:
-    border-color var(--duration-fast) var(--ease-out-smooth),
-    color var(--duration-fast) var(--ease-out-smooth),
-    transform var(--duration-fast) var(--ease-in-out-back);
-}
-
-.example-list button:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-  transform: translateY(-1px);
-}
-
-.example-list button:active {
-  transform: translateY(0) scale(0.98);
-  transition-duration: calc(var(--duration-fast) / 2);
-}
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-@media (max-width: 600px) {
+@media (max-width: 560px) {
   .composer-dock {
     width: calc(100% - 24px);
     padding: 12px 0 10px;
@@ -299,21 +255,6 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
 
   .empty-state {
     width: calc(100% - 24px);
-  }
-
-  .empty-lead h2 {
-    font-size: 1.5rem;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .example-list button {
-    transition-property: border-color, color;
-  }
-
-  .example-list button:hover,
-  .example-list button:active {
-    transform: none;
   }
 }
 </style>

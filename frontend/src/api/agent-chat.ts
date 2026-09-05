@@ -34,6 +34,14 @@ export const AGENT_STREAM_IDLE_TIMEOUT_MS = 60_000
 /** 建立连接（拿到响应头）的超时。流开始之后就换成上面的空闲超时。 */
 export const AGENT_STREAM_CONNECT_TIMEOUT_MS = 30_000
 
+/**
+ * 自定义系统提示词的字符上界，与后端 `agent/limits.py` 的 MAX_SYSTEM_PROMPT_CHARS 一致
+ * （都是 4000）。放 api 层是因为它是请求契约：设置中心的「Agent 偏好」编辑器要用它做
+ * maxlength，而 features/agent-chat 的提问上界（MAX_MESSAGE_CHARACTERS）留在那边——
+ * 提示词与提问虽然都会整段进入模型上下文并按 token 计费，但用途不同，刻意不共用一个常量。
+ */
+export const MAX_SYSTEM_PROMPT_CHARACTERS = 4000
+
 const SSE_FRAME_SEPARATOR = '\n\n'
 const SSE_DATA_FIELD = 'data:'
 

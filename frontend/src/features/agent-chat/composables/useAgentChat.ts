@@ -23,6 +23,17 @@ export type AgentChatStream = typeof streamAgentChat
 /** 注入回放实现，同上。 */
 export type AgentThreadLoader = typeof getAgentThreadMessages
 
+export interface UseAgentChatOptions {
+  stream?: AgentChatStream
+  loadThreadMessages?: AgentThreadLoader
+  /**
+   * 发送时读取自定义系统提示词。提示词是设置中心的偏好（本浏览器的持久配置），不是
+   * 对话状态——由调用方注入 getter 而不是在这里持有，本 composable 保持与偏好 store
+   * 解耦，测试也能自由替身。
+   */
+  getSystemPrompt?: () => string
+}
+
 const CANCELLED_TRACE_NOTE = '本轮对话已取消，这次工具调用的结果未送达。'
 const FAILED_TRACE_NOTE = '本轮对话中断，这次工具调用的结果未送达。'
 // 回放专用：历史里那次调用没有结果，是当时就断了，不是现在还在查。
@@ -39,10 +50,11 @@ const HISTORY_TRACE_NOTE = '这次工具调用没有结果记录，当时的对�
  * 还没 resolve 的读取，而「事件已经拿到、await 还没恢复执行」的窗口内 abort 不起作用，
  * 只有序号比较能拦住已取消的那一轮继续往界面上写字。
  */
-export function useAgentChat(
-  stream: AgentChatStream = streamAgentChat,
-  loadThreadMessages: AgentThreadLoader = getAgentThreadMessages,
-) {
+export function useAgentChat({
+  stream = streamAgentChat,
+  loadThreadMessages = getAgentThreadMessages,
+  getSystemPrompt = () => '',
+}: UseAgentChatOptions = {}) {
   const draft = ref('')
   // 用深层 ref 而不是检索页那样的 shallowRef：流式过程要原地改写最后一轮的 answer 和
   // traces，shallowRef 只跟踪整个数组的替换，逐 token 追加不会触发渲染。对话对象很小
@@ -51,7 +63,6 @@ export function useAgentChat(
   const status = ref<AgentChatStatus>('idle')
   const inputError = ref<string | null>(null)
   const threadId = ref<string | null>(null)
-  const systemPrompt = ref('')
   // 回放状态与流式状态分开：一个是「历史读出来了吗」，一个是「这一轮在生成吗」。合成一个
   // status 会让「正在读历史」误触发输入框禁用之外的流式 UI（停止按钮、光标）。
   const isLoadingThread = ref(false)
@@ -98,7 +109,7 @@ export function useAgentChat(
       for await (const event of stream({
         message: question,
         threadId: threadId.value,
-        systemPrompt: systemPrompt.value,
+        systemPrompt: getSystemPrompt(),
         signal: controller.signal,
       })) {
         // 已被取消或已被更新的一轮不再往界面上写：break 会走生成器的 finally，
@@ -295,7 +306,6 @@ export function useAgentChat(
     status,
     inputError,
     threadId,
-    systemPrompt,
     isLoadingThread,
     threadError,
     isHistoryTruncated,

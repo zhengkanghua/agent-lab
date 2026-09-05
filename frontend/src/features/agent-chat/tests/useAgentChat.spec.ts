@@ -13,11 +13,19 @@ const THREAD_ID = '30000000-0000-4000-8000-000000000001'
 const OTHER_THREAD_ID = '30000000-0000-4000-8000-000000000002'
 
 /** 仍然挂载组件而不是裸调 composable：onScopeDispose 的取消语义需要真实的 effect scope。 */
-function mountHarness(stream: AgentChatStream, loader?: AgentThreadLoader) {
+function mountHarness(
+  stream: AgentChatStream,
+  loader?: AgentThreadLoader,
+  options: { getSystemPrompt?: () => string } = {},
+) {
   let composable: ReturnType<typeof useAgentChat> | undefined
   const Harness = defineComponent({
     setup() {
-      composable = loader ? useAgentChat(stream, loader) : useAgentChat(stream)
+      composable = useAgentChat({
+        stream,
+        ...(loader ? { loadThreadMessages: loader } : {}),
+        ...options,
+      })
       return () => h('div')
     },
   })
@@ -526,10 +534,12 @@ describe('useAgentChat', () => {
     wrapper.unmount()
   })
 
-  it('把自定义系统提示词交给流', async () => {
+  it('把注入的系统提示词交给流', async () => {
     const stream = scriptedStream([{ event: 'done', thread_id: THREAD_ID }])
-    const { wrapper, chat } = mountHarness(stream)
-    chat.systemPrompt.value = '你是财经记者。'
+    // 提示词来自设置中心的偏好 store，由调用方注入 getter；这里验证 send 时刻的取值会进流。
+    const { wrapper, chat } = mountHarness(stream, undefined, {
+      getSystemPrompt: () => '你是财经记者。',
+    })
     chat.draft.value = '问题'
 
     await chat.send()

@@ -24,7 +24,11 @@ function makeRouter(): Router {
     history: createMemoryHistory(),
     routes: [
       { path: '/', name: 'search', component: { template: '<div>search</div>' } },
-      { path: '/account', name: 'account', component: { template: '<div>account</div>' } },
+      {
+        path: '/settings/:section?',
+        name: 'settings',
+        component: { template: '<div>settings</div>' },
+      },
       {
         path: '/admin',
         component: AdminShell,
@@ -122,6 +126,6 @@ describe('AdminShell', () => {
     const { wrapper } = await mountShell()
 
     expect(wrapper.get('.account-identity span').text()).toBe('admin@example.com')
-    expect(wrapper.get('.account-identity').attributes('href')).toBe('/account')
+    expect(wrapper.get('.account-identity').attributes('href')).toBe('/settings/account')
   })
 })

@@ -17,6 +17,31 @@ export type DocumentSearchRequest = components['schemas']['DocumentSearchRequest
 export type DocumentSearchResultDto = components['schemas']['DocumentSearchResult']
 export type DocumentSearchMatchDto = components['schemas']['DocumentSearchMatch']
 
+/**
+ * 数量参数的契约边界。与后端一一对应：document_limit 是 1..100，matches_per_document 是
+ * 1..20。放在 api 层是因为它们是请求契约的一部分——检索页的输入条与设置中心的「检索偏好」
+ * 是两个不同的 UI 消费方，边界只有这一份，谁都不许自己另抄一份。
+ *
+ * UI 的下拉选项可以比 MAX 收得更窄（产品选择），但归一化必须按契约兜底，以免发出后端
+ * 必然拒绝的请求。MAX_QUERY_CHARACTERS 同理，仍在
+ * features/semantic-search/model/search-validation.ts（它只服务检索输入框一处）。
+ */
+export const MIN_RESULT_LIMIT = 1
+export const MAX_RESULT_LIMIT = 100
+export const DEFAULT_RESULT_LIMIT = 10
+export const DEFAULT_MATCHES_PER_DOCUMENT = 3
+export const MAX_MATCHES_PER_DOCUMENT = 20
+
+export function normalizeResultLimit(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_RESULT_LIMIT
+  return Math.min(MAX_RESULT_LIMIT, Math.max(MIN_RESULT_LIMIT, Math.trunc(value)))
+}
+
+export function normalizeMatchesPerDocument(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_MATCHES_PER_DOCUMENT
+  return Math.min(MAX_MATCHES_PER_DOCUMENT, Math.max(MIN_RESULT_LIMIT, Math.trunc(value)))
+}
+
 export interface SearchDocumentsOptions {
   query: string
   documentLimit: number

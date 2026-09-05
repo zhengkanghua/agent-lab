@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { usePasswordChangeForm } from '../composables/usePasswordChangeForm'
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseField from '@/shared/ui/BaseField.vue'
-import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
+import BaseInput from '@/shared/ui/BaseInput.vue'
 
 const { form, validationErrors, canSubmit, submit, isPending, errorMessage, successMessage } =
   usePasswordChangeForm()
@@ -15,7 +16,7 @@ function getFieldError(field: string): string | undefined {
 <template>
   <form class="password-form" @submit.prevent="submit">
     <div class="form-header">
-      <h2 class="form-title">修改密码</h2>
+      <h3 class="form-title">修改密码</h3>
       <p class="form-description">修改成功后,其他设备的登录将自动失效。</p>
     </div>
 
@@ -29,10 +30,9 @@ function getFieldError(field: string): string | undefined {
         label="当前密码"
         :error="getFieldError('currentPassword')"
       >
-        <input
+        <BaseInput
           v-bind="control"
           v-model="form.currentPassword"
-          class="account-input"
           type="password"
           name="current-password"
           autocomplete="current-password"
@@ -46,10 +46,9 @@ function getFieldError(field: string): string | undefined {
         label="新密码"
         :error="getFieldError('newPassword')"
       >
-        <input
+        <BaseInput
           v-bind="control"
           v-model="form.newPassword"
-          class="account-input"
           type="password"
           name="new-password"
           autocomplete="new-password"
@@ -63,10 +62,9 @@ function getFieldError(field: string): string | undefined {
         label="确认新密码"
         :error="getFieldError('confirmPassword')"
       >
-        <input
+        <BaseInput
           v-bind="control"
           v-model="form.confirmPassword"
-          class="account-input"
           type="password"
           name="confirm-password"
           autocomplete="new-password"
@@ -75,17 +73,14 @@ function getFieldError(field: string): string | undefined {
       </BaseField>
     </div>
 
-    <div v-if="errorMessage" class="message message-error" role="alert">
-      {{ errorMessage }}
-    </div>
+    <BaseCallout v-if="errorMessage" tone="danger" :description="errorMessage" />
 
-    <div v-if="successMessage" class="message message-success" role="status">
-      {{ successMessage }}
-    </div>
+    <!-- role="status" 经 attrs 落到根元素：成功提示对读屏是礼貌播报，不是警报。 -->
+    <BaseCallout v-if="successMessage" tone="info" role="status" :description="successMessage" />
 
-    <BaseButton type="submit" :disabled="!canSubmit" class="submit-button">
-      <BaseSpinner v-if="isPending" class="spinner" />
-      <span>{{ isPending ? '提交中...' : '修改密码' }}</span>
+    <!-- loading 期间文案保留，按钮宽度不跳动（见 BaseButton 注释）。 -->
+    <BaseButton type="submit" class="submit-button" :loading="isPending" :disabled="!canSubmit">
+      修改密码
     </BaseButton>
   </form>
 </template>
@@ -123,63 +118,7 @@ function getFieldError(field: string): string | undefined {
   gap: var(--space-4);
 }
 
-/* 输入框样式与登录页 .login-input 同款：输入框没抽成基础组件（type/autocomplete
-   属性面差别太大），各页面自带样式是仓库现状，见 LoginPage.vue 同名注释。 */
-.account-input {
-  width: 100%;
-  height: 42px;
-  padding: 0 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  background: var(--surface-raised);
-  font-size: 0.84rem;
-  font-weight: 450;
-  outline: none;
-  transition:
-    border-color 140ms ease,
-    box-shadow 140ms ease;
-}
-
-.account-input::placeholder {
-  color: var(--text-tertiary);
-}
-
-.account-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 4px var(--accent-soft);
-}
-
-.account-input:disabled {
-  color: var(--text-tertiary);
-  background: var(--surface-sunken);
-}
-
-.message {
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
-}
-
-.message-error {
-  background: var(--surface-error);
-  color: var(--text-error);
-}
-
-.message-success {
-  background: var(--surface-success);
-  color: var(--text-success);
-}
-
 .submit-button {
   align-self: flex-start;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.spinner {
-  width: 1rem;
-  height: 1rem;
 }
 </style>

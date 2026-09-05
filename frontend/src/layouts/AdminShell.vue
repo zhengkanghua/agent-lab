@@ -110,10 +110,10 @@ function closeDrawer(): void {
 
           <RouterLink
             v-if="authSession.user.value"
-            :to="{ name: 'account' }"
+            :to="{ name: 'settings', params: { section: 'account' } }"
             class="account-identity"
-            :aria-label="`账号设置 - ${authSession.user.value.email}`"
-            :title="`账号设置 - ${authSession.user.value.email}`"
+            :aria-label="`账号与设置 - ${authSession.user.value.email}`"
+            :title="`账号与设置 - ${authSession.user.value.email}`"
           >
             <span>{{ authSession.user.value.email }}</span>
           </RouterLink>

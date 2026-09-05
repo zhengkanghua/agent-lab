@@ -7,14 +7,14 @@ const api = vi.hoisted(() => ({ fetchAgentDefaultPrompt: vi.fn() }))
 vi.mock('../../../api/agent-chat', () => api)
 
 import { ApiError } from '@/api/client'
-import { useAgentDefaultPrompt } from '../composables/useAgentDefaultPrompt'
+import { useDefaultAgentPrompt } from '../composables/useDefaultAgentPrompt'
 
 /** 仍然挂载组件而不是裸调 composable：onScopeDispose 的取消语义需要真实的 effect scope。 */
 function mountHarness() {
-  let composable: ReturnType<typeof useAgentDefaultPrompt> | undefined
+  let composable: ReturnType<typeof useDefaultAgentPrompt> | undefined
   const Harness = defineComponent({
     setup() {
-      composable = useAgentDefaultPrompt()
+      composable = useDefaultAgentPrompt()
       return () => h('div')
     },
   })
@@ -23,7 +23,7 @@ function mountHarness() {
   return { wrapper, prompt: composable }
 }
 
-describe('useAgentDefaultPrompt', () => {
+describe('useDefaultAgentPrompt', () => {
   beforeEach(() => {
     api.fetchAgentDefaultPrompt.mockReset()
   })

@@ -6,15 +6,15 @@ import { authSession } from '@/features/auth'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 import ThemeToggle from '@/shared/ui/ThemeToggle.vue'
 
-/* 登录后三页共用的外壳：跳转链接、顶栏、页脚。
+/* 登录后前台三页（检索 / Agent 对话 / 设置）共用的外壳：跳转链接、顶栏。
  *
- * 收编前三页各写一份顶栏，SearchPage 与 AgentChatPage 的 .topbar 连字节都相同，
- * UserAdminPage 只是换了个类名 .admin-topbar。差异集中在四处：品牌文案与图标、
- * mode-note 的有无、导航入口、窄屏断点。这四处都做成入口，不为了统一抹平。
+ * 收编各页自写一份顶栏的差异集中在四处：品牌文案与图标、mode-note 的有无、导航入口、
+ * 窄屏断点。前三处做成入口，不为了统一抹平；断点原先开放成 compactAt prop，
+ * 旧账号页消失后已无人传第二档，收成一个 560px 常量（消融）。
  *
  * 正文由调用方放进默认插槽，连 <main> 一起——那上面的类是各页自己的骨架
- * （检索页两栏、账号页单栏），scoped 样式必须写在各页里才生效。外壳只负责
- * 提供跳转链接的落点，因此需要 mainId 与页面的 <main id> 对上。
+ * （检索页单列流、设置页左导航右内容），scoped 样式必须写在各页里才生效。
+ * 外壳只负责提供跳转链接的落点，因此需要 mainId 与页面的 <main id> 对上。
  *
  * 直接读 authSession 而不是让调用方传邮箱：会话是应用级单例，三页都只是显示它。
  * 传进来会让每页多一份 v-if 判空，而那个判断三页完全一样。
@@ -44,18 +44,9 @@ const props = withDefaults(
     mainId: string
     skipLabel: string
     navLinks?: TopbarNavLink[]
-    /** 省略则整个 mode-note 不渲染（账号页没有这一块）。 */
+    /** 省略则整个 mode-note 不渲染（设置页没有这一块）。 */
     modeLabel?: string
     modeDetail?: string
-    /** 省略则不渲染页脚（账号页没有页脚）。 */
-    footerBrand?: string
-    footerNote?: string
-    /* 顶栏收窄的断点。两个正文页在 560px 收，账号页要提前到 720px：
-       它的操作区多一个带文案的「返回检索」，邮箱在 560px 以上就已经挤出去了。
-       媒体查询读不到自定义属性，所以做成两个类而不是一个变量。 */
-    compactAt?: 560 | 720
-    /** 账号页整页底色是 raised，两个正文页用默认底色。 */
-    background?: 'default' | 'raised'
     loggingOut?: boolean
     logoutError?: boolean
   }>(),
@@ -65,10 +56,6 @@ const props = withDefaults(
     navLinks: () => [],
     modeLabel: undefined,
     modeDetail: undefined,
-    footerBrand: undefined,
-    footerNote: undefined,
-    compactAt: 560,
-    background: 'default',
     loggingOut: false,
     logoutError: false,
   },
@@ -86,10 +73,7 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
 </script>
 
 <template>
-  <div
-    class="app-shell"
-    :class="[`compact-${compactAt}`, { 'bg-raised': background === 'raised' }]"
-  >
+  <div class="app-shell">
     <a class="skip-link" :href="`#${mainId}`">{{ skipLabel }}</a>
 
     <header class="topbar">
@@ -129,10 +113,10 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
 
             <RouterLink
               v-if="authSession.user.value"
-              :to="{ name: 'account' }"
+              :to="{ name: 'settings', params: { section: 'account' } }"
               class="account-identity"
-              :aria-label="`账号设置 - ${authSession.user.value.email}`"
-              :title="`账号设置 - ${authSession.user.value.email}`"
+              :aria-label="`账号与设置 - ${authSession.user.value.email}`"
+              :title="`账号与设置 - ${authSession.user.value.email}`"
             >
               <UserRound :size="16" aria-hidden="true" />
               <span>{{ authSession.user.value.email }}</span>
@@ -154,13 +138,6 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
     </header>
 
     <slot />
-
-    <footer v-if="footerBrand" class="site-footer">
-      <div class="content-wrap footer-inner">
-        <span>{{ footerBrand }}</span>
-        <span v-if="footerNote">{{ footerNote }}</span>
-      </div>
-    </footer>
   </div>
 </template>
 
@@ -171,14 +148,9 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
 /* 顶栏总高对外暴露成自定义属性：Agent 页要让正文区正好占满「视口减顶栏」，
    否则底部贴靠的输入区要么被挤出屏幕、要么留一条空隙。
    68px 来自 .topbar-inner 的 min-height（topbar.css），+1px 是下边框。
-   自定义属性沿 DOM 继承，不受 scoped 限制，所以子页面能读到；而两个 compact
-   断点在下面各自改写它，页面那边不必知道断点在哪。 */
+   自定义属性沿 DOM 继承，不受 scoped 限制，所以子页面能读到；窄屏断点在下面改写它。 */
 .app-shell {
   --app-topbar-height: 69px;
-}
-
-.bg-raised {
-  background: var(--surface-raised);
 }
 
 .topbar {
@@ -314,94 +286,31 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
   white-space: nowrap;
 }
 
-.site-footer {
-  border-top: 1px solid var(--border-subtle);
-  background: var(--surface-raised);
-}
-
-/* 两处原本是 --text-tertiary：它在这两个底色上都只有 3.85:1，正文字号不到 AA 的 4.5。
-   --text-secondary 是 7.57:1。mode-detail 与页脚右侧都是真内容而非装饰，所以改色。 */
-.footer-inner {
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 19px 0 22px;
-  color: var(--text-secondary);
-  font-size: 0.72rem;
-}
-
-/* 底色那档抬到 secondary 之后，这一档跟着抬到 primary，否则两个 span
-   只剩字重之差，原来的两级层次会塌成一级。 */
-.footer-inner span:first-child {
-  color: var(--text-primary);
-  font-weight: 720;
-}
-
-/* 两个断点的声明完全一样，只有阈值不同。写成两块而不是一块加变量：
-   媒体查询的条件读不到自定义属性。 */
 @media (max-width: 560px) {
-  .compact-560 {
+  .app-shell {
     --app-topbar-height: 63px;
   }
 
-  .compact-560 .topbar-inner {
+  .topbar-inner {
     min-height: 62px;
   }
 
-  .compact-560 .brand-copy small,
-  .compact-560 .mode-detail,
-  .compact-560 .account-identity {
+  .brand-copy small,
+  .mode-detail,
+  .account-identity {
     display: none;
   }
 
-  .compact-560 .mode-note {
+  .mode-note {
     font-size: 0.72rem;
   }
 
-  .compact-560 .topbar-actions {
+  .topbar-actions {
     gap: 8px;
   }
 
-  .compact-560 .account-control {
+  .account-control {
     padding-left: 8px;
-  }
-}
-
-@media (max-width: 720px) {
-  .compact-720 {
-    --app-topbar-height: 63px;
-  }
-
-  .compact-720 .topbar-inner {
-    min-height: 62px;
-  }
-
-  .compact-720 .brand-copy small,
-  .compact-720 .mode-detail,
-  .compact-720 .account-identity {
-    display: none;
-  }
-
-  .compact-720 .mode-note {
-    font-size: 0.72rem;
-  }
-
-  .compact-720 .topbar-actions {
-    gap: 8px;
-  }
-
-  .compact-720 .account-control {
-    padding-left: 8px;
-  }
-}
-
-/* 页脚在窄屏改成竖排。原来只有 SearchPage 有这一条，AgentChatPage 漏了——
-   两页页脚其余样式逐字节相同，那是抄漏而不是刻意的差异。 */
-@media (max-width: 560px) {
-  .footer-inner {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 5px;
   }
 }
 </style>

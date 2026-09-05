@@ -6,18 +6,20 @@ import { searchDocuments } from '@/api/document-search'
 import { useSearchStream } from '../composables/useSearchStream'
 import { _resetRecordSequence } from '../model/search-record'
 
-vi.mock('../../../api/document-search', () => ({
+// 数量参数的归一化函数随 composable 一起被使用，mock 里用 importOriginal 保留真实现。
+vi.mock('../../../api/document-search', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../api/document-search')>()),
   searchDocuments: vi.fn(),
 }))
 
 const mockedSearchDocuments = vi.mocked(searchDocuments)
 
 // 仍然挂载组件而不是裸调 composable：onScopeDispose 的取消语义需要真实的 effect scope。
-function mountHarness() {
+function mountHarness(options: Parameters<typeof useSearchStream>[0] = {}) {
   let stream: ReturnType<typeof useSearchStream> | undefined
   const Harness = defineComponent({
     setup() {
-      stream = useSearchStream()
+      stream = useSearchStream(options)
       return () => h('div')
     },
   })
@@ -190,6 +192,42 @@ describe('useSearchStream', () => {
 
     expect(stream.records.value).toHaveLength(2)
     expect(stream.latestRecord.value?.status).toBe('success')
+    wrapper.unmount()
+  })
+
+  it('数量参数在提交那一刻从注入的 getter 读取（设置中心的偏好）', async () => {
+    mockedSearchDocuments.mockResolvedValue([dto])
+    let limit = 20
+    let perDocument = 5
+    const { wrapper, stream } = mountHarness({
+      getDocumentLimit: () => limit,
+      getMatchesPerDocument: () => perDocument,
+    })
+    stream.draft.value = '货币政策'
+
+    await stream.search()
+    await flushPromises()
+
+    expect(mockedSearchDocuments).toHaveBeenCalledWith({
+      query: '货币政策',
+      documentLimit: 20,
+      matchesPerDocument: 5,
+      signal: expect.any(AbortSignal),
+    })
+
+    // 下一轮提交时改了偏好：新的一轮用新值，不发请求去改旧记录。
+    limit = 1
+    perDocument = 1
+    stream.draft.value = '财政政策'
+    await stream.search()
+    await flushPromises()
+
+    expect(mockedSearchDocuments).toHaveBeenLastCalledWith({
+      query: '财政政策',
+      documentLimit: 1,
+      matchesPerDocument: 1,
+      signal: expect.any(AbortSignal),
+    })
     wrapper.unmount()
   })
 

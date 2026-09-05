@@ -1,22 +1,33 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import SearchComposer from '../components/SearchComposer.vue'
 import { MAX_QUERY_CHARACTERS } from '../model/search-validation'
 
 type ComposerProps = InstanceType<typeof SearchComposer>['$props']
 
+function testRouter() {
+  return createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/', name: 'search', component: { template: '<div />' } },
+      { path: '/settings/:section?', name: 'settings', component: { template: '<div />' } },
+    ],
+  })
+}
+
 function mountComposer(overrides: Partial<ComposerProps> = {}) {
   return mount(SearchComposer, {
     props: {
       modelValue: '央行利率',
-      documentLimit: 10,
-      matchesPerDocument: 3,
       loading: false,
       inputError: null,
       remainingCharacters: 4088,
       hasRecords: false,
+      preferenceSummary: '每次检索 10 篇 · 每篇 3 条（在设置中调整）',
       ...overrides,
     },
+    global: { plugins: [testRouter()] },
   })
 }
 
@@ -28,13 +39,15 @@ describe('SearchComposer', () => {
     expect(textarea.attributes('maxlength')).toBe(String(MAX_QUERY_CHARACTERS))
   })
 
-  it('offers article count options from one to twenty', () => {
+  it('数量参数不在输入条里：它们是设置中心的检索偏好', () => {
     const wrapper = mountComposer()
-    const select = wrapper.get<HTMLSelectElement>('select[aria-label*="新闻数量"]')
 
-    expect([...select.element.options].map((option) => Number(option.value))).toEqual([
-      1, 5, 10, 20,
-    ])
+    expect(wrapper.find('select').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('新闻数量')
+    // 偏好入口保留：图标链接直达设置页，当前值放在 title 里。
+    const prefsLink = wrapper.get('.prefs-link')
+    expect(prefsLink.attributes('aria-label')).toBe('检索偏好设置')
+    expect(prefsLink.attributes('title')).toContain('每次检索 10 篇')
   })
 
   it('has no mode switch (chunk mode removed)', () => {

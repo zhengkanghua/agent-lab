@@ -22,7 +22,7 @@ function testRouter(): Router {
       { path: '/', name: 'search', component: { template: '<div />' } },
       { path: '/agent', name: 'agent-chat', component: { template: '<div />' } },
       { path: '/admin', name: 'user-admin', component: { template: '<div />' } },
-      { path: '/account', name: 'account', component: { template: '<div />' } },
+      { path: '/settings/:section?', name: 'settings', component: { template: '<div />' } },
     ],
   })
 }
@@ -152,15 +152,6 @@ describe('AppShell', () => {
     expect(wrapper.find('.mode-detail').exists()).toBe(false)
   })
 
-  it('省略 footerBrand 时不渲染页脚', async () => {
-    const { wrapper } = await mountShell()
-    expect(wrapper.find('.site-footer').exists()).toBe(false)
-
-    const withFooter = await mountShell({ footerBrand: 'Signal Desk', footerNote: '只读访问' })
-    const spans = withFooter.wrapper.findAll('.footer-inner span').map((span) => span.text())
-    expect(spans).toEqual(['Signal Desk', '只读访问'])
-  })
-
   it('未登录时不渲染账号邮箱，退出键仍在', async () => {
     session.user.value = null
     const { wrapper } = await mountShell()
@@ -203,30 +194,17 @@ describe('AppShell', () => {
     expect(alert.attributes('role')).toBe('alert')
   })
 
-  /* compactAt 与 background 只改类名，媒体查询在 jsdom 里读不出胜负；
-     断言类名是为了保证两页各自拿到自己那套断点。 */
-  it('compactAt 默认 560，可切到 720', async () => {
+  it('账号与设置入口指向设置中心的账号分区', async () => {
     const { wrapper } = await mountShell()
-    expect(wrapper.classes()).toContain('compact-560')
 
-    await wrapper.setProps({ compactAt: 720 })
-    expect(wrapper.classes()).toContain('compact-720')
-    expect(wrapper.classes()).not.toContain('compact-560')
+    expect(wrapper.get('.account-identity').attributes('href')).toBe('/settings/account')
   })
 
-  it('background 默认不加 bg-raised', async () => {
+  it('默认插槽的 main 落在顶栏之后（页脚已随消融移除）', async () => {
     const { wrapper } = await mountShell()
-    expect(wrapper.classes()).not.toContain('bg-raised')
-
-    await wrapper.setProps({ background: 'raised' })
-    expect(wrapper.classes()).toContain('bg-raised')
-  })
-
-  it('默认插槽的 main 落在顶栏之后、页脚之前', async () => {
-    const { wrapper } = await mountShell({ footerBrand: 'Signal Desk' })
 
     const root = wrapper.element as HTMLElement
     const marks = Array.from(root.children).map((child) => child.tagName.toLowerCase())
-    expect(marks).toEqual(['a', 'header', 'main', 'footer'])
+    expect(marks).toEqual(['a', 'header', 'main'])
   })
 })

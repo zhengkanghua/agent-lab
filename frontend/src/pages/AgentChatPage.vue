@@ -4,12 +4,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { Bot, History, Search, ShieldCheck } from '@lucide/vue'
 import AppShell from '@/layouts/AppShell.vue'
 import { useLogout } from '@/features/auth'
+import { usePreferences } from '@/features/settings'
+import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import {
   AgentComposer,
   AgentTranscript,
   ThreadSidebar,
   useAgentChat,
-  useAgentDefaultPrompt,
   useThreadList,
   AGENT_EXAMPLES,
 } from '@/features/agent-chat'
@@ -18,8 +19,12 @@ import type { AgentThreadSummaryDto } from '@/api/agent-threads'
 const route = useRoute()
 const router = useRouter()
 
-const chat = useAgentChat()
-const { defaultPrompt, load: loadDefaultPrompt } = useAgentDefaultPrompt()
+// 自定义系统提示词是设置中心的持久偏好：发送时从偏好 store 读，本页不再持有编辑状态。
+const { preferences } = usePreferences()
+
+const chat = useAgentChat({
+  getSystemPrompt: () => preferences.agentSystemPrompt,
+})
 
 const threadList = useThreadList({
   activeThreadId: () => chat.threadId.value,
@@ -50,7 +55,6 @@ const routeThreadId = computed(() => {
 })
 
 onMounted(() => {
-  void loadDefaultPrompt()
   void threadList.load()
 })
 
@@ -191,17 +195,24 @@ async function chooseExample(value: string): Promise<void> {
 
           <!-- 打不开某个会话时说明情况并给出下一步。不跳回 /agent：那样地址悄悄变了，
                用户不知道自己点的那个会话到底怎么了。 -->
-          <div v-else-if="chat.threadError.value" class="thread-error" role="alert">
-            <p class="thread-error-title">{{ chat.threadError.value.title }}</p>
-            <p class="thread-error-description">{{ chat.threadError.value.description }}</p>
-          </div>
+          <BaseCallout
+            v-else-if="chat.threadError.value"
+            class="thread-error"
+            tone="danger"
+            :title="chat.threadError.value.title"
+            :description="chat.threadError.value.description"
+          />
 
           <!-- 历史被压缩过就如实说明。不说的话用户会以为看到的是全部记录，而模型实际上
                只记得一段摘要——两边对不上时，他会以为模型在胡说。 -->
-          <p v-if="chat.isHistoryTruncated.value" class="history-note">
-            <History :size="14" aria-hidden="true" />
-            较早的对话已被压缩成摘要，这里只显示保留下来的轮次。
-          </p>
+          <BaseCallout
+            v-if="chat.isHistoryTruncated.value"
+            class="history-note"
+            tone="neutral"
+            description="较早的对话已被压缩成摘要，这里只显示保留下来的轮次。"
+          >
+            <template #icon><History :size="14" aria-hidden="true" /></template>
+          </BaseCallout>
 
           <AgentTranscript
             :turns="chat.turns.value"
@@ -217,14 +228,12 @@ async function chooseExample(value: string): Promise<void> {
         <div class="composer-dock">
           <AgentComposer
             v-model="chat.draft.value"
-            :system-prompt="chat.systemPrompt.value"
-            :default-prompt="defaultPrompt"
+            :custom-prompt-active="preferences.agentSystemPrompt.trim().length > 0"
             :input-error="chat.inputError.value"
             :remaining-characters="chat.remainingCharacters.value"
             :streaming="chat.isStreaming.value"
             :can-send="chat.canSend.value"
             :has-history="hasHistory"
-            @update:system-prompt="chat.systemPrompt.value = $event"
             @submit="chat.send"
             @cancel="chat.cancel"
             @new-conversation="startNewConversation"
@@ -281,45 +290,13 @@ async function chooseExample(value: string): Promise<void> {
   font-size: 0.85rem;
 }
 
+/* 面板本体归 BaseCallout；这里只留节奏。 */
 .thread-error {
   margin-bottom: 14px;
-  padding: 12px 13px;
-  border: 1px solid var(--danger-soft);
-  border-radius: var(--radius-sm);
-  background: var(--danger-soft);
 }
 
-.thread-error-title {
-  color: var(--danger);
-  font-size: 0.85rem;
-  font-weight: 720;
-}
-
-.thread-error-description {
-  margin-top: 5px;
-  color: var(--text-secondary);
-  font-size: 0.8rem;
-  line-height: 1.6;
-}
-
-/* 压缩说明用中性色，不用警告色：这不是故障，是正常的上下文管理。
-   用警告色会让人以为出了问题。 */
 .history-note {
-  display: flex;
-  align-items: center;
-  gap: 7px;
   margin-bottom: 14px;
-  padding: 8px 11px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--text-tertiary);
-  background: var(--surface-sunken);
-  font-size: 0.75rem;
-  line-height: 1.55;
-}
-
-.history-note svg {
-  flex: 0 0 auto;
 }
 
 /* flex: 1 是为了空态那条 justify-content: flex-end 能生效——不占满剩余高度，

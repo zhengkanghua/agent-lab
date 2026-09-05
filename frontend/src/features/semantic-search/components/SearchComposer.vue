@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Eraser, Layers3, ListFilter, Search } from '@lucide/vue'
+import { Eraser, Search, SlidersHorizontal } from '@lucide/vue'
+import { RouterLink } from 'vue-router'
 import BaseButton from '@/shared/ui/BaseButton.vue'
-import BasePopover from '@/shared/ui/BasePopover.vue'
 import BaseField from '@/shared/ui/BaseField.vue'
 import { MAX_QUERY_CHARACTERS } from '../model/search-validation'
 
 /* 检索页顶部常驻的输入条（Q3 / Q4 模型二）。
  *
  * 去掉了「按片段」模式切换和 idle/搜后两态切换：这一条固定在页面顶部、始终同样形态，
- * 输入在顶、最新检索记录顶在其正下方，视觉上构成一条连续向下的检索流。数量参数是全局
- * 一份（Q7 甲）影响之后所有轮；「每篇相关片段」是次要设置，收进折叠区不占主行。
+ * 输入在顶、最新检索记录顶在其正下方，视觉上构成一条连续向下的检索流。
+ *
+ * 数量参数不在这里：它们是全局默认、影响之后所有检索的偏好，归设置中心的「检索偏好」
+ * 分区（可发现、可持久）；输入条只留一个跳转入口（右下角滑杆图标），悬停能看到当前值。
  */
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
@@ -18,21 +20,19 @@ const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const props = withDefaults(
   defineProps<{
     modelValue: string
-    documentLimit: number
-    matchesPerDocument: number
     loading: boolean
     inputError: string | null
     remainingCharacters: number
     /** 是否已有一条以上检索记录：决定「清空检索流」要不要出现。 */
     hasRecords: boolean
+    /** 悬停在设置入口上时展示的当前参数摘要，如「每次 10 篇 · 每篇 3 条」。 */
+    preferenceSummary?: string
   }>(),
-  {},
+  { preferenceSummary: undefined },
 )
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
-  'update:documentLimit': [value: number]
-  'update:matchesPerDocument': [value: number]
   submit: []
   clear: []
 }>()
@@ -40,16 +40,6 @@ const emit = defineEmits<{
 const draft = computed({
   get: () => props.modelValue,
   set: (value: string) => emit('update:modelValue', value),
-})
-
-const documentLimit = computed({
-  get: () => props.documentLimit,
-  set: (value: number) => emit('update:documentLimit', value),
-})
-
-const matchesPerDocument = computed({
-  get: () => props.matchesPerDocument,
-  set: (value: number) => emit('update:matchesPerDocument', value),
 })
 
 const counterTone = computed(() => {
@@ -76,58 +66,6 @@ defineExpose({ focusInput })
 <template>
   <section class="composer" aria-label="语义检索输入条" style="container-type: inline-size">
     <form class="search-form" :aria-busy="loading" @submit.prevent="emit('submit')">
-      <!-- Top configuration row -->
-      <div class="composer-toolbar-top">
-        <label class="result-limit-control">
-          <span class="control-label">
-            <ListFilter :size="16" aria-hidden="true" />
-            新闻数量
-          </span>
-          <select
-            v-model.number="documentLimit"
-            :disabled="loading"
-            aria-label="每次检索最多显示的新闻数量（影响之后所有检索）"
-          >
-            <option :value="1">1 篇</option>
-            <option :value="5">5 篇</option>
-            <option :value="10">10 篇</option>
-            <option :value="20">20 篇</option>
-          </select>
-        </label>
-
-        <BasePopover side="bottom" align="start">
-          <template #trigger>
-            <div
-              class="advanced-options-trigger"
-              role="button"
-              tabindex="0"
-              aria-label="更多设置"
-              @keydown.enter.prevent
-              @keydown.space.prevent
-            >
-              <Layers3 :size="15" aria-hidden="true" />
-              <span class="trigger-label">更多设置</span>
-              <span class="trigger-meta">每篇 {{ matchesPerDocument }} 条相关片段</span>
-            </div>
-          </template>
-
-          <div class="advanced-options-content">
-            <label>
-              <span>每篇新闻最多保留的相关片段</span>
-              <select
-                v-model.number="matchesPerDocument"
-                aria-label="每篇新闻最多显示的相关片段数（影响之后所有检索）"
-              >
-                <option :value="1">1 条</option>
-                <option :value="3">3 条</option>
-                <option :value="5">5 条</option>
-              </select>
-            </label>
-          </div>
-        </BasePopover>
-      </div>
-
-      <!-- Unified Input Area -->
       <div class="query-container" :class="{ 'has-error': !!inputError }">
         <BaseField
           id="search-query"
@@ -154,6 +92,17 @@ defineExpose({ focusInput })
           <span class="character-count" :class="counterTone" aria-hidden="true">
             {{ remainingCharacters.toLocaleString('zh-CN') }}
           </span>
+
+          <!-- 数量参数的入口迁去了设置中心；这里保留一个能直达的图标，
+               不让「在哪里调参数」变成需要翻文档才知道的事。 -->
+          <RouterLink
+            class="prefs-link"
+            :to="{ name: 'settings', params: { section: 'search' } }"
+            aria-label="检索偏好设置"
+            :title="preferenceSummary ?? '检索偏好设置'"
+          >
+            <SlidersHorizontal :size="16" aria-hidden="true" />
+          </RouterLink>
 
           <BaseButton
             v-if="hasRecords"
@@ -188,36 +137,30 @@ defineExpose({ focusInput })
 
 <style scoped>
 .composer {
-  padding: 14px 16px 16px;
-  background: transparent;
-  transition: all 150ms ease;
+  padding: 0;
 }
 
 .search-form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
 }
 
 /* 字段标签与字数说明的接线归 BaseField。输入框留在这里：高度、resize、聚焦态是本页专有的。 */
 .query-input {
   display: block;
   width: 100%;
-  min-height: 52px;
+  min-height: 44px;
+  max-height: 150px;
   resize: vertical;
-  padding: 12px 0 8px;
+  padding: 8px 0;
   border: none;
-  border-bottom: 2px solid var(--border-subtle);
-  border-radius: 0;
   outline: none;
   box-shadow: none;
   color: var(--text-primary);
   background: transparent;
-  font-size: 1.15rem;
-  line-height: 1.65;
-  transition:
-    border-color 200ms ease,
-    background-color 200ms ease;
+  font-size: 1.1rem;
+  line-height: 1.5;
+  font-family: inherit;
 }
 
 .query-input::placeholder {
@@ -225,114 +168,6 @@ defineExpose({ focusInput })
   font-weight: 400;
 }
 
-.query-input:focus,
-.query-input:focus-visible {
-  outline: none;
-  box-shadow: none;
-  border-bottom: 2px solid var(--accent);
-  background: transparent;
-}
-
-.character-count {
-  display: block;
-  text-align: right;
-  color: var(--text-tertiary);
-  font-family: var(--mono-font);
-  font-size: 0.67rem;
-  letter-spacing: 0;
-}
-
-.character-count.is-near {
-  color: var(--warning);
-}
-
-.character-count.is-over {
-  color: var(--danger);
-}
-
-.composer-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  column-gap: 22px;
-  row-gap: 10px;
-}
-
-.result-limit-control {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--text-secondary);
-  font-size: 0.8rem;
-  white-space: nowrap;
-}
-
-.control-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.control-label svg {
-  color: var(--text-tertiary);
-}
-
-.result-limit-control select,
-.advanced-options-content select {
-  width: 88px;
-  height: 32px;
-  padding: 0 8px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  outline: 0;
-  color: var(--text-primary);
-  background: var(--surface-raised);
-  font-weight: 700;
-  font-size: 0.8rem;
-}
-
-.advanced-options-trigger {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  height: 32px;
-  padding: 0 8px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-primary);
-  font-size: 0.78rem;
-  font-weight: 700;
-  cursor: pointer;
-  transition: color var(--duration-fast) ease;
-}
-
-.advanced-options-trigger svg {
-  color: var(--accent);
-}
-
-.advanced-options-trigger:hover {
-  color: var(--accent-hover);
-}
-
-.advanced-options-trigger .trigger-meta {
-  margin-left: 8px;
-  color: var(--text-secondary);
-  font-family: var(--mono-font);
-  font-size: 0.68rem;
-  font-weight: 400;
-}
-
-.advanced-options-content label {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  color: var(--text-secondary);
-  font-size: 0.78rem;
-}
-
-/* 底部输入框容器 */
 .query-container {
   display: flex;
   align-items: flex-end;
@@ -386,28 +221,6 @@ defineExpose({ focusInput })
   font-size: 0.75rem;
 }
 
-.query-input {
-  display: block;
-  width: 100%;
-  min-height: 44px;
-  max-height: 150px;
-  resize: vertical;
-  padding: 8px 0;
-  border: none;
-  outline: none;
-  box-shadow: none;
-  color: var(--text-primary);
-  background: transparent;
-  font-size: 1.1rem;
-  line-height: 1.5;
-  font-family: inherit;
-}
-
-.query-input::placeholder {
-  color: var(--text-tertiary);
-  font-weight: 400;
-}
-
 .query-actions {
   display: flex;
   align-items: center;
@@ -428,6 +241,28 @@ defineExpose({ focusInput })
 
 .character-count.is-over {
   color: var(--danger);
+}
+
+/* 设置入口与 BaseIconButton 的视觉一档对齐（同尺寸、同悬停），
+   但它是链接——要中键新开、要读屏报「链接」。 */
+.prefs-link {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  transition:
+    border-color var(--duration-fast) var(--ease-out-smooth),
+    color var(--duration-fast) var(--ease-out-smooth),
+    background-color var(--duration-fast) var(--ease-out-smooth);
+}
+
+.prefs-link:hover {
+  border-color: var(--border-subtle);
+  color: var(--accent);
+  background: var(--surface-base);
 }
 
 .clear-button {
@@ -451,16 +286,7 @@ defineExpose({ focusInput })
 }
 
 @container (max-width: 600px) {
-  .composer {
-    padding: 12px 12px 10px;
-  }
-
-  .query-input {
-    min-height: 58px;
-  }
-
-  .character-count,
-  .advanced-options {
+  .character-count {
     display: none;
   }
 }

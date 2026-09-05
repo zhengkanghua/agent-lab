@@ -1,16 +1,26 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it, afterEach } from 'vitest'
+import { describe, expect, it } from 'vitest'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import AgentComposer from '../components/AgentComposer.vue'
-import { MAX_MESSAGE_CHARACTERS, MAX_SYSTEM_PROMPT_CHARACTERS } from '../model/agent-validation'
+import { MAX_MESSAGE_CHARACTERS } from '../model/agent-validation'
 
 type ComposerProps = InstanceType<typeof AgentComposer>['$props']
+
+function testRouter() {
+  return createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/', name: 'search', component: { template: '<div />' } },
+      { path: '/settings/:section?', name: 'settings', component: { template: '<div />' } },
+    ],
+  })
+}
 
 function mountComposer(overrides: Partial<ComposerProps> = {}) {
   return mount(AgentComposer, {
     props: {
       modelValue: '央行利率',
-      systemPrompt: '',
-      defaultPrompt: '你是新闻检索助手。',
+      customPromptActive: false,
       inputError: null,
       remainingCharacters: 3996,
       streaming: false,
@@ -18,48 +28,22 @@ function mountComposer(overrides: Partial<ComposerProps> = {}) {
       hasHistory: false,
       ...overrides,
     },
-    attachTo: document.body,
+    global: { plugins: [testRouter()] },
   })
-}
-
-/* 恢复为 BaseDisclosure。 */
-async function openPromptPanel(wrapper: ReturnType<typeof mountComposer>) {
-  await wrapper.get('.disclosure-summary').trigger('click')
-  await wrapper.vm.$nextTick()
-  return wrapper
-}
-
-function getPopoverElement(selector: string): Element {
-  const el = document.querySelector(selector)
-  if (!el) throw new Error(`Unable to find ${selector} in document`)
-  return el
 }
 
 describe('AgentComposer', () => {
-  let wrapper: ReturnType<typeof mountComposer> | null = null
+  it('提问输入框的上界与校验常量同源', () => {
+    // 否则会出现「能打进去但一提交就报错」。系统提示词的上界在设置中心的编辑器里测。
+    const wrapper = mountComposer()
 
-  afterEach(() => {
-    if (wrapper) {
-      wrapper.unmount()
-      wrapper = null
-    }
-    // 清理所有 Radix Popover 残留的 Portal 内容
-    document.querySelectorAll('[data-radix-popper-content-wrapper]').forEach((el) => el.remove())
-    document.querySelectorAll('.prompt-panel').forEach((el) => el.remove())
-  })
-  it('两个输入框的上界与校验常量同源', async () => {
-    wrapper = await openPromptPanel(mountComposer())
-
-    // 否则会出现「能打进去但一提交就报错」。
     expect(wrapper.get('.message-input').attributes('maxlength')).toBe(
       String(MAX_MESSAGE_CHARACTERS),
     )
-    const promptInput = getPopoverElement('.prompt-input') as HTMLTextAreaElement
-    expect(promptInput.maxLength).toBe(MAX_SYSTEM_PROMPT_CHARACTERS)
   })
 
   it('Enter 发送', async () => {
-    wrapper = mountComposer()
+    const wrapper = mountComposer()
 
     await wrapper.get('.message-input').trigger('keydown.enter')
 
@@ -67,7 +51,7 @@ describe('AgentComposer', () => {
   })
 
   it('Shift + Enter 只换行，不发送', async () => {
-    wrapper = mountComposer()
+    const wrapper = mountComposer()
 
     await wrapper.get('.message-input').trigger('keydown.enter', { shiftKey: true })
 
@@ -75,7 +59,7 @@ describe('AgentComposer', () => {
   })
 
   it('输入法组合期间的 Enter 不发送', async () => {
-    wrapper = mountComposer()
+    const wrapper = mountComposer()
 
     // 中文输入按 Enter 是「确认候选词」，不拦住会把半个词发出去。
     await wrapper.get('.message-input').trigger('keydown.enter', { isComposing: true })
@@ -84,7 +68,7 @@ describe('AgentComposer', () => {
   })
 
   it('不能发送时 Enter 不发送', async () => {
-    wrapper = mountComposer({ canSend: false })
+    const wrapper = mountComposer({ canSend: false })
 
     await wrapper.get('.message-input').trigger('keydown.enter')
 
@@ -92,7 +76,7 @@ describe('AgentComposer', () => {
   })
 
   it('剩余字数临近与超出上界时换配色', async () => {
-    wrapper = mountComposer({ remainingCharacters: 150 })
+    const wrapper = mountComposer({ remainingCharacters: 150 })
     expect(wrapper.get('.character-count').classes()).toContain('is-near')
 
     await wrapper.setProps({ remainingCharacters: -3 })
@@ -100,7 +84,7 @@ describe('AgentComposer', () => {
   })
 
   it('流式期间把发送换成停止生成', async () => {
-    wrapper = mountComposer({ streaming: true, canSend: false, hasHistory: true })
+    const wrapper = mountComposer({ streaming: true, canSend: false, hasHistory: true })
 
     expect(wrapper.find('.send-button').exists()).toBe(false)
     await wrapper.get('.stop-button').trigger('click')
@@ -111,75 +95,31 @@ describe('AgentComposer', () => {
   })
 
   it('没有历史时不显示新会话按钮', () => {
-    wrapper = mountComposer({ hasHistory: false })
+    const wrapper = mountComposer({ hasHistory: false })
     expect(wrapper.find('.secondary-button').exists()).toBe(false)
   })
 
   it('有历史时新会话按钮可用并冒泡事件', async () => {
-    wrapper = mountComposer({ hasHistory: true })
+    const wrapper = mountComposer({ hasHistory: true })
 
     await wrapper.get('.secondary-button').trigger('click')
 
     expect(wrapper.emitted('new-conversation')).toHaveLength(1)
   })
 
-  it('填入默认提示词把服务端那份写回上层', async () => {
-    wrapper = await openPromptPanel(mountComposer())
+  it('偏好里存了自定义提示词时亮徽章并链到设置页，默认时不打扰', async () => {
+    const wrapper = mountComposer({ customPromptActive: false })
+    expect(wrapper.find('.prompt-badge-link').exists()).toBe(false)
 
-    const fillButton = getPopoverElement('.prompt-actions button') as HTMLButtonElement
-    fillButton.click()
-    await wrapper.vm.$nextTick()
+    await wrapper.setProps({ customPromptActive: true })
 
-    expect(wrapper.emitted('update:systemPrompt')?.[0]).toEqual(['你是新闻检索助手。'])
-  })
-
-  it('默认提示词没取到时按钮禁用', async () => {
-    wrapper = await openPromptPanel(mountComposer({ defaultPrompt: null }))
-
-    const fillButton = getPopoverElement('.prompt-actions button') as HTMLButtonElement
-    expect(fillButton.disabled).toBe(true)
-  })
-
-  it('清空按钮把提示词置空，空的时候自身禁用', async () => {
-    wrapper = await openPromptPanel(mountComposer({ systemPrompt: '你是财经记者。' }))
-    const buttons = document.querySelectorAll('.prompt-actions button')
-    const clearButton = buttons[1] as HTMLButtonElement
-
-    clearButton.click()
-    await wrapper.vm.$nextTick()
-    expect(wrapper.emitted('update:systemPrompt')?.[0]).toEqual([''])
-
-    await wrapper.setProps({ systemPrompt: '' })
-    await wrapper.vm.$nextTick()
-
-    // 重新打开浮层获取更新后的按钮状态
-    await wrapper.get('.disclosure-summary').trigger('click')
-    await wrapper.vm.$nextTick()
-    await wrapper.get('.disclosure-summary').trigger('click')
-    await wrapper.vm.$nextTick()
-
-    const updatedButtons = document.querySelectorAll('.prompt-actions button')
-    const updatedClearButton = updatedButtons[1] as HTMLButtonElement
-    expect(updatedClearButton.disabled).toBe(true)
-  })
-
-  it('齿轮的角标与无障碍名都只看去掉空白后的内容', async () => {
-    /* 浮层收起后，齿轮上的角标是唯一能看出「提示词被改过」的地方，所以判断口径
-       必须和原来 <details> 摘要里那个「已覆盖 / 用默认」一致：纯空白算没改。 */
-    wrapper = mountComposer({ systemPrompt: '   ' })
-    const trigger = () => wrapper!.get('.disclosure-summary')
-
-    expect(wrapper.find('.prompt-badge').exists()).toBe(false)
-    expect(trigger().find('.disclosure-title').text()).toBe('自定义系统提示词')
-
-    await wrapper.setProps({ systemPrompt: '你是财经记者。' })
-
-    expect(wrapper.find('.prompt-badge').exists()).toBe(true)
-    expect(trigger().find('.disclosure-title').text()).toBe('自定义系统提示词（已覆盖）')
+    const badge = wrapper.get('.prompt-badge-link')
+    expect(badge.attributes('aria-label')).toContain('自定义提示词')
+    expect(badge.attributes('href')).toBe('/settings/agent')
   })
 
   it('校验错误挂到输入框的 aria-describedby 上', async () => {
-    wrapper = mountComposer({ inputError: '请输入想问 Agent 的问题。' })
+    const wrapper = mountComposer({ inputError: '请输入想问 Agent 的问题。' })
 
     expect(wrapper.get('.field-error').attributes('role')).toBe('alert')
     expect(wrapper.get('.message-input').attributes('aria-describedby')).toBe('agent-message-error')

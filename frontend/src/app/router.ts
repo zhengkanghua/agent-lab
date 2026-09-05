@@ -42,10 +42,24 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresSuperuser: true },
     },
     {
-      path: '/account',
-      name: 'account',
-      component: () => import('../pages/AccountPage.vue'),
+      /*
+       * 设置中心：账号安全、检索偏好、Agent 偏好三个分区由路径参数区分。
+       * 分区放进路径而不是 query，理由与 /agent/:threadId 相同——这个地址可分享、
+       * 可收藏、可刷新。参数不收窄成枚举：非法值由 SettingsPage 重定向到 account，
+       * 前端再拦一道校验属于重复实现。
+       *
+       * Agent 偏好分区只对超级用户有意义（/agent/* 的后端依赖是 current_superuser），
+       * 守卫在下面统一拦。
+       */
+      path: '/settings/:section?',
+      name: 'settings',
+      component: () => import('../pages/SettingsPage.vue'),
       meta: { requiresAuth: true },
+    },
+    {
+      // 旧地址整体并入设置中心：重定向让旧收藏与旧文档链接继续有效。
+      path: '/account',
+      redirect: { name: 'settings', params: { section: 'account' } },
     },
     {
       /*
@@ -97,6 +111,15 @@ router.beforeEach(async (to) => {
 
   if (to.meta.requiresSuperuser && !authSession.user.value?.is_superuser) {
     return { name: 'search' }
+  }
+
+  // 设置中心里的 Agent 偏好分区与 /agent 同权：改的是模型行为，只有超管该看到它。
+  if (
+    to.name === 'settings' &&
+    to.params.section === 'agent' &&
+    !authSession.user.value?.is_superuser
+  ) {
+    return { name: 'settings', params: { section: 'account' }, replace: true }
   }
 
   if (to.name === 'login' && authSession.status.value === 'authenticated') {
