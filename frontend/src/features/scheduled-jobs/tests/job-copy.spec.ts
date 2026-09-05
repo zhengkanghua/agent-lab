@@ -17,6 +17,7 @@ const jobBase = {
 
 function makeRun(overrides: Partial<JobRunDto>): JobRunDto {
   return {
+    needs_attention: false,
     id: '50000000-0000-4000-8000-000000000001',
     job_id: jobBase.id,
     trigger_type: 'manual',
@@ -103,5 +104,13 @@ describe('formatRunStats', () => {
 
   it('falls back to 本轮无变更 for empty stats', () => {
     expect(formatRunStats(makeRun({ stats: {} }))).toBe('本轮无变更')
+  })
+
+  it('does not present an accepted execution as having no changes', () => {
+    expect(
+      formatRunStats(
+        makeRun({ status: 'running', finished_at: null, stats: { phase: 'accepted' } }),
+      ),
+    ).toBe('等待执行结果')
   })
 })

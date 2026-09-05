@@ -18,6 +18,7 @@ export function useCronPreview(cronExpr: Ref<string>, debounceMs = 300) {
   const state = ref<CronPreviewState>('idle')
   const previewTimes = ref<string[]>([])
   const failureMessage = ref('')
+  const timezone = ref('')
 
   let timer: ReturnType<typeof setTimeout> | null = null
   let controller: AbortController | null = null
@@ -51,6 +52,7 @@ export function useCronPreview(cronExpr: Ref<string>, debounceMs = 300) {
       state.value = 'valid'
       failureMessage.value = ''
       previewTimes.value = result.next_run_times.map(formatBeijingTime)
+      timezone.value = result.timezone ?? ''
     } catch (error) {
       if (isAbortError(error) || seq !== requestSeq) return
       state.value = 'invalid'
@@ -62,6 +64,8 @@ export function useCronPreview(cronExpr: Ref<string>, debounceMs = 300) {
   watch(
     cronExpr,
     (next) => {
+      requestSeq += 1
+      controller?.abort()
       if (timer !== null) clearTimeout(timer)
       const shapeError = validateCronShape(next)
       if (shapeError) {
@@ -75,13 +79,14 @@ export function useCronPreview(cronExpr: Ref<string>, debounceMs = 300) {
       previewTimes.value = []
       timer = setTimeout(() => void check(next), debounceMs)
     },
-    { immediate: true },
+    { immediate: true, flush: 'sync' },
   )
 
   onScopeDispose(() => {
+    requestSeq += 1
     if (timer !== null) clearTimeout(timer)
     controller?.abort()
   })
 
-  return { state, previewTimes, shapeMessage, message, canSubmit }
+  return { state, previewTimes, shapeMessage, message, canSubmit, timezone }
 }

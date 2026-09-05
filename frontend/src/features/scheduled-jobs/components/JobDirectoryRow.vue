@@ -8,6 +8,7 @@ import type { UseJobFormReturn } from '../composables/useJobForm'
 import { formatBeijingTime, formatLastRunSummary, taskTypeLabel } from '../model/job-copy'
 import JobForm from './JobForm.vue'
 import JobRunHistory from './JobRunHistory.vue'
+import { supportsJobForm } from '../model/job-validation'
 
 /*
  * 一行定时任务：配置摘要 + 行内操作（立即执行 / 编辑 / 执行历史 / 删除）。
@@ -44,10 +45,15 @@ const emit = defineEmits<{
   'update:limitPerSource': [value: number]
   'update:batchSize': [value: number]
   'update:staleAfterMinutes': [value: number]
+  'update:retentionDays': [value: number]
+  'update:dryRun': [value: boolean]
   'update:enabled': [value: boolean]
 }>()
 
 const confirmingDelete = ref(false)
+const executionPending = computed(
+  () => !!props.job.active_run || [...props.awaitedRunIds.values()].includes(props.job.id),
+)
 
 const isEditOpen = computed(
   () => props.expanded?.jobId === props.job.id && props.expanded.kind === 'edit',
@@ -57,6 +63,7 @@ const isHistoryOpen = computed(
 )
 
 function onDeleteClick(): void {
+  if (props.busy || executionPending.value) return
   if (!confirmingDelete.value) {
     confirmingDelete.value = true
     return
@@ -97,11 +104,7 @@ function onDeleteClick(): void {
         <p class="schedule-line">
           <small>下次</small>
           <span>
-            {{
-              job.next_run_at !== null
-                ? formatBeijingTime(job.next_run_at)
-                : '未排期（停用或调度器关闭）'
-            }}
+            {{ job.next_run_at !== null ? formatBeijingTime(job.next_run_at) : '未排期' }}
           </span>
         </p>
       </div>
@@ -110,7 +113,7 @@ function onDeleteClick(): void {
         <BaseButton
           variant="ghost"
           size="xs"
-          :disabled="busy"
+          :disabled="busy || executionPending"
           :aria-label="`立即执行 ${job.key}`"
           @click="emit('run-now', job)"
         >
@@ -121,6 +124,14 @@ function onDeleteClick(): void {
           variant="ghost"
           size="xs"
           :aria-pressed="isEditOpen"
+          :disabled="busy || job.enabled || executionPending || !supportsJobForm(job.task_type)"
+          :title="
+            !supportsJobForm(job.task_type)
+              ? '此类型暂不支持编辑'
+              : job.enabled || job.active_run
+                ? '先停用，并等待当前任务执行结束'
+                : '编辑任务配置'
+          "
           :aria-label="`编辑 ${job.key}`"
           @click="emit('toggle-edit', job)"
         >
@@ -141,7 +152,7 @@ function onDeleteClick(): void {
           <BaseButton
             variant="ghost"
             size="xs"
-            :disabled="busy"
+            :disabled="busy || executionPending"
             :aria-label="`确认删除 ${job.key}`"
             @click="onDeleteClick"
           >
@@ -156,7 +167,7 @@ function onDeleteClick(): void {
           v-else
           variant="ghost"
           size="xs"
-          :disabled="busy"
+          :disabled="busy || executionPending"
           :aria-label="`删除 ${job.key}`"
           @click="onDeleteClick"
         >
@@ -169,7 +180,7 @@ function onDeleteClick(): void {
     <BaseCallout v-if="error" class="job-error" tone="danger" :description="error" />
 
     <JobForm
-      v-if="isEditOpen && editForm !== null"
+      v-if="isEditOpen && editForm !== null && !job.enabled && !job.active_run"
       mode="edit"
       :job="job"
       :key-value="editForm.key.value"
@@ -178,6 +189,9 @@ function onDeleteClick(): void {
       :limit-per-source="editForm.limitPerSource.value"
       :batch-size="editForm.batchSize.value"
       :stale-after-minutes="editForm.staleAfterMinutes.value"
+      :retention-days="editForm.retentionDays.value"
+      :dry-run="editForm.dryRun.value"
+      :task-types="editForm.taskTypes.value"
       :enabled="editForm.enabled.value"
       :errors="editForm.errors.value"
       :form-error="editForm.formError.value"
@@ -188,6 +202,8 @@ function onDeleteClick(): void {
       @update:limit-per-source="emit('update:limitPerSource', $event)"
       @update:batch-size="emit('update:batchSize', $event)"
       @update:stale-after-minutes="emit('update:staleAfterMinutes', $event)"
+      @update:retention-days="emit('update:retentionDays', $event)"
+      @update:dry-run="emit('update:dryRun', $event)"
       @update:enabled="emit('update:enabled', $event)"
       @submit="emit('submit-edit', job)"
       @close="emit('toggle-edit', job)"
@@ -198,6 +214,7 @@ function onDeleteClick(): void {
       :job-id="job.id"
       :active="isHistoryOpen"
       :awaited-run-ids="awaitedRunIds"
+      :active-run="job.active_run ?? null"
       @awaited-finished="(run) => emit('run-finished', job.id, run)"
     />
   </div>

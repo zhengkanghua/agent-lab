@@ -87,4 +87,31 @@ describe('useCronPreview', () => {
     expect(preview.message.value).toBe('cron 表达式无效，需要 5 段式 cron（分 时 日 月 周）。')
     scope.stop()
   })
+
+  it('invalidates immediately and ignores an old response arriving during debounce', async () => {
+    let respond!: (value: unknown) => void
+    api.validateCron.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          respond = resolve
+        }),
+    )
+    const cron = ref('0 9 * * *')
+    const scope = effectScope()
+    const preview = scope.run(() => useCronPreview(cron))!
+    await vi.advanceTimersByTimeAsync(300)
+    cron.value = '0 10 * * *'
+    expect(preview.canSubmit.value).toBe(false)
+    respond({ next_run_times: ['2026-09-03T01:00:00Z'], timezone: 'Asia/Shanghai' })
+    await flushPromises()
+    expect(preview.canSubmit.value).toBe(false)
+    expect(preview.previewTimes.value).toEqual([])
+    api.validateCron.mockResolvedValue({
+      next_run_times: ['2026-09-03T02:00:00Z'],
+      timezone: 'Asia/Shanghai',
+    })
+    await vi.advanceTimersByTimeAsync(300)
+    expect(preview.previewTimes.value).toEqual(['2026-09-03 10:00:00'])
+    scope.stop()
+  })
 })

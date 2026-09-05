@@ -9,11 +9,7 @@ import type { JobRunDto, ScheduledJobDto, ScheduledJobTaskType } from '@/api/sch
 export const TASK_TYPE_LABEL: Readonly<Record<ScheduledJobTaskType, string>> = {
   freshrss_sync: 'FreshRSS 同步',
   index_pending: '向量索引',
-}
-
-export const TASK_TYPE_DESCRIPTION: Readonly<Record<ScheduledJobTaskType, string>> = {
-  freshrss_sync: '把 FreshRSS 里的新文章拉取入库到 PostgreSQL（不向量化）',
-  index_pending: '把 PostgreSQL 里待索引的文档切块、向量化并写入 Qdrant',
+  prune_old_documents: '旧新闻清理',
 }
 
 export const RUN_STATUS_LABEL: Readonly<Record<JobRunDto['status'], string>> = {
@@ -39,6 +35,19 @@ export function taskTypeLabel(taskType: string): string {
 
 export function runStatusLabel(status: string): string {
   return RUN_STATUS_LABEL[status as JobRunDto['status']] ?? status
+}
+
+export function executionStatusLabel(run: JobRunDto): string {
+  if (run.needs_attention) return '待核实'
+  if (
+    run.status === 'succeeded' &&
+    ['failed_source_count', 'failed_count', 'failed_batches'].some(
+      (key) => Number(run.stats[key] ?? 0) > 0,
+    )
+  )
+    return '已结束，有失败项'
+  if (run.status === 'succeeded' && run.stats.resource_close_error) return '业务完成，资源关闭失败'
+  return runStatusLabel(run.status)
 }
 
 export function triggerTypeLabel(triggerType: string): string {
@@ -74,10 +83,15 @@ export function formatBeijingTime(iso: string): string {
 
 /** 上次执行摘要里的状态短语；空字符串表示「还没有执行过」。 */
 export function formatLastRunSummary(job: ScheduledJobDto): string {
-  const lastRun = job.last_run
+  const lastRun = job.active_run ?? job.last_run
   if (lastRun === null) return '尚未执行'
-  const status = RUN_STATUS_LABEL[lastRun.status]
-  const finished = lastRun.finished_at !== null ? formatBeijingTime(lastRun.finished_at) : '进行中'
+  const status = executionStatusLabel(lastRun)
+  const finished =
+    lastRun.finished_at !== null
+      ? formatBeijingTime(lastRun.finished_at)
+      : lastRun.status === 'running' && !lastRun.needs_attention
+        ? '进行中'
+        : formatBeijingTime(lastRun.started_at)
   return `${status} · ${finished}`
 }
 
@@ -86,6 +100,8 @@ export function formatLastRunSummary(job: ScheduledJobDto): string {
  * 写进 stats。这里给出人话文案；未知值原样展示，后端加枚举时前端不至于渲染出 undefined。
  */
 const ERROR_REASON_LABEL: Readonly<Record<string, string>> = {
+  execution_interrupted: '任务执行已中断，结果需要核实',
+  owner_confirmed_stopped: '已确认执行者停止，业务结果未确认',
   login_rejected: 'FreshRSS 登录被拒绝（API 凭据无效或被停用）',
   login_no_token: 'FreshRSS 登录响应缺少令牌（可能被反代/WAF 拦截）',
   request_rejected: 'FreshRSS API 请求被拒绝',
@@ -110,19 +126,23 @@ export function errorReasonLabel(reason: string): string {
  */
 export function formatRunStats(run: JobRunDto): string {
   if (run.status === 'skipped') {
-    return '上一轮尚未结束，本轮按策略跳过'
+    const reasons: Record<string, string> = {
+      previous_run_still_running: '上一轮尚未结束，本轮按策略跳过',
+      missed_fire_time: '已错过执行时间，本次不补执行',
+      trigger_still_pending: '上次触发尚未受理，本次跳过',
+    }
+    return reasons[String(run.stats.reason)] ?? '本次触发已跳过'
   }
   const stats = run.stats
   const fragments: string[] = []
+  if (run.needs_attention) fragments.push('任务执行或写入结果待核实')
 
   if (run.status === 'failed') {
     const reason = stats.error_reason
     if (typeof reason === 'string') {
       fragments.push(`失败原因：${errorReasonLabel(reason)}`)
     }
-    if (fragments.length === 0) {
-      return '本轮执行失败（原因见 error_type）'
-    }
+    if (fragments.length === 0) fragments.push(`本轮执行失败（${run.error_type ?? '未知原因'}）`)
   }
 
   if (typeof stats.synchronized_document_count === 'number') {
@@ -134,6 +154,18 @@ export function formatRunStats(run: JobRunDto): string {
   if (typeof stats.indexed_count === 'number') {
     fragments.push(`已索引 ${stats.indexed_count}`)
   }
+  if (typeof stats.failed_count === 'number' && stats.failed_count > 0)
+    fragments.push(`失败文档 ${stats.failed_count}`)
+  if (typeof stats.documents_deleted === 'number')
+    fragments.push(`${stats.dry_run ? '预计删除' : '已删除'}新闻 ${stats.documents_deleted}`)
+  if (typeof stats.qdrant_points_deleted === 'number')
+    fragments.push(
+      `${stats.dry_run ? '预计涉及' : '删除前匹配'}片段 ${stats.qdrant_points_deleted}`,
+    )
+  if (typeof stats.failed_documents === 'number' && stats.failed_documents > 0)
+    fragments.push(`未完成新闻 ${stats.failed_documents}`)
+  if (stats.resource_close_error)
+    fragments.push(`资源关闭失败：${String(stats.resource_close_error)}`)
   if (typeof stats.candidate_count === 'number') {
     fragments.push(`候选 ${stats.candidate_count}`)
   }
@@ -152,5 +184,6 @@ export function formatRunStats(run: JobRunDto): string {
     }
   }
 
-  return fragments.length > 0 ? fragments.join(' · ') : '本轮无变更'
+  if (fragments.length > 0) return fragments.join(' · ')
+  return run.status === 'running' ? '等待执行结果' : '本轮无变更'
 }

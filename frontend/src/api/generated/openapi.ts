@@ -262,6 +262,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/scheduled-jobs/task-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Task Types
+         * @description 返回代码注册的任务类型、参数默认值和约束。
+         */
+        get: operations["task_types_scheduled_jobs_task_types_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/scheduled-jobs": {
         parameters: {
             query?: never;
@@ -271,13 +291,13 @@ export interface paths {
         };
         /**
          * 列出全部定时任务
-         * @description 返回任务配置、下次计划执行时间（UTC；调度器未启动或任务停用为空）与最近一次执行摘要。列表不含任何正文、凭据或异常文本。
+         * @description 返回任务配置、按数据库配置计算的下次计划时间（UTC；停用为空）与最近一次执行摘要。列表不含任何正文、凭据或异常文本。
          */
         get: operations["list_jobs_scheduled_jobs_get"];
         put?: never;
         /**
          * 创建定时任务
-         * @description 校验任务类型、cron 与参数后创建任务；创建成功即按 enabled 状态注册进调度器。key 与已存在任务重复返回 409；类型、cron 或参数不合法返回 422。
+         * @description 校验任务类型、cron 与参数后创建任务；scheduler 周期刷新已提交的配置。key 与已存在任务重复返回 409；类型、cron 或参数不合法返回 422。
          */
         post: operations["create_job_scheduled_jobs_post"];
         delete?: never;
@@ -329,7 +349,7 @@ export interface paths {
         head?: never;
         /**
          * 修改定时任务的 cron、参数或启停状态
-         * @description 只修改请求中出现的字段；key 与任务类型不可修改。修改成功后调度器立即生效，无需重启服务。
+         * @description 只修改请求中出现的字段；key 与任务类型不可修改。修改 cron 或参数前必须停用且当前任务执行已结束；保存后保持停用，重新启用单独操作。scheduler 周期刷新，无需重启。
          */
         patch: operations["update_job_scheduled_jobs__job_id__patch"];
         trace?: never;
@@ -366,6 +386,26 @@ export interface paths {
          * @description 按开始时间新→旧返回执行记录（含被跳过的记录），默认 20 条、上限 100 条。
          */
         get: operations["list_job_runs_scheduled_jobs__job_id__runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scheduled-jobs/{job_id}/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Job Run
+         * @description 按任务执行 ID 查询，不受最近历史页大小限制。
+         */
+        get: operations["get_job_run_scheduled_jobs__job_id__runs__run_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1024,6 +1064,12 @@ export interface components {
              * @description 未来 3 次执行时间在服务端解释时区（SCHEDULER_TIMEZONE，默认上海）下的 ISO8601 字符串，前端可直接展示或自行换算。
              */
             next_run_times_local: string[];
+            /**
+             * Timezone
+             * @description 服务端实际 cron 解释时区。
+             * @default Asia/Shanghai
+             */
+            timezone: string;
         };
         /**
          * DocumentDetailResponse
@@ -1296,12 +1342,12 @@ export interface components {
             started_at: string;
             /**
              * Finished At
-             * @description 结束时刻，UTC；running 与 skipped 状态下为空。
+             * @description 结束时刻，UTC；尚未结束时为空，skipped 的起止时刻相同。
              */
             finished_at: string | null;
             /**
              * Stats
-             * @description 脱敏统计：数量与按异常类型的聚合计数；skipped 记录含 reason 字段。
+             * @description 脱敏统计：数量与按异常类型的聚合计数；skipped 记录含 reason 字段，批次级失败的记录含 error_reason（稳定失败原因枚举）。
              */
             stats: {
                 [key: string]: unknown;
@@ -1311,6 +1357,13 @@ export interface components {
              * @description 批次级失败的异常类名（只含类型名，无异常文本）；成功与跳过时为空。
              */
             error_type: string | null;
+            /** Heartbeat At */
+            heartbeat_at?: string | null;
+            /**
+             * Needs Attention
+             * @description 心跳失联只表示需要核实，不授权抢占或重做业务。
+             */
+            readonly needs_attention: boolean;
         };
         /**
          * PipelineErrorResponse
@@ -1503,7 +1556,7 @@ export interface components {
             key: string;
             /**
              * Task Type
-             * @description 任务类型，可选取值见 GET /scheduled-jobs 返回的 task_types（目前为 freshrss_sync、index_pending）。
+             * @description 任务类型，可选取值见 GET /scheduled-jobs/task-types。
              */
             task_type: string;
             /**
@@ -1513,7 +1566,7 @@ export interface components {
             cron_expr: string;
             /**
              * Params
-             * @description 任务参数（JSON 对象），形状随任务类型：freshrss_sync 为 {limit_per_source}，index_pending 为 {batch_size, stale_after_minutes}；缺省字段用默认值。
+             * @description 任务参数（JSON 对象），形状随任务类型：freshrss_sync 为 {limit_per_source}，index_pending 为 {batch_size, stale_after_minutes}，prune_old_documents 为 {retention_days, dry_run}；缺省字段用默认值。
              */
             params?: {
                 [key: string]: unknown;
@@ -1564,7 +1617,7 @@ export interface components {
             key: string;
             /**
              * Task Type
-             * @description 任务类型（freshrss_sync 或 index_pending）。
+             * @description 任务类型标识，见任务类型列表。
              */
             task_type: string;
             /**
@@ -1586,11 +1639,13 @@ export interface components {
             enabled: boolean;
             /**
              * Next Run At
-             * @description 下次计划执行时间（UTC）；调度器未启动（SCHEDULER_ENABLED=false）或任务停用/未注册时为空。
+             * @description 按数据库配置计算的下次计划时间（UTC）；停用或配置无效为空，不代表 scheduler 就绪。
              */
             next_run_at: string | null;
             /** @description 最近一次执行记录；尚无历史时为空。 */
             last_run: components["schemas"]["JobRunResponse"] | null;
+            /** @description 当前未释放的执行或待核实的写操作。 */
+            active_run?: components["schemas"]["JobRunResponse"] | null;
             /**
              * Created At
              * Format: date-time
@@ -1649,6 +1704,21 @@ export interface components {
              * @description 是否参与 cron 调度；不传表示不修改。
              */
             enabled?: boolean | null;
+        };
+        /** ScheduledTaskTypeResponse */
+        ScheduledTaskTypeResponse: {
+            /** Task Type */
+            task_type: string;
+            /** Description */
+            description: string;
+            /** Defaults */
+            defaults: {
+                [key: string]: unknown;
+            };
+            /** Params Schema */
+            params_schema: {
+                [key: string]: unknown;
+            };
         };
         /**
          * UserAdminCreateRequest
@@ -2687,6 +2757,26 @@ export interface operations {
             };
         };
     };
+    task_types_scheduled_jobs_task_types_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledTaskTypeResponse"][];
+                };
+            };
+        };
+    };
     list_jobs_scheduled_jobs_get: {
         parameters: {
             query?: never;
@@ -2876,6 +2966,15 @@ export interface operations {
                     "application/json": components["schemas"]["ScheduledJobErrorResponse"];
                 };
             };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2922,6 +3021,15 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3027,6 +3135,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobRunResponse"][];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+        };
+    };
+    get_job_run_scheduled_jobs__job_id__runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRunResponse"];
                 };
             };
             /** @description Not Found */

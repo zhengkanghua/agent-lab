@@ -3,9 +3,17 @@ import {
   buildParams,
   validateCronShape,
   validateKey,
-  validateParams,
+  validateParams as validate,
   type JobFormValues,
 } from '../model/job-validation'
+import { taskTypes } from '@/api/scheduled-jobs.fixture'
+
+function validateParams(values: JobFormValues) {
+  return validate(
+    values,
+    taskTypes.find((spec) => spec.task_type === values.taskType),
+  )
+}
 
 function baseValues(overrides: Partial<JobFormValues> = {}): JobFormValues {
   return {
@@ -15,6 +23,8 @@ function baseValues(overrides: Partial<JobFormValues> = {}): JobFormValues {
     limitPerSource: 2,
     batchSize: 20,
     staleAfterMinutes: 60,
+    retentionDays: 180,
+    dryRun: true,
     enabled: true,
     ...overrides,
   }

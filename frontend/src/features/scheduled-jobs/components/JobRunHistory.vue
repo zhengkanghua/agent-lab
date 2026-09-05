@@ -2,12 +2,13 @@
 import { computed } from 'vue'
 import { RefreshCw } from '@lucide/vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
+import BaseButton from '@/shared/ui/BaseButton.vue'
 import type { JobRunDto } from '@/api/scheduled-jobs'
 import { useJobRuns } from '../composables/useJobRuns'
 import {
   formatBeijingTime,
   formatRunStats,
-  runStatusLabel,
+  executionStatusLabel,
   triggerTypeLabel,
 } from '../model/job-copy'
 
@@ -22,6 +23,7 @@ const props = defineProps<{
   active: boolean
   /** 手动触发后等待终态的 run id → 任务 id（目录持有）。 */
   awaitedRunIds: ReadonlyMap<string, string>
+  activeRun: JobRunDto | null
 }>()
 
 const emit = defineEmits<{
@@ -45,7 +47,12 @@ const query = useJobRuns({
   onAwaitedFinished: (run) => emit('awaited-finished', run),
 })
 
-const runs = computed(() => query.data.value ?? [])
+const runs = computed(() => {
+  const records = query.data.value ?? []
+  return props.activeRun && !records.some((run) => run.id === props.activeRun?.id)
+    ? [props.activeRun, ...records]
+    : records
+})
 
 function refresh(): void {
   void query.refetch()
@@ -77,7 +84,7 @@ function refresh(): void {
       <li v-for="run in runs" :key="run.id" class="run-item" :data-status="run.status">
         <div class="run-meta">
           <span class="run-badge" :data-status="run.status">
-            {{ runStatusLabel(run.status) }}
+            {{ executionStatusLabel(run) }}
           </span>
           <span class="run-trigger">{{ triggerTypeLabel(run.trigger_type) }}</span>
           <time :datetime="run.started_at">{{ formatBeijingTime(run.started_at) }}</time>

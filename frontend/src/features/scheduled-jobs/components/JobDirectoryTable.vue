@@ -41,6 +41,8 @@ const emit = defineEmits<{
   'update:limitPerSource': [value: number]
   'update:batchSize': [value: number]
   'update:staleAfterMinutes': [value: number]
+  'update:retentionDays': [value: number]
+  'update:dryRun': [value: boolean]
   'update:enabled': [value: boolean]
 }>()
 
@@ -119,6 +121,8 @@ function editFormFor(job: ScheduledJobDto): UseJobFormReturn | null {
         @update:limit-per-source="emit('update:limitPerSource', $event)"
         @update:batch-size="emit('update:batchSize', $event)"
         @update:stale-after-minutes="emit('update:staleAfterMinutes', $event)"
+        @update:retention-days="emit('update:retentionDays', $event)"
+        @update:dry-run="emit('update:dryRun', $event)"
         @update:enabled="emit('update:enabled', $event)"
       />
     </div>

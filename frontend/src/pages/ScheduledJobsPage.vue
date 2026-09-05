@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { CalendarClock, Check, Plus } from '@lucide/vue'
+import { Check, Plus, RefreshCw } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import { authSession } from '@/features/auth'
 import {
   JobDirectoryTable,
   JobForm,
@@ -13,13 +14,14 @@ import {
  * 侧边栏、顶部标题栏、退出登录都由 AdminShell 提供；本页只负责正文内容。
  * 创建与编辑共用 JobForm（受控字段归 useJobForm），行内操作归 useScheduledJobDirectory。 */
 
-const directory = useScheduledJobDirectory()
+const directory = useScheduledJobDirectory({ accountId: authSession.user.value?.id ?? 'anonymous' })
 
 const createPanel = ref(false)
 
 const createForm = useJobForm({
   mode: 'create',
   job: null,
+  taskTypes: directory.taskTypes,
   onSubmit: async (payload) => {
     await directory.createJob(payload)
     createPanel.value = false
@@ -34,6 +36,7 @@ const createForm = useJobForm({
 const editForm = useJobForm({
   mode: 'edit',
   job: directory.editingJob,
+  taskTypes: directory.taskTypes,
   onSubmit: async (payload) => {
     const job = directory.editingJob.value
     if (job !== null) await directory.updateJob(job, payload)
@@ -56,13 +59,23 @@ function openCreate(): void {
 <template>
   <section class="admin-page" aria-labelledby="admin-title" style="container-type: inline-size">
     <div class="page-bar">
-      <p class="page-intro">
-        配置定时任务，让 FreshRSS 同步与向量索引按 cron
-        自动执行；到点自动跑，也能在这里立即执行或回看历史。
-      </p>
-      <BaseButton v-if="!createPanel" variant="primary" @click="openCreate">
+      <p class="page-intro">定时任务</p>
+      <BaseButton
+        v-if="!createPanel"
+        variant="primary"
+        :disabled="directory.taskTypes.value.length === 0"
+        @click="openCreate"
+      >
         <template #icon><Plus :size="18" aria-hidden="true" /></template>
         新建任务
+      </BaseButton>
+    </div>
+
+    <div v-if="directory.taskTypesError.value" role="alert">
+      {{ directory.taskTypesError.value }}
+      <BaseButton variant="ghost" @click="directory.load">
+        <template #icon><RefreshCw :size="16" aria-hidden="true" /></template>
+        重试
       </BaseButton>
     </div>
 
@@ -76,6 +89,9 @@ function openCreate(): void {
       :limit-per-source="createForm.limitPerSource.value"
       :batch-size="createForm.batchSize.value"
       :stale-after-minutes="createForm.staleAfterMinutes.value"
+      :retention-days="createForm.retentionDays.value"
+      :dry-run="createForm.dryRun.value"
+      :task-types="directory.taskTypes.value"
       :enabled="createForm.enabled.value"
       :errors="createForm.errors.value"
       :form-error="createForm.formError.value"
@@ -86,6 +102,8 @@ function openCreate(): void {
       @update:limit-per-source="createForm.limitPerSource.value = $event"
       @update:batch-size="createForm.batchSize.value = $event"
       @update:stale-after-minutes="createForm.staleAfterMinutes.value = $event"
+      @update:retention-days="createForm.retentionDays.value = $event"
+      @update:dry-run="createForm.dryRun.value = $event"
       @update:enabled="createForm.enabled.value = $event"
       @submit="createForm.submit()"
       @close="createForm.close()"
@@ -119,13 +137,10 @@ function openCreate(): void {
       @update:limit-per-source="editForm.limitPerSource.value = $event"
       @update:batch-size="editForm.batchSize.value = $event"
       @update:stale-after-minutes="editForm.staleAfterMinutes.value = $event"
+      @update:retention-days="editForm.retentionDays.value = $event"
+      @update:dry-run="editForm.dryRun.value = $event"
       @update:enabled="editForm.enabled.value = $event"
     />
-
-    <p v-if="directory.jobs.value.length === 0" class="empty-hint" aria-hidden="true">
-      <CalendarClock :size="14" aria-hidden="true" />
-      提示：调度器开关在服务端 .env（SCHEDULER_ENABLED），任务启停在这里控制。
-    </p>
   </section>
 </template>
 

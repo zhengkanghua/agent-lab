@@ -7,21 +7,14 @@ import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 import BaseInput from '@/shared/ui/BaseInput.vue'
 import BaseSelect from '@/shared/ui/BaseSelect.vue'
 import {
-  SCHEDULED_JOB_TASK_TYPES,
+  type ScheduledTaskTypeDto,
   type ScheduledJobDto,
   type ScheduledJobTaskType,
 } from '@/api/scheduled-jobs'
 import { useCronPreview } from '../composables/useCronPreview'
-import { TASK_TYPE_DESCRIPTION, TASK_TYPE_LABEL } from '../model/job-copy'
+import { taskTypeLabel } from '../model/job-copy'
 import type { JobFormErrors } from '../model/job-validation'
-import {
-  BATCH_SIZE_MAX,
-  BATCH_SIZE_MIN,
-  LIMIT_PER_SOURCE_MAX,
-  LIMIT_PER_SOURCE_MIN,
-  STALE_AFTER_MINUTES_MAX,
-  STALE_AFTER_MINUTES_MIN,
-} from '../model/job-validation'
+import { parameterBounds, supportsJobForm } from '../model/job-validation'
 
 /*
  * 定时任务的创建/编辑表单（受控组件，字段值由 useJobForm 持有）。
@@ -40,6 +33,9 @@ const props = defineProps<{
   limitPerSource: number
   batchSize: number
   staleAfterMinutes: number
+  retentionDays: number
+  dryRun: boolean
+  taskTypes: ScheduledTaskTypeDto[]
   enabled: boolean
   errors: JobFormErrors
   formError: string
@@ -53,6 +49,8 @@ const emit = defineEmits<{
   'update:limitPerSource': [value: number]
   'update:batchSize': [value: number]
   'update:staleAfterMinutes': [value: number]
+  'update:retentionDays': [value: number]
+  'update:dryRun': [value: boolean]
   'update:enabled': [value: boolean]
   submit: []
   close: []
@@ -88,6 +86,21 @@ const enabledDraft = computed({
 })
 
 const isCreate = computed(() => props.mode === 'create')
+const selectedSpec = computed(() =>
+  props.taskTypes.find((item) => item.task_type === props.taskType),
+)
+const syncBounds = computed(() => parameterBounds(selectedSpec.value, 'limit_per_source'))
+const batchBounds = computed(() => parameterBounds(selectedSpec.value, 'batch_size'))
+const staleBounds = computed(() => parameterBounds(selectedSpec.value, 'stale_after_minutes'))
+const retentionBounds = computed(() => parameterBounds(selectedSpec.value, 'retention_days'))
+const retentionDraft = computed({
+  get: () => props.retentionDays,
+  set: (value: number) => emit('update:retentionDays', value),
+})
+const dryRunDraft = computed({
+  get: () => props.dryRun,
+  set: (value: boolean) => emit('update:dryRun', value),
+})
 
 const {
   state: previewState,
@@ -95,6 +108,7 @@ const {
   shapeMessage: previewShapeMessage,
   message: previewFailureMessage,
   canSubmit: previewCanSubmit,
+  timezone,
 } = useCronPreview(cronDraft)
 
 const previewText = computed(() => {
@@ -107,7 +121,7 @@ const previewText = computed(() => {
 
 /** cron 没校验通过就不发出提交；具体原因已经在预览区里写明。 */
 function onSubmit(): void {
-  if (!previewCanSubmit.value) return
+  if (!previewCanSubmit.value || props.submitting || !selectedSpec.value) return
   emit('submit')
 }
 </script>
@@ -122,7 +136,7 @@ function onSubmit(): void {
       <div>
         <p>{{ isCreate ? '新建定时任务' : `编辑定时任务「${job?.key ?? ''}」` }}</p>
         <h2 id="job-editor-title">
-          {{ isCreate ? '让同步与索引按 cron 自动执行' : '调整执行节奏与参数' }}
+          {{ isCreate ? '任务配置' : '执行节奏与参数' }}
         </h2>
       </div>
       <BaseIconButton label="关闭表单" busy-cursor :disabled="submitting" @click="emit('close')">
@@ -134,12 +148,18 @@ function onSubmit(): void {
       <label class="field-control">
         <span>任务类型</span>
         <BaseSelect v-if="isCreate" v-model="taskTypeDraft" :disabled="submitting">
-          <option v-for="type in SCHEDULED_JOB_TASK_TYPES" :key="type" :value="type">
-            {{ TASK_TYPE_LABEL[type] }}
+          <option
+            v-for="type in taskTypes"
+            :key="type.task_type"
+            :value="type.task_type"
+            :disabled="!supportsJobForm(type.task_type)"
+          >
+            {{ taskTypeLabel(type.task_type)
+            }}{{ supportsJobForm(type.task_type) ? '' : '（暂不支持编辑）' }}
           </option>
         </BaseSelect>
-        <BaseInput v-else :model-value="TASK_TYPE_LABEL[taskType]" disabled />
-        <small>{{ TASK_TYPE_DESCRIPTION[taskType] }}</small>
+        <BaseInput v-else :model-value="taskTypeLabel(taskType)" disabled />
+        <em v-if="errors.taskType" class="field-error">{{ errors.taskType }}</em>
       </label>
 
       <label v-if="isCreate" class="field-control">
@@ -170,7 +190,7 @@ function onSubmit(): void {
           :disabled="submitting"
           :aria-invalid="errors.cron !== undefined || previewState === 'invalid'"
         />
-        <small>按北京时间解释，例如 0 9 * * * 表示每天早上 9 点；存储仍是 UTC。</small>
+        <small v-if="timezone">cron 时区：{{ timezone }}；以下时刻显示为北京时间</small>
         <em v-if="errors.cron" class="field-error">{{ errors.cron }}</em>
         <em v-else-if="previewShapeMessage" class="field-error">{{ previewShapeMessage }}</em>
         <em v-else-if="previewFailureMessage" class="field-error">{{ previewFailureMessage }}</em>
@@ -183,12 +203,12 @@ function onSubmit(): void {
           <BaseInput
             v-model="limitDraft"
             type="number"
-            :min="LIMIT_PER_SOURCE_MIN"
-            :max="LIMIT_PER_SOURCE_MAX"
+            :min="syncBounds.min"
+            :max="syncBounds.max"
             :disabled="submitting"
             :aria-invalid="errors.limitPerSource !== undefined"
           />
-          <small>{{ LIMIT_PER_SOURCE_MIN }}–{{ LIMIT_PER_SOURCE_MAX }} 篇</small>
+          <small>{{ syncBounds.min }}–{{ syncBounds.max }} 篇</small>
           <em v-if="errors.limitPerSource" class="field-error">{{ errors.limitPerSource }}</em>
         </label>
       </template>
@@ -199,12 +219,12 @@ function onSubmit(): void {
           <BaseInput
             v-model="batchDraft"
             type="number"
-            :min="BATCH_SIZE_MIN"
-            :max="BATCH_SIZE_MAX"
+            :min="batchBounds.min"
+            :max="batchBounds.max"
             :disabled="submitting"
             :aria-invalid="errors.batchSize !== undefined"
           />
-          <small>{{ BATCH_SIZE_MIN }}–{{ BATCH_SIZE_MAX }} 篇</small>
+          <small>{{ batchBounds.min }}–{{ batchBounds.max }} 篇</small>
           <em v-if="errors.batchSize" class="field-error">{{ errors.batchSize }}</em>
         </label>
         <label class="field-control">
@@ -212,19 +232,44 @@ function onSubmit(): void {
           <BaseInput
             v-model="staleDraft"
             type="number"
-            :min="STALE_AFTER_MINUTES_MIN"
-            :max="STALE_AFTER_MINUTES_MAX"
+            :min="staleBounds.min"
+            :max="staleBounds.max"
             :disabled="submitting"
             :aria-invalid="errors.staleAfterMinutes !== undefined"
           />
-          <small>{{ STALE_AFTER_MINUTES_MIN }}–{{ STALE_AFTER_MINUTES_MAX }} 分钟</small>
+          <small>{{ staleBounds.min }}–{{ staleBounds.max }} 分钟</small>
           <em v-if="errors.staleAfterMinutes" class="field-error">
             {{ errors.staleAfterMinutes }}
           </em>
         </label>
       </template>
 
-      <label class="check-control">
+      <template v-if="taskType === 'prune_old_documents'">
+        <label class="field-control">
+          <span>保留天数</span>
+          <BaseInput
+            v-model="retentionDraft"
+            name="retention-days"
+            type="number"
+            :min="retentionBounds.min"
+            :max="retentionBounds.max"
+            :disabled="submitting"
+          />
+          <small>{{ retentionBounds.min }}–{{ retentionBounds.max }} 天</small>
+          <em v-if="errors.retentionDays" class="field-error">{{ errors.retentionDays }}</em>
+        </label>
+        <label class="check-control">
+          <input v-model="dryRunDraft" name="dry-run" type="checkbox" :disabled="submitting" />
+          <span
+            ><strong>仅预演</strong
+            ><small>{{
+              dryRun ? '预计删除已完成索引的旧新闻' : '将实际删除已完成索引的旧新闻及其索引'
+            }}</small></span
+          >
+        </label>
+      </template>
+
+      <label v-if="isCreate" class="check-control">
         <input v-model="enabledDraft" type="checkbox" :disabled="submitting" />
         <span>
           <strong>启用</strong>
@@ -232,7 +277,13 @@ function onSubmit(): void {
         </span>
       </label>
 
-      <BaseButton class="submit-command" variant="primary" type="submit" :loading="submitting">
+      <BaseButton
+        class="submit-command"
+        variant="primary"
+        type="submit"
+        :loading="submitting"
+        :disabled="!previewCanSubmit || !selectedSpec"
+      >
         <template #icon><Check :size="17" aria-hidden="true" /></template>
         {{ submitting ? '正在保存' : isCreate ? '确认创建' : '确认修改' }}
       </BaseButton>

@@ -9,9 +9,8 @@ export type ScheduledJobUpdateRequest = components['schemas']['ScheduledJobUpdat
 export type CronValidationDto = components['schemas']['CronValidateResponse']
 export type ScheduledJobTriggerDto = components['schemas']['ScheduledJobTriggerResponse']
 
-/** 任务类型清单与后端注册表一一对应；新类型要两边一起加。 */
-export const SCHEDULED_JOB_TASK_TYPES = ['freshrss_sync', 'index_pending'] as const
-export type ScheduledJobTaskType = (typeof SCHEDULED_JOB_TASK_TYPES)[number]
+export type ScheduledJobTaskType = string
+export type ScheduledTaskTypeDto = components['schemas']['ScheduledTaskTypeResponse']
 
 export const SCHEDULED_JOB_RUN_STATUSES = ['running', 'succeeded', 'failed', 'skipped'] as const
 export type ScheduledJobRunStatus = (typeof SCHEDULED_JOB_RUN_STATUSES)[number]
@@ -43,6 +42,43 @@ export async function listScheduledJobs(signal?: AbortSignal): Promise<Scheduled
   if (!Array.isArray(response) || !response.every(isScheduledJobDto)) {
     throw invalidSchedulerResponse('定时任务接口返回了无效的任务列表。')
   }
+  return response
+}
+
+export async function listScheduledTaskTypes(
+  signal?: AbortSignal,
+): Promise<ScheduledTaskTypeDto[]> {
+  const response = await requestJson<unknown>('/scheduled-jobs/task-types', {
+    method: 'GET',
+    signal,
+  })
+  if (
+    !Array.isArray(response) ||
+    !response.every(
+      (value) =>
+        isRecord(value) &&
+        hasText(value.task_type) &&
+        hasText(value.description) &&
+        isRecord(value.defaults) &&
+        isRecord(value.params_schema),
+    )
+  ) {
+    throw invalidSchedulerResponse('定时任务接口返回了无效的任务类型。')
+  }
+  return response as ScheduledTaskTypeDto[]
+}
+
+export async function getScheduledJobRun(
+  jobId: string,
+  runId: string,
+  signal?: AbortSignal,
+): Promise<JobRunDto> {
+  const response = await requestJson<unknown>(
+    `/scheduled-jobs/${encodeURIComponent(jobId)}/runs/${encodeURIComponent(runId)}`,
+    { method: 'GET', signal },
+  )
+  if (!isJobRunDto(response) || response.id !== runId || response.job_id !== jobId)
+    throw invalidSchedulerResponse('任务执行记录无效。')
   return response
 }
 
@@ -125,6 +161,7 @@ export async function validateCron(
     !isStringArray(response.next_run_times) ||
     !isStringArray(response.next_run_times_local) ||
     response.next_run_times.length === 0 ||
+    (response.timezone !== undefined && !hasText(response.timezone)) ||
     response.next_run_times.length !== response.next_run_times_local.length
   ) {
     throw invalidSchedulerResponse('定时任务接口返回了无效的 cron 预览。')
@@ -145,12 +182,15 @@ export function isScheduledJobDto(value: unknown): value is ScheduledJobDto {
     isRecord(value) &&
     isUuid(value.id) &&
     hasText(value.key) &&
-    isTaskType(value.task_type) &&
+    hasText(value.task_type) &&
     hasText(value.cron_expr) &&
     isRecord(value.params) &&
     typeof value.enabled === 'boolean' &&
     isIsoDateTimeOrNull(value.next_run_at) &&
     (value.last_run === null || isJobRunDto(value.last_run)) &&
+    (value.active_run === undefined ||
+      value.active_run === null ||
+      isJobRunDto(value.active_run)) &&
     isIsoDateTime(value.created_at) &&
     isIsoDateTime(value.updated_at)
   )
@@ -166,13 +206,9 @@ export function isJobRunDto(value: unknown): value is JobRunDto {
     isIsoDateTime(value.started_at) &&
     isIsoDateTimeOrNull(value.finished_at) &&
     isRecord(value.stats) &&
+    (value.needs_attention === undefined || typeof value.needs_attention === 'boolean') &&
+    (value.heartbeat_at === undefined || isIsoDateTimeOrNull(value.heartbeat_at)) &&
     (value.error_type === null || hasText(value.error_type))
-  )
-}
-
-function isTaskType(value: unknown): value is ScheduledJobTaskType {
-  return (
-    typeof value === 'string' && (SCHEDULED_JOB_TASK_TYPES as readonly string[]).includes(value)
   )
 }
 

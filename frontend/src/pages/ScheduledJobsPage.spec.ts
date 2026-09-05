@@ -1,11 +1,17 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
+import { taskTypes } from '@/api/scheduled-jobs.fixture'
+import { ApiError } from '@/api/client'
+
+enableAutoUnmount(afterEach)
 
 const api = vi.hoisted(() => ({
   listScheduledJobs: vi.fn(),
+  listScheduledTaskTypes: vi.fn(),
+  getScheduledJobRun: vi.fn(),
   createScheduledJob: vi.fn(),
   updateScheduledJob: vi.fn(),
   deleteScheduledJob: vi.fn(),
@@ -21,6 +27,8 @@ vi.mock('../api/scheduled-jobs', async (importOriginal) => {
   return {
     ...actual,
     listScheduledJobs: api.listScheduledJobs,
+    listScheduledTaskTypes: api.listScheduledTaskTypes,
+    getScheduledJobRun: api.getScheduledJobRun,
     createScheduledJob: api.createScheduledJob,
     updateScheduledJob: api.updateScheduledJob,
     deleteScheduledJob: api.deleteScheduledJob,
@@ -105,6 +113,17 @@ async function mountPage() {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks()
+  sessionStorage.clear()
+  api.listScheduledTaskTypes.mockResolvedValue(taskTypes)
+  api.getScheduledJobRun.mockImplementation(async (jobId: string, runId: string) => ({
+    ...syncJob.last_run,
+    id: runId,
+    job_id: jobId,
+    status: 'running',
+    finished_at: null,
+    needs_attention: false,
+  }))
   api.listScheduledJobs.mockResolvedValue([syncJob])
   api.createScheduledJob.mockReset()
   api.updateScheduledJob.mockReset()
@@ -115,6 +134,7 @@ beforeEach(() => {
   api.validateCron.mockResolvedValue({
     next_run_times: ['2026-09-03T01:00:00Z'],
     next_run_times_local: ['2026-09-03T09:00:00+08:00'],
+    timezone: 'Asia/Shanghai',
   })
   session.initialize.mockReset()
 })
@@ -178,7 +198,7 @@ describe('ScheduledJobsPage', () => {
     expect(api.triggerScheduledJob).toHaveBeenCalledWith(syncJob.id)
     // 历史面板自动展开（Q3：触发后直接纳客）。
     expect(wrapper.text()).toContain('执行历史')
-    expect(wrapper.text()).toContain('手动执行完成：成功')
+    expect(wrapper.text()).toContain('手动执行：成功')
   })
 
   it('delete requires a second confirming click', async () => {
@@ -196,6 +216,7 @@ describe('ScheduledJobsPage', () => {
   })
 
   it('opening the editor prefills the job and submits through update', async () => {
+    api.listScheduledJobs.mockResolvedValue([{ ...syncJob, enabled: false }])
     api.updateScheduledJob.mockResolvedValue(syncJob)
     const wrapper = await mountPage()
 
@@ -210,7 +231,111 @@ describe('ScheduledJobsPage', () => {
     await wrapper.get('form.job-form').trigger('submit')
     await flushPromises()
     expect(api.updateScheduledJob).toHaveBeenCalledWith(
-      expect.objectContaining({ jobId: syncJob.id, cronExpr: '*/10 * * * *' }),
+      expect.objectContaining({ jobId: syncJob.id, cronExpr: '*/10 * * * *', enabled: false }),
     )
+  })
+
+  it('blocks editing enabled jobs and deleting active executions', async () => {
+    api.listScheduledJobs.mockResolvedValue([
+      { ...syncJob, active_run: { ...syncJob.last_run, status: 'running' } },
+    ])
+    const wrapper = await mountPage()
+    expect(
+      wrapper.get('button[aria-label="编辑 freshrss-sync"]').attributes('disabled'),
+    ).toBeDefined()
+    expect(
+      wrapper.get('button[aria-label="删除 freshrss-sync"]').attributes('disabled'),
+    ).toBeDefined()
+    expect(
+      wrapper.get('input[aria-label="启用 freshrss-sync"]').attributes('disabled'),
+    ).toBeUndefined()
+  })
+
+  it('edits the existing retention type with backend defaults and a boolean dry run', async () => {
+    api.listScheduledJobs.mockResolvedValue([
+      {
+        ...syncJob,
+        key: 'retention',
+        task_type: 'prune_old_documents',
+        enabled: false,
+        params: { retention_days: 180, dry_run: true },
+      },
+    ])
+    const wrapper = await mountPage()
+    await wrapper.get('button[aria-label="编辑 retention"]').trigger('click')
+    await vi.waitFor(() => expect(wrapper.text()).toContain('接下来 3 次'))
+    expect((wrapper.get('input[name="retention-days"]').element as HTMLInputElement).value).toBe(
+      '180',
+    )
+    await wrapper.get('input[name="dry-run"]').setValue(false)
+    await wrapper.get('form.job-form').trigger('submit')
+    await flushPromises()
+    expect(api.updateScheduledJob).toHaveBeenCalledWith(
+      expect.objectContaining({ params: { retention_days: 180, dry_run: false }, enabled: false }),
+    )
+  })
+
+  it('keeps an unknown task visible without offering an unsupported editor', async () => {
+    api.listScheduledJobs.mockResolvedValue([
+      { ...syncJob, task_type: 'future_task', enabled: false },
+      { ...syncJob, id: 'other-job', key: 'known-job' },
+    ])
+    const wrapper = await mountPage()
+    expect(wrapper.text()).toContain('future_task')
+    expect(wrapper.text()).toContain('known-job')
+    expect(
+      wrapper.get('button[aria-label="编辑 freshrss-sync"]').attributes('disabled'),
+    ).toBeDefined()
+  })
+
+  it('reports metadata loading failures and disables creation', async () => {
+    api.listScheduledTaskTypes.mockRejectedValue(new Error('offline'))
+    const wrapper = await mountPage()
+    expect(wrapper.get('[role="alert"]').text()).toContain('读取任务类型失败')
+    const create = wrapper.findAll('button').find((button) => button.text() === '新建任务')!
+    expect(create.attributes('disabled')).toBeDefined()
+  })
+
+  it('ignores repeated clicks and follows the receipt after leaving the page', async () => {
+    let accept!: (receipt: unknown) => void
+    api.triggerScheduledJob.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          accept = resolve
+        }),
+    )
+    const wrapper = await mountPage()
+    const button = wrapper.get('button[aria-label="立即执行 freshrss-sync"]')
+    await button.trigger('click')
+    await button.trigger('click')
+    expect(api.triggerScheduledJob).toHaveBeenCalledTimes(1)
+    const runId = '60000000-0000-4000-8000-000000000010'
+    accept({ job_id: syncJob.id, run_id: runId, status: 'running' })
+    await flushPromises()
+    await wrapper.get('button[aria-label="查看 freshrss-sync 的执行历史"]').trigger('click')
+    wrapper.unmount()
+    // 历史列表没有目标记录，重新打开仍用回执中的准确 ID 查询。
+    api.getScheduledJobRun.mockResolvedValue({
+      ...syncJob.last_run,
+      id: runId,
+      status: 'succeeded',
+    })
+    const reopened = await mountPage()
+    await flushPromises()
+    expect(api.getScheduledJobRun).toHaveBeenCalledWith(syncJob.id, runId, expect.any(AbortSignal))
+    expect(reopened.text()).toContain('手动执行：成功')
+    expect(api.triggerScheduledJob).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports an uncertain receipt on timeout without resubmitting', async () => {
+    api.triggerScheduledJob.mockRejectedValue(
+      new ApiError({ code: 'request_timeout', message: 'timeout' }),
+    )
+    const wrapper = await mountPage()
+    await wrapper.get('button[aria-label="立即执行 freshrss-sync"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('受理情况待核实')
+    expect(api.triggerScheduledJob).toHaveBeenCalledTimes(1)
+    expect(api.listScheduledJobRuns).toHaveBeenCalled()
   })
 })

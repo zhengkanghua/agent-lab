@@ -4,6 +4,8 @@ import {
   deleteScheduledJob,
   listScheduledJobRuns,
   listScheduledJobs,
+  listScheduledTaskTypes,
+  getScheduledJobRun,
   triggerScheduledJob,
   updateScheduledJob,
   validateCron,
@@ -118,7 +120,7 @@ describe('scheduled jobs API', () => {
   it('rejects malformed jobs, runs, receipts, and cron previews before rendering', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ ...job, task_type: 'mystery_type' }]))
+      .mockResolvedValueOnce(jsonResponse([{ ...job, task_type: '' }]))
       .mockResolvedValueOnce(jsonResponse([{ ...run, status: 'unknown' }]))
       .mockResolvedValueOnce(jsonResponse({ job_id: job.id, run_id: run.id, status: 'done' }))
       .mockResolvedValueOnce(jsonResponse({ next_run_times: [] }))
@@ -132,5 +134,43 @@ describe('scheduled jobs API', () => {
     await expect(validateCron({ cronExpr: '* * * * *' })).rejects.toMatchObject({
       code: 'response_invalid',
     })
+  })
+
+  it('accepts unknown task names but checks a queried run belongs to the requested job', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse([{ ...job, task_type: 'future_task' }]))
+        .mockResolvedValueOnce(
+          jsonResponse({ ...run, job_id: '40000000-0000-4000-8000-000000000099' }),
+        )
+        .mockResolvedValueOnce(jsonResponse({ ...run, needs_attention: 'false' })),
+    )
+    await expect(listScheduledJobs()).resolves.toEqual([{ ...job, task_type: 'future_task' }])
+    await expect(getScheduledJobRun(job.id, run.id)).rejects.toMatchObject({
+      code: 'response_invalid',
+    })
+    await expect(getScheduledJobRun(job.id, run.id)).rejects.toMatchObject({
+      code: 'response_invalid',
+    })
+  })
+
+  it('reads type metadata with boolean retention defaults', async () => {
+    const metadata = [
+      {
+        task_type: 'prune_old_documents',
+        description: '旧新闻清理',
+        defaults: { retention_days: 180, dry_run: true },
+        params_schema: { type: 'object' },
+      },
+    ]
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(metadata))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(listScheduledTaskTypes()).resolves.toEqual(metadata)
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/scheduled-jobs/task-types',
+      expect.objectContaining({ method: 'GET' }),
+    )
   })
 })
