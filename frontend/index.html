@@ -7,6 +7,27 @@
     <meta name="theme-color" content="#f3f5f4" />
     <meta name="description" content="Signal Desk：面向新闻研究的语义检索工作台。" />
     <title>Signal Desk · 新闻语义检索</title>
+    <script>
+      /*
+       * 主题防闪烁：在任何 CSS 渲染前把 data-theme 落到 <html> 上。
+       * 与 ThemeToggle 的解析规则保持一致——显式选择优先，否则跟随系统。
+       * 主题值只落 'light'/'dark' 两个结果值，'auto' 是 ThemeToggle 内部的选择状态，
+       * 不进 DOM。tokens.css 因此只需要一份深色覆盖块（按属性选择器），不再需要
+       * prefers-color-scheme 的媒体查询副本。
+       */
+      ;(function () {
+        try {
+          var saved = localStorage.getItem('theme')
+          var dark =
+            saved === 'dark' ||
+            ((saved === null || saved === 'auto') &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches)
+          if (dark) document.documentElement.dataset.theme = 'dark'
+        } catch (e) {
+          /* localStorage 不可用（隐私模式等）就保持浅色默认。 */
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

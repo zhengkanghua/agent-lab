@@ -46,7 +46,8 @@
   /* 次要按钮的悬停底：比 --surface-sunken 再深一档。少了它，静态与悬停会撞成同色。 */
   --surface-sunken-hover: var(--neutral-300);
   --surface-overlay: rgb(20 24 26 / 42%);
-  /* 顶栏毛玻璃底：半透明让下方内容透出，配合 backdrop-filter。 */
+  /* 顶栏与吸附输入坞的底：96% 不透明，只留一丝透意。不再配 backdrop-filter——
+     那点模糊不可见，却会在主题切换时闪出一帧黑色矩形（Chromium 伪影）。 */
   --surface-scrim: rgb(255 255 255 / 96%);
   /* 与页面明暗相反的实底（跳转链接、标识块）。深色模式下这一对整体反转，
      不能用 --surface-raised 顶替：那个跟着页面走，反转后就成了深底深字。 */
@@ -165,93 +166,14 @@
   --z-popover: 50; /* Portal 弹层：盖过输入坞与后台侧栏，让位阅读层 */
   --z-reader: 80; /* 全屏阅读层 */
   --z-skip: 100; /* 无障碍跳转链接 */
-  --z-toast: 9999; /* 全局通知，永远最高 */
 }
 
 /* ========== 深色模式 ========== */
 
-/* 深色模式：系统偏好 */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    /* 1、色阶层：反转明度 */
-    --neutral-50: #14181a;
-    --neutral-100: #1f2523;
-    --neutral-200: #2f3634;
-    --neutral-300: #4d5654;
-    --neutral-400: #5c6663;
-    --neutral-500: #7b8481;
-    --neutral-600: #b4bbb9;
-    --neutral-700: #d8dcdb;
-    --neutral-800: #e9ebea;
-    --neutral-900: #f4f5f5;
-    --neutral-950: #fbfbfa;
-
-    /* 2、强调色：深色下需要提亮 */
-    --teal-100: #0b574e;
-    --teal-400: #4fb3a3;
-    --teal-600: #5fc9ba;
-    --teal-700: #7dd4c7;
-
-    /* 3、状态色：深色下提亮 */
-    --brick-100: #5c1f1f;
-    --brick-600: #e86060;
-    --amber-100: #5c4a1f;
-    --amber-600: #d9a43d;
-
-    /* 4、语义层——表面：覆盖写死的浅色代码 */
-    --surface-base: var(--neutral-50);
-    --surface-raised: var(--neutral-100);
-    --surface-sunken: var(--neutral-200);
-    --surface-sunken-hover: var(--neutral-300);
-    --surface-overlay: rgb(20 24 26 / 80%);
-    --surface-scrim: rgb(20 24 26 / 80%);
-    --surface-inverse: var(--neutral-900);
-    --surface-secondary: var(--neutral-100);
-    --surface-tertiary: var(--neutral-200);
-    --surface-hover: var(--neutral-200);
-    --surface-error: var(--brick-100);
-    --surface-success: var(--teal-100);
-
-    /* 5、语义层——文字：覆盖写死的浅色代码 */
-    --text-primary: var(--neutral-950);
-    --text-secondary: var(--neutral-700);
-    --text-tertiary: var(--neutral-500);
-    --text-on-accent: var(--neutral-50);
-    /* 反转块在深色下是浅底，字必须跟着翻成深色：--neutral-950 在深色
-       映射里是白，用它会出现白字白底（品牌标识块就是这么被写没的）。 */
-    --text-on-inverse: var(--neutral-50);
-    --text-error: var(--brick-600);
-    --text-success: var(--teal-700);
-
-    /* 6、语义层——描边：覆盖写死的浅色代码 */
-    --border-subtle: var(--neutral-300);
-    --border-strong: var(--neutral-400);
-
-    /* 7、语义层——强调与状态 */
-    --accent: var(--teal-600);
-    --accent-primary: var(--teal-600);
-    --accent-hover: var(--teal-400);
-    --accent-soft: var(--teal-100);
-    --accent-ring: rgb(95 201 186 / 24%);
-    --success: var(--teal-600);
-    --danger: var(--brick-600);
-    --danger-soft: var(--brick-100);
-    --warning: var(--amber-600);
-    --warning-soft: var(--amber-100);
-
-    /* 8、阴影：深色模式下投影要提亮边缘 */
-    --shadow-soft: 0 14px 34px rgb(0 0 0 / 50%);
-    --shadow-card: 0 6px 20px rgb(0 0 0 / 30%);
-    --shadow-raised: 0 1px 5px rgb(0 0 0 / 40%);
-    --shadow-inset-chip: 0 1px 3px rgb(0 0 0 / 60%);
-    --shadow-drawer: -18px 0 48px rgb(0 0 0 / 60%);
-
-    /* 10、告知浏览器使用深色滚动条 */
-    color-scheme: dark;
-  }
-}
-
-/* 用户手动切换：强制深色 */
+/* 深色覆盖只有这一份：主题解析在 JS（index.html 防闪烁脚本与 ThemeToggle 同一套规则，
+   显式选择优先，否则跟随系统），解析结果永远以 data-theme 属性落到 <html> 上。
+   因此这里不需要再维护 prefers-color-scheme 的媒体查询副本——那份副本曾是整块
+   逐字节重复的 80 行，改一个深色值要同步两处。 */
 [data-theme='dark'] {
   /* 1、色阶层：同上深色映射 */
   --neutral-50: #14181a;
@@ -327,10 +249,4 @@
 
   /* 10、告知浏览器使用深色滚动条 */
   color-scheme: dark;
-}
-
-/* 用户手动切换：强制浅色（覆盖系统深色偏好） */
-[data-theme='light'] {
-  color-scheme: light;
-  /* 保持原有浅色色阶，无需重新声明 */
 }

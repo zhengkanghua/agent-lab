@@ -8,14 +8,18 @@ const theme = ref<Theme>('auto')
 const resolvedTheme = ref<'light' | 'dark'>('light')
 
 function applyTheme(t: Theme) {
+  // data-theme 永远落「解析后的结果值」：'auto' 在这里解析成 light/dark 再写进 DOM，
+  // 而不是删属性交给 CSS 媒体查询。这样 tokens.css 的深色覆盖只需要 [data-theme='dark']
+  // 一份，不用再维护 prefers-color-scheme 的重复块；index.html 的防闪烁脚本用同一套规则。
   if (t === 'auto') {
-    delete document.documentElement.dataset.theme
     // jsdom 不支持 matchMedia，测试环境默认 light
     const systemPrefersDark =
       typeof window.matchMedia === 'function'
         ? window.matchMedia('(prefers-color-scheme: dark)').matches
         : false
-    resolvedTheme.value = systemPrefersDark ? 'dark' : 'light'
+    const resolved = systemPrefersDark ? 'dark' : 'light'
+    document.documentElement.dataset.theme = resolved
+    resolvedTheme.value = resolved
   } else {
     document.documentElement.dataset.theme = t
     resolvedTheme.value = t
