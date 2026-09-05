@@ -623,30 +623,25 @@ indexed/skipped/failed 数量以及按 ``error_type`` 聚合的失败，不返�
 定时任务模块（[ADR 0014](../../docs/adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md)、
 [ADR 0017](../../docs/adr/0017-scheduler-runs-in-a-dedicated-process.md)）
 用 APScheduler 3.x（``AsyncIOScheduler`` + 内存 job store）按 cron 到点
-执行两类任务：``freshrss_sync``（FreshRSS → PostgreSQL）与 ``index_pending``（PostgreSQL 待
-索引文档 → Qdrant）。类型清单由代码注册表（``services/scheduled_task_registry.py``）定义，
-不是数据库数据——新增类型等于改代码。
+执行三种任务：``freshrss_sync``（同步）、``index_pending``（索引）和 ``prune_old_documents``（清理已完成索引的旧 Document）。
+当前执行及恢复规则见 [ADR 0019](../../docs/adr/0019-scheduled-execution-and-write-coordination.md)。
+类型注册表直接关联参数模型与业务执行函数，不从数据库加载代码。
 
 职责切分：
 
-- **PostgreSQL 是唯一事实来源**。``scheduled_jobs`` 存任务配置（key 唯一、cron 原样字符串、
-  params JSONB、启停），``scheduled_job_runs`` 存执行历史（running/succeeded/failed/skipped、
-  脱敏统计、error_type）。调度进程启动时从表里加载启用任务注册进调度器（进程内模式由 lifespan、独立进程模式由 ``scheduler_main`` 完成）；管理 API
-  写库成功后立即同步调度状态，不需要重启。
-- **调度器只是执行机构**（``services/scheduler_runner.py``）。cron 到点与手动触发走同一个
-  ``_execute`` 包装器：参数防御性重验 → 按次新建写 Runtime（与手动流水线同一工厂）→ 只跑
-  对应步骤 → finally 关闭 → 写终态 → 裁剪历史（每任务保留最近 50 条，可配）。
-- **运行策略**：同一任务上一轮未结束，到点触发记一条 ``skipped`` 后放弃（进程内
-  ``asyncio.Lock`` 判定，APScheduler ``max_instances=1`` 兜底）；错过执行点给
-  ``SCHEDULER_MISFIRE_GRACE_SECONDS``（默认 600 秒）宽限补跑；失败不自动重试，由下一轮
-  cron 或手动触发兜底。
-- **开关与边界**：``SCHEDULER_ENABLED`` 默认 false，关闭时调度器不启动，但管理 API 与手动
-  触发照常可用（``next_run_at`` 为空）。进程内模式**要求单 uvicorn worker 单实例**，否则同一
-  任务会被重复调度；生产容器部署走独立调度进程（同镜像第二个 compose 服务，backend 容器由
-  compose 强制关闭进程内调度，见 ADR 0017），多 worker 只影响 API。每次部署重启会打断正在
-  执行的任务——可接受，执行是有界且可恢复的（来源 checkpoint、索引超时回收）。
-- **cron 时区**：``SCHEDULER_TIMEZONE``（默认 Asia/Shanghai）只用于把 cron 字符串翻译成
-  具体时刻；数据库存储一律 UTC，不新增时区不一致。
+- **配置管理**：``scheduled_job_service.py`` 负责校验及操作前置条件，Repository 的任务行锁覆盖修改、删除和认领。修改 cron/参数前必须已经停用且没有活动执行或未确认占用；保存后保持停用。停用不取消当前执行，仍可手动触发。
+- **触发管理**：``scheduler_runner.py`` 只管理 cron、配置刷新与调度事件。独立 scheduler 默认每 5 秒读一次配置；自动认领再检查启用状态和版本，拒绝旧 cron 回调。错过时间不补执行，允许一秒正常投递误差。
+- **统一执行**：``scheduled_job_executor.py`` 为 cron 和 API 共用受理、参数重验、执行快照、执行者、心跳与收尾。同任务原子认领冲突时，手动返回 409，cron 记已结束的 skipped。任务函数在 ``scheduled_tasks.py``，调度核心没有业务类型分支。
+- **写资源协调**：``write_coordination.py`` 用 PostgreSQL 短事务咨询锁维护持久占用。同步、索引各自串行，彼此可以并行；清理排他取得二者。API Pipeline、CLI、定时任务都经 ``PipelineWriteRuntime`` 的公开写入口参与。等待时不占长事务；心跳过期不自动释放资源。
+- **资源归属**：``pipeline/assembly.py`` 是 API、CLI、scheduler 共用装配。Runtime 按需创建客户端，清理直接使用 ``QdrantDeletionStore``，不读取索引 Service 内部属性。Engine 和工厂归进程，Runtime/client 归本次调用，Session/事务归各工作单元。
+- **收尾与恢复**：关闭先拒绝新受理，等待当前执行，再按关闭宽限取消并等待收尾，最后关闭进程依赖。业务结果、资源关闭错误、终态保存失败分别记录；只重试一次幂等终态保存，不重复业务。强制退出可能来不及收尾，须人工核实旧进程与远端写入停止后释放占用。
+- **清理**：固定本次 UTC 截止时刻，优先发布时间、缺失才用入库时间，严格早于边界且 indexed 才进入新候选。每批 50 连续处理，无整次上限；预演不改业务表或 Qdrant。真实删除按独立待办、Qdrant 确认、PostgreSQL 条件删除推进，失败目标不在本次原地重试。待办同时阻挡同步更新和索引认领，不能让 checkpoint 越过未保存的来源页。
+- **API 与前端**：``GET /scheduled-jobs/task-types`` 导出类型默认值及参数 schema；``GET /scheduled-jobs/{job_id}/runs/{run_id}`` 精确查询回执。``active_run`` 表示未释放执行，``needs_attention`` 表示待核实。前端显式适配三种表单，未知类型仍可列出，部分失败不显示全部成功。手动回执按账号保存在当前浏览器标签页，重新进入页面继续查询；请求超时不自动重复提交。
+- **时间与就绪**：cron 解释、预览和注册共用 ``SCHEDULER_TIMEZONE``，记录存 UTC。``next_run_at`` 是数据库配置算出的下次计划时间，API 不开启 cron 时也可计算；它不证明 scheduler 就绪。本地就绪文件记录配置加载与刷新状态，Compose 和发布流程另行检查 scheduler。
+
+新增任务类型时，在注册表绑定参数模型与执行函数，实现必要的 Runtime 能力及业务 Service，补接入测试；需要配置界面时增加显式表单适配。无需修改 scheduler 或执行器，不增加通用插件层。
+
+完整跨进程顺序见 [定时任务执行](../../docs/flows/scheduled-job-execution.md)。持久占用与跨库删除在隔离集成验证通过前，不以 mock 测试代替实测保证。
 
 写路径的 CPU 段（HTML 解析、切块、tiktoken 计数）由 ``DocumentIndexingService`` 通过
 ``asyncio.to_thread`` 移出事件循环执行——该步骤是纯计算、无共享状态；手动与定时两条入口
@@ -667,7 +662,7 @@ pipeline（Document、Chunk、Ollama Embedding）
         ↓
 services + qdrant（索引状态编排、Point/Payload、Collection/Alias 生命周期与只读搜索）
         ↓
-pipeline write runtime（只组合手动同步与索引写路径；不提供搜索）
+pipeline write runtime（组合同步、索引与清理写路径；不提供搜索）
         ↓
 agent（模型客户端、只读工具、中间件、图装配与流式翻译；只消费 services 的只读能力）
         ↓
@@ -683,7 +678,7 @@ api（HTTP 校验、按请求 Runtime、错误契约；不实现 Embedding/Qdran
 ``api/`` 内部再分一层：``dependencies.py`` 与 ``error_contract.py`` 是基础设施，
 ``vector_search.py``、``document_search.py``、``documents.py``、``pipeline.py``、
 ``user_admin.py``、``scheduled_jobs.py``、``auth.py``、``health.py``、``agent_chat.py`` 是平级
-特性路由，彼此不互相 import；``main.py`` 是唯一的装配根。``dependencies.py`` 里
+特性路由，彼此不互相 import；``main.py`` 是 API 装配根，写入与调度装配复用 ``pipeline/assembly.py``。``dependencies.py`` 里
 ``AgentRuntime`` 只在 ``TYPE_CHECKING`` 下导入——运行时导入会成环（``dependencies`` →
 ``agent.runtime`` → ``agent.middleware`` → ``api.error_contract`` → ``dependencies``），而本模块
 只从 ``app.state`` 取现成对象、从不构造也不 ``isinstance``。
@@ -700,9 +695,11 @@ documents        清洗正文、来源关联、当前处理状态，以及 Qdran
 users            内部登录邮箱、Argon2 密码 Hash、启用/超级用户状态和唯一环境托管标记
 access_tokens    浏览器登录产生的可撤销随机 Token、创建时间和所属用户
 agent_threads    Agent 会话的账号归属、标题与最后活跃时间；不含任何消息内容
-scheduled_jobs   定时任务配置：key 唯一、任务类型、cron 原样字符串、params JSONB 与启停
+scheduled_jobs   定时任务配置：key 唯一、任务类型、cron、params、启停和配置版本
 scheduled_job_runs  任务执行历史：触发方式、状态、起止时间、脱敏统计与 error_type；
-                    随任务删除级联删除，每次执行收尾只保留最近 N 条
+                    保存执行快照、执行者和心跳；级联删除，裁剪保护活动和占用中的记录
+write_operations   同步、索引、清理的持久资源占用；失联不自动抢占
+document_deletions  独立删除待办：目标、版本、时间边界、Qdrant 确认及脱敏错误
 alembic_version  由 Alembic 维护当前迁移版本
 
 以下四张由 langgraph-checkpoint-postgres 自建自迁移，Alembic 既不生成也不删除（ADR 0004）：

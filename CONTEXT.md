@@ -74,7 +74,7 @@ _Avoid_：保底账号、root；不带限定词时说不清它和普通超级用
 _Avoid_：作业、计划任务、crontab（那只是 cron 字符串本身）；代码标识符沿用 `ScheduledJob`，不改。
 
 **任务类型**：
-定时任务能选择的执行种类，v1 只有 `freshrss_sync`（FreshRSS 增量同步进 PostgreSQL）和 `index_pending`（PostgreSQL 待索引文档切块向量化写进 Qdrant）两种；类型清单由代码注册，不是数据库数据。
+定时任务能选择的业务执行种类。
 _Avoid_：工作流、pipeline（那指手动两步连跑的接口，不是调度概念）。
 
 **任务执行**：

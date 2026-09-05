@@ -278,6 +278,39 @@ CI 的完整顺序在 [`.github/workflows/deploy.yml`](../.github/workflows/depl
 
 ## 三、排查
 
+### 定时任务升级与恢复
+
+执行这些命令前仍需确认目标环境与操作授权。新版包含迁移 `f1a8c3d9e602`：新增配置版本、执行快照、执行者和心跳、写资源占用及独立删除待办，不改现有 cron、参数或启停，不创建真实删除任务。
+
+首次切换的顺序：
+
+1. 先确认定时任务的开发服务隔离验证已通过。验证可以直接使用当前开发 PostgreSQL/Qdrant，每次只创建随机 schema、Collection、Alias 和合成数据，不需要另建测试服务器；离线 mock 通过不能代替这一步，测试入口见 [后端 README](../backend/README.md#测试)。生产数据行为仍需在发布后的受控窗口观察。
+2. 更新服务器的 `docker-compose.yml`，与仓库版本一致。现有 workflow 不上传 compose；仅更新镜像不会带来新增的关闭宽限和 scheduler healthcheck。
+3. 首次从未采用写资源协议的旧版升级前，先在授权的维护窗口停止旧 backend、scheduler 及容器外的 `sync-news`、`index-pending`、`run-once`，并确认远端未决写入均已结束，再发起 workflow。迁移只捕获当时可见的旧 `running` 记录，不能追踪旧 HTTP Pipeline/CLI，也不能保护迁移后旧进程新受理的执行；因此必须完成这一步，不能只依赖迁移后的统一停止。真实清理保持停用，验收完成后再按需启用。
+4. workflow 沿用先增量迁移、再统一停止 backend、scheduler 并启动新版的顺序。后续已采用同一占用协议的版本升级时，迁移失败仍保留原来运行的容器；首次升级前手动停下的旧容器不会因失败自动重启。停写检查或迁移失败时先保持停止，核实数据库状态与兼容性后再由操作者决定恢复旧版。这个切换包含停机，Compose 和 workflow 都留出收尾时间。迁移看到的旧版未结束任务执行会转为保守占用，需人工核实，不按心跳年龄自动解锁。
+5. 分别确认 API 健康和 scheduler 就绪。后者只读取容器内就绪文件中的进程、配置加载及最近刷新状态，不调用新闻同步、索引或清理，不周期探测全部外部服务。
+
+```bash
+docker compose exec -T scheduler python -m agent_lab.scheduler_main --check
+docker compose exec -T scheduler python -m agent_lab.scheduler_maintenance
+```
+
+第二条默认只查看执行者、心跳和占用，输出不含连接串、正文或第三方错误文本。页面的 `needs_attention` 不是允许重新执行的信号。先依据 owner 识别并确认所属进程已经停止，再确认 Qdrant 等远端未决写入已结束；仅确认容器退出或心跳过期还不够。
+
+人工确认完成后，才在新版容器中执行对应恢复命令：
+
+```bash
+docker compose exec -T scheduler python -m agent_lab.scheduler_maintenance --run-id <任务执行UUID> --confirm-stopped
+# 没有任务执行记录的手动 Pipeline/CLI，占用通过 operation-id 定位：
+docker compose exec -T scheduler python -m agent_lab.scheduler_maintenance --operation-id <占用UUID> --confirm-stopped
+```
+
+恢复会拒绝近期仍有心跳的执行，关闭失联执行记录、解除相关占用并清除其待核实提示；已经失败的结果和统计继续保留。它不重新执行业务，也不删除 Document 或删除待办。删除待办由下一次正常清理重新核实并继续处理，失败不是“下次一定成功”的保证。
+
+日志用 `job_id`、`run_id`、`operation_id`、`owner` 关联：等待写资源、业务失败、客户端关闭失败、终态未保存是不同问题。业务成功但终态未保存时，不能直接再跑一次当作修复。
+
+回退前必须停止所有相关写入口并核实未决写入。迁移 downgrade 遇到占用或删除待办会拒绝，不能删掉它们来强行降级；代码回退也不能恢复已经删除的新闻。旧 `SCHEDULER_MISFIRE_GRACE_SECONDS` 已移除，遗留值不生效，所有入口均不补执行。
+
 ### 看日志
 
 ```bash

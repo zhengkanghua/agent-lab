@@ -1,5 +1,7 @@
 # 定时任务：进程内 APScheduler，数据库为唯一事实来源
 
+> **后续决策**：[ADR 0019](0019-scheduled-execution-and-write-coordination.md) 替代本文的宽限补跑、仅进程内互斥及中断恢复规则；下文保留原决策历史。
+
 > **状态（2026-09）**：部署形态已被 [ADR 0017](0017-scheduler-runs-in-a-dedicated-process.md)
 > 取代——生产容器部署下调度器跑独立进程、backend 已多 worker 化，本文的「单进程硬前提」只对
 > 保留的本地开发进程内模式继续成立，「生产 `.env` 必须写 `SCHEDULER_ENABLED=true`」随之失效

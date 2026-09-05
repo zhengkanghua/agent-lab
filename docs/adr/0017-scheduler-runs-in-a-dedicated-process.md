@@ -1,5 +1,7 @@
 # 调度器跑在独立进程，backend 多 worker 化
 
+> **后续决策**：[ADR 0019](0019-scheduled-execution-and-write-coordination.md) 保留本文的生产进程形态，替代宽限补跑和中断恢复规则，补充跨进程认领与写资源协调；本文记录的装配复制债已由共享按需装配解决。
+
 ## Context
 
 ADR 0014 决定调度器（APScheduler AsyncIOScheduler）跑在 backend 的 uvicorn 进程内，前提是部署

@@ -77,6 +77,10 @@ langgraph-checkpoint-postgres 3.1.2、langsmith 0.10.18。这里的版本号都�
   API worker 数，与调度器无关。``.env`` 里的 ``SCHEDULER_ENABLED`` 在容器部署下被 compose 覆盖，
   对 backend 容器不生效。
 
+定时任务现在有同步、索引、旧 Document 清理三种类型。配置修改顺序统一为先停用、等当前任务执行结束、保存修改，再单独启用；停用仍允许手动触发。配置默认每 5 秒由独立 scheduler 刷新，错过 cron 不补执行。同任务互斥与清理占用由 PostgreSQL 协调，手动 Pipeline 和 CLI 也参与。
+
+清理默认预演，仅选择已完成索引且超过保留期的 Document，每批 50 连续处理，没有整次上限。失败可能保留删除待办或待核实占用，不能仅因心跳过期就解锁。规则与代价见 [ADR 0019](../docs/adr/0019-scheduled-execution-and-write-coordination.md)，排查和升级顺序见 [部署文档](../docs/container_deployment.md#定时任务升级与恢复)。
+
 Agent Runtime 的装配是**非致命**的：LLM 配置缺失或会话记忆连不上时，只记异常类型（配置和
 连接串里都有凭据，异常文本可能带出来），把 ``app.state.agent_runtime`` 留成 ``None``，进程
 照常启动，只有 ``/agent/*`` 返回 503。所以「服务起来了」不等于「Agent 可用」，改完 LLM 配置
@@ -95,10 +99,12 @@ AUTH_ADMIN_EMAIL        保底超级管理员，必须与 AUTH_ADMIN_PASSWORD �
 AUTH_ADMIN_PASSWORD     留成 AUTH_ADMIN_EMAIL= 这样的空值会因邮箱格式校验直接启动失败。
                         密码 12 到 128 字符，且不能等于邮箱。
 FRESHRSS_SYNC_CATEGORIES  分类白名单，JSON 数组。不配就同步不到任何东西。
-SCHEDULER_ENABLED         默认 false。生产要定时同步必须在 .env 里显式 true；
+SCHEDULER_ENABLED         默认 false。生产 compose 对 API 强制 false、scheduler 强制 true；
                           关闭时定时任务管理 API 仍可用（可手动触发），只是不到点自动执行。
 SCHEDULER_TIMEZONE        cron 表达式的解释时区，默认 Asia/Shanghai。只影响「0 9 * * *」
                           翻译成哪个时刻；数据库存储一律 UTC，不受影响。
+SCHEDULER_REFRESH_SECONDS 默认 5，独立 scheduler 读取数据库配置的间隔。
+SCHEDULER_SHUTDOWN_GRACE_SECONDS 默认 10，关闭先等待，再取消并收尾，不限制清理执行时长。
 QDRANT_DISTANCE         改这个或维度必须新建 Schema/Collection，不能原地改。
 LLM_API_KEY             LLM_PROVIDER=openai_compatible 时必须非空，否则 /agent/* 全部 503；
                         provider=ollama 时允许为空。检索接口不受影响。
@@ -283,11 +289,9 @@ uv run pytest -q
 ``create_app``：后者每个工厂参数都有生产默认值，漏掉一个，lifespan 就会拿真实的那个去连真实
 服务。这已经发生过一次——``agent_runtime_factory`` 被 5 个文件集体漏掉，每次进 lifespan 白等
 30 秒连接池超时，而 lifespan 那个 ``except Exception`` 把失败咽掉了，所以测试照常通过、没人
-发现。想验证离线，把 ``DATABASE_URL`` 临时指到 ``192.0.2.1`` 这类不可达地址再跑一遍，耗时不变
-才算真离线。
+发现。现在 ``tests/conftest.py`` 默认阻断 psycopg 真实连接和 httpx 真实传输；替身接入遗漏会直接让测试失败，不通过访问真实连接来证明离线。
 
-只有 5 个测试文件受环境变量门控，默认跳过。仅在明确允许访问当前 ``.env`` 指向的服务时启用；
-它们只发送短小、无敏感信息的中文文本，不打印密钥或完整向量。
+外部集成测试受环境变量门控，默认跳过。运行前需明确访问范围并获得授权；以下账号、模型和既有远程测试可能使用应用环境。定时任务测试可以使用老板已配置的开发 PostgreSQL/Qdrant，但只创建随机 schema、Collection、Alias 和合成数据，不碰业务数据，也不打印密钥或完整向量。
 
 真实 PostgreSQL 的环境管理员同步与账号管理 Service 行为；使用随机临时记录并自动清理：
 
@@ -311,13 +315,15 @@ $env:RUN_QDRANT_REMOTE_INTEGRATION_TEST="1"
 uv run pytest -q tests/test_qdrant_remote_integration.py
 ```
 
-真实 PostgreSQL + FreshRSS + Ollama + Qdrant 的定时任务端到端：验证迁移种子任务、并用
-可回滚事务真实执行 ``freshrss_sync`` 与 ``index_pending`` 各一轮（历史不残留）：
+定时任务的多进程 PostgreSQL 与跨库 Qdrant 验证可以直接使用当前开发配置；测试每次创建随机 PostgreSQL schema、随机 Qdrant Collection/Alias，子进程独立提交，结束关闭子进程并删除测试资源。不访问 FreshRSS、Ollama 或模型，也不需要另建测试服务器。测试账号需要创建 schema 和表的权限：
 
 ```powershell
-$env:RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST="1"
-uv run pytest -q tests/test_scheduler_postgres_integration.py
+uv run pytest -q --tb=short --scheduler-configured-services `
+  tests/test_scheduler_postgres_integration.py `
+  tests/test_scheduler_retention_integration.py
 ```
+
+这组测试会生成常规 pytest/Python 缓存，不生成新闻导出文件。强制终止测试可能留下带 ``scheduler_test_`` 标识的资源，须先确认测试进程已退出再清理。离线测试不能证明多进程数据库锁、跨库恢复或实际部署；上面的隔离验证也只覆盖合成数据，不等于生产发布验收。
 
 真实 PostgreSQL 的会话归属过滤与旧会话清理（验证归属只匹配自己的行；需已跑过
 ``alembic upgrade head``）：
@@ -354,7 +360,8 @@ uv run pytest -q tests/test_cli.py tests/test_news_pipeline_execution.py `
 
 # 定时任务：类型注册表与 cron 预览、调度器包装器、管理 API 契约（假 Store/Runtime，不连库）
 uv run pytest -q tests/test_scheduled_task_registry.py tests/test_scheduler_runner.py `
-  tests/test_scheduled_jobs_api.py
+  tests/test_scheduled_jobs_api.py tests/test_scheduler_safety.py tests/test_scheduler_lifecycle.py `
+  tests/test_document_retention_service.py
 
 # 增量同步与正文质量
 uv run pytest -q tests/test_freshrss_incremental_sync.py tests/test_content_quality.py

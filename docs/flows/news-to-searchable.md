@@ -38,7 +38,7 @@ PostgreSQL 里，下次 `index-pending` 会接着处理。
 2. **干活**：切 Chunk → Ollama 向量化 → 写 Qdrant。**这期间不占数据库事务**，因为这几步
    都是网络调用，占着事务等网络会把连接池耗光。
 3. **确认**：按 revision 条件回写最终状态。如果处理期间新闻内容变了（revision 变了），
-   条件不满足，不覆盖新版本——旧 Worker 白干，但不会写坏数据。
+   条件不满足，不覆盖 PostgreSQL 的新版本；Qdrant 可能仍是旧快照，后续索引继续追赶，不能把版本检查当作跨库事务。
 
 三种终态：索引成功 / 跳过（没领到，或被更新版本抢走）/ 失败。定义在 `DocumentIndexingResult`。
 
@@ -47,7 +47,9 @@ PostgreSQL 里，下次 `index-pending` 会接着处理。
 `services/news_pipeline_execution_service.py` 是 CLI 三个命令背后的执行器：开短生命周期
 Session、取索引候选、**回收超时卡在 processing 的任务**、逐篇调用索引 Service。
 
-进程崩在第二步会留下 processing 状态的孤儿任务，靠这里的超时回收捞回来，不需要人工介入。
+这些写入口先参加共同的写资源协调。同类写操作串行，同步和索引可并行；清理排他取得二者，避免旧索引在清理之后重新写回。
+
+进程崩在写入过程中会留下处理状态和资源占用。先人工确认旧进程和远端未决写入都已停止、释放占用，后续索引才能取得写资源并回收符合条件的处理记录；仅经过一段时间不足以证明可以重做。
 
 `api/pipeline.py` 的 `POST /pipeline/run-once` 走同一个执行器，只是入口不同，要求超级用户。
 
@@ -56,3 +58,4 @@ Session、取索引候选、**回收超时卡在 processing 的任务**、逐篇
 - 没有后台自动重试。cron 到点与手动触发都会发起执行（见 ADR 0014/0017 的定时任务调度器），但每一轮仍是有界批次，失败靠下一轮 cron 或人工兜底。
 - Chunk 和向量不落 PostgreSQL，只在 Qdrant。
 - Qdrant Collection 和 Alias 的创建切换归 `qdrant/lifecycle.py`，不在本链路里。
+- 有未完成删除待办的 Document 不参与同步更新或索引认领；同步遇到这种目标会回滚该来源页，checkpoint 不越过它。清理与任务执行恢复见 [定时任务执行](scheduled-job-execution.md)。

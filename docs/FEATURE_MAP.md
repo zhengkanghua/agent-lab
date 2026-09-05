@@ -21,7 +21,7 @@
 | 读取单篇文档 | `/`（检索流某条记录内展开） | `GET /documents/{document_id}` | `api/documents.py` → `repositories/document_repository.py`；前端 `api/documents.ts`、`features/semantic-search/composables/useDocumentReader.ts` | `tests/test_documents_api.py`、`src/api/documents.spec.ts` |
 | 用户管理（增删改、改密、踢会话） | `/admin/users` | `GET /admin/users`、`POST /admin/users`、`PATCH /admin/users/{user_id}`、`POST /admin/users/{user_id}/password`、`DELETE /admin/users/{user_id}/sessions` | `api/user_admin.py` → `services/user_admin_service.py`；前端 `api/user-admin.ts`、`pages/UserAdminPage.vue` | `tests/test_user_admin.py`、`src/api/user-admin.spec.ts`、`src/pages/UserAdminPage.spec.ts` |
 | 手工触发同步加索引 | 无页面 | `POST /pipeline/run-once` | `api/pipeline.py` → `services/news_pipeline_execution_service.py` | `tests/test_pipeline_api.py`、`tests/test_news_pipeline_execution.py` |
-| 定时任务管理（配置 cron 与参数、启停、立即执行、看执行历史；cron 到点自动同步/索引） | `/admin/scheduled-jobs`（超管） | `GET /scheduled-jobs`、`POST /scheduled-jobs`、`GET/PATCH/DELETE /scheduled-jobs/{job_id}`、`POST /scheduled-jobs/{job_id}/trigger`、`GET /scheduled-jobs/{job_id}/runs`、`POST /scheduled-jobs/validate-cron` | `api/scheduled_jobs.py` → `services/scheduled_job_service.py`、`services/scheduler_runner.py`、`services/scheduled_task_registry.py`、`repositories/scheduled_job_repository.py` | `tests/test_scheduled_jobs_api.py`、`tests/test_scheduler_runner.py`、`tests/test_scheduled_task_registry.py`、`tests/test_scheduler_postgres_integration.py`（真库真上游，默认跳过） |
+| 定时任务管理与同步、索引、清理执行 | `/admin/scheduled-jobs`（超级用户） | `/scheduled-jobs` 配置管理、`/task-types`、`/validate-cron`、`/{job_id}/trigger`、`/{job_id}/runs`、`/{job_id}/runs/{run_id}` | [执行链路](flows/scheduled-job-execution.md)；`scheduled_job_service.py`、`scheduler_runner.py`、`scheduled_job_executor.py`、`scheduled_task_registry.py`、`write_coordination.py`、相关 Repository | `test_scheduled_jobs_api.py`、`test_scheduler_safety.py`、`test_scheduler_lifecycle.py`、`test_document_retention_service.py`；`test_scheduler_postgres_integration.py`、`test_scheduler_retention_integration.py`（显式隔离地址，默认跳过） |
 | Agent 对话（模型自己调检索工具再作答，SSE 流式） | `/agent` | `POST /agent/chat` | `api/agent_chat.py` → `agent/runtime.py`、`agent/streaming.py`、`agent/tools/`；前端 `api/agent-chat.ts`、`features/agent-chat/`、`pages/AgentChatPage.vue` | `tests/test_agent_chat_api.py`、`tests/test_agent_streaming.py`、`tests/test_agent_tools.py`、`tests/test_agent_middleware.py`、`src/api/agent-chat.spec.ts`、`src/features/agent-chat/tests/`、`src/pages/AgentChatPage.spec.ts` |
 | 检索偏好（数量参数的默认值，改动即生效，只存本浏览器） | `/settings/search`（检索输入条有直达入口） | 无后端参与 | 前端 `features/settings/`、`pages/SettingsPage.vue` | `src/features/settings/tests/`、`src/pages/SettingsPage.spec.ts` |
 | Agent 偏好（自定义系统提示词，仅超级用户，只存本浏览器） | `/settings/agent`（输入条徽章直达） | 无后端参与（编辑不落库；随每轮 `/agent/chat` 请求发送） | 前端 `features/settings/`、`pages/SettingsPage.vue` | `src/features/settings/tests/`、`src/pages/SettingsPage.spec.ts` |
@@ -34,10 +34,7 @@
 `include_router` 处。设置中心的两个偏好分区是纯前端能力，只读已有接口
 （`GET /agent/default-prompt`），自己没有后端路由。
 
-定时任务到点自动执行受 `SCHEDULER_ENABLED` 总开关控制，默认关闭，生产 `.env` 必须显式开；
-任务清单存在 PostgreSQL 的 `scheduled_jobs` 表，是调度器的事实来源。进程内调度、单实例约束
-和运行策略见
-[`adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md`](adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md)。
+定时任务的进程形态见 [ADR 0017](adr/0017-scheduler-runs-in-a-dedicated-process.md)，认领、写资源协调及恢复决策见 [ADR 0019](adr/0019-scheduled-execution-and-write-coordination.md)。
 
 检索页重构后去掉了「按片段」模式，前端只走 `POST /document-search`（按新闻分组）并在页内做
 多轮累积（检索流）；后端 `/vector-search` 接口与后端单测仍保留，只是前端不再调用它，因此
