@@ -4,7 +4,7 @@
 # 不需要复制仓库其余部分。compose 会读同目录的 .env 做两件事——替换下面的 ${...}
 # 占位符，以及通过 env_file 把同一份变量注入容器进程。
 #
-# 这里只有后端一个服务。前端不在容器里：dist 是静态文件，由 OpenResty 直接发，
+# 这里有 API 与 scheduler 两个服务。前端不在容器里：dist 是静态文件，由 OpenResty 直接发，
 # 理由见 docs/adr/0008-backend-in-image-frontend-as-static-files.md。
 #
 # 迁移刻意不写成 compose 服务，而是部署脚本里显式两条命令，见 docs/container_deployment.md。
@@ -25,6 +25,8 @@ services:
     image: ${BACKEND_IMAGE:?BACKEND_IMAGE 未设置：检查本文件同目录的 .env}
     container_name: agent-lab-backend
     restart: unless-stopped
+    # 留出等待、取消及短事务收尾时间；不是任务执行的时长上限。
+    stop_grace_period: 360s
 
     # 只绑 127.0.0.1：这个端口只给同机的 OpenResty 反代用，不该被公网直接访问。
     # 写成 "18000:8000" 会绑到 0.0.0.0，且 Docker 直接改 iptables、绕过 ufw
@@ -67,6 +69,7 @@ services:
     image: ${BACKEND_IMAGE:?BACKEND_IMAGE 未设置：检查本文件同目录的 .env}
     container_name: agent-lab-scheduler
     restart: unless-stopped
+    stop_grace_period: 360s
     env_file:
       - .env
     environment:
@@ -89,3 +92,10 @@ services:
       - ./.env:/app/.env:ro
     # 使用调度器入口启动
     command: ["python", "-m", "agent_lab.scheduler_main"]
+    # 只读本容器配置刷新状态，不新增远程探测或触发真实任务。
+    healthcheck:
+      test: ["CMD", "python", "-m", "agent_lab.scheduler_main", "--check"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 3

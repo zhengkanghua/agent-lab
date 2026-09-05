@@ -214,13 +214,18 @@ jobs:
             # 本地旧镜像——表现是本工作流全绿、容器也重启了，但跑的还是上一版代码。
             docker compose pull
 
+            # 首次从未采用写资源协议的旧版升级，须先按部署文档停写并确认远端写入结束。
+            # 迁移中的旧执行快照不能替代该步骤，也不能追踪旧 HTTP Pipeline/CLI。
             # 迁移必须在 up -d 之前，且这两条的顺序不能反：checkpointer 的四张表不由
             # Alembic 管，见 docs/adr/0004-checkpointer-tables-outside-alembic.md。
             # 用 run --rm 起一次性容器，不碰正在服务的那个。任一条失败，set -e 会让
-            # 本步骤直接失败并中止后续步骤，旧容器保持运行。
+            # 本步骤直接失败并中止后续步骤，原来运行的旧容器保持运行，不重启已停止的容器。
             docker compose run --rm backend alembic upgrade head
             docker compose run --rm backend agent-lab init-checkpointer
 
+            # 迁移失败仍保留旧容器；迁移成功后统一停止两个旧写入口，再启新版。
+            # 避免旧 API/CLI 协调协议与新版清理混跑；外部 CLI 须事先停止，见部署文档。
+            docker compose stop --timeout 360 backend scheduler
             docker compose up -d
 
             # 验证进程真的起来了并且连得上 PostgreSQL。没有这一步，容器崩溃重启循环时
@@ -233,6 +238,20 @@ jobs:
               if [ "$i" -eq 10 ]; then
                 echo "健康检查连续失败，输出最后 50 行日志："
                 docker compose logs --tail 50 backend
+                exit 1
+              fi
+              sleep 3
+            done
+
+            # scheduler 就绪检查只读本容器状态，不通过执行同步/索引/清理探测。
+            for i in $(seq 1 10); do
+              if docker compose exec -T scheduler python -m agent_lab.scheduler_main --check; then
+                echo "scheduler 配置加载与刷新检查通过"
+                break
+              fi
+              if [ "$i" -eq 10 ]; then
+                echo "scheduler 就绪检查失败，请检查配置刷新及执行者恢复记录"
+                docker compose logs --tail 50 scheduler
                 exit 1
               fi
               sleep 3
