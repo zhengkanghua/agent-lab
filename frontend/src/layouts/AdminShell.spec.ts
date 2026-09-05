@@ -17,9 +17,9 @@ vi.mock('@/features/auth/useLogout', () => ({
 
 import AdminShell from './AdminShell.vue'
 
-const PAGE = { template: '<section class="probe">账号管理正文</section>' }
-
 function makeRouter(): Router {
+  // 外壳不再参与路由（AdminPage 像前台页嵌 AppShell 一样嵌它）；路由表只需要能解析
+  // 菜单里的 RouterLink 目标。
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -29,21 +29,7 @@ function makeRouter(): Router {
         name: 'settings',
         component: { template: '<div>settings</div>' },
       },
-      {
-        path: '/admin',
-        component: AdminShell,
-        children: [
-          {
-            path: 'users',
-            name: 'user-admin',
-            component: PAGE,
-            meta: { title: '账号管理', subtitle: '访问控制' },
-          },
-          /* 外壳菜单新增了「定时任务」项；本地路由表必须能解析它，
-             否则 RouterLink 在 vue-router 5 下直接抛 No match。 */
-          { path: 'scheduled-jobs', name: 'scheduled-jobs', component: PAGE },
-        ],
-      },
+      { path: '/admin/:section?', name: 'admin', component: { template: '<div>admin</div>' } },
     ],
   })
   void router.push('/admin/users')
@@ -53,7 +39,12 @@ function makeRouter(): Router {
 async function mountShell() {
   const router = makeRouter()
   await router.isReady()
-  const wrapper = mount(AdminShell, { global: { plugins: [router] }, attachTo: document.body })
+  const wrapper = mount(AdminShell, {
+    props: { headingTitle: '账号管理', headingSubtitle: '访问控制' },
+    slots: { default: '<section class="probe">账号管理正文</section>' },
+    global: { plugins: [router] },
+    attachTo: document.body,
+  })
   await flushPromises()
   return { wrapper, router }
 }
@@ -69,7 +60,7 @@ afterEach(() => {
 })
 
 describe('AdminShell', () => {
-  it('侧边栏有返回工作台与后台菜单', async () => {
+  it('侧边栏有返回工作台与后台菜单，菜单指向单一路由的分区参数', async () => {
     const { wrapper } = await mountShell()
 
     const back = wrapper.get('.menu-back')
@@ -79,22 +70,25 @@ describe('AdminShell', () => {
     const menu = wrapper.get('.menu-item')
     expect(menu.attributes('href')).toBe('/admin/users')
     expect(menu.text()).toContain('账号管理')
+
+    const labels = wrapper.findAll('.menu-item').map((item) => item.attributes('href'))
+    expect(labels).toEqual(['/admin/users', '/admin/scheduled-jobs'])
   })
 
-  it('从路由 meta 渲染顶栏标题与分区', async () => {
+  it('顶栏标题与分区说明来自 props（一条路由没有逐子 meta 了）', async () => {
     const { wrapper } = await mountShell()
 
     expect(wrapper.get('.topbar-title').text()).toBe('账号管理')
     expect(wrapper.get('.topbar-subtitle').text()).toBe('访问控制')
   })
 
-  it('当前后台页对应菜单高亮(router-link-active)', async () => {
+  it('当前分区对应菜单高亮(router-link-active)', async () => {
     const { wrapper } = await mountShell()
 
     expect(wrapper.get('.menu-item').classes()).toContain('router-link-active')
   })
 
-  it('内容区用 RouterView 渲染子页面，跳转链接指向内容 main', async () => {
+  it('正文经默认插槽进入内容区，跳转链接指向内容 main', async () => {
     const { wrapper } = await mountShell()
 
     expect(wrapper.get('.probe').text()).toBe('账号管理正文')
@@ -122,7 +116,7 @@ describe('AdminShell', () => {
     expect(wrapper.find('button[aria-label="退出登录"]').exists()).toBe(true)
   })
 
-  it('已登录时右上角显示邮箱且指向账号设置', async () => {
+  it('已登录时右上角显示邮箱且指向账号与设置', async () => {
     const { wrapper } = await mountShell()
 
     expect(wrapper.get('.account-identity span').text()).toBe('admin@example.com')

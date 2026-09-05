@@ -1,33 +1,42 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import { ArrowLeft, CalendarClock, LogOut, Menu, ShieldCheck, UsersRound, X } from '@lucide/vue'
-import { RouterLink, RouterView, useRoute } from 'vue-router'
+import { RouterLink } from 'vue-router'
 import { authSession, useLogout } from '@/features/auth'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 import ThemeToggle from '@/shared/ui/ThemeToggle.vue'
 
-/* 后台控制台布局：固定左侧导航 + 右侧内容区。它作为 /admin 父路由的组件挂在路由上，
- * 内容区用 <RouterView> 承载子页面（账号管理等）。
+/* 后台控制台布局：固定左侧导航 + 右侧内容区。后台只有一条路由（/admin/:section?），
+ * 页面（AdminPage）像前台页面嵌 AppShell 一样把本外壳嵌进模板，正文经默认插槽进来。
  *
  * 与 AppShell 的区别是刻意的：AppShell 是前台工作台的单条顶栏，AdminShell 是管理端的
  * 侧边栏布局，二者不互相归并，各自只服务一个领域。
  *
- * 后台导航在这里集中定义（侧边栏对后台所有页面一致），新增后台页面时：
- *   1) 在 router.ts 的 /admin.children 加一条（带 meta.title / meta.subtitle）；
+ * 后台导航在这里集中定义（侧边栏对后台所有分区一致），新增后台分区时：
+ *   1) 在 pages/AdminPage.vue 的分区注册表加一条（标题/分区说明）；
  *   2) 在下方的 adminMenuItems 加一项。
- * 权限守卫挂在 /admin 父路由，新页面自动继承「后台只给超管」。
- * 退出登录归本外壳持有：顶栏的退出键在这里，退登成功后跳登录页会卸载当前子页面，
- * 子页里的敏感输入随之被回收，不必让每个子页面各自接线退登。
+ * 权限守卫挂在 /admin 路由上，新分区自动继承「后台只给超管」。
+ * 退出登录归本外壳持有：顶栏的退出键在这里，退登成功后跳登录页会卸载当前分区，
+ * 分区里的敏感输入随之被回收，不必让每个分区各自接线退登。
  */
 
-const route = useRoute()
-
-const headingTitle = computed(() => (route.meta.title as string | undefined) ?? '管理控制台')
-const headingSubtitle = computed(() => route.meta.subtitle as string | undefined)
+const props = withDefaults(
+  defineProps<{
+    /** 顶栏标题与分区说明，由 AdminPage 按当前分区传入（后台只有一条路由，
+        不能再从 route.meta 取）。 */
+    headingTitle?: string
+    headingSubtitle?: string
+  }>(),
+  { headingTitle: '管理控制台', headingSubtitle: undefined },
+)
 
 const adminMenuItems = [
-  { to: { name: 'user-admin' }, label: '账号管理', icon: UsersRound },
-  { to: { name: 'scheduled-jobs' }, label: '定时任务', icon: CalendarClock },
+  { to: { name: 'admin', params: { section: 'users' } }, label: '账号管理', icon: UsersRound },
+  {
+    to: { name: 'admin', params: { section: 'scheduled-jobs' } },
+    label: '定时任务',
+    icon: CalendarClock,
+  },
 ]
 
 const { loggingOut, logoutError, logout } = useLogout()
@@ -101,8 +110,8 @@ function closeDrawer(): void {
         </BaseIconButton>
 
         <div class="topbar-heading">
-          <p v-if="headingSubtitle" class="topbar-subtitle">{{ headingSubtitle }}</p>
-          <h1 class="topbar-title" :title="headingTitle">{{ headingTitle }}</h1>
+          <p v-if="props.headingSubtitle" class="topbar-subtitle">{{ props.headingSubtitle }}</p>
+          <h1 class="topbar-title" :title="props.headingTitle">{{ props.headingTitle }}</h1>
         </div>
 
         <div class="topbar-actions">
@@ -127,7 +136,7 @@ function closeDrawer(): void {
       </header>
 
       <main id="admin-content" class="admin-content">
-        <RouterView />
+        <slot />
       </main>
     </div>
   </div>

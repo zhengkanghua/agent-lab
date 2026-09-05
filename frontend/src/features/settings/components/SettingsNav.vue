@@ -44,8 +44,12 @@ const sections: SectionItem[] = [
 const visibleSections = sections.filter((item) => !item.superuserOnly || props.isSuperuser)
 
 const adminLinks = [
-  { label: '账号管理', to: { name: 'user-admin' }, icon: Users },
-  { label: '定时任务', to: { name: 'scheduled-jobs' }, icon: CalendarClock },
+  { label: '账号管理', to: { name: 'admin', params: { section: 'users' } }, icon: Users },
+  {
+    label: '定时任务',
+    to: { name: 'admin', params: { section: 'scheduled-jobs' } },
+    icon: CalendarClock,
+  },
 ]
 </script>
 

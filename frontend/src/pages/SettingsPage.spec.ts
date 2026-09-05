@@ -30,8 +30,7 @@ function makeRouter(): Router {
     routes: [
       { path: '/', name: 'search', component: { template: '<div />' } },
       { path: '/settings/:section?', name: 'settings', component: SettingsPage },
-      { path: '/admin/users', name: 'user-admin', component: { template: '<div />' } },
-      { path: '/admin/scheduled-jobs', name: 'scheduled-jobs', component: { template: '<div />' } },
+      { path: '/admin/:section?', name: 'admin', component: { template: '<div />' } },
     ],
   })
 }

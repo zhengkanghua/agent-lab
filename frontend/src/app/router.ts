@@ -1,6 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { authSession } from '../features/auth/auth-session'
-import AdminShell from '../layouts/AdminShell.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -63,33 +62,17 @@ const router = createRouter({
     },
     {
       /*
-       * 后台控制台：父路由挂 AdminShell（固定侧边栏 + 内容区），摆在它下面的都是后台
-       * 页。权限守卫 requiresAuth + requiresSuperuser 挂在父路由上，新加的后台子页面
-       * 自动继承「后台只给超管」，不必重复声明。父路由自身不渲染页面，/admin 直接重定向
-       * 到第一个后台页（账号管理）。
+       * 后台控制台：只有一条路由，板块由路径参数区分（users=账号管理、
+       * scheduled-jobs=定时任务），与 /settings/:section? 同一取舍——地址可分享、
+       * 可刷新、可收藏；旧的两条子路由地址原样有效，不必加重定向。分区注册表
+       * 与顶栏标题在 pages/AdminPage.vue。参数不收窄成枚举：非法值由 AdminPage
+       * 重定向回账号管理，前端再拦一道校验属于重复实现。
+       * 权限守卫 requiresAuth + requiresSuperuser 挂在本路由上，新增分区自动继承。
        */
-      path: '/admin',
-      component: AdminShell,
+      path: '/admin/:section?',
+      name: 'admin',
+      component: () => import('../pages/AdminPage.vue'),
       meta: { requiresAuth: true, requiresSuperuser: true },
-      children: [
-        {
-          path: 'users',
-          name: 'user-admin',
-          component: () => import('../pages/UserAdminPage.vue'),
-          /* title / subtitle 供 AdminShell 顶栏渲染当前页标题与分区。 */
-          meta: { title: '账号管理', subtitle: '访问控制' },
-        },
-        {
-          path: 'scheduled-jobs',
-          name: 'scheduled-jobs',
-          component: () => import('../pages/ScheduledJobsPage.vue'),
-          meta: { title: '定时任务', subtitle: '数据自动化' },
-        },
-        /* 后台加新页面：在此加一条 child（带 meta.title / meta.subtitle），并在
-           AdminShell 的 adminMenuItems 加一项即可。未知后台地址落回账号管理。 */
-        { path: '', redirect: { name: 'user-admin' } },
-        { path: ':pathMatch(.*)*', redirect: { name: 'user-admin' } },
-      ],
     },
     {
       path: '/:pathMatch(.*)*',

@@ -101,7 +101,7 @@ describe('application router authentication guard', () => {
     expect(router.currentRoute.value.query.redirect).toBe(`/agent/${threadId}`)
   })
 
-  it('allows only superusers to enter account management', async () => {
+  it('后台只有一条路由：分区由路径参数区分，且整体只对超级用户开放', async () => {
     auth.status.value = 'authenticated'
     auth.user.value = { is_superuser: false }
     const regularRouter = await freshRouter()
@@ -114,24 +114,21 @@ describe('application router authentication guard', () => {
     const superuserRouter = await freshRouter()
     await superuserRouter.push('/admin/users')
     await superuserRouter.isReady()
-    expect(superuserRouter.currentRoute.value.name).toBe('user-admin')
-  })
+    expect(superuserRouter.currentRoute.value.name).toBe('admin')
+    expect(superuserRouter.currentRoute.value.params.section).toBe('users')
 
-  it('allows only superusers to enter scheduled job management', async () => {
-    // /admin 子路由的守卫挂在父路由上，新页面自动继承；这条测试锁住「新页面没有
-    // 意外绕过父路由权限」——后端 /scheduled-jobs 同样只对超级用户开放。
-    auth.status.value = 'authenticated'
+    // 另一个分区走同一条路由；守卫同样生效（后端 /scheduled-jobs 也只对超管开放）。
     auth.user.value = { is_superuser: false }
-    const regularRouter = await freshRouter()
-
-    await regularRouter.push('/admin/scheduled-jobs')
-    await regularRouter.isReady()
-    expect(regularRouter.currentRoute.value.name).toBe('search')
+    const regularRouter2 = await freshRouter()
+    await regularRouter2.push('/admin/scheduled-jobs')
+    await regularRouter2.isReady()
+    expect(regularRouter2.currentRoute.value.name).toBe('search')
 
     auth.user.value = { is_superuser: true }
-    const superuserRouter = await freshRouter()
-    await superuserRouter.push('/admin/scheduled-jobs')
-    await superuserRouter.isReady()
-    expect(superuserRouter.currentRoute.value.name).toBe('scheduled-jobs')
+    const superuserRouter2 = await freshRouter()
+    await superuserRouter2.push('/admin/scheduled-jobs')
+    await superuserRouter2.isReady()
+    expect(superuserRouter2.currentRoute.value.name).toBe('admin')
+    expect(superuserRouter2.currentRoute.value.params.section).toBe('scheduled-jobs')
   })
 })
