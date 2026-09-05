@@ -158,8 +158,10 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
   z-index: var(--z-topbar);
   top: 0;
   border-bottom: 1px solid var(--border-subtle);
+  /* --surface-scrim 本身 96% 不透明，毛玻璃几乎没有可见效果；而 backdrop-filter
+     在主题切换（根背景色突变）时会闪出一帧黑色矩形（Chromium 已知伪影，
+     2026-09 老板实测检索页输入坞同款问题），不值得为不可见的效果保留。 */
   background: var(--surface-scrim);
-  backdrop-filter: blur(12px);
 }
 
 .brand-lockup {

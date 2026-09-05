@@ -300,8 +300,8 @@ function closeDrawer(): void {
   min-height: 64px;
   padding: 0 28px;
   border-bottom: 1px solid var(--border-subtle);
+  /* 同 AppShell 顶栏：scrim 已 96% 不透明，blur 不可见却会在主题切换时闪黑。 */
   background: var(--surface-scrim);
-  backdrop-filter: blur(12px);
 }
 
 .menu-toggle {

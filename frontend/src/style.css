@@ -76,23 +76,6 @@
     box-shadow: 0 0 0 3px var(--accent-ring);
     transition: box-shadow 150ms ease;
   }
-
-  /* View Transitions API：平滑的主题切换 */
-  @supports (view-transition-name: none) {
-    ::view-transition-old(root),
-    ::view-transition-new(root) {
-      animation-duration: 0.5s;
-      animation-timing-function: var(--ease-out-smooth);
-    }
-
-    ::view-transition-old(root) {
-      z-index: 1;
-    }
-
-    ::view-transition-new(root) {
-      z-index: 2;
-    }
-  }
 }
 
 @layer components {

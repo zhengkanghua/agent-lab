@@ -211,11 +211,11 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
   width: min(100%, calc(var(--stream-width) + 80px));
   margin: 0 auto;
   padding: 16px 0 14px;
+  /* 底色与页面同色，常态不可见；吸附后换成 --surface-scrim。这里刻意不加
+     transition：background-color 的 250ms 渐变会让主题切换的瞬间留下一块
+     「旧底色矩形」——整页瞬时翻转，唯独它还在渐变（2026-09 老板录屏实测）。 */
   background: var(--surface-base);
   border-bottom: 1px solid transparent;
-  transition:
-    border-bottom-color var(--duration-normal) var(--ease-out-smooth),
-    background-color var(--duration-normal) var(--ease-out-smooth);
   z-index: var(--z-dock);
 }
 
