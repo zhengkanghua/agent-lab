@@ -11,7 +11,7 @@ DocumentIndexingService。它不创建 Qdrant Collection/Alias、不实现 HTTP/
 
 import logging
 from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
@@ -24,6 +24,7 @@ from agent_lab.services.document_indexing_service import (
 )
 from agent_lab.services.freshrss_import_service import FreshRSSImportService
 from agent_lab.services.freshrss_import_service import SourceSyncFailure
+from agent_lab.services.write_coordination import WriteCoordinator, ensure_write_confirmed
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,7 @@ class NewsPipelineExecutionService:
         session_factory: AsyncSessionFactory,
         *,
         clock: UtcClock | None = None,
+        coordinator: WriteCoordinator | None = None,
     ) -> None:
         """绑定 Session factory 和可测试时钟，不执行外部 I/O。
 
@@ -113,8 +115,19 @@ class NewsPipelineExecutionService:
 
         self._session_factory = session_factory
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._coordinator = coordinator
+
+    def writing(self, resources: tuple[str, ...]):
+        """生产入口显式注入跨进程协调；纯 Service 测试可替换此边界。"""
+        return self._coordinator.hold(resources) if self._coordinator else nullcontext()
 
     async def sync_news(
+        self, import_service: FreshRSSImportService, *, limit_per_source: int,
+    ) -> NewsSyncExecutionResult:
+        async with self.writing(("sync",)):
+            return await self._sync_news(import_service, limit_per_source=limit_per_source)
+
+    async def _sync_news(
         self,
         import_service: FreshRSSImportService,
         *,
@@ -166,6 +179,12 @@ class NewsPipelineExecutionService:
         )
 
     async def index_pending(
+        self, indexing_service: DocumentIndexingService, *, batch_size: int, stale_after: timedelta,
+    ) -> PendingIndexExecutionResult:
+        async with self.writing(("index",)):
+            return await self._index_pending(indexing_service, batch_size=batch_size, stale_after=stale_after)
+
+    async def _index_pending(
         self,
         indexing_service: DocumentIndexingService,
         *,
@@ -225,6 +244,7 @@ class NewsPipelineExecutionService:
         skipped_count = 0
         failures: list[IndexExecutionFailure] = []
         for document_id in candidate_ids:
+            ensure_write_confirmed()
             try:
                 async with self._session_factory() as session:
                     result = await indexing_service.index_document(session, document_id)

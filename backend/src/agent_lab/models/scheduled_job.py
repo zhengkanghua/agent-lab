@@ -74,6 +74,7 @@ class ScheduledJobRecord(TimestampMixin, Base):
         nullable=False,
         comment="是否参与 cron 调度；停用的任务保留配置但不到点执行。",
     )
+    config_version: Mapped[int] = mapped_column(default=1, server_default="1", nullable=False)
 
     # 一对多 ORM 导航属性，不是 scheduled_jobs 表里的数组列。实际外键在
     # scheduled_job_runs.job_id，删除任务时执行历史由数据库级联删除。
@@ -145,6 +146,9 @@ class JobRunRecord(Base):
         nullable=True,
         comment="批次级失败的异常类名；只存类型名，不存异常文本。成功与跳过时为空。",
     )
+    config_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}", nullable=False)
+    owner: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # 多对一 ORM 导航属性；真实外键在本表 job_id 一侧。
     job: Mapped[ScheduledJobRecord] = relationship(

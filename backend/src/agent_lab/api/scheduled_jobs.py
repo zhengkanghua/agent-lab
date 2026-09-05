@@ -1,7 +1,7 @@
 """提供仅超级用户可访问的定时任务管理 HTTP API。
 
 本层校验 OpenAPI 输入、调用 ScheduledJobService，并把领域错误或数据库故障转换成稳定
-脱敏响应。写操作（创建/修改/删除/触发）成功后由 Service 同步到运行中的调度器；本层
+脱敏响应。配置提交后由 scheduler 周期刷新，手动触发由当前 API worker 受理；本层
 不直接接触 APScheduler。``params`` 是任意 JSON，因此和账号管理一样挂
 ``SanitizedValidationRoute``，请求校验失败统一换成固定 ``invalid_request``，不回显原始输入。
 """
@@ -30,10 +30,12 @@ from agent_lab.schemas.scheduled_jobs import (
     ScheduledJobResponse,
     ScheduledJobTriggerResponse,
     ScheduledJobUpdateRequest,
+    ScheduledTaskTypeResponse,
 )
 from agent_lab.services.scheduler_runner import ScheduledJobRunner
 from agent_lab.services.scheduled_job_service import ScheduledJobService, ScheduledJobView
 from agent_lab.services.scheduled_task_errors import ScheduledJobDomainError
+from agent_lab.services.scheduled_task_registry import TASK_TYPE_SPECS
 
 
 router = APIRouter(
@@ -53,13 +55,22 @@ def get_scheduled_job_service(
     return ScheduledJobService(session, runner)
 
 
+@router.get("/task-types", response_model=list[ScheduledTaskTypeResponse])
+async def task_types() -> list[ScheduledTaskTypeResponse]:
+    """返回代码注册的任务类型、参数默认值和约束。"""
+    return [ScheduledTaskTypeResponse(
+        task_type=spec.task_type, description=spec.description,
+        defaults=spec.validate_params({}), params_schema=spec.params_model.model_json_schema(),
+    ) for spec in TASK_TYPE_SPECS.values()]
+
+
 @router.get(
     "",
     response_model=list[ScheduledJobResponse],
     responses={503: {"model": ScheduledJobErrorResponse}},
     summary="列出全部定时任务",
     description=(
-        "返回任务配置、下次计划执行时间（UTC；调度器未启动或任务停用为空）与最近一次"
+        "返回任务配置、按数据库配置计算的下次计划时间（UTC；停用为空）与最近一次"
         "执行摘要。列表不含任何正文、凭据或异常文本。"
     ),
 )
@@ -86,7 +97,7 @@ async def list_jobs(
     },
     summary="创建定时任务",
     description=(
-        "校验任务类型、cron 与参数后创建任务；创建成功即按 enabled 状态注册进调度器。"
+        "校验任务类型、cron 与参数后创建任务；scheduler 周期刷新已提交的配置。"
         "key 与已存在任务重复返回 409；类型、cron 或参数不合法返回 422。"
     ),
 )
@@ -134,6 +145,7 @@ async def validate_cron(
     return CronValidateResponse(
         next_run_times=utc_times,
         next_run_times_local=local_times,
+        timezone=service.timezone,
     )
 
 
@@ -166,13 +178,14 @@ async def get_job(
     response_model=ScheduledJobResponse,
     responses={
         404: {"model": ScheduledJobErrorResponse},
+        409: {"model": ScheduledJobErrorResponse},
         422: {"model": ScheduledJobErrorResponse},
         503: {"model": ScheduledJobErrorResponse},
     },
     summary="修改定时任务的 cron、参数或启停状态",
     description=(
-        "只修改请求中出现的字段；key 与任务类型不可修改。修改成功后调度器立即生效，"
-        "无需重启服务。"
+        "只修改请求中出现的字段；key 与任务类型不可修改。修改 cron 或参数前必须停用且"
+        "当前任务执行已结束；保存后保持停用，重新启用单独操作。scheduler 周期刷新，无需重启。"
     ),
 )
 async def update_job(
@@ -202,6 +215,7 @@ async def update_job(
     status_code=status.HTTP_204_NO_CONTENT,
     responses={
         404: {"model": ScheduledJobErrorResponse},
+        409: {"model": ScheduledJobErrorResponse},
         503: {"model": ScheduledJobErrorResponse},
     },
     summary="删除定时任务",
@@ -300,7 +314,19 @@ def _job_response(view: ScheduledJobView) -> ScheduledJobResponse:
         ),
         created_at=view.record.created_at,
         updated_at=view.record.updated_at,
+        active_run=JobRunResponse.model_validate(view.active_run) if view.active_run else None,
     )
+
+
+@router.get("/{job_id}/runs/{run_id}", response_model=JobRunResponse, responses={404: {"model": ScheduledJobErrorResponse}, 503: {"model": ScheduledJobErrorResponse}})
+async def get_job_run(job_id: UUID, run_id: UUID, service: Annotated[ScheduledJobService, Depends(get_scheduled_job_service)]):
+    """按任务执行 ID 查询，不受最近历史页大小限制。"""
+    try:
+        return JobRunResponse.model_validate(await service.get_run(job_id, run_id))
+    except ScheduledJobDomainError as error:
+        return _domain_error(error)
+    except SQLAlchemyError as error:
+        return _database_error(error)
 
 
 def _domain_error(error: ScheduledJobDomainError) -> JSONResponse:
@@ -314,6 +340,8 @@ def _domain_error(error: ScheduledJobDomainError) -> JSONResponse:
         "scheduled_job_not_found": status.HTTP_404_NOT_FOUND,
         "scheduled_job_key_conflict": status.HTTP_409_CONFLICT,
         "scheduled_job_already_running": status.HTTP_409_CONFLICT,
+        "scheduled_job_edit_blocked": status.HTTP_409_CONFLICT,
+        "scheduled_job_closing": status.HTTP_503_SERVICE_UNAVAILABLE,
         "scheduled_job_invalid_cron": status.HTTP_422_UNPROCESSABLE_CONTENT,
         "scheduled_job_invalid_params": status.HTTP_422_UNPROCESSABLE_CONTENT,
         "scheduled_job_unknown_type": status.HTTP_422_UNPROCESSABLE_CONTENT,

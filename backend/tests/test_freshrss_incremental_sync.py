@@ -499,6 +499,28 @@ def test_one_source_failure_is_isolated_and_other_source_commits() -> None:
     assert ("feed/healthy", "feed/healthy/item/1") in store.documents
 
 
+def test_pending_document_deletion_rolls_back_source_page_and_checkpoint(monkeypatch):
+    from agent_lab.domain.write_scope import DocumentDeletionPendingError
+    store = MemoryStore()
+    store.install_checkpoint("feed/blocked", "1")
+    session = FakeSession(store)
+    client = FakeFreshRSSClient({"feed/blocked": [1, 2], "feed/healthy": [3]})
+    original = FakeDocumentRepository.upsert
+
+    async def guarded(repository, document, *, source_id):
+        if document.source.external_id == "feed/blocked":
+            raise DocumentDeletionPendingError()
+        return await original(repository, document, source_id=source_id)
+
+    monkeypatch.setattr(FakeDocumentRepository, "upsert", guarded)
+    result = run(service_for(client).import_recent_per_source(session, limit_per_source=2))
+    assert result.failed_source_count == 1
+    assert result.failures[0].error_type == "DocumentDeletionPendingError"
+    assert store.checkpoints["feed/blocked"] == "1"
+    assert ("feed/blocked", "feed/blocked/item/2") not in store.documents
+    assert store.checkpoints["feed/healthy"] == "3"
+
+
 def test_repository_rejects_numeric_checkpoint_rewind_before_database_io() -> None:
     session = SimpleNamespace()
 

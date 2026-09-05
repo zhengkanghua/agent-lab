@@ -51,14 +51,12 @@ from agent_lab.config.llm import get_llm_settings
 from agent_lab.config.ollama_embedding import (
     get_ollama_embedding_settings,
 )
-from agent_lab.config.freshrss import get_freshrss_settings
 from agent_lab.config.qdrant import get_qdrant_settings
 from agent_lab.config.scheduler import get_scheduler_settings
 from agent_lab.config.settings import get_settings
 from agent_lab.db.session import async_session_factory, engine
 from agent_lab.pipeline.write_runtime import PipelineWriteRuntime
 from agent_lab.qdrant.runtime import VectorSearchRuntime
-from agent_lab.repositories.scheduled_job_repository import ScheduledJobStore
 from agent_lab.services.scheduler_runner import ScheduledJobRunner
 from agent_lab.services.vector_search_service import VectorSearchService
 
@@ -215,12 +213,8 @@ def build_pipeline_write_runtime() -> PipelineWriteRuntime:
         Qdrant I/O；startup 不调用。
     """
 
-    return PipelineWriteRuntime.build(
-        session_factory=async_session_factory,
-        freshrss_settings=get_freshrss_settings(),
-        qdrant_settings=get_qdrant_settings(),
-        ollama_settings=get_ollama_embedding_settings(),
-    )
+    from agent_lab.pipeline.assembly import build_pipeline_write_runtime as build
+    return build()
 
 
 def build_scheduler_runner(
@@ -244,11 +238,8 @@ def build_scheduler_runner(
         （加载任务清单）和每次执行的历史读写。
     """
 
-    return ScheduledJobRunner(
-        store_factory=lambda: ScheduledJobStore(async_session_factory),
-        write_runtime_factory=pipeline_runtime_factory,
-        settings=get_scheduler_settings(),
-    )
+    from agent_lab.pipeline.assembly import build_scheduler_runner as build
+    return build(pipeline_runtime_factory)
 
 
 def create_app(

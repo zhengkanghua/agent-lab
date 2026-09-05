@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import json
+from contextlib import nullcontext
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
@@ -10,6 +11,7 @@ from uuid import uuid4
 import pytest
 
 import agent_lab.cli as cli_module
+from agent_lab.pipeline.write_runtime import PipelineWriteRuntime
 from agent_lab.cli import CommandOutcome, build_parser, main
 from agent_lab.services.news_pipeline_execution_service import (
     IndexExecutionFailure,
@@ -155,24 +157,21 @@ def test_index_runtime_is_prepared_before_batch_and_always_closed(
             events.append("close")
 
     class FakeExecutor:
+        def writing(self, _resources):
+            return nullcontext()
+
         async def index_pending(self, service: Any, **kwargs: Any) -> Any:
             assert service is FakeRuntime.service
             assert kwargs["batch_size"] == 3
             events.append("index_pending")
             return expected
 
-    monkeypatch.setattr(
-        cli_module,
-        "DocumentIndexingRuntime",
-        SimpleNamespace(build=lambda *_args: FakeRuntime()),
-    )
-    monkeypatch.setattr(cli_module, "get_qdrant_settings", lambda: object())
-    monkeypatch.setattr(cli_module, "get_ollama_embedding_settings", lambda: object())
-    args = argparse.Namespace(batch_size=3, stale_after_minutes=60)
-
-    result = run(cli_module._execute_index_batch(FakeExecutor(), args))  # noqa: SLF001
-
-    assert result is expected
+    monkeypatch.setattr(cli_module, "build_pipeline_write_runtime", lambda: PipelineWriteRuntime(
+        executor=FakeExecutor(), indexing_factory=FakeRuntime,
+    ))
+    args = build_parser().parse_args(["index-pending", "--batch-size", "3"])
+    result = run(cli_module.dispatch_command(args))
+    assert result.exit_code == 0
     assert events == ["ensure_ready", "index_pending", "close"]
 
 
@@ -192,25 +191,19 @@ def test_index_runtime_closes_when_lifecycle_preparation_fails(
             events.append("close")
 
     class FailIfIndexedExecutor:
+        def writing(self, _resources):
+            return nullcontext()
+
         async def index_pending(self, *_args: Any, **_kwargs: Any) -> Any:
             raise AssertionError("候选处理必须等待 ensure_ready")
 
-    monkeypatch.setattr(
-        cli_module,
-        "DocumentIndexingRuntime",
-        SimpleNamespace(build=lambda *_args: FakeRuntime()),
-    )
-    monkeypatch.setattr(cli_module, "get_qdrant_settings", lambda: object())
-    monkeypatch.setattr(cli_module, "get_ollama_embedding_settings", lambda: object())
-    args = argparse.Namespace(batch_size=1, stale_after_minutes=60)
+    monkeypatch.setattr(cli_module, "build_pipeline_write_runtime", lambda: PipelineWriteRuntime(
+        executor=FailIfIndexedExecutor(), indexing_factory=FakeRuntime,
+    ))
+    args = build_parser().parse_args(["index-pending"])
 
     with pytest.raises(RuntimeError, match="远端响应"):
-        run(
-            cli_module._execute_index_batch(  # noqa: SLF001
-                FailIfIndexedExecutor(),
-                args,
-            )
-        )
+        run(cli_module.dispatch_command(args))
 
     assert events == ["ensure_ready", "close"]
 
@@ -228,18 +221,10 @@ def test_dispatch_sync_news_never_builds_qdrant_runtime(
             events.append(f"sync:{kwargs['limit_per_source']}")
             return NewsSyncExecutionResult(synchronized_count=5)
 
-    monkeypatch.setattr(cli_module, "NewsPipelineExecutionService", FakeExecutor)
-    monkeypatch.setattr(cli_module, "FreshRSSImportService", lambda _settings: object())
-    monkeypatch.setattr(cli_module, "get_freshrss_settings", lambda: object())
-    monkeypatch.setattr(
-        cli_module,
-        "DocumentIndexingRuntime",
-        SimpleNamespace(
-            build=lambda *_args: (_ for _ in ()).throw(
-                AssertionError("sync-news must not build Qdrant runtime")
-            )
-        ),
-    )
+    monkeypatch.setattr(cli_module, "build_pipeline_write_runtime", lambda: PipelineWriteRuntime(
+        executor=FakeExecutor(None), import_service=object(),
+        indexing_factory=lambda: pytest.fail("同步不能创建索引依赖"),
+    ))
 
     outcome = run(
         cli_module.dispatch_command(
@@ -275,10 +260,16 @@ def test_dispatch_run_once_syncs_before_indexing(
             failures=(),
         )
 
-    monkeypatch.setattr(cli_module, "NewsPipelineExecutionService", FakeExecutor)
-    monkeypatch.setattr(cli_module, "FreshRSSImportService", lambda _settings: object())
-    monkeypatch.setattr(cli_module, "get_freshrss_settings", lambda: object())
-    monkeypatch.setattr(cli_module, "_execute_index_batch", fake_index)
+
+    class FakeRuntime:
+        async def run_once(self, **_kwargs):
+            executor = FakeExecutor(None)
+            return SimpleNamespace(sync=await executor.sync_news(None), index=await fake_index(executor, None))
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(cli_module, "build_pipeline_write_runtime", FakeRuntime)
 
     outcome = run(
         cli_module.dispatch_command(build_parser().parse_args(["run-once"]))
@@ -323,10 +314,16 @@ def test_run_once_continues_indexing_but_fails_when_one_source_failed(
             failures=(),
         )
 
-    monkeypatch.setattr(cli_module, "NewsPipelineExecutionService", FakeExecutor)
-    monkeypatch.setattr(cli_module, "FreshRSSImportService", lambda _settings: object())
-    monkeypatch.setattr(cli_module, "get_freshrss_settings", lambda: object())
-    monkeypatch.setattr(cli_module, "_execute_index_batch", fake_index)
+
+    class FakeRuntime:
+        async def run_once(self, **_kwargs):
+            executor = FakeExecutor(None)
+            return SimpleNamespace(sync=await executor.sync_news(None), index=await fake_index(executor, None))
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(cli_module, "build_pipeline_write_runtime", FakeRuntime)
 
     outcome = run(cli_module.dispatch_command(build_parser().parse_args(["run-once"])))
 

@@ -12,13 +12,15 @@
 
 from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_lab.models.scheduled_job import JobRunRecord, ScheduledJobRecord
+from agent_lab.models.write_operation import WriteOperationRecord
+from agent_lab.services.scheduled_task_errors import ScheduledJobAlreadyRunningError, ScheduledJobNotFoundError
 
 
 class ScheduledJobRepository:
@@ -55,6 +57,23 @@ class ScheduledJobRepository:
         """按主键取任务；不存在返回 None。"""
 
         return await self._session.get(ScheduledJobRecord, job_id)
+
+    async def lock_job(self, job_id: UUID) -> ScheduledJobRecord | None:
+        """修改、删除、认领共用任务行锁，判断和写入处在同一短事务。"""
+        return await self._session.scalar(select(ScheduledJobRecord).where(
+            ScheduledJobRecord.id == job_id,
+        ).with_for_update().execution_options(populate_existing=True))
+
+    async def active_run(self, job_id: UUID) -> JobRunRecord | None:
+        return await self._session.scalar(select(JobRunRecord).where(
+            JobRunRecord.job_id == job_id,
+            or_(JobRunRecord.status == "running", exists().where(WriteOperationRecord.run_id == JobRunRecord.id)),
+        ).order_by(JobRunRecord.started_at).limit(1))
+
+    async def get_run(self, job_id: UUID, run_id: UUID) -> JobRunRecord | None:
+        return await self._session.scalar(select(JobRunRecord).where(
+            JobRunRecord.job_id == job_id, JobRunRecord.id == run_id,
+        ))
 
     async def get_job_by_key(self, key: str) -> ScheduledJobRecord | None:
         """按业务唯一键取任务，用于创建时的冲突检查。"""
@@ -121,6 +140,7 @@ class ScheduledJobRepository:
             trigger_type=trigger_type,
             status=status,
             started_at=started_at,
+            finished_at=started_at if status == "skipped" else None,
             stats=stats,
             error_type=error_type,
         )
@@ -139,10 +159,13 @@ class ScheduledJobRepository:
     ) -> None:
         """把一条执行记录更新为终态（succeeded/failed/skipped）并提交。"""
 
-        record = await self._session.get(JobRunRecord, run_id)
-        if record is None:
-            # 落库记录被并发删除时保持静默：历史行丢失不影响任务执行本身。
+        record = await self._session.scalar(select(JobRunRecord).where(
+            JobRunRecord.id == run_id,
+        ).with_for_update())
+        if record is not None and record.status == status and record.stats == stats:
             return
+        if record is None or record.status != "running":
+            raise RuntimeError("任务执行记录不存在或已经结束。")
         record.status = status
         record.finished_at = finished_at
         record.stats = stats
@@ -181,6 +204,7 @@ class ScheduledJobRepository:
         subquery = (
             select(JobRunRecord.id)
             .where(JobRunRecord.job_id == job_id)
+            .where(JobRunRecord.status != "running")
             .order_by(JobRunRecord.started_at.desc(), JobRunRecord.id.desc())
             .limit(keep)
             .scalar_subquery()
@@ -189,6 +213,8 @@ class ScheduledJobRepository:
             delete(JobRunRecord).where(
                 JobRunRecord.job_id == job_id,
                 JobRunRecord.id.not_in(subquery),
+                JobRunRecord.status != "running",
+                ~exists().where(WriteOperationRecord.run_id == JobRunRecord.id),
             )
         )
         await self._session.commit()
@@ -240,6 +266,48 @@ class ScheduledJobStore:
         async with self._session() as session:
             return await ScheduledJobRepository(session).get_job(job_id)
 
+    async def claim_run(self, job_id: UUID, *, trigger_type: str, started_at: datetime, owner: str, expected_version: int | None = None):
+        """重新读取并验证配置，原子地保存执行快照及同任务唯一认领。"""
+        from pydantic import ValidationError
+        from agent_lab.services.scheduled_task_registry import get_task_type_spec
+        from agent_lab.services.scheduled_task_errors import ScheduledJobInvalidParamsError, ScheduledJobUnknownTypeError
+
+        async with self._session() as session:
+            repository = ScheduledJobRepository(session)
+            job = await repository.lock_job(job_id)
+            if job is None:
+                if trigger_type == "scheduled":
+                    return None
+                raise ScheduledJobNotFoundError()
+            if trigger_type == "scheduled" and (not job.enabled or (expected_version is not None and job.config_version != expected_version)):
+                return None
+            if await repository.active_run(job_id) is not None:
+                raise ScheduledJobAlreadyRunningError(job_id)
+            spec = get_task_type_spec(job.task_type)
+            if spec is None:
+                raise ScheduledJobUnknownTypeError()
+            try:
+                params = spec.validate_params(job.params)
+            except ValidationError:
+                raise ScheduledJobInvalidParamsError() from None
+            run_id = uuid4()
+            session.add(JobRunRecord(
+                id=run_id, job_id=job_id, trigger_type=trigger_type, status="running",
+                started_at=started_at, stats={"phase": "accepted"}, owner=owner, heartbeat_at=started_at,
+                config_snapshot={"task_type": job.task_type, "cron_expr": job.cron_expr, "params": params, "config_version": job.config_version},
+            ))
+            await session.commit()
+            return job, run_id
+
+    async def heartbeat(self, run_id: UUID) -> None:
+        async with self._session() as session:
+            result = await session.execute(update(JobRunRecord).where(
+                JobRunRecord.id == run_id, JobRunRecord.status == "running",
+            ).values(heartbeat_at=datetime.now(UTC)))
+            if result.rowcount != 1:
+                raise RuntimeError("任务执行所有权已经失效。")
+            await session.commit()
+
     async def record_skipped(
         self,
         job_id: UUID,
@@ -257,25 +325,6 @@ class ScheduledJobStore:
                 status="skipped",
                 started_at=started_at,
                 stats=stats,
-            )
-            return record.id
-
-    async def start_run(
-        self,
-        job_id: UUID,
-        *,
-        trigger_type: str,
-        started_at: datetime,
-    ) -> UUID:
-        """记一条 ``running`` 执行记录并返回记录 id。"""
-
-        async with self._session() as session:
-            record = await ScheduledJobRepository(session).create_run(
-                job_id=job_id,
-                trigger_type=trigger_type,
-                status="running",
-                started_at=started_at,
-                stats={},
             )
             return record.id
 

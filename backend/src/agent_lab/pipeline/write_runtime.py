@@ -1,11 +1,11 @@
-"""组装一次「手动新闻同步 + 向量索引」所需的写入 Runtime（工具箱）。
+"""按需组装一次同步、索引或清理所需的写入 Runtime（工具箱）。
 
 本模块位于“装配根”和“应用 Service”之间：它把 NewsPipelineExecutionService（编排
 同步/索引批次）、FreshRSSImportService（抓取）和 DocumentIndexingRuntime（写 Qdrant）
 三个已有组件打包成一个可调用的写工具箱。
 
-它不暴露 Vector Search（搜索由独立的只读 VectorSearchRuntime 负责），保证写入口
-不会获得读权限。也不实现后台任务/队列/调度/WebSocket/LLM/RAG，构造时不做任何外部 I/O。
+它不暴露 Vector Search（搜索由独立的只读 VectorSearchRuntime 负责）。
+也不实现后台任务、队列或调度，构造时保存工厂，不做外部 I/O。
 """
 
 from collections.abc import Callable
@@ -14,11 +14,17 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from qdrant_client import AsyncQdrantClient
 
 from agent_lab.config.freshrss import FreshRSSSettings
 from agent_lab.config.ollama_embedding import OllamaEmbeddingSettings
 from agent_lab.config.qdrant import QdrantSettings
 from agent_lab.qdrant.runtime import DocumentIndexingRuntime
+from agent_lab.qdrant.lifecycle import build_qdrant_client
+from agent_lab.qdrant.store import QdrantDeletionStore
+from agent_lab.repositories.document_retention_repository import DocumentRetentionRepository
+from agent_lab.services.document_retention_service import DocumentRetentionService
+from agent_lab.services.write_coordination import WriteCoordinator
 from agent_lab.services.freshrss_import_service import FreshRSSImportService
 from agent_lab.services.news_pipeline_execution_service import (
     NewsPipelineExecutionService,
@@ -42,12 +48,12 @@ class PipelineRunOnceExecutionResult:
     index: PendingIndexExecutionResult
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class PipelineWriteRuntime:
-    """持有一次手动执行所需的「导入、执行、索引写入」三组写入组件。
+    """按需持有一次 HTTP、CLI 或定时任务执行所需的写入组件。
 
-    生命周期 = 一次 HTTP 请求 或 一次显式 CLI 工作单元，用完即整体关闭：
-    - ``build`` 只创建本地 client 和组件（不连外部服务）；
+    生命周期 = 一次工作单元，用完即整体关闭：
+    - ``build/lazy`` 只保存所需工厂（不连外部服务）；
     - ``run_once`` 依次做 FreshRSS/PostgreSQL 同步 → 准备 Qdrant Alias → 索引；
     - ``close`` 释放写入 client。
 
@@ -55,8 +61,22 @@ class PipelineWriteRuntime:
     """
 
     executor: NewsPipelineExecutionService
-    import_service: FreshRSSImportService
-    indexing_runtime: DocumentIndexingRuntime
+    import_service: FreshRSSImportService | None = None
+    indexing_runtime: DocumentIndexingRuntime | None = None
+    import_factory: Callable | None = None
+    indexing_factory: Callable | None = None
+    retention_settings_factory: Callable | None = None
+    session_factory: AsyncSessionFactory | None = None
+    retention_client: AsyncQdrantClient | None = None
+
+    @classmethod
+    def lazy(cls, *, session_factory, freshrss_factory, indexing_factory, qdrant_settings_factory):
+        """保存工厂，执行所需步骤时才创建客户端；构造本身不读取上游配置。"""
+        return cls(
+            executor=NewsPipelineExecutionService(session_factory, coordinator=WriteCoordinator(session_factory)),
+            import_factory=freshrss_factory, indexing_factory=indexing_factory,
+            retention_settings_factory=qdrant_settings_factory, session_factory=session_factory,
+        )
 
     @classmethod
     def build(
@@ -83,13 +103,11 @@ class PipelineWriteRuntime:
             VectorIndexConfigurationError: 组件无法共享同一向量规格。
         """
 
-        return cls(
-            executor=NewsPipelineExecutionService(session_factory),
-            import_service=FreshRSSImportService(freshrss_settings),
-            indexing_runtime=DocumentIndexingRuntime.build(
-                qdrant_settings,
-                ollama_settings,
-            ),
+        return cls.lazy(
+            session_factory=session_factory,
+            freshrss_factory=lambda: FreshRSSImportService(freshrss_settings),
+            indexing_factory=lambda: DocumentIndexingRuntime.build(qdrant_settings, ollama_settings),
+            qdrant_settings_factory=lambda: qdrant_settings,
         )
 
     async def run_once(
@@ -151,6 +169,8 @@ class PipelineWriteRuntime:
             不访问 Qdrant。
         """
 
+        if self.import_service is None:
+            self.import_service = self.import_factory()
         return await self.executor.sync_news(
             self.import_service,
             limit_per_source=limit_per_source,
@@ -183,14 +203,25 @@ class PipelineWriteRuntime:
             I/O；不访问 FreshRSS，也不执行 Vector Search。
         """
 
-        # 1、显式准备 Qdrant：创建/校验物理 Collection 与 current Alias
-        await self.indexing_runtime.ensure_ready()
-        # 2、索引：领取待处理文档，切分 → 向量化 → 写入 Qdrant
-        return await self.executor.index_pending(
-            self.indexing_runtime.service,
-            batch_size=batch_size,
-            stale_after=stale_after,
-        )
+        async with self.executor.writing(("index",)):
+            if self.indexing_runtime is None:
+                self.indexing_runtime = self.indexing_factory()
+            await self.indexing_runtime.ensure_ready()
+            return await self.executor.index_pending(
+                self.indexing_runtime.service, batch_size=batch_size, stale_after=stale_after,
+            )
+
+    async def prune_old_documents(self, *, retention_days: int, dry_run: bool):
+        """只创建数据库会话与 Qdrant 删除客户端，不接触 FreshRSS 或向量生成。"""
+        async with self.executor.writing(("sync", "index")):
+            settings = self.retention_settings_factory()
+            if self.retention_client is None:
+                self.retention_client = build_qdrant_client(settings)
+            async with self.session_factory() as session:
+                service = DocumentRetentionService(
+                    DocumentRetentionRepository(session), QdrantDeletionStore(self.retention_client, settings),
+                )
+                return await service.prune_old_documents(retention_days, dry_run)
 
     async def close(self) -> None:
         """关闭 Ollama 与 Qdrant 写入 client，不修改任何远程业务数据。
@@ -203,7 +234,15 @@ class PipelineWriteRuntime:
             本方法不执行同步、Embedding、Qdrant lifecycle、Point 写入或搜索。
         """
 
-        await self.indexing_runtime.close()
+        error = None
+        for resource in (self.indexing_runtime, self.retention_client):
+            if resource is not None:
+                try:
+                    await resource.close()
+                except Exception as exc:
+                    error = error or exc
+        if error is not None:
+            raise error
 
 
 __all__ = ["PipelineRunOnceExecutionResult", "PipelineWriteRuntime"]

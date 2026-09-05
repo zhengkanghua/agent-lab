@@ -24,6 +24,8 @@ from agent_lab.services.scheduled_task_errors import (
     ScheduledJobKeyConflictError,
     ScheduledJobNotFoundError,
     ScheduledJobUnknownTypeError,
+    ScheduledJobEditBlockedError,
+    ScheduledJobAlreadyRunningError,
 )
 from agent_lab.services.scheduler_runner import ScheduledJobRunner
 from agent_lab.services.scheduled_task_registry import TaskTypeSpec, get_task_type_spec
@@ -40,6 +42,7 @@ class ScheduledJobView:
     record: ScheduledJobRecord
     next_run_at: datetime | None
     last_run: JobRunRecord | None
+    active_run: JobRunRecord | None = None
 
 
 class ScheduledJobService:
@@ -55,6 +58,10 @@ class ScheduledJobService:
 
         self._repository = ScheduledJobRepository(session)
         self._runner = runner
+
+    @property
+    def timezone(self):
+        return self._runner.timezone
 
     async def list_jobs(self) -> list[ScheduledJobView]:
         """返回全部任务及各自的下次执行时间与最近一次执行。"""
@@ -114,13 +121,18 @@ class ScheduledJobService:
         params: dict | None = None,
         enabled: bool | None = None,
     ) -> ScheduledJobView:
-        """修改 cron / 参数 / 启停（key 与任务类型不可改），成功后同步调度器。
+        """修改 cron / 参数 / 启停（key 与任务类型不可改），提交后供 scheduler 刷新。
 
         只提交了哪个字段就改哪个字段；``params`` 传了（哪怕空 dict）就整体替换并按
         任务类型重新校验。
         """
 
-        record = await self._require_job(job_id)
+        record = await self._repository.lock_job(job_id)
+        if record is None:
+            raise ScheduledJobNotFoundError()
+        if cron_expr is not None or params is not None:
+            if record.enabled or enabled is True or await self._repository.active_run(job_id) is not None:
+                raise ScheduledJobEditBlockedError()
         if cron_expr is not None:
             self._require_cron(cron_expr)
             record.cron_expr = cron_expr
@@ -129,6 +141,7 @@ class ScheduledJobService:
             record.params = self._normalize_params(spec, params)
         if enabled is not None:
             record.enabled = enabled
+        record.config_version += 1
         await self._repository.commit()
         # commit 后 refresh，确保服务器端更新的 updated_at 已加载，
         # 避免后续同步访问时触发 MissingGreenlet 错误。
@@ -139,9 +152,13 @@ class ScheduledJobService:
     async def delete_job(self, job_id: UUID) -> None:
         """删除任务；执行历史随数据库级联删除，调度器条目同步摘除。"""
 
-        record = await self._require_job(job_id)
-        self._runner.remove_job(job_id)
+        record = await self._repository.lock_job(job_id)
+        if record is None:
+            raise ScheduledJobNotFoundError()
+        if await self._repository.active_run(job_id) is not None:
+            raise ScheduledJobAlreadyRunningError(job_id)
         await self._repository.delete_job(record)
+        self._runner.remove_job(job_id)
 
     async def trigger(self, job_id: UUID) -> UUID:
         """手动触发一次执行，返回新执行记录 id。
@@ -164,6 +181,12 @@ class ScheduledJobService:
         record = await self._require_job(job_id)
         return list(await self._repository.list_runs(record.id, limit=limit))
 
+    async def get_run(self, job_id: UUID, run_id: UUID) -> JobRunRecord:
+        result = await self._repository.get_run(job_id, run_id)
+        if result is None:
+            raise ScheduledJobNotFoundError()
+        return result
+
     def validate_cron(self, cron_expr: str) -> tuple[list[datetime], list[str]]:
         """校验 cron 并给出未来 3 次执行时间，供管理端提交前预览。
 
@@ -181,12 +204,13 @@ class ScheduledJobService:
         return self._runner.upcoming_fire_times(cron_expr)
 
     async def _build_view(self, record: ScheduledJobRecord) -> ScheduledJobView:
-        """凑齐一行的完整视图：记录 + 调度器里的下次执行 + 最近一次执行。"""
+        """组合配置算出的下次计划时刻、最近执行与未释放执行，不代替就绪检查。"""
 
         return ScheduledJobView(
             record=record,
-            next_run_at=self._runner.next_run_at(record.id),
+            next_run_at=self._runner.planned_run_at(record),
             last_run=await self._repository.latest_run(record.id),
+            active_run=await self._repository.active_run(record.id),
         )
 
     async def _require_job(self, job_id: UUID) -> ScheduledJobRecord:

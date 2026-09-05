@@ -6,11 +6,11 @@
 所有时刻字段一律 UTC ISO8601，展示时区的换算由前端负责。
 """
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 class CronValidateRequest(BaseModel):
@@ -35,6 +35,14 @@ class CronValidateResponse(BaseModel):
             " ISO8601 字符串，前端可直接展示或自行换算。"
         ),
     )
+    timezone: str = Field(default="Asia/Shanghai", description="服务端实际 cron 解释时区。")
+
+
+class ScheduledTaskTypeResponse(BaseModel):
+    task_type: str
+    description: str
+    defaults: dict[str, Any]
+    params_schema: dict[str, Any]
 
 
 class ScheduledJobCreateRequest(BaseModel):
@@ -49,7 +57,7 @@ class ScheduledJobCreateRequest(BaseModel):
     task_type: str = Field(
         min_length=1,
         max_length=64,
-        description="任务类型，可选取值见 GET /scheduled-jobs 返回的 task_types（目前为 freshrss_sync、index_pending）。",
+        description="任务类型，可选取值见 GET /scheduled-jobs/task-types。",
     )
     cron_expr: str = Field(
         min_length=1,
@@ -60,7 +68,8 @@ class ScheduledJobCreateRequest(BaseModel):
         default_factory=dict,
         description=(
             "任务参数（JSON 对象），形状随任务类型：freshrss_sync 为 {limit_per_source}，"
-            "index_pending 为 {batch_size, stale_after_minutes}；缺省字段用默认值。"
+            "index_pending 为 {batch_size, stale_after_minutes}，prune_old_documents 为"
+            " {retention_days, dry_run}；缺省字段用默认值。"
         ),
     )
     enabled: bool = Field(
@@ -102,7 +111,7 @@ class JobRunResponse(BaseModel):
     status: str = Field(description="执行状态：running、succeeded、failed 或 skipped。")
     started_at: datetime = Field(description="开始（或跳过判定发生）时刻，UTC。")
     finished_at: datetime | None = Field(
-        description="结束时刻，UTC；running 与 skipped 状态下为空。",
+        description="结束时刻，UTC；尚未结束时为空，skipped 的起止时刻相同。",
     )
     stats: dict[str, Any] = Field(
         description=(
@@ -113,6 +122,15 @@ class JobRunResponse(BaseModel):
     error_type: str | None = Field(
         description="批次级失败的异常类名（只含类型名，无异常文本）；成功与跳过时为空。",
     )
+    heartbeat_at: datetime | None = None
+
+    @computed_field
+    @property
+    def needs_attention(self) -> bool:
+        """心跳失联只表示需要核实，不授权抢占或重做业务。"""
+        return self.stats.get("needs_attention") is True or self.status == "running" and (
+            self.heartbeat_at is None or self.heartbeat_at < datetime.now(UTC) - timedelta(seconds=30)
+        )
 
 
 class ScheduledJobResponse(BaseModel):
@@ -122,16 +140,17 @@ class ScheduledJobResponse(BaseModel):
 
     id: UUID = Field(description="定时任务 id。")
     key: str = Field(description="业务唯一键，创建后不可修改。")
-    task_type: str = Field(description="任务类型（freshrss_sync 或 index_pending）。")
+    task_type: str = Field(description="任务类型标识，见任务类型列表。")
     cron_expr: str = Field(description="5 段式 cron 表达式原样字符串。")
     params: dict[str, Any] = Field(description="任务参数（已按类型规范化的 JSON 对象）。")
     enabled: bool = Field(description="是否参与 cron 调度。")
     next_run_at: datetime | None = Field(
-        description="下次计划执行时间（UTC）；调度器未启动（SCHEDULER_ENABLED=false）或任务停用/未注册时为空。",
+        description="按数据库配置计算的下次计划时间（UTC）；停用或配置无效为空，不代表 scheduler 就绪。",
     )
     last_run: JobRunResponse | None = Field(
         description="最近一次执行记录；尚无历史时为空。",
     )
+    active_run: JobRunResponse | None = Field(default=None, description="当前未释放的执行或待核实的写操作。")
     created_at: datetime = Field(description="创建时间，UTC。")
     updated_at: datetime = Field(description="最近一次配置修改时间，UTC。")
 

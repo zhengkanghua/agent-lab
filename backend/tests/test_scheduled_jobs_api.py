@@ -25,6 +25,8 @@ from agent_lab.services.scheduled_task_errors import (
     ScheduledJobKeyConflictError,
     ScheduledJobNotFoundError,
     ScheduledJobUnknownTypeError,
+    ScheduledJobClosingError,
+    ScheduledJobEditBlockedError,
 )
 from tests.app_helpers import create_offline_app
 from tests.auth_helpers import allow_reader, allow_superuser
@@ -69,6 +71,7 @@ def make_view(*, key: str = "freshrss-sync", enabled: bool = True) -> ScheduledJ
 
 
 class FakeScheduledJobService:
+    timezone = "Asia/Shanghai"
     """记录命令、返回 canned 视图或抛指定领域异常的 Service 替身。"""
 
     def __init__(self, *, error: Exception | None = None) -> None:
@@ -120,6 +123,13 @@ class FakeScheduledJobService:
         self.runs_queried.append((job_id, limit))
         return [self.view.last_run]
 
+    async def get_run(self, job_id, run_id):
+        if self.error:
+            raise self.error
+        if job_id != self.view.record.id or run_id != self.view.last_run.id:
+            raise ScheduledJobNotFoundError()
+        return self.view.last_run
+
     def validate_cron(self, cron_expr: str) -> tuple[list, list]:
         if self.error is not None:
             raise self.error
@@ -165,6 +175,17 @@ def send(app: FastAPI, method: str, path: str, **kwargs: Any) -> httpx.Response:
 
 
 class TestAuthGate:
+    @pytest.mark.parametrize("path", ["/scheduled-jobs/task-types", f"/scheduled-jobs/{uuid4()}/runs/{uuid4()}"])
+    @pytest.mark.parametrize("superuser, expected", [(None, 401), (False, 403)])
+    def test_new_read_routes_require_superuser(self, path, superuser, expected):
+        from agent_lab.auth.dependencies import cookie_transport
+        from tests.test_auth import auth_app, user
+        app, strategy = auth_app(user(superuser=False))
+        app.dependency_overrides[get_scheduled_job_service] = FakeScheduledJobService
+        headers = {} if superuser is None else {"cookie": f"{cookie_transport.cookie_name}={strategy.token}"}
+        response = send(app, "GET", path, headers=headers)
+        assert response.status_code == expected
+
     def test_requires_login(self) -> None:
         # 不覆盖任何鉴权依赖：真实 Cookie 认证在无 Cookie 时必须给 401。
         app = make_app(FakeScheduledJobService(), superuser=None)
@@ -215,6 +236,7 @@ class TestCrudContract:
         }
         # 响应里只该有契约字段：没有 ORM 内部属性顺带漏出去。
         assert set(job) == {
+            "active_run",
             "id",
             "key",
             "task_type",
@@ -309,6 +331,35 @@ class TestDomainErrorMapping:
 
 
 class TestTriggerAndRuns:
+    def test_types_include_retention_boolean_defaults_and_bounds(self):
+        response = send(make_app(FakeScheduledJobService()), "GET", "/scheduled-jobs/task-types")
+        assert response.status_code == 200
+        types = {item["task_type"]: item for item in response.json()}
+        assert set(types) == {"freshrss_sync", "index_pending", "prune_old_documents"}
+        retention = types["prune_old_documents"]
+        assert retention["defaults"] == {"retention_days": 180, "dry_run": True}
+        assert retention["params_schema"]["properties"]["dry_run"]["type"] == "boolean"
+        assert retention["params_schema"]["properties"]["retention_days"]["minimum"] == 30
+
+    def test_detail_uses_both_identifiers_and_exposes_attention(self):
+        service = FakeScheduledJobService()
+        app = make_app(service)
+        record = service.view.last_run
+        response = send(app, "GET", f"/scheduled-jobs/{record.job_id}/runs/{record.id}")
+        assert response.status_code == 200 and response.json()["needs_attention"] is False
+        response = send(app, "GET", f"/scheduled-jobs/{uuid4()}/runs/{record.id}")
+        assert response.status_code == 404
+
+    @pytest.mark.parametrize("error, method, suffix, expected", [
+        (ScheduledJobClosingError(), "POST", "trigger", 503),
+        (ScheduledJobEditBlockedError(), "PATCH", "", 409),
+    ])
+    def test_edit_and_closing_errors_are_stable_and_safe(self, error, method, suffix, expected):
+        app = make_app(FakeScheduledJobService(error=error))
+        path = f"/scheduled-jobs/{uuid4()}" + (f"/{suffix}" if suffix else "")
+        response = send(app, method, path, json={"params": {}} if method == "PATCH" else None)
+        assert response.status_code == expected and response.json()["code"] == error.code
+
     def test_trigger_returns_202_with_run_receipt(self) -> None:
         service = FakeScheduledJobService()
         app = make_app(service)

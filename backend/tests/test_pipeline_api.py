@@ -6,6 +6,7 @@ Ollama 或 Qdrant。重点验证参数边界、startup 零写入、Service 复�
 """
 
 import asyncio
+from contextlib import nullcontext
 from datetime import timedelta
 from typing import Any
 from uuid import uuid4
@@ -345,6 +346,9 @@ def test_pipeline_write_runtime_reuses_execution_service_in_strict_order() -> No
     expected = execution_result()
 
     class FakeExecutor:
+        def writing(self, _resources):
+            return nullcontext()
+
         async def sync_news(self, service: Any, **kwargs: Any) -> NewsSyncExecutionResult:
             assert service is import_service
             assert kwargs == {"limit_per_source": 4}

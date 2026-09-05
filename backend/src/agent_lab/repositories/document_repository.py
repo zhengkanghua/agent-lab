@@ -11,14 +11,16 @@ from uuid import UUID, uuid4
 
 from datetime import UTC, datetime
 
-from sqlalchemy import case, func, or_, select, update
+from sqlalchemy import case, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from agent_lab.domain.enums import ProcessingStatus
+from agent_lab.domain.write_scope import DocumentDeletionPendingError
 from agent_lab.domain.source_document import SourceDocument
 from agent_lab.models.document import DocumentRecord
+from agent_lab.models.write_operation import DocumentDeletionRecord
 
 
 class DocumentRepository:
@@ -87,6 +89,7 @@ class DocumentRepository:
         statement = (
             select(DocumentRecord.id)
             .where(
+                ~exists().where(DocumentDeletionRecord.document_id == DocumentRecord.id),
                 DocumentRecord.processing_status.in_(
                     [ProcessingStatus.PENDING, ProcessingStatus.FAILED]
                 )
@@ -201,7 +204,7 @@ class DocumentRepository:
                     ),
                     "updated_at": func.now(),
                 },
-                where=has_changes,
+                where=has_changes & ~exists().where(DocumentDeletionRecord.document_id == DocumentRecord.id),
             )
             .returning(DocumentRecord)
             # 同一 AsyncSession 可能已经缓存该 ORM 对象；populate_existing 让
@@ -224,6 +227,11 @@ class DocumentRepository:
         existing = await self._session.scalar(existing_statement)
         if existing is None:
             raise RuntimeError("文档 upsert 未返回行")
+        if await self._session.scalar(select(exists().where(
+            DocumentDeletionRecord.document_id == existing.id,
+        ))):
+            # 让来源事务回滚，checkpoint 不能越过仍被删除意图阻挡的数据。
+            raise DocumentDeletionPendingError()
         return existing
 
     async def claim_for_indexing(
@@ -261,6 +269,7 @@ class DocumentRepository:
             .where(
                 DocumentRecord.id == document_id,
                 DocumentRecord.index_revision == expected_revision,
+                ~exists().where(DocumentDeletionRecord.document_id == DocumentRecord.id),
                 DocumentRecord.processing_status.in_(
                     [ProcessingStatus.PENDING, ProcessingStatus.FAILED]
                 ),
@@ -446,82 +455,4 @@ class DocumentRepository:
         )
         result = await self._session.execute(statement)
         await self._session.commit()
-        return result.rowcount
-
-    async def query_documents_to_delete(
-        self,
-        *,
-        cutoff_date: datetime,
-        batch_size: int,
-        status_filter: ProcessingStatus = ProcessingStatus.INDEXED,
-    ) -> list[UUID]:
-        """查询需要删除的文档 ID 列表。
-
-        Args:
-            cutoff_date: 发布时间或入库时间早于此日期的文档将被删除。
-            batch_size: 单批最多返回的文档数量。
-            status_filter: 只删除该状态的文档，默认只删除已索引的。
-
-        Returns:
-            按发布时间从旧到新排序的文档 ID 列表（NULL 发布时间排最前）。
-
-        Raises:
-            ValueError: cutoff_date 没有时区信息或 batch_size 不大于零。
-            Exception: PostgreSQL 查询失败时传播。
-
-        Notes:
-            这是 PostgreSQL 只读 I/O。删除条件：published_at < cutoff_date OR
-            (published_at IS NULL AND created_at < cutoff_date)。只返回 ID，
-            不预先锁定；真正删除由调用方在事务内完成。
-        """
-
-        if cutoff_date.utcoffset() is None:
-            raise ValueError("cutoff_date 必须包含时区信息")
-        if batch_size < 1:
-            raise ValueError("batch_size 必须大于零")
-
-        statement = (
-            select(DocumentRecord.id)
-            .where(
-                DocumentRecord.processing_status == status_filter,
-                or_(
-                    DocumentRecord.published_at < cutoff_date,
-                    (
-                        DocumentRecord.published_at.is_(None)
-                        & (DocumentRecord.created_at < cutoff_date)
-                    ),
-                ),
-            )
-            .order_by(
-                DocumentRecord.published_at.asc().nulls_first(),
-                DocumentRecord.id,
-            )
-            .limit(batch_size)
-        )
-        return list((await self._session.scalars(statement)).all())
-
-    async def delete_by_ids(self, document_ids: list[UUID]) -> int:
-        """批量删除指定 ID 的文档。
-
-        Args:
-            document_ids: 要删除的文档 ID 列表。
-
-        Returns:
-            实际删除的文档数量。
-
-        Raises:
-            Exception: PostgreSQL 删除失败时传播。
-
-        Notes:
-            这是 PostgreSQL I/O。调用方负责在事务内调用此方法，并决定是否提交。
-            通常配合 Qdrant 删除使用：先 Qdrant 删除成功，再调用此方法，事务提交。
-        """
-
-        if not document_ids:
-            return 0
-
-        statement = DocumentRecord.__table__.delete().where(
-            DocumentRecord.id.in_(document_ids)
-        )
-        result = await self._session.execute(statement)
         return result.rowcount

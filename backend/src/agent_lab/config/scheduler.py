@@ -36,14 +36,8 @@ class SchedulerSettings(BaseSettings):
             "只影响「0 9 * * *」这类字符串翻译成哪个时刻，数据库存储仍是 UTC。"
         ),
     )
-    misfire_grace_seconds: int = Field(
-        default=600,
-        ge=1,
-        description=(
-            "错过的 cron 触发在多少秒内允许补跑，来源于 SCHEDULER_MISFIRE_GRACE_SECONDS；"
-            "超过宽限就放弃这一次，等下一轮。"
-        ),
-    )
+    refresh_seconds: float = Field(default=5, ge=1, le=60, description="数据库配置刷新间隔秒数。")
+    shutdown_grace_seconds: float = Field(default=10, ge=0, le=300, description="进程关闭时等待任务收尾的秒数，不是清理任务执行上限。")
     run_history_retention: int = Field(
         default=50,
         ge=1,

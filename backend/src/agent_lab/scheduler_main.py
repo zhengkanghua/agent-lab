@@ -1,142 +1,106 @@
-"""调度器独立进程入口。
+"""独立 scheduler 入口及本容器就绪检查；检查不连接远程服务。"""
 
-此模块作为独立进程启动,只负责执行定时任务,不处理 HTTP 请求。
-与 API worker 完全解耦,避免多 worker 环境下任务重复执行。
-
-启动方式:
-    docker compose up scheduler
-    或本地测试: python -m agent_lab.scheduler_main
-"""
+import argparse
 import asyncio
+import json
 import logging
+import os
+from pathlib import Path
 import signal
 import sys
-import os
+import tempfile
+import time
 
-# Windows 控制台编码兼容：强制 UTF-8 输出
-if sys.platform == "win32":
+logger = logging.getLogger(__name__)
+
+
+def status_path():
+    return Path(os.environ.get("SCHEDULER_STATUS_PATH", str(Path(tempfile.gettempdir()) / "agent-lab-scheduler.json")))
+
+
+def write_status(*, ready, jobs, max_age_seconds=30):
+    path = status_path()
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"pid": os.getpid(), "ready": ready, "jobs": jobs, "updated_at": time.time(), "max_age_seconds": max_age_seconds}), encoding="utf-8")
+    temporary.replace(path)
+
+
+def process_exists(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name != "nt":
+        os.kill(pid, 0)
+        return True
+    # Windows 的 os.kill(pid, 0) 不是只读探测，使用只查询进程状态的句柄。
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel.OpenProcess(0x1000, False, pid)
+    if not handle:
+        return False
     try:
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
-    except Exception:
-        # Python < 3.7 或其他情况下的降级处理
-        import codecs
-        sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
-        sys.stderr = codecs.getwriter("utf-8")(sys.stderr.detach())
-
-# 调度器是常驻进程：不配置 logging 时 Python 只输出 WARNING 以上且不带时间戳，
-# 「定时任务执行完成」等 INFO 日志会全部丢失，docker logs 无法对时间线。根级别压到
-# WARNING 避免第三方库刷屏，agent_lab 提到 INFO（与 CLI 入口 cli.py 同款口径）。
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
-logging.getLogger("agent_lab").setLevel(logging.INFO)
-
-from agent_lab.config.scheduler import get_scheduler_settings
-from agent_lab.db.session import async_session_factory, engine
-from agent_lab.pipeline.write_runtime import PipelineWriteRuntime
-from agent_lab.repositories.scheduled_job_repository import ScheduledJobStore
-from agent_lab.services.scheduler_runner import ScheduledJobRunner
+        code = wintypes.DWORD()
+        return bool(kernel.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259
+    finally:
+        kernel.CloseHandle(handle)
 
 
-def build_pipeline_write_runtime() -> PipelineWriteRuntime:
-    """构建写入 Runtime（复制自 main.py）。"""
-    from agent_lab.config.freshrss import get_freshrss_settings
-    from agent_lab.config.ollama_embedding import get_ollama_embedding_settings
-    from agent_lab.config.qdrant import get_qdrant_settings
-
-    return PipelineWriteRuntime.build(
-        session_factory=async_session_factory,
-        freshrss_settings=get_freshrss_settings(),
-        qdrant_settings=get_qdrant_settings(),
-        ollama_settings=get_ollama_embedding_settings(),
-    )
-
-
-def build_scheduler_runner() -> ScheduledJobRunner:
-    """构建调度器（复制自 main.py）。"""
-    return ScheduledJobRunner(
-        store_factory=lambda: ScheduledJobStore(async_session_factory),
-        write_runtime_factory=build_pipeline_write_runtime,
-        settings=get_scheduler_settings(),
-    )
+def check_status():
+    try:
+        state = json.loads(status_path().read_text(encoding="utf-8"))
+        return state["ready"] is True and 0 <= time.time() - state["updated_at"] < state.get("max_age_seconds", 30) and process_exists(state["pid"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
 
 
 async def main():
-    """调度器主函数。"""
-    settings = get_scheduler_settings()
+    from agent_lab.config.scheduler import get_scheduler_settings
+    from agent_lab.db.session import engine
+    from agent_lab.pipeline.assembly import build_scheduler_runner
 
-    # 检查调度器开关（可选,保留灵活性）
-    if not settings.enabled:
-        print("SCHEDULER_ENABLED=false,调度器不启动")
-        print("如需启动调度器,请设置环境变量 SCHEDULER_ENABLED=true")
-        return
-
-    print("=" * 60)
-    print("Agent Lab 调度器启动中...")
-    print(f"时区: {settings.timezone}")
-    print(f"宽限时间: {settings.misfire_grace_seconds}s")
-    print("=" * 60)
-
-    # 创建调度器
-    scheduler = build_scheduler_runner()
-
-    # 优雅关闭处理
-    shutdown_event = asyncio.Event()
-
-    def signal_handler(sig, frame):
-        print(f"\n收到信号 {sig},正在停止调度器...")
-        shutdown_event.set()
-
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
+    if not get_scheduler_settings().enabled:
+        raise RuntimeError("独立 scheduler 的调度开关未启用。")
+    write_status(ready=False, jobs=0)
+    scheduler = build_scheduler_runner(status_writer=write_status)
+    stopping = asyncio.Event()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: stopping.set())
     try:
-        # 启动调度器
         await scheduler.start()
-        print("✓ 调度器已启动")
-        print("按 Ctrl+C 停止")
-
-        # 阻塞在这里,保持进程运行
-        await shutdown_event.wait()
-
-    except Exception as e:
-        print(f"✗ 调度器启动失败: {e}", file=sys.stderr)
-        raise
+        logger.info("scheduler 已加载配置并启动")
+        await stopping.wait()
     finally:
-        print("正在停止调度器...")
         try:
             await scheduler.close()
-        except Exception as e:
-            print(f"调度器关闭时出错: {e}", file=sys.stderr)
-
-        try:
+        finally:
             await engine.dispose()
-        except Exception as e:
-            print(f"数据库连接池关闭时出错: {e}", file=sys.stderr)
 
-        print("✓ 调度器已停止")
+
+def entrypoint():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--check", action="store_true")
+    args = parser.parse_args()
+    if args.check:
+        return 0 if check_status() else 1
+    logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logging.getLogger("agent_lab").setLevel(logging.INFO)
+    try:
+        if sys.platform == "win32":
+            with asyncio.Runner(loop_factory=asyncio.SelectorEventLoop) as runner:
+                runner.run(main())
+        else:
+            asyncio.run(main())
+        return 0
+    except KeyboardInterrupt:
+        return 0
+    except Exception as exc:
+        logger.error("scheduler 退出 error_type=%s", type(exc).__name__)
+        return 1
 
 
 if __name__ == "__main__":
-    try:
-        # Windows 兼容：使用 SelectorEventLoop 而不是 ProactorEventLoop
-        # Psycopg 异步驱动要求 SelectorEventLoop
-        if sys.platform == "win32":
-            import selectors
-            # 手动创建和设置事件循环，因为 asyncio.run() 会创建新的循环
-            selector = selectors.SelectSelector()
-            loop = asyncio.SelectorEventLoop(selector)
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(main())
-            finally:
-                loop.close()
-        else:
-            asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n调度器已终止")
-    except Exception as e:
-        print(f"调度器异常退出: {e}", file=sys.stderr)
-        sys.exit(1)
+    sys.exit(entrypoint())

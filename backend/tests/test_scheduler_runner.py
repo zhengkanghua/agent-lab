@@ -17,7 +17,8 @@ import pytest
 from agent_lab.config.scheduler import SchedulerSettings
 from agent_lab.ingestion.freshrss_client import FreshRSSAuthenticationError
 from agent_lab.models.scheduled_job import ScheduledJobRecord
-from agent_lab.services.scheduled_task_errors import ScheduledJobAlreadyRunningError
+from agent_lab.services.scheduled_task_errors import ScheduledJobAlreadyRunningError, ScheduledJobUnknownTypeError
+from agent_lab.services.scheduled_task_registry import get_task_type_spec
 from agent_lab.services.scheduler_runner import SKIPPED_PREVIOUS_RUNNING_REASON, ScheduledJobRunner
 
 
@@ -44,6 +45,7 @@ def make_job(
         enabled=enabled,
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
+        config_version=1,
     )
 
 
@@ -70,7 +72,7 @@ class FakeStore:
             trigger_type=trigger_type,
             status="skipped",
             started_at=started_at,
-            finished_at=None,
+            finished_at=started_at,
             stats=stats,
             error_type=None,
         )
@@ -118,6 +120,22 @@ class FakeStore:
             if record.id == run_id:
                 return record
         return None
+
+    async def claim_run(self, job_id, *, trigger_type, started_at, owner, expected_version=None):
+        job = self.jobs.get(job_id)
+        if job is None or (trigger_type == "scheduled" and (not job.enabled or (expected_version is not None and job.config_version != expected_version))):
+            return None
+        if any(record.job_id == job_id and record.status == "running" for record in self.runs):
+            raise ScheduledJobAlreadyRunningError(job_id)
+        spec = get_task_type_spec(job.task_type)
+        if spec is None:
+            raise ScheduledJobUnknownTypeError()
+        spec.validate_params(job.params)
+        run_id = await self.start_run(job_id, trigger_type=trigger_type, started_at=started_at)
+        return job, run_id
+
+    async def heartbeat(self, run_id):
+        pass
 
 
 class FakeWriteRuntime:
@@ -235,7 +253,7 @@ class TestUnifiedExecution:
             run_id = await store.start_run(
                 job.id, trigger_type="scheduled", started_at=datetime.now(UTC)
             )
-            await runner._execute(job, run_id, "scheduled")
+            await runner._executor.execute(job, run_id, "scheduled")
             record = store.find(run_id)
             assert record is not None and record.status == "succeeded"
             assert record.stats["candidate_count"] == 3
@@ -262,7 +280,7 @@ class TestUnifiedExecution:
             assert record.status == "failed"
             # 历史只记异常类名，不记异常文本（"boom" 不得出现）。
             assert record.error_type == "RuntimeError"
-            assert record.stats == {}
+            assert record.stats == {"failure_phase": "business"}
             assert runtime.closed is True
 
         run(scenario())
@@ -285,22 +303,21 @@ class TestUnifiedExecution:
             record = await wait_for_terminal(store, run_id)
             assert record.status == "failed"
             assert record.error_type == "FreshRSSAuthenticationError"
-            assert record.stats == {"error_reason": "login_rejected"}
+            assert record.stats == {"error_reason": "login_rejected", "failure_phase": "business"}
             assert runtime.closed is True
 
         run(scenario())
 
-    def test_unknown_task_type_fails_with_its_class_name(self) -> None:
+    def test_unknown_task_type_is_rejected_before_acceptance(self) -> None:
         store, runtime = FakeStore(), FakeWriteRuntime()
         runner = make_runner(store, runtime)
         job = make_job(task_type="no_such_type")
         store.jobs[job.id] = job
 
         async def scenario() -> None:
-            run_id = await runner.trigger_now(job)
-            record = await wait_for_terminal(store, run_id)
-            assert record.status == "failed"
-            assert record.error_type == "ScheduledJobUnknownTypeError"
+            with pytest.raises(ScheduledJobUnknownTypeError):
+                await runner.trigger_now(job)
+            assert store.runs == []
             # 未执行任何业务步骤。
             assert runtime.sync_calls == []
             assert runtime.index_calls == []
@@ -318,6 +335,7 @@ class TestUnifiedExecution:
         async def scenario() -> None:
             run_id = await runner.trigger_now(job)
             await wait_for_terminal(store, run_id)
+            await runner.close()
             assert store.prunes == [(job.id, 3)]
 
         run(scenario())

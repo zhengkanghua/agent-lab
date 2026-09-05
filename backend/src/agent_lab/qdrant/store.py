@@ -27,6 +27,7 @@ from qdrant_client.http import models
 from agent_lab.config.qdrant import QdrantSettings
 from agent_lab.qdrant.index_spec import VectorIndexSpec
 from agent_lab.qdrant.payload import QdrantPayloadMapper
+from agent_lab.domain.write_scope import remote_write
 
 
 class QdrantPointStoreError(RuntimeError):
@@ -45,6 +46,45 @@ class ReplaceChunksResult:
     document_id: str
     upserted_ids: tuple[str, ...]
     deleted_ids: tuple[str, ...]
+
+
+class QdrantDeletionStore:
+    """清理所需的最小 Qdrant 能力，不依赖向量模型和 Chunk 规格。"""
+
+    def __init__(self, client, settings: QdrantSettings) -> None:
+        self._client = client
+        self._alias = settings.collection_alias
+
+    def _filter(self, document_ids):
+        ids = [str(UUID(value)) for value in document_ids]
+        return models.Filter(must=[models.FieldCondition(
+            key="document_id", match=models.MatchAny(any=ids),
+        )])
+
+    async def count_by_document_ids(self, document_ids: list[str]) -> int:
+        if not document_ids:
+            return 0
+        try:
+            result = await self._client.count(
+                collection_name=self._alias, count_filter=self._filter(document_ids), exact=True,
+            )
+            return result.count
+        except Exception as exc:
+            raise QdrantPointStoreError(type(exc).__name__) from None
+
+    @remote_write
+    async def delete_by_document_ids(self, document_ids: list[str]) -> None:
+        """只返回已完成确认；Qdrant 不提供实际删除 Point 数量。"""
+        if not document_ids:
+            return
+        try:
+            result = await self._client.delete(
+                collection_name=self._alias,
+                points_selector=models.FilterSelector(filter=self._filter(document_ids)), wait=True,
+            )
+            QdrantChunkStore._ensure_completed(result, "retention delete")
+        except Exception as exc:
+            raise QdrantPointStoreError(type(exc).__name__) from None
 
 
 class QdrantChunkStore:
@@ -223,106 +263,6 @@ class QdrantChunkStore:
             await self._delete_ids(ids)
         return tuple(ids)
 
-    async def delete_by_document_ids(self, document_ids: list[str]) -> int:
-        """批量删除多篇新闻的全部 Point。
-
-        Args:
-            document_ids: PostgreSQL 文档 UUID 字符串列表。
-
-        Returns:
-            实际删除的 Point 数量。
-
-        Raises:
-            QdrantPointStoreError: Qdrant 删除失败。
-
-        Notes:
-            这是 Qdrant 网络 I/O。使用 Filter MatchAny 一次删除多篇文档的 Point，
-            比逐个调用 delete_document 更高效。Qdrant 删除操作是幂等的，重复删除
-            不存在的 Point 不会报错。
-        """
-
-        if not document_ids:
-            return 0
-
-        # 规范化所有 UUID
-        canonical_ids = [
-            self._canonical_uuid(doc_id, context=f"document_id[{i}]")
-            for i, doc_id in enumerate(document_ids)
-        ]
-
-        try:
-            result = await self._client.delete(
-                collection_name=self._collection_alias,
-                points_selector=models.FilterSelector(
-                    filter=models.Filter(
-                        must=[
-                            models.FieldCondition(
-                                key="document_id",
-                                match=models.MatchAny(any=canonical_ids),
-                            )
-                        ]
-                    )
-                ),
-                wait=True,
-            )
-        except Exception as exc:
-            raise QdrantPointStoreError(
-                f"通过 Alias {self._collection_alias!r} 批量删除 {len(document_ids)} "
-                f"篇文档的 Point 失败：{type(exc).__name__}。"
-            ) from None
-
-        self._ensure_completed(result, "batch delete by document_ids")
-        # Qdrant 删除操作的返回结果不直接包含删除数量，这里返回请求的文档数作为预期值
-        # 真实删除的 Point 数量 = 文档数 × 每篇平均 Chunk 数，但调用方关心的是文档数
-        return len(document_ids)
-
-    async def count_by_document_ids(self, document_ids: list[str]) -> int:
-        """统计多篇新闻对应的 Point 总数。
-
-        Args:
-            document_ids: PostgreSQL 文档 UUID 字符串列表。
-
-        Returns:
-            这批文档在 Qdrant 中的 Point 总数。
-
-        Raises:
-            QdrantPointStoreError: Qdrant 查询失败。
-
-        Notes:
-            这是 Qdrant 网络 I/O。用于 dry_run 模式统计将要删除的 Point 数量，
-            不读取向量或 Payload 正文。
-        """
-
-        if not document_ids:
-            return 0
-
-        # 规范化所有 UUID
-        canonical_ids = [
-            self._canonical_uuid(doc_id, context=f"document_id[{i}]")
-            for i, doc_id in enumerate(document_ids)
-        ]
-
-        try:
-            result = await self._client.count(
-                collection_name=self._collection_alias,
-                count_filter=models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="document_id",
-                            match=models.MatchAny(any=canonical_ids),
-                        )
-                    ]
-                ),
-                exact=True,
-            )
-        except Exception as exc:
-            raise QdrantPointStoreError(
-                f"通过 Alias {self._collection_alias!r} 统计 {len(document_ids)} "
-                f"篇文档的 Point 数量失败：{type(exc).__name__}。"
-            ) from None
-
-        return result.count
-
     def _build_points(
         self,
         document_id: str,
@@ -391,6 +331,7 @@ class QdrantChunkStore:
             raise QdrantPointStoreError(f"向量 {index} 的 L2 范数不是有限值。")
         return normalized
 
+    @remote_write
     async def _upsert_points(self, points: Sequence[models.PointStruct]) -> None:
         """
         按配置批量 upsert 到 current Alias，并等待服务端完成。"""
@@ -412,6 +353,7 @@ class QdrantChunkStore:
                 ) from None
             self._ensure_completed(result, "upsert")
 
+    @remote_write
     async def _delete_ids(self, ids: Sequence[str]) -> None:
         """按批次从 current Alias 删除 Point，并等待服务端完成。"""
 

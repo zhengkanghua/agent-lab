@@ -67,6 +67,18 @@ class ScheduledJobAlreadyRunningError(ScheduledJobDomainError):
         self.job_id = job_id
 
 
+class ScheduledJobEditBlockedError(ScheduledJobDomainError):
+    """修改前必须先停用，并等本次执行结束。"""
+
+    code = "scheduled_job_edit_blocked"
+    detail = "请先停用任务，等待本次执行结束后再修改配置。"
+
+
+class ScheduledJobClosingError(ScheduledJobDomainError):
+    code = "scheduled_job_closing"
+    detail = "服务正在停止，暂不接受新的任务执行。"
+
+
 __all__ = [
     "ScheduledJobAlreadyRunningError",
     "ScheduledJobDomainError",

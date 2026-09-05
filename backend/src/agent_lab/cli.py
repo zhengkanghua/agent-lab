@@ -26,11 +26,6 @@ from agent_lab.agent.checkpointer import (
     setup_checkpointer_tables,
 )
 from agent_lab.auth.manager import UserManager
-from agent_lab.config.freshrss import get_freshrss_settings
-from agent_lab.config.ollama_embedding import (
-    get_ollama_embedding_settings,
-)
-from agent_lab.config.qdrant import get_qdrant_settings
 from agent_lab.config.settings import get_settings
 from agent_lab.db.session import async_session_factory, engine
 from agent_lab.models.user import UserRecord
@@ -42,12 +37,10 @@ from agent_lab.pipeline.limits import (
     MAX_LIMIT_PER_SOURCE,
     MAX_STALE_AFTER_MINUTES,
 )
-from agent_lab.qdrant.runtime import DocumentIndexingRuntime
+from agent_lab.pipeline.assembly import build_pipeline_write_runtime
 from agent_lab.schemas.auth import AuthUserCreate
 from agent_lab.services.agent_thread_service import AgentThreadService
-from agent_lab.services.freshrss_import_service import FreshRSSImportService
 from agent_lab.services.news_pipeline_execution_service import (
-    NewsPipelineExecutionService,
     NewsSyncExecutionResult,
     PendingIndexExecutionResult,
 )
@@ -264,48 +257,35 @@ async def dispatch_command(args: argparse.Namespace) -> CommandOutcome:
     if args.command == "prune-old-threads":
         return await _prune_old_threads(args)
 
-    executor = NewsPipelineExecutionService(async_session_factory)
-    # 命令分派：sync-news 只同步；index-pending 只索引；run-once 两步都做
-    if args.command == "sync-news":
-        # 1、只做 FreshRSS → PostgreSQL，不接触 Qdrant
-        sync_result = await executor.sync_news(
-            FreshRSSImportService(get_freshrss_settings()),
-            limit_per_source=args.limit_per_source,
-        )
-        return _sync_outcome(args.command, sync_result)
-
-    if args.command == "index-pending":
-        index_result = await _execute_index_batch(executor, args)
-        return _index_outcome(args.command, index_result)
-
-    if args.command == "run-once":
-        # 1、先同步：FreshRSS → PostgreSQL
-        sync_result = await executor.sync_news(
-            FreshRSSImportService(get_freshrss_settings()),
-            limit_per_source=args.limit_per_source,
-        )
-        # 2、再准备 Alias 并索引。个别来源同步失败不影响这一步——那类失败被隔进
-        #    sync_result 里不会抛出，而上一轮可能还留着没索引的文档，值得一并处理掉。
-        #    批次级失败（订阅列表读不到等）会直接抛出，走不到这里。
-        index_result = await _execute_index_batch(executor, args)
-        # 3、合并两个子结果，任一部分失败整个命令就 ok=false
-        index_outcome = _index_outcome(args.command, index_result)
-        sync_outcome = _sync_outcome(args.command, sync_result)
-        ok = sync_outcome.exit_code == 0 and index_outcome.exit_code == 0
-        return CommandOutcome(
-            payload={
-                **index_outcome.payload,
-                **{
-                    key: value
-                    for key, value in sync_outcome.payload.items()
-                    if key not in {"command", "ok"}
-                },
-                "ok": ok,
-            },
-            exit_code=0 if ok else 1,
-        )
-
-    raise ValueError(f"不支持的命令：{args.command!r}")
+    runtime = build_pipeline_write_runtime()
+    operation_error = None
+    try:
+        if args.command == "sync-news":
+            return _sync_outcome(args.command, await runtime.sync_only(limit_per_source=args.limit_per_source))
+        if args.command == "index-pending":
+            return _index_outcome(args.command, await runtime.index_only(
+                batch_size=args.batch_size, stale_after=timedelta(minutes=args.stale_after_minutes),
+            ))
+        if args.command == "run-once":
+            result = await runtime.run_once(
+                limit_per_source=args.limit_per_source, batch_size=args.batch_size,
+                stale_after=timedelta(minutes=args.stale_after_minutes),
+            )
+            index_outcome = _index_outcome(args.command, result.index)
+            sync_outcome = _sync_outcome(args.command, result.sync)
+            ok = sync_outcome.exit_code == 0 and index_outcome.exit_code == 0
+            return CommandOutcome(payload={**index_outcome.payload, **sync_outcome.payload, "ok": ok}, exit_code=0 if ok else 1)
+        raise ValueError("不支持的 Pipeline 命令。")
+    except BaseException as exc:
+        operation_error = exc
+        raise
+    finally:
+        try:
+            await runtime.close()
+        except Exception as close_error:
+            if operation_error is None:
+                raise
+            operation_error.add_note(f"关闭写 Runtime 失败：{type(close_error).__name__}。")
 
 
 async def _create_user(args: argparse.Namespace) -> CommandOutcome:
@@ -539,63 +519,6 @@ async def _prune_old_threads(args: argparse.Namespace) -> CommandOutcome:
 
 
 
-async def _execute_index_batch(
-    executor: NewsPipelineExecutionService,
-    args: argparse.Namespace,
-) -> PendingIndexExecutionResult:
-    """组装写入 Runtime，显式准备 Alias 并确保任何路径都关闭 client。
-
-    Args:
-        executor: 持有 Session 工厂的批次执行 Service。
-        args: 提供 ``batch_size`` 与 ``stale_after_minutes`` 的已解析参数。
-
-    Returns:
-        本批次的候选、成功、跳过和失败统计。
-
-    Raises:
-        Exception: Qdrant lifecycle、Embedding 或 PostgreSQL 的批次级失败。
-
-    Notes:
-        执行 Qdrant 写入（Collection/Alias 准备加 Point 写入）、Ollama Embedding 和
-        PostgreSQL 读写。无论成败都会关闭 Qdrant client。
-    """
-
-    # 1、每次调用建一个新 Runtime。它持有 Qdrant client 和 Embedding client，是「这一批
-    #    专用」的资源，用完就关，不做进程级复用。
-    runtime = DocumentIndexingRuntime.build(
-        get_qdrant_settings(),
-        get_ollama_embedding_settings(),
-    )
-    operation_error: BaseException | None = None
-    try:
-        # 2、先 ensure_ready 再索引：Collection 和 current Alias 必须在写 Point 之前就位。
-        await runtime.ensure_ready()
-        return await executor.index_pending(
-            runtime.service,
-            batch_size=args.batch_size,
-            stale_after=timedelta(minutes=args.stale_after_minutes),
-        )
-    # 3、把主异常记下来再原样抛出。记它只为了给下面的 finally 一个判断依据：
-    #    「主流程是成功的还是失败的」。用 BaseException 是为了连 CancelledError 也算上。
-    except BaseException as exc:
-        operation_error = exc
-        raise
-    finally:
-        # 4、关闭一定要执行，但关闭本身也可能失败，于是分两种情况：
-        #    主流程成功 → 关闭失败就是唯一的失败，正常抛出去。
-        #    主流程已经失败 → 关闭失败挂成 note 附在主异常上。直接 raise 会把主异常
-        #    顶掉，那才是真正要查的那个。
-        try:
-            await runtime.close()
-        except Exception as close_error:
-            if operation_error is None:
-                raise
-            operation_error.add_note(
-                "此外关闭索引运行时也失败："
-                f"{type(close_error).__name__}。"
-            )
-
-
 def _index_outcome(
     command: str,
     result: PendingIndexExecutionResult,
@@ -677,7 +600,7 @@ async def _run_with_cleanup(args: argparse.Namespace) -> CommandOutcome:
     为什么必须显式 dispose：``engine`` 是模块级全局对象，进程退出时不保证连接池里的
     连接被优雅归还。CLI 是一次性进程，跑完就走，留着的连接会在 PostgreSQL 侧挂一会儿。
 
-    ``add_note`` 那套和 ``_execute_index_batch`` 的 finally 是同一个模式，理由见那里。
+    释放失败只附在既有业务异常后，不掩盖导致命令失败的原因。
 
     Args:
         args: 已解析的 CLI 参数。
