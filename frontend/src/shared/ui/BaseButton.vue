@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, type RouteLocationRaw } from 'vue-router'
 import BaseSpinner from './BaseSpinner.vue'
 
 /* 全站按钮的唯一实现。
@@ -32,7 +32,7 @@ const props = withDefaults(
     block?: boolean
     type?: 'button' | 'submit' | 'reset'
     /** 给出 to 就渲染成 RouterLink；此时 type/disabled/loading 不适用。 */
-    to?: string
+    to?: RouteLocationRaw
   }>(),
   {
     variant: 'secondary',
