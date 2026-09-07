@@ -13,9 +13,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
-import agent_lab.services.news_pipeline_execution_service as execution_module
 from agent_lab.services.document_indexing_service import DocumentIndexingResult
-from agent_lab.services.freshrss_import_service import FreshRSSImportResult
+from agent_lab.knowledge.document_contracts import SourceImportResult
 from agent_lab.services.news_pipeline_execution_service import (
     NewsPipelineExecutionService,
 )
@@ -43,11 +42,15 @@ class FakeSessionContext:
 class FakeSessionFactory:
     """记录创建次数并为每次调用生成不同 fake Session。"""
 
-    def __init__(self) -> None:
+    def __init__(self, repository=None) -> None:
         self.sessions: list[Any] = []
+        self.repository = repository
 
     def __call__(self) -> FakeSessionContext:
         session = SimpleNamespace(sequence=len(self.sessions))
+        if self.repository is not None:
+            session.requeue_stale_processing = self.repository.requeue_stale_processing
+            session.list_index_candidate_ids = self.repository.list_index_candidate_ids
         self.sessions.append(session)
         return FakeSessionContext(session)
 
@@ -57,16 +60,15 @@ class FakeImportService:
 
     def __init__(self, record_count: int = 3) -> None:
         self.records = [object() for _ in range(record_count)]
-        self.calls: list[tuple[Any, int]] = []
+        self.calls: list[int] = []
 
     async def import_recent_per_source(
         self,
-        session: Any,
         *,
         limit_per_source: int,
-    ) -> FreshRSSImportResult:
-        self.calls.append((session, limit_per_source))
-        return FreshRSSImportResult(
+    ) -> SourceImportResult:
+        self.calls.append(limit_per_source)
+        return SourceImportResult(
             source_count=2,
             synchronized_count=len(self.records),
             checkpoint_advanced_count=2,
@@ -116,7 +118,7 @@ class FakeIndexingService:
         )
 
 
-def test_sync_news_uses_one_session_and_reports_processed_count() -> None:
+def test_sync_news_delegates_transaction_ownership_and_reports_processed_count() -> None:
     session_factory = FakeSessionFactory()
     import_service = FakeImportService(record_count=4)
     executor = NewsPipelineExecutionService(session_factory)  # type: ignore[arg-type]
@@ -132,8 +134,8 @@ def test_sync_news_uses_one_session_and_reports_processed_count() -> None:
     assert result.source_count == 2
     assert result.successful_source_count == 2
     assert result.checkpoint_advanced_count == 2
-    assert import_service.calls == [(session_factory.sessions[0], 2)]
-    assert len(session_factory.sessions) == 1
+    assert import_service.calls == [2]
+    assert session_factory.sessions == []
 
 
 def test_sync_news_rejects_invalid_limit_before_opening_session() -> None:
@@ -158,11 +160,6 @@ def test_index_pending_requeues_then_uses_an_independent_session_per_document(
     document_ids = [uuid4(), uuid4(), uuid4(), uuid4()]
     fixed_now = datetime(2026, 8, 14, 12, 0, tzinfo=UTC)
     repository = FakeCandidateRepository(document_ids, requeued=2)
-    monkeypatch.setattr(
-        execution_module,
-        "DocumentRepository",
-        lambda _session: repository,
-    )
     indexing_service = FakeIndexingService(
         {
             document_ids[0]: "indexed",
@@ -171,7 +168,7 @@ def test_index_pending_requeues_then_uses_an_independent_session_per_document(
             document_ids[3]: "indexed",
         }
     )
-    session_factory = FakeSessionFactory()
+    session_factory = FakeSessionFactory(repository)
     executor = NewsPipelineExecutionService(
         session_factory,  # type: ignore[arg-type]
         clock=lambda: fixed_now,
@@ -206,15 +203,10 @@ def test_index_pending_processes_only_one_bounded_candidate_batch(
 ) -> None:
     document_ids = [uuid4(), uuid4(), uuid4()]
     repository = FakeCandidateRepository(document_ids)
-    monkeypatch.setattr(
-        execution_module,
-        "DocumentRepository",
-        lambda _session: repository,
-    )
     indexing_service = FakeIndexingService(
         {document_id: "indexed" for document_id in document_ids}
     )
-    executor = NewsPipelineExecutionService(FakeSessionFactory())  # type: ignore[arg-type]
+    executor = NewsPipelineExecutionService(FakeSessionFactory(repository))
 
     result = run(
         executor.index_pending(  # type: ignore[arg-type]

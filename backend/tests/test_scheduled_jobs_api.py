@@ -337,9 +337,16 @@ class TestTriggerAndRuns:
         types = {item["task_type"]: item for item in response.json()}
         assert set(types) == {"freshrss_sync", "index_pending", "prune_old_documents"}
         retention = types["prune_old_documents"]
-        assert retention["defaults"] == {"retention_days": 180, "dry_run": True}
+        assert retention["defaults"] == {
+            "retention_days": 180,
+            "dry_run": True,
+            "knowledge_base_ids": ["10000000-0000-4000-8000-000000000010"],
+        }
         assert retention["params_schema"]["properties"]["dry_run"]["type"] == "boolean"
         assert retention["params_schema"]["properties"]["retention_days"]["minimum"] == 30
+        # 清理范围以 KnowledgeBase ID 数组暴露，供管理端表单渲染多选。
+        scope = retention["params_schema"]["properties"]["knowledge_base_ids"]
+        assert scope["type"] == "array" and scope["minItems"] == 1
 
     def test_detail_uses_both_identifiers_and_exposes_attention(self):
         service = FakeScheduledJobService()

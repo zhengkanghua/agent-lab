@@ -16,6 +16,7 @@ class DocumentType(StrEnum):
     FILING = "filing"
     RESEARCH_REPORT = "research_report"
     POLICY_DOCUMENT = "policy_document"
+    OTHER = "other"
 
 
 

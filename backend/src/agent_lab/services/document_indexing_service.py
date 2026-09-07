@@ -1,9 +1,7 @@
-"""编排「一篇 PostgreSQL 新闻 → Chunk → Embedding → 写入 Qdrant」的完整索引过程。
+"""通过仓储、切分、Embedding 和向量写入端口编排单篇 Document 索引。
 
-本模块位于应用 Service 层，是唯一同时知道四个环节的组件：
-PostgreSQL 的 ``processing_status``（状态机）、Document/Chunk Pipeline（切分）、
-Ollama Embedding（向量化）、Qdrant Point Store（写入）。它相当于索引任务的
-「总调度员」。
+应用 Service 只接收纯快照和端口，具体 PostgreSQL、LangChain/Ollama 和 Qdrant
+实现由装配层选择。它负责状态、切分和写入的顺序，不创建外部客户端。
 
 它不执行相似度搜索、不生成 LLM 回答、不创建 PostgreSQL Chunk/Embedding 表；
 Qdrant Collection 和 Alias 的生命周期由单独的 lifecycle 组件负责。一个关键顺序
@@ -15,17 +13,9 @@ import asyncio
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from agent_lab.models.document import DocumentRecord
-from agent_lab.pipeline.document_chunk_pipeline import DocumentChunkPipeline
-from agent_lab.pipeline.ollama_embedding_provider import (
-    OllamaEmbeddingProvider,
-)
-from agent_lab.qdrant.index_spec import VectorIndexSpec
-from agent_lab.qdrant.index_spec import VectorIndexConfigurationError
-from agent_lab.qdrant.store import QdrantChunkStore, ReplaceChunksResult
-from agent_lab.repositories.document_repository import DocumentRepository
+from agent_lab.knowledge.document_contracts import DocumentSnapshot, ReplaceChunksResult
+from agent_lab.knowledge.domain import VectorIndexConfigurationError
+from agent_lab.knowledge.ports import ChunkPipeline, ChunkStore, EmbeddingProvider, IndexingRepository, IndexSpecification
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,23 +49,23 @@ class DocumentIndexingService:
     3. 确认（mark_indexed）：再次用 revision 条件更新，如果处理期间新闻内容变了
        （revision 变了），条件不满足就不会覆盖新版本，旧 Worker 白干但无害。
 
-    实例可以在同一事件循环中复用，但每次调用传入的 ``AsyncSession`` 只能属于当前
-    工作单元（不能跨任务共享 Session）。底层组件只做自己的职责，不自行修改
+    实例可以在同一事件循环中复用，每次调用的 Repository 只属于当前工作单元。
+    应用只接收纯文档快照；底层组件只做自己的职责，不自行修改
     processing_status。
     """
 
     def __init__(
         self,
         *,
-        chunk_pipeline: DocumentChunkPipeline,
-        embedding_provider: OllamaEmbeddingProvider,
-        point_store: QdrantChunkStore,
-        spec: VectorIndexSpec,
+        chunk_pipeline: ChunkPipeline,
+        embedding_provider: EmbeddingProvider,
+        point_store: ChunkStore,
+        spec: IndexSpecification,
     ) -> None:
         """创建索引编排服务。
 
         Args:
-            chunk_pipeline: ORM 文档到 LangChain Chunk 的内存流水线。
+            chunk_pipeline: DocumentSnapshot 到 Chunk 的内存流水线。
             embedding_provider: 通过 Ollama 生成并校验向量的 Provider。
             point_store: 只使用 current Alias 的 Qdrant Point Store。
             spec: 当前 Collection 的维度、模型和 Schema 规格。
@@ -124,13 +114,13 @@ class DocumentIndexingService:
 
     async def index_document(
         self,
-        session: AsyncSession,
+        repository: IndexingRepository,
         document_id: UUID,
     ) -> DocumentIndexingResult:
         """按主键加载并索引一篇文档，无需调用方处理 ORM eager loading。
 
         Args:
-            session: 当前工作单元的 AsyncSession。
+            repository: 当前工作单元的索引存储端口，返回纯文档快照。
             document_id: PostgreSQL ``documents.id`` 主键。
 
         Returns:
@@ -145,17 +135,17 @@ class DocumentIndexingService:
             Ollama Embedding 和 Qdrant Alias 写入；不执行向量检索或 LLM I/O。
         """
 
-        record = await DocumentRepository(session).get_with_source(document_id)
+        record = await repository.get_for_indexing(document_id)
         if record is None:
             raise DocumentIndexingNotFoundError(
                 f"未找到待索引的文档 {document_id}。"
             )
-        return await self.index_record(session, record)
+        return await self.index_record(repository, record)
 
     async def index_record(
         self,
-        session: AsyncSession,
-        record: DocumentRecord,
+        repository: IndexingRepository,
+        record: DocumentSnapshot,
     ) -> DocumentIndexingResult:
         """
         索引一篇新闻的当前 revision，并在成功/失败后更新 processing_status。
@@ -174,8 +164,8 @@ class DocumentIndexingService:
         同时绝不吞掉原始异常（失败原因对排查很重要）。
 
         Args:
-            session: 当前工作单元的 AsyncSession；服务会提交领取、成功或失败状态。
-            record: 已 eager-load ``source`` relationship 的 DocumentRecord。
+            repository: 短事务状态端口，每次条件更新在返回前提交。
+            record: 独立文档快照，不受底层事务提交或回滚影响。
 
         Returns:
             ``indexed=True`` 表示当前 revision 已完整写入 Qdrant；``skipped=True``
@@ -191,7 +181,6 @@ class DocumentIndexingService:
             条件不匹配时返回 ``indexed=False``，下一次 pending 任务会幂等重试。
         """
 
-        repository = DocumentRepository(session)
         revision = record.index_revision
         # 1、原子领取：把 pending/failed → processing（条件 UPDATE），抢不到就跳过
         claimed = await repository.claim_for_indexing(
@@ -207,26 +196,7 @@ class DocumentIndexingService:
             )
 
         try:
-            # 2、切分：ORM 文档 → LangChain Chunk。切块是纯 CPU 计算（解析 HTML、
-            #    按 token 长度切分），直接在事件循环里算会让并发的 SSE 流式响应卡顿
-            #    几百毫秒到几秒；丢给线程池执行，事件循环立刻空出来继续服务其他请求
-            #    （build_chunks 是纯函数，无共享状态，线程池执行无副作用）。
-            chunks = await asyncio.to_thread(self._chunk_pipeline.build_chunks, record)
-            if not chunks:
-                raise ValueError("文档分块流水线针对非空内容未返回任何分块。")
-            # 3、向量化：逐批调 Ollama，返回与 Chunks 一一对应的向量
-            chunk_embeddings = await self._embedding_provider.embed_chunks(chunks)
-            if self._embedding_provider.dimension != self._spec.dimension:
-                raise ValueError(
-                    f"嵌入维度 {self._embedding_provider.dimension} 与"
-                    f"索引规格 {self._spec.dimension} 不匹配。"
-                )
-            # 4、写入 Qdrant：整篇替换该新闻在 current Alias 下的 Point
-            qdrant_result = await self._point_store.replace_document_chunks(
-                str(record.id),
-                chunks,
-                [item.embedding for item in chunk_embeddings],
-            )
+            qdrant_result = await self.write_snapshot(record)
             # 5、确认：带 revision 条件标记 indexed；若处理期间内容已更新则条件不满足
             indexed = await repository.mark_indexed(
                 document_id=record.id,
@@ -268,6 +238,27 @@ class DocumentIndexingService:
                     f"{type(status_exc).__name__}。"
                 )
             raise
+
+    async def write_snapshot(self, record: DocumentSnapshot) -> ReplaceChunksResult:
+        """切分、向量化并写入指定 Store；日常索引与隔离重建共用此步骤。
+
+        不领取或确认数据库状态；调用方必须已取得对应写资源。重建的 Store 由
+        专用适配器指向尚未发布的 generation，成功快照只能在发布之后更新。
+        """
+        chunks = await asyncio.to_thread(self._chunk_pipeline.build_chunks, record)
+        if not chunks:
+            raise ValueError("文档分块流水线针对非空内容未返回任何分块。")
+        chunk_embeddings = await self._embedding_provider.embed_chunks(chunks)
+        if self._embedding_provider.dimension != self._spec.dimension:
+            raise ValueError(
+                f"嵌入维度 {self._embedding_provider.dimension} 与"
+                f"索引规格 {self._spec.dimension} 不匹配。"
+            )
+        if [item.chunk_id for item in chunk_embeddings] != [chunk.id for chunk in chunks]:
+            raise ValueError("Embedding 返回的 Chunk 身份或顺序不一致。")
+        return await self._point_store.replace_document_chunks(
+            str(record.id), chunks, [item.embedding for item in chunk_embeddings],
+        )
 
     @staticmethod
     def _safe_error(error: Exception) -> str:

@@ -7,6 +7,7 @@ Ollama 或 Qdrant，也不打印文章正文。
 
 import asyncio
 from dataclasses import dataclass, field
+from contextlib import asynccontextmanager
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -17,9 +18,10 @@ import pytest
 import httpx
 from pydantic import SecretStr
 
-import agent_lab.services.freshrss_import_service as import_module
+import agent_lab.knowledge.adapters.importing as import_module
 from agent_lab.config.freshrss import FreshRSSSettings
 from agent_lab.domain.source_document import SourceDocument, SourceInfo
+from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.ingestion.freshrss_client import FreshRSSConnectionError
 from agent_lab.ingestion.freshrss_client import FreshRSSClient
 from agent_lab.schemas.freshrss import (
@@ -29,7 +31,8 @@ from agent_lab.schemas.freshrss import (
     freshrss_item_id_key,
 )
 from agent_lab.repositories.source_repository import SourceRepository
-from agent_lab.services.freshrss_import_service import FreshRSSImportService
+from agent_lab.knowledge.importing import SourceImportService
+from agent_lab.knowledge.composition import build_source_import_service
 
 
 def run(coroutine: Any) -> Any:
@@ -114,11 +117,14 @@ class MemoryStore:
     """保存仅在 fake commit 后可见的来源、游标、文档和 revision。"""
 
     source_ids: dict[str, UUID] = field(default_factory=dict)
+    sources: dict[str, SourceInfo] = field(default_factory=dict)
+    bindings: dict[str, UUID] = field(default_factory=dict)
     checkpoints: dict[str, str | None] = field(default_factory=dict)
     documents: dict[tuple[str, str], SourceDocument] = field(default_factory=dict)
     revisions: dict[tuple[str, str], int] = field(default_factory=dict)
     fail_commit_once: set[str] = field(default_factory=set)
     fail_document_upsert: set[str] = field(default_factory=set)
+    inactive_knowledge_bases: set[UUID] = field(default_factory=set)
 
     def source_id(self, external_id: str) -> UUID:
         """为来源生成与执行次数无关的稳定测试 UUID。"""
@@ -130,6 +136,15 @@ class MemoryStore:
 
         self.source_ids[external_id] = self.source_id(external_id)
         self.checkpoints[external_id] = checkpoint
+        # 已有 checkpoint 的来源必然完成过绑定，默认挂到新闻库模拟存量数据。
+        self.bindings.setdefault(external_id, DEFAULT_NEWS_KNOWLEDGE_BASE_ID)
+
+    def register(self, external_id: str) -> None:
+        """预置一个已发现并绑定、但还没有同步基线的来源。"""
+
+        self.source_ids[external_id] = self.source_id(external_id)
+        self.checkpoints.setdefault(external_id, None)
+        self.bindings.setdefault(external_id, DEFAULT_NEWS_KNOWLEDGE_BASE_ID)
 
 
 class FakeSession:
@@ -138,6 +153,7 @@ class FakeSession:
     def __init__(self, store: MemoryStore) -> None:
         self.store = store
         self.pending_source: tuple[str, UUID] | None = None
+        self.pending_source_info: SourceInfo | None = None
         self.pending_documents: dict[tuple[str, str], SourceDocument] = {}
         self.pending_checkpoint: tuple[str, str] | None = None
         self.commit_count = 0
@@ -155,6 +171,7 @@ class FakeSession:
             source_external_id, source_id = self.pending_source
             self.store.source_ids[source_external_id] = source_id
             self.store.checkpoints.setdefault(source_external_id, None)
+            self.store.sources[source_external_id] = self.pending_source_info
         for key, document in self.pending_documents.items():
             existing = self.store.documents.get(key)
             if existing is None:
@@ -189,6 +206,7 @@ class FakeSession:
         """清空当前事务暂存，不修改已提交状态。"""
 
         self.pending_source = None
+        self.pending_source_info = None
         self.pending_documents.clear()
         self.pending_checkpoint = None
 
@@ -213,6 +231,7 @@ class FakeSourceRepository:
             return None
         return SimpleNamespace(
             id=source_id,
+            knowledge_base_id=self.session.store.bindings.get(external_id),
             sync_checkpoint=self.session.store.checkpoints.get(external_id),
         )
 
@@ -224,7 +243,16 @@ class FakeSourceRepository:
             self.session.store.source_id(source.external_id),
         )
         self.session.pending_source = (source.external_id, source_id)
-        return SimpleNamespace(id=source_id)
+        self.session.pending_source_info = source
+        return SimpleNamespace(
+            id=source_id,
+            knowledge_base_id=self.session.store.bindings.get(source.external_id),
+            sync_checkpoint=self.session.store.checkpoints.get(source.external_id),
+        )
+
+    async def get_for_update(self, source_id: UUID) -> Any:
+        external_id = self._external_id_for(source_id)
+        return await self.get_by_business_key(provider="freshrss_test", external_id=external_id)
 
     async def update_sync_checkpoint(
         self,
@@ -262,11 +290,19 @@ class FakeDocumentRepository:
     def __init__(self, session: FakeSession) -> None:
         self.session = session
 
-    async def upsert(self, document: SourceDocument, *, source_id: UUID) -> Any:
+    async def upsert(
+        self,
+        document: SourceDocument,
+        *,
+        source_id: UUID,
+        knowledge_base_id: UUID | None,
+    ) -> Any:
         """按来源与文章 ID 暂存文档，不修改 processing/revision 真实实现。"""
 
         external_id = document.source.external_id
         assert source_id == self.session.store.source_id(external_id)
+        # 文档归属必须与来源绑定一致，模拟真实 upsert 的来源分流语义。
+        assert knowledge_base_id == self.session.store.bindings.get(external_id)
         if external_id in self.session.store.fail_document_upsert:
             raise RuntimeError("数据库 URL 和语句必须保持私密")
         key = (external_id, document.external_id)
@@ -382,11 +418,18 @@ def settings() -> FreshRSSSettings:
     )
 
 
-def service_for(client: FakeFreshRSSClient) -> FreshRSSImportService:
+def service_for(client: FakeFreshRSSClient, session: FakeSession) -> SourceImportService:
     """创建注入内存客户端的增量导入 Service。"""
 
-    return FreshRSSImportService(
-        settings(),
+    @asynccontextmanager
+    async def sessions():
+        try:
+            yield session
+        finally:
+            await session.rollback()
+
+    return build_source_import_service(
+        settings(), sessions,
         client_factory=lambda _settings: client,  # type: ignore[arg-type,return-value]
     )
 
@@ -397,15 +440,86 @@ def fake_repositories(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(import_module, "SourceRepository", FakeSourceRepository)
     monkeypatch.setattr(import_module, "DocumentRepository", FakeDocumentRepository)
+    class KnowledgeBaseRepository:
+        def __init__(self, session):
+            self.store = session.store
+
+        async def get(self, knowledge_base_id):
+            return SimpleNamespace(id=knowledge_base_id, is_active=knowledge_base_id not in self.store.inactive_knowledge_bases)
+
+        get_for_update = get
+
+    monkeypatch.setattr(import_module, "PostgresKnowledgeBaseRepository", KnowledgeBaseRepository)
+
+
+def test_disabled_source_is_skipped_and_reenabled_source_resumes():
+    async def verify():
+        store = MemoryStore()
+        store.install_checkpoint("feed/1", "10")
+        store.inactive_knowledge_bases.add(DEFAULT_NEWS_KNOWLEDGE_BASE_ID)
+        client = FakeFreshRSSClient({"feed/1": [11]})
+        session = FakeSession(store)
+        result = await service_for(client, session).import_recent_per_source()
+        assert result.synchronized_count == 0
+        assert result.failed_source_count == 0
+        assert client.calls == []
+        assert store.documents == {}
+        assert store.checkpoints["feed/1"] == "10"
+        store.inactive_knowledge_bases.clear()
+        resumed = await service_for(client, session).import_recent_per_source()
+        assert resumed.synchronized_count == 1
+        assert store.checkpoints["feed/1"] == "11"
+
+    run(verify())
+
+
+def test_disable_during_network_request_discards_page_but_other_source_continues():
+    async def verify():
+        store = MemoryStore()
+        store.install_checkpoint("feed/1", "10")
+        store.install_checkpoint("feed/2", "20")
+        target = UUID("10000000-0000-4000-8000-000000000011")
+        store.bindings["feed/1"] = target
+
+        class DisableDuringRead(FakeFreshRSSClient):
+            async def fetch_items(self, item_ids):
+                if item_ids[0].startswith("feed/1/"):
+                    store.inactive_knowledge_bases.add(target)
+                return await super().fetch_items(item_ids)
+
+        client = DisableDuringRead({"feed/1": [11], "feed/2": [21]})
+        result = await service_for(client, FakeSession(store)).import_recent_per_source()
+        assert result.synchronized_count == 1
+        assert result.checkpoint_advanced_count == 1
+        assert result.failed_source_count == 0
+        assert store.checkpoints == {"feed/1": "10", "feed/2": "21"}
+        assert set(store.documents) == {("feed/2", "feed/2/item/21")}
+
+    run(verify())
+
+
+def test_disabled_source_cannot_advance_checkpoint_without_documents():
+    store = MemoryStore()
+    store.install_checkpoint("feed/1", "10")
+    store.inactive_knowledge_bases.add(DEFAULT_NEWS_KNOWLEDGE_BASE_ID)
+    session = FakeSession(store)
+    result = run(service_for(FakeFreshRSSClient({}), session).save_source_page(
+        documents=[], existing_source_id=store.source_id("feed/1"),
+        expected_checkpoint="10", new_checkpoint="11",
+    ))
+    assert result == (0, False)
+    assert store.checkpoints["feed/1"] == "10"
+    assert session.commit_count == 0
 
 
 def test_checkpoint_pages_do_not_lose_news_between_bounded_manual_runs() -> None:
     store = MemoryStore()
+    store.register("feed/1")
     session = FakeSession(store)
     client = FakeFreshRSSClient({"feed/1": [1, 2, 3]})
-    service = service_for(client)
+    service = service_for(client, session)
 
-    first = run(service.import_recent_per_source(session, limit_per_source=2))
+    first = run(service.import_recent_per_source(limit_per_source=2))
     assert first.synchronized_count == 2
     assert store.checkpoints["feed/1"] == "3"
     assert set(store.documents) == {
@@ -414,17 +528,17 @@ def test_checkpoint_pages_do_not_lose_news_between_bounded_manual_runs() -> None
     }
 
     client.articles["feed/1"].extend([4, 5, 6, 7])
-    second = run(service.import_recent_per_source(session, limit_per_source=2))
+    second = run(service.import_recent_per_source(limit_per_source=2))
     assert second.synchronized_count == 2
     assert store.checkpoints["feed/1"] == "5"
-    third = run(service.import_recent_per_source(session, limit_per_source=2))
+    third = run(service.import_recent_per_source(limit_per_source=2))
     assert third.synchronized_count == 2
     assert store.checkpoints["feed/1"] == "7"
     assert {
         external_id for source_id, external_id in store.documents if source_id == "feed/1"
     } >= {f"feed/1/item/{number}" for number in range(2, 8)}
 
-    repeated = run(service.import_recent_per_source(session, limit_per_source=2))
+    repeated = run(service.import_recent_per_source(limit_per_source=2))
     assert repeated.synchronized_count == 0
     assert repeated.checkpoint_advanced_count == 0
     assert store.checkpoints["feed/1"] == "7"
@@ -435,17 +549,18 @@ def test_checkpoint_pages_do_not_lose_news_between_bounded_manual_runs() -> None
 
 def test_checkpoint_is_not_published_when_page_commit_fails() -> None:
     store = MemoryStore(fail_commit_once={"feed/1"})
+    store.register("feed/1")
     session = FakeSession(store)
     client = FakeFreshRSSClient({"feed/1": [1]})
-    service = service_for(client)
+    service = service_for(client, session)
 
-    failed = run(service.import_recent_per_source(session, limit_per_source=2))
+    failed = run(service.import_recent_per_source(limit_per_source=2))
     assert failed.failed_source_count == 1
     assert failed.failures[0].error_type == "RuntimeError"
     assert store.checkpoints.get("feed/1") is None
     assert store.documents == {}
 
-    succeeded = run(service.import_recent_per_source(session, limit_per_source=2))
+    succeeded = run(service.import_recent_per_source(limit_per_source=2))
     assert succeeded.failed_source_count == 0
     assert store.checkpoints["feed/1"] == "1"
     assert ("feed/1", "feed/1/item/1") in store.documents
@@ -469,7 +584,7 @@ def test_request_mapping_or_postgresql_failure_never_advances_checkpoint(
     )
 
     result = run(
-        service_for(client).import_recent_per_source(session, limit_per_source=2)
+        service_for(client, session).import_recent_per_source(limit_per_source=2)
     )
 
     assert result.failed_source_count == 1
@@ -479,6 +594,8 @@ def test_request_mapping_or_postgresql_failure_never_advances_checkpoint(
 
 def test_one_source_failure_is_isolated_and_other_source_commits() -> None:
     store = MemoryStore()
+    store.register("feed/failed")
+    store.register("feed/healthy")
     session = FakeSession(store)
     client = FakeFreshRSSClient(
         {"feed/failed": [1], "feed/healthy": [1]},
@@ -486,7 +603,7 @@ def test_one_source_failure_is_isolated_and_other_source_commits() -> None:
     )
 
     result = run(
-        service_for(client).import_recent_per_source(session, limit_per_source=2)
+        service_for(client, session).import_recent_per_source(limit_per_source=2)
     )
 
     assert result.source_count == 2
@@ -494,7 +611,8 @@ def test_one_source_failure_is_isolated_and_other_source_commits() -> None:
     assert result.failed_source_count == 1
     assert result.failures[0].source_external_id == "feed/failed"
     assert result.failures[0].error_type == "FreshRSSConnectionError"
-    assert "feed/failed" not in store.checkpoints
+    # register 预置的空游标必须原样保留：失败的来源不能有任何已提交 checkpoint。
+    assert store.checkpoints.get("feed/failed") is None
     assert store.checkpoints["feed/healthy"] == "1"
     assert ("feed/healthy", "feed/healthy/item/1") in store.documents
 
@@ -503,22 +621,97 @@ def test_pending_document_deletion_rolls_back_source_page_and_checkpoint(monkeyp
     from agent_lab.domain.write_scope import DocumentDeletionPendingError
     store = MemoryStore()
     store.install_checkpoint("feed/blocked", "1")
+    store.register("feed/healthy")
     session = FakeSession(store)
     client = FakeFreshRSSClient({"feed/blocked": [1, 2], "feed/healthy": [3]})
     original = FakeDocumentRepository.upsert
 
-    async def guarded(repository, document, *, source_id):
+    async def guarded(repository, document, *, source_id, knowledge_base_id):
         if document.source.external_id == "feed/blocked":
             raise DocumentDeletionPendingError()
-        return await original(repository, document, source_id=source_id)
+        return await original(
+            repository,
+            document,
+            source_id=source_id,
+            knowledge_base_id=knowledge_base_id,
+        )
 
     monkeypatch.setattr(FakeDocumentRepository, "upsert", guarded)
-    result = run(service_for(client).import_recent_per_source(session, limit_per_source=2))
+    result = run(service_for(client, session).import_recent_per_source(limit_per_source=2))
     assert result.failed_source_count == 1
     assert result.failures[0].error_type == "DocumentDeletionPendingError"
     assert store.checkpoints["feed/blocked"] == "1"
     assert ("feed/blocked", "feed/blocked/item/2") not in store.documents
     assert store.checkpoints["feed/healthy"] == "3"
+
+
+def test_new_subscription_is_registered_without_fetching_articles() -> None:
+    """新发现的订阅只登记来源元数据；绑定前不请求文章、不写文档、不建游标。"""
+
+    store = MemoryStore()
+    session = FakeSession(store)
+    client = FakeFreshRSSClient({"feed/new": [1, 2]})
+
+    result = run(
+        service_for(client, session).import_recent_per_source(limit_per_source=2)
+    )
+
+    assert result.source_count == 1
+    assert result.failed_source_count == 0
+    assert result.synchronized_count == 0
+    assert result.checkpoint_advanced_count == 0
+    assert "feed/new" in store.source_ids
+    assert client.calls == []
+    assert not any(
+        external_id == "feed/new" for external_id, _item in store.documents
+    )
+    assert store.checkpoints.get("feed/new") is None
+
+
+def test_unbound_source_is_skipped_until_binding() -> None:
+    """已登记未绑定的来源被跳过：不拉取、不推进游标，绑定后从新基线开始。"""
+
+    store = MemoryStore()
+    store.source_ids["feed/unbound"] = store.source_id("feed/unbound")
+    store.checkpoints["feed/unbound"] = None
+    session = FakeSession(store)
+    client = FakeFreshRSSClient({"feed/unbound": [1, 2]})
+
+    result = run(
+        service_for(client, session).import_recent_per_source(limit_per_source=2)
+    )
+
+    assert result.source_count == 1
+    assert result.failed_source_count == 0
+    assert result.synchronized_count == 0
+    assert result.checkpoint_advanced_count == 0
+    assert client.calls == []
+    assert store.checkpoints["feed/unbound"] is None
+    assert not any(
+        external_id == "feed/unbound" for external_id, _item in store.documents
+    )
+
+
+@pytest.mark.parametrize("state", ["unbound", "inactive", "active"])
+def test_subscription_metadata_updates_without_new_documents(state) -> None:
+    store = MemoryStore()
+    store.install_checkpoint("feed/1", "10")
+    store.sources["feed/1"] = SourceInfo(provider="freshrss_test", external_id="feed/1", name="Old name")
+    if state == "unbound":
+        store.bindings.clear()
+    elif state == "inactive":
+        store.inactive_knowledge_bases.add(DEFAULT_NEWS_KNOWLEDGE_BASE_ID)
+    client = FakeFreshRSSClient({"feed/1": []})
+
+    result = run(service_for(client, FakeSession(store)).import_recent_per_source())
+
+    assert result.failed_source_count == result.synchronized_count == result.checkpoint_advanced_count == 0
+    assert store.sources["feed/1"].name == "Source feed/1"
+    assert str(store.sources["feed/1"].feed_url) == "https://example.com/feed/1.xml"
+    assert str(store.sources["feed/1"].home_url) == "https://example.com/feed/1"
+    assert store.checkpoints["feed/1"] == "10" and store.documents == {}
+    if state != "active":
+        assert client.calls == []
 
 
 def test_repository_rejects_numeric_checkpoint_rewind_before_database_io() -> None:

@@ -69,6 +69,12 @@ from agent_lab.ingestion.freshrss_client import (
     FreshRSSTimeoutError,
 )
 from agent_lab.ingestion.freshrss_mapper import FreshRSSMappingError
+from agent_lab.knowledge.domain import (
+    KnowledgeBaseInactiveError,
+    KnowledgeBaseKeyConflictError,
+    KnowledgeBaseNotFoundError,
+    KnowledgeBaseStorageError,
+)
 from agent_lab.pipeline.ollama_embedding_provider import (
     EmbeddingResponseError,
     OllamaAuthenticationError,
@@ -99,6 +105,9 @@ from agent_lab.services.vector_search_service import QueryVectorValidationError
 
 
 VectorSearchErrorCode = Literal[
+    "knowledge_base_not_found",
+    "knowledge_base_inactive",
+    "knowledge_base_storage_unavailable",
     "search_runtime_unavailable",
     "embedding_authentication_failed",
     "embedding_unavailable",
@@ -429,6 +438,38 @@ USER_ADMIN_ERROR_RULES: tuple[ErrorContractRule, ...] = (
     ),
 )
 
+KNOWLEDGE_BASE_ERROR_RULES: tuple[ErrorContractRule, ...] = (
+    ErrorContractRule(
+        exceptions=(KnowledgeBaseInactiveError,),
+        status_code=status.HTTP_409_CONFLICT,
+        code="knowledge_base_inactive",
+        detail="知识库已停用。",
+        retryable=False,
+    ),
+    ErrorContractRule(
+        exceptions=(KnowledgeBaseNotFoundError,),
+        status_code=status.HTTP_404_NOT_FOUND,
+        code="knowledge_base_not_found",
+        detail="知识库不存在。",
+        retryable=False,
+    ),
+    ErrorContractRule(
+        exceptions=(KnowledgeBaseKeyConflictError,),
+        status_code=status.HTTP_409_CONFLICT,
+        code="knowledge_base_key_conflict",
+        detail="知识库稳定键已被使用。",
+        retryable=False,
+    ),
+    ErrorContractRule(
+        exceptions=(KnowledgeBaseStorageError,),
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="knowledge_base_storage_unavailable",
+        detail="知识库存储当前不可用。",
+        retryable=True,
+    ),
+)
+
+
 # 定时任务管理链路（/scheduled-jobs）的错误表。与账号管理同构：基础设施失败只有数据库
 # 一类；领域错误（任务不存在、cron 无效、正在运行中冲突等）自带稳定 code 与安全中文
 # detail，由路由的 _domain_error 映射成 404/409/422，不进本表。
@@ -655,6 +696,7 @@ AGENT_CHAT_ERROR_RULES: tuple[ErrorContractRule, ...] = (
 # retryable 在这条链路上同样不直接用：要不要换个检索词重试由模型自己决定，我们只把
 # 「失败了、原因是这一类」如实告诉它。
 AGENT_TOOL_ERROR_RULES: tuple[ErrorContractRule, ...] = (
+    *KNOWLEDGE_BASE_ERROR_RULES,
     *VECTOR_SEARCH_ERROR_RULES,
     ErrorContractRule(
         exceptions=(SQLAlchemyError,),
@@ -847,6 +889,15 @@ def build_user_admin_error_response(error: BaseException) -> JSONResponse:
         rule.code,
         rule.detail,
         retryable=rule.retryable,
+    )
+
+
+def build_knowledge_base_error_response(error: BaseException) -> JSONResponse:
+    """仅按异常类型映射知识库业务失败和适配器故障。"""
+
+    rule = resolve_error_contract(error, KNOWLEDGE_BASE_ERROR_RULES)
+    return build_error_response(
+        rule.status_code, rule.code, rule.detail, retryable=rule.retryable,
     )
 
 

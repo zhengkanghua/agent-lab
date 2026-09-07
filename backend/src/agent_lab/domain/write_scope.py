@@ -13,6 +13,10 @@ class WriteRecoveryRequiredError(RuntimeError):
         self.stats = stats or {}
 
 
+class WriteResourceBusyError(RuntimeError):
+    """写资源正被其他操作使用，要求立即受理的配置变更返回冲突。"""
+
+
 class DocumentDeletionPendingError(RuntimeError):
     """Document 仍有删除待办，来源同步不得将其当作已成功保存。"""
 

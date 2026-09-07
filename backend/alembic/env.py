@@ -104,6 +104,11 @@ def run_migrations_online() -> None:
     默认事件循环。迁移使用 NullPool，完成后不会保留数据库连接。
     """
 
+    # 隔离验收可提供限定 search_path 的连接；普通 CLI 仍使用应用配置。
+    connection = config.attributes.get("connection")
+    if connection is not None:
+        do_run_migrations(connection)
+        return
     loop_factory = asyncio.SelectorEventLoop if sys.platform == "win32" else None
     asyncio.run(run_async_migrations(), loop_factory=loop_factory)
 

@@ -13,6 +13,7 @@ import pytest
 from agent_lab.api.dependencies import VectorSearchRuntimeUnavailableError
 from agent_lab.api.error_contract import (
     INVALID_REQUEST_RULE,
+    KNOWLEDGE_BASE_ERROR_RULES,
     PIPELINE_ERROR_RULES,
     SEARCH_UPSTREAM_EXCEPTIONS,
     UNCLASSIFIED_ERROR_RULE,
@@ -39,6 +40,7 @@ def all_error_rules() -> tuple[ErrorContractRule, ...]:
         *VECTOR_SEARCH_ERROR_RULES,
         *PIPELINE_ERROR_RULES,
         *USER_ADMIN_ERROR_RULES,
+        *KNOWLEDGE_BASE_ERROR_RULES,
         UNCLASSIFIED_ERROR_RULE,
         INVALID_REQUEST_RULE,
     )
@@ -134,7 +136,7 @@ def test_same_error_code_always_maps_to_the_same_detail() -> None:
 
 @pytest.mark.parametrize(
     "rules",
-    [VECTOR_SEARCH_ERROR_RULES, PIPELINE_ERROR_RULES, USER_ADMIN_ERROR_RULES],
+    [VECTOR_SEARCH_ERROR_RULES, PIPELINE_ERROR_RULES, USER_ADMIN_ERROR_RULES, KNOWLEDGE_BASE_ERROR_RULES],
 )
 def test_specific_rules_are_never_shadowed_by_earlier_base_exception(
     rules: tuple[ErrorContractRule, ...],

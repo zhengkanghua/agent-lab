@@ -30,7 +30,7 @@ from agent_lab.pipeline.write_runtime import (
     PipelineWriteRuntime,
 )
 from agent_lab.qdrant.lifecycle import QdrantLifecycleError
-from agent_lab.services.freshrss_import_service import SourceSyncFailure
+from agent_lab.knowledge.document_contracts import SourceSyncFailure
 from agent_lab.services.news_pipeline_execution_service import (
     IndexExecutionFailure,
     NewsSyncExecutionResult,

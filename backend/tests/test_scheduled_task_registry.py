@@ -5,13 +5,21 @@ cron 解析与未来执行时间预览。不访问 PostgreSQL、APScheduler 不�
 """
 
 import asyncio
+import json
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
+from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
+from psycopg.types.json import Jsonb, JsonbDumper
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql.psycopg import PGDialect_psycopg
 
 from agent_lab.config.scheduler import SchedulerSettings
+from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.services.scheduled_task_registry import (
     TASK_TYPE_SPECS,
     FreshRssSyncTaskParams,
@@ -20,6 +28,7 @@ from agent_lab.services.scheduled_task_registry import (
     get_task_type_spec,
 )
 from agent_lab.services.scheduler_runner import ScheduledJobRunner
+from agent_lab.services.scheduled_job_executor import ScheduledJobExecutor
 
 
 def run(coroutine: Any) -> Any:
@@ -61,10 +70,26 @@ class TestTaskTypeRegistry:
         params = PruneOldDocumentsTaskParams.model_validate({})
         assert params.retention_days == 180
         assert params.dry_run is True  # 默认预演模式
+        # 缺省范围只解析到新闻库，兼容旧任务配置且绝不解释为全库清理。
+        assert params.knowledge_base_ids == [DEFAULT_NEWS_KNOWLEDGE_BASE_ID]
         with pytest.raises(ValidationError):
             PruneOldDocumentsTaskParams.model_validate({"retention_days": 29})
         with pytest.raises(ValidationError):
             PruneOldDocumentsTaskParams.model_validate({"retention_days": 731})
+        # 空范围无法表达保留策略；重复 ID 去重后保留首次出现顺序。
+        with pytest.raises(ValidationError):
+            PruneOldDocumentsTaskParams.model_validate({"knowledge_base_ids": []})
+        scoped = PruneOldDocumentsTaskParams.model_validate({
+            "knowledge_base_ids": [
+                "10000000-0000-4000-8000-000000000011",
+                str(DEFAULT_NEWS_KNOWLEDGE_BASE_ID),
+                "10000000-0000-4000-8000-000000000011",
+            ]
+        })
+        assert scoped.knowledge_base_ids == [
+            UUID("10000000-0000-4000-8000-000000000011"),
+            DEFAULT_NEWS_KNOWLEDGE_BASE_ID,
+        ]
         # 边界值应该合法
         PruneOldDocumentsTaskParams.model_validate({"retention_days": 30})
         PruneOldDocumentsTaskParams.model_validate({"retention_days": 730})
@@ -77,6 +102,50 @@ class TestTaskTypeRegistry:
         assert normalized == {"batch_size": 5, "stale_after_minutes": 60}
         with pytest.raises(ValidationError):
             spec.validate_params({"batch_size": 5, "junk": "x"})
+
+    @pytest.mark.parametrize("raw", [
+        None,
+        {"knowledge_base_ids": [str(DEFAULT_NEWS_KNOWLEDGE_BASE_ID)]},
+        {"knowledge_base_ids": [
+            "10000000-0000-4000-8000-000000000011",
+            str(DEFAULT_NEWS_KNOWLEDGE_BASE_ID),
+            "10000000-0000-4000-8000-000000000011",
+        ]},
+    ])
+    def test_prune_config_and_run_snapshot_are_jsonb_serializable(self, raw) -> None:
+        spec = get_task_type_spec("prune_old_documents")
+        assert spec is not None
+        params = spec.validate_params(raw)
+        dialect = PGDialect_psycopg()
+        binder = JSONB().dialect_impl(dialect).bind_processor(dialect)
+        assert binder is not None
+        for value in (params, {"task_type": spec.task_type, "params": params}):
+            encoded = JsonbDumper(Jsonb).dump(binder(value))
+            assert json.loads(encoded) == value
+        assert len(params["knowledge_base_ids"]) == len(set(params["knowledge_base_ids"]))
+
+    @pytest.mark.parametrize("raw", [{}, {"knowledge_base_ids": [str(DEFAULT_NEWS_KNOWLEDGE_BASE_ID)]}])
+    def test_executor_restores_uuid_scope_from_json_configuration(self, raw) -> None:
+        async def verify() -> None:
+            runtime = SimpleNamespace(
+                prune_old_documents=AsyncMock(return_value=SimpleNamespace(to_job_run_stats=lambda: {})),
+                close=AsyncMock(),
+            )
+            store = SimpleNamespace(finish_run=AsyncMock(), prune_runs=AsyncMock())
+            executor = ScheduledJobExecutor(
+                store_factory=lambda: store,
+                runtime_factory=lambda: runtime,
+                settings=SchedulerSettings(),
+            )
+            job = SimpleNamespace(id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID, task_type="prune_old_documents", params=raw)
+            await executor.execute(job, UUID("10000000-0000-4000-8000-000000000011"), "manual")
+            runtime.prune_old_documents.assert_awaited_once_with(
+                retention_days=180, dry_run=True, knowledge_base_ids=[DEFAULT_NEWS_KNOWLEDGE_BASE_ID],
+            )
+            assert store.finish_run.await_args.kwargs["status"] == "succeeded"
+            runtime.close.assert_awaited_once()
+
+        run(verify())
 
 
 class TestCronUtilities:

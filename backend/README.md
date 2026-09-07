@@ -163,7 +163,7 @@ http://127.0.0.1:8000/health
 
 ## 手动写入命令
 
-七个 CLI 子命令（``agent-lab``）都是显式、一次性、有界的：
+CLI 子命令（``agent-lab``）都是显式、一次性执行后退出的：
 
 ```powershell
 # 交互式创建内部登录账号；密码在终端隐藏输入，不进命令历史
@@ -178,6 +178,9 @@ uv run agent-lab index-pending --batch-size 20 --stale-after-minutes 60
 
 # 先同步，再处理一个索引批次，然后退出
 uv run agent-lab run-once --limit-per-source 2 --batch-size 20
+
+# 全量重建现有 Document，包括已 indexed 的记录；选择尚未存在的 generation
+uv run agent-lab rebuild-index --generation 2
 
 # 建 Agent 会话历史的四张 checkpoint* 表（数据库结构写入，幂等，不动业务表和 Qdrant）
 uv run agent-lab init-checkpointer
@@ -277,6 +280,26 @@ Invoke-RestMethod -Method Post `
   -Body $pipeline
 ```
 
+## 知识库升级与索引重建
+
+知识库模型迁移和 v2 Payload 升级需要在恢复正常写任务前完成。原新闻索引不能直接作为
+新通用索引使用；`index-pending` 只处理待索引记录，不能替代存量数据的全量重建。
+以下是部署操作，执行前按环境权限确认：
+
+1. 停止或协调现有写任务，核实没有失联/uncertain 写占用、processing 文档和删除待办。
+2. 执行 `uv run alembic upgrade head`，为已有 Source/Document 回填 news 归属及通用字段。
+3. 配置 `QDRANT_COLLECTION_SCHEMA_VERSION=v2`，执行上面的 `rebuild-index`，代次必须未存在。
+4. 命令在 sync/index 占用内构建全部文档，逐篇回读 Payload、核对版本与总数，全部通过后
+   才发布 current Alias 并更新 PostgreSQL 成功快照。构建失败保留原 Alias；发布结果不确定
+   时保留写占用，按 [写协调恢复流程](../docs/flows/scheduled-job-execution.md) 核实后恢复。
+5. 恢复应用与调度；新发现的 Source 在后台完成绑定后才会拉取文章。保留存量数据时无需
+   重新绑定已有 Source，也不重置其 checkpoint。知识数据清空重拉是另一个需确认的操作。
+
+命令不删除账号、会话、checkpointer 历史、任务配置、Source 游标或旧 Collection。
+旧 Collection 经发布确认后单独清理；失败 generation 不自动复用。相同规格的运行进程
+跟随 current Alias，无需仅因 generation 变化而修改其配置。随机隔离验收通过不等于已在
+应用数据库执行升级或已完成正式发布。
+
 ## 测试
 
 开发中先运行受影响的测试文件，需要定位单个用例时追加 `-k <用例名片段>`。连续小修改不逐次执行全量测试：
@@ -325,6 +348,7 @@ uv run pytest -q tests/test_qdrant_remote_integration.py
 
 ```powershell
 uv run pytest -q --tb=short --scheduler-configured-services `
+  tests/test_knowledge_postgres_integration.py `
   tests/test_scheduler_postgres_integration.py `
   tests/test_scheduler_retention_integration.py
 ```

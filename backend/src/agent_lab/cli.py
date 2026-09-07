@@ -13,7 +13,7 @@ import logging
 from secrets import compare_digest
 import sys
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import timedelta
 from typing import Any
 
@@ -38,6 +38,7 @@ from agent_lab.pipeline.limits import (
     MAX_STALE_AFTER_MINUTES,
 )
 from agent_lab.pipeline.assembly import build_pipeline_write_runtime
+from agent_lab.knowledge.composition import index_rebuild_service
 from agent_lab.schemas.auth import AuthUserCreate
 from agent_lab.services.agent_thread_service import AgentThreadService
 from agent_lab.services.news_pipeline_execution_service import (
@@ -141,6 +142,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="准备 Qdrant current Alias 并处理一批 pending/failed 新闻。",
     )
     _add_index_arguments(index_parser)
+
+    rebuild_parser = subparsers.add_parser(
+        "rebuild-index", help="全量写入新的 Qdrant generation，核验完成后切换 current Alias。",
+    )
+    rebuild_parser.add_argument(
+        "--generation", required=True,
+        type=_bounded_integer("generation", minimum=1, maximum=999999),
+        help="尚未存在的目标 generation；原 Collection 和 Source 游标保留。",
+    )
 
     run_parser = subparsers.add_parser(
         "run-once",
@@ -256,6 +266,14 @@ async def dispatch_command(args: argparse.Namespace) -> CommandOutcome:
 
     if args.command == "prune-old-threads":
         return await _prune_old_threads(args)
+
+    if args.command == "rebuild-index":
+        async with index_rebuild_service(args.generation) as service:
+            result = await service.rebuild()
+            return CommandOutcome(
+                payload={"command": args.command, "ok": True, "generation": args.generation, **asdict(result)},
+                exit_code=0,
+            )
 
     runtime = build_pipeline_write_runtime()
     operation_error = None

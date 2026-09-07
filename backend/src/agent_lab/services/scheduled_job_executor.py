@@ -68,7 +68,9 @@ class ScheduledJobExecutor:
             spec = get_task_type_spec(job.task_type)
             if spec is None:
                 raise ScheduledJobUnknownTypeError()
-            params = spec.validate_params(job.params)
+            normalized = spec.validate_params(job.params)
+            # 配置和快照保存 JSON 值；业务执行恢复 UUID 等参数的原生类型。
+            params = spec.params_model.model_validate(normalized).model_dump()
             phase = "runtime"
             runtime = self._runtimes()
             phase = "business"

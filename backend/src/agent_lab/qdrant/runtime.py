@@ -18,6 +18,7 @@ from qdrant_client import AsyncQdrantClient
 
 from agent_lab.config.ollama_embedding import OllamaEmbeddingSettings
 from agent_lab.config.qdrant import QdrantSettings
+from agent_lab.knowledge.ports import KnowledgeBaseScope
 from agent_lab.pipeline.document_chunk_pipeline import DocumentChunkPipeline
 from agent_lab.pipeline.document_chunker import DocumentChunker
 from agent_lab.pipeline.ollama_embedding_provider import (
@@ -128,6 +129,7 @@ class VectorSearchRuntime:
         qdrant_settings: QdrantSettings,
         ollama_settings: OllamaEmbeddingSettings,
         *,
+        knowledge_base_scope: KnowledgeBaseScope,
         client: AsyncQdrantClient | None = None,
     ) -> "VectorSearchRuntime":
         """由同一配置组装 query Provider 与 current Alias 搜索组件。
@@ -166,6 +168,7 @@ class VectorSearchRuntime:
             embedding_provider=embedding_provider,
             vector_search=vector_search,
             spec=spec,
+            knowledge_base_scope=knowledge_base_scope,
         )
         return cls(
             client=qdrant_client,

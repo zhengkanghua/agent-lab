@@ -54,6 +54,10 @@ class VectorSearchFilters(BaseModel):
     实例只存在于一次搜索请求的内存中，字段来自调用方而不是 PostgreSQL 查询。
     """
 
+    knowledge_base_id: UUID | None = Field(
+        default=None,
+        description="KnowledgeBase 范围；普通 HTTP 边界缺省时解析为 news。",
+    )
     source_id: UUID | None = Field(
         default=None,
         description=(
@@ -248,6 +252,12 @@ class VectorSearchRequest(BaseModel):
             "有限数值。它不是概率，生产阈值需用真实新闻评测后决定。"
         ),
     )
+    knowledge_base_id: UUID | None = Field(
+        default=None,
+        description=(
+            "可选 KnowledgeBase 范围；普通 HTTP 边界缺省时解析为固定的 news KnowledgeBase。"
+        ),
+    )
     filters: VectorSearchFilters = Field(
         default_factory=VectorSearchFilters,
         description=(
@@ -267,6 +277,31 @@ class VectorSearchRequest(BaseModel):
     _validate_threshold = field_validator("score_threshold", mode="before")(
         require_numeric_threshold
     )
+
+    @model_validator(mode="after")
+    def validate_knowledge_base_scope(self) -> "VectorSearchRequest":
+        """拒绝顶层范围和过滤器范围互相矛盾，避免调用方误以为只查一个库。"""
+
+        nested = self.filters.knowledge_base_id
+        if (
+            self.knowledge_base_id is not None
+            and nested is not None
+            and self.knowledge_base_id != nested
+        ):
+            raise ValueError("knowledge_base_id 与 filters.knowledge_base_id 必须一致")
+        return self
+
+    def with_knowledge_base_scope(self, knowledge_base_id: UUID) -> "VectorSearchRequest":
+        """返回同时填充顶层和过滤器范围的副本，供 HTTP 边界传给应用 Service。"""
+
+        return self.model_copy(
+            update={
+                "knowledge_base_id": knowledge_base_id,
+                "filters": self.filters.model_copy(
+                    update={"knowledge_base_id": knowledge_base_id}
+                ),
+            }
+        )
 
 
 class VectorSearchResult(BaseModel):
@@ -309,6 +344,12 @@ class VectorSearchResult(BaseModel):
             "documents.id，供回查完整新闻或后续显式聚合。"
         ),
     )
+    knowledge_base_id: UUID = Field(
+        description=(
+            "来自 Qdrant Point Payload.knowledge_base_id 的必需 UUID；不可空，限定命中"
+            "所属 KnowledgeBase，防止共享 Collection 发生跨库返回。"
+        ),
+    )
     content_hash: str = Field(
         pattern=r"^[0-9a-fA-F]{64}$",
         description=(
@@ -339,10 +380,10 @@ class VectorSearchResult(BaseModel):
             "和回查，不参与当前 query Vector 比较。"
         ),
     )
-    url: AnyHttpUrl = Field(
+    url: AnyHttpUrl | None = Field(
         description=(
-            "来自 Qdrant Point Payload.url 的必需 HTTP(S) 原文地址；不可空，用于回到"
-            "来源页面，不进入 Embedding。"
+            "来自 Qdrant Point Payload.url 的可空 HTTP(S) 原文地址；无外部地址时为 null，"
+            "有地址时用于回到来源页面，不进入 Embedding。"
         ),
     )
     published_at: datetime | None = Field(
@@ -365,38 +406,39 @@ class VectorSearchResult(BaseModel):
             "命中文档类型并对应精确过滤值。"
         ),
     )
-    source_id: UUID = Field(
+    mime_type: str = Field(min_length=1, description="文档内容的 MIME 格式，与 document_type 业务类型独立。")
+    source_id: UUID | None = Field(
         description=(
-            "来自 Qdrant Point Payload.source_id 的必需 UUID；不可空，关联 PostgreSQL "
-            "sources.id 并对应来源过滤条件。"
+            "来自 Qdrant Point Payload.source_id 的可空 UUID；有 Source 时关联 PostgreSQL "
+            "sources.id 并对应来源过滤条件，无 Source 时为 null。"
         ),
     )
-    source_provider: str = Field(
+    source_provider: str | None = Field(
         min_length=1,
         description=(
-            "来自 Qdrant Point Payload.source_provider 的必需非空 keyword；不可空，"
+            "来自 Qdrant Point Payload.source_provider 的可空 keyword；有 Source 时"
             "标识接入提供方并对应精确过滤条件。"
         ),
     )
-    source_name: str = Field(
+    source_name: str | None = Field(
         min_length=1,
         description=(
-            "来自 Qdrant Point Payload.source_name 的必需非空展示名称；不可空，用于向"
-            "调用方说明新闻来源。"
+            "来自 Qdrant Point Payload.source_name 的可空展示名称；有 Source 时用于向"
+            "调用方说明文档来源。"
         ),
     )
-    source_external_id: str = Field(
+    source_external_id: str | None = Field(
         min_length=1,
         description=(
-            "来自 Qdrant Point Payload.source_external_id 的必需非空外部来源标识；"
-            "不可空，用于审计接入系统中的来源身份。"
+            "来自 Qdrant Point Payload.source_external_id 的可空外部来源标识；"
+            "存在时用于审计接入系统中的来源身份。"
         ),
     )
-    document_external_id: str = Field(
+    document_external_id: str | None = Field(
         min_length=1,
         description=(
-            "来自 Qdrant Point Payload.document_external_id 的必需非空外部文档标识；"
-            "不可空，用于审计来源系统中的文章身份。"
+            "来自 Qdrant Point Payload.document_external_id 的可空外部文档标识；"
+            "存在时用于审计来源系统中的文档身份。"
         ),
     )
     authors: list[str] = Field(
@@ -443,13 +485,14 @@ class VectorSearchResult(BaseModel):
         "source_external_id",
         "document_external_id",
         "embedding_model",
+        "mime_type",
     )
     @classmethod
-    def reject_blank_required_strings(cls, value: str) -> str:
-        """拒绝类型正确但只包含空白的必需 Payload 字符串。
+    def reject_blank_required_strings(cls, value: str | None) -> str | None:
+        """字符串存在时拒绝纯空白；可空字段保持 null。
 
         Args:
-            value: Pydantic 已确认类型为字符串的必需结果字段。
+            value: Pydantic 已确认符合字段类型的字符串或 null。
 
         Returns:
             保留原始有效空白的字符串，避免改变 Qdrant 展示内容。
@@ -458,7 +501,7 @@ class VectorSearchResult(BaseModel):
             ValueError: 字符串不包含任何非空白字符。
         """
 
-        if not value.strip():
+        if value is not None and not value.strip():
             raise ValueError("检索结果的必填字符串不能为空白")
         return value
 

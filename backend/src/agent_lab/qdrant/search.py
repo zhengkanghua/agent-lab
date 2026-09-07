@@ -20,7 +20,6 @@ Pydantic 响应模型不再重复这些校验——它们拿到的数据来自�
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from numbers import Real
 from typing import Any, Never
 from uuid import UUID
@@ -33,6 +32,7 @@ from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedR
 
 from agent_lab.config.qdrant import QdrantSettings
 from agent_lab.qdrant.index_spec import VectorIndexSpec
+from agent_lab.knowledge.document_contracts import DocumentSearchGroup
 from agent_lab.schemas.vector_search import (
     VectorSearchFilters,
     VectorSearchResult,
@@ -71,23 +71,6 @@ class QdrantSearchResponseError(QdrantVectorSearchError):
     """Qdrant 返回的 Point ID、score 或 Payload 不符合搜索响应契约。"""
 
 
-@dataclass(frozen=True, slots=True)
-class QdrantDocumentSearchGroup:
-    """Qdrant grouped query 返回的一篇新闻及其相关 Chunk。
-
-    该值对象仍处在基础设施层，保留每个 Chunk 的完整 ``VectorSearchResult``，由
-    应用 Service 再映射成公开的 ``DocumentSearchResult``。
-
-    构造它的 ``search_groups`` 已经保证：``matches`` 非空、按 score 降序、组内每个
-    Payload 的 document_id 都等于本组 ``document_id``、组内 chunk_id 互不重复、文档级
-    元数据组内一致。因此持有该对象的代码可以直接取 ``matches[0]`` 当 best match，
-    也可以直接用任一 Chunk 的文档级字段代表整篇文档，无需再次校验。
-    """
-
-    document_id: UUID
-    matches: tuple[VectorSearchResult, ...]
-
-
 class QdrantVectorSearch:
     """只通过 current Alias 查询新闻 Chunk，并返回强类型结果。
 
@@ -105,6 +88,7 @@ class QdrantVectorSearch:
     # JSON 字符串」这条约定。详见 _validate_payload_json_types。
     _STRING_ENCODED_PAYLOAD_FIELDS = (
         "document_id",
+        "knowledge_base_id",
         "source_id",
         "previous_chunk_id",
         "next_chunk_id",
@@ -114,6 +98,8 @@ class QdrantVectorSearch:
     # 同一个 document 分组内，这些字段描述的是「文档级」事实而不是「Chunk 级」事实，
     # 因此组内每个 Chunk 必须完全一致；Service 只取第一个 Chunk 的值代表整篇文档。
     _GROUP_CONSISTENT_PAYLOAD_FIELDS = (
+        "knowledge_base_id",
+        "mime_type",
         "content_hash",
         "title",
         "url",
@@ -227,7 +213,7 @@ class QdrantVectorSearch:
         matches_per_document: int,
         score_threshold: float | None,
         filters: VectorSearchFilters,
-    ) -> list[QdrantDocumentSearchGroup]:
+    ) -> list[DocumentSearchGroup]:
         """通过 Qdrant 正式 grouped query 返回按文档分组的相关 Chunk。
 
         分组在 Qdrant 侧按 ``document_id`` 完成，不在 Python 里对 top_k 结果二次去重。
@@ -282,7 +268,7 @@ class QdrantVectorSearch:
                 "Qdrant 分组查询响应必须包含 groups 列表。"
             )
 
-        mapped_groups: list[QdrantDocumentSearchGroup] = []
+        mapped_groups: list[DocumentSearchGroup] = []
         seen_document_ids: set[UUID] = set()
         for group_index, group in enumerate(groups):
             group_id = getattr(group, "id", None)
@@ -335,7 +321,7 @@ class QdrantVectorSearch:
 
             mapped_matches.sort(key=lambda result: result.score, reverse=True)
             mapped_groups.append(
-                QdrantDocumentSearchGroup(
+                DocumentSearchGroup(
                     document_id=document_id,
                     matches=tuple(mapped_matches),
                 )
@@ -356,6 +342,13 @@ class QdrantVectorSearch:
 
         # 逐个可选条件翻译成 Qdrant 的 FieldCondition，最终拼成一个 must（AND）Filter
         conditions: list[models.FieldCondition] = []
+        if filters.knowledge_base_id is not None:
+            conditions.append(
+                models.FieldCondition(
+                    key="knowledge_base_id",
+                    match=models.MatchValue(value=str(filters.knowledge_base_id)),
+                )
+            )
         if filters.source_id is not None:
             conditions.append(
                 models.FieldCondition(
@@ -495,7 +488,7 @@ class QdrantVectorSearch:
         """
 
         for field in cls._STRING_ENCODED_PAYLOAD_FIELDS:
-            if field in payload and not isinstance(payload[field], str):
+            if field in payload and payload[field] is not None and not isinstance(payload[field], str):
                 raise QdrantSearchResponseError(
                     f"Qdrant 结果第 {result_index} 项违反了响应契约，"
                     f"涉及字段：{field}。"

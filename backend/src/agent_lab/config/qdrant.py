@@ -51,11 +51,12 @@ class QdrantSettings(BaseSettings):
         ),
     )
     collection_schema_version: str = Field(
-        default="v1",
+        default="v2",
         min_length=2,
         description=(
             "向量索引契约版本，来源于 QDRANT_COLLECTION_SCHEMA_VERSION；模型、维度、"
-            "Distance、Chunk 规则或 Payload 不兼容变化时必须递增。"
+            "Distance、Chunk 规则或 Payload 不兼容变化时必须递增。v2 起每个 Point 必带"
+            "knowledge_base_id，来源字段可空。"
         ),
     )
     collection_generation: int = Field(
@@ -143,24 +144,24 @@ class QdrantSettings(BaseSettings):
         """返回真正保存 Vector 和 Payload 的物理 Collection 名称。
 
         名字由 environment + schema_version + generation 拼成（如
-        news_chunks_langchain_v1_001），只在生命周期组件里使用；业务读写不碰它。
+        knowledge_chunks_dev_v2_001），用于生命周期管理和重建适配器；日常读写使用 Alias。
         """
 
         return (
-            f"news_chunks_{self.environment}_{self.collection_schema_version}_"
+            f"knowledge_chunks_{self.environment}_{self.collection_schema_version}_"
             f"{self.collection_generation:03d}"
         )
 
     @property
     def collection_alias(self) -> str:
-        """返回所有应用数据读写使用的稳定 ``current`` Alias 名称。
+        """返回日常数据读写使用的稳定 ``current`` Alias 名称。
 
-        Alias 只是一个「指针」，不存数据。应用写 Point、搜索都只通过这个 Alias，
+        Alias 只是一个「指针」，不存数据。日常写 Point、搜索都通过这个 Alias，
         部署时把 Alias 原子切换到新的物理 Collection，就能零停机换索引——应用代码
         完全不用改。
         """
 
-        return f"news_chunks_{self.environment}_current"
+        return f"knowledge_chunks_{self.environment}_current"
 
     model_config = SettingsConfigDict(
         env_file=".env",

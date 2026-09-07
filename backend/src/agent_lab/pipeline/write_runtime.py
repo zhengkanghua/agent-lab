@@ -1,7 +1,7 @@
 """按需组装一次同步、索引或清理所需的写入 Runtime（工具箱）。
 
 本模块位于“装配根”和“应用 Service”之间：它把 NewsPipelineExecutionService（编排
-同步/索引批次）、FreshRSSImportService（抓取）和 DocumentIndexingRuntime（写 Qdrant）
+同步/索引批次）、SourceImportService（导入）和 DocumentIndexingRuntime（写 Qdrant）
 三个已有组件打包成一个可调用的写工具箱。
 
 它不暴露 Vector Search（搜索由独立的只读 VectorSearchRuntime 负责）。
@@ -12,6 +12,8 @@ from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import timedelta
+from functools import partial
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from qdrant_client import AsyncQdrantClient
@@ -25,7 +27,8 @@ from agent_lab.qdrant.store import QdrantDeletionStore
 from agent_lab.repositories.document_retention_repository import DocumentRetentionRepository
 from agent_lab.services.document_retention_service import DocumentRetentionService
 from agent_lab.services.write_coordination import WriteCoordinator
-from agent_lab.services.freshrss_import_service import FreshRSSImportService
+from agent_lab.knowledge.importing import SourceImportService
+from agent_lab.knowledge.adapters.documents import postgres_indexing_work
 from agent_lab.services.news_pipeline_execution_service import (
     NewsPipelineExecutionService,
     NewsSyncExecutionResult,
@@ -61,7 +64,7 @@ class PipelineWriteRuntime:
     """
 
     executor: NewsPipelineExecutionService
-    import_service: FreshRSSImportService | None = None
+    import_service: SourceImportService | None = None
     indexing_runtime: DocumentIndexingRuntime | None = None
     import_factory: Callable | None = None
     indexing_factory: Callable | None = None
@@ -73,7 +76,7 @@ class PipelineWriteRuntime:
     def lazy(cls, *, session_factory, freshrss_factory, indexing_factory, qdrant_settings_factory):
         """保存工厂，执行所需步骤时才创建客户端；构造本身不读取上游配置。"""
         return cls(
-            executor=NewsPipelineExecutionService(session_factory, coordinator=WriteCoordinator(session_factory)),
+            executor=NewsPipelineExecutionService(partial(postgres_indexing_work, session_factory), coordinator=WriteCoordinator(session_factory)),
             import_factory=freshrss_factory, indexing_factory=indexing_factory,
             retention_settings_factory=qdrant_settings_factory, session_factory=session_factory,
         )
@@ -103,9 +106,11 @@ class PipelineWriteRuntime:
             VectorIndexConfigurationError: 组件无法共享同一向量规格。
         """
 
+        from agent_lab.knowledge.composition import build_source_import_service
+
         return cls.lazy(
             session_factory=session_factory,
-            freshrss_factory=lambda: FreshRSSImportService(freshrss_settings),
+            freshrss_factory=lambda: build_source_import_service(freshrss_settings, session_factory),
             indexing_factory=lambda: DocumentIndexingRuntime.build(qdrant_settings, ollama_settings),
             qdrant_settings_factory=lambda: qdrant_settings,
         )
@@ -211,7 +216,9 @@ class PipelineWriteRuntime:
                 self.indexing_runtime.service, batch_size=batch_size, stale_after=stale_after,
             )
 
-    async def prune_old_documents(self, *, retention_days: int, dry_run: bool):
+    async def prune_old_documents(
+        self, *, retention_days: int, dry_run: bool, knowledge_base_ids: list[UUID]
+    ):
         """只创建数据库会话与 Qdrant 删除客户端，不接触 FreshRSS 或向量生成。"""
         async with self.executor.writing(("sync", "index")):
             settings = self.retention_settings_factory()
@@ -221,7 +228,9 @@ class PipelineWriteRuntime:
                 service = DocumentRetentionService(
                     DocumentRetentionRepository(session), QdrantDeletionStore(self.retention_client, settings),
                 )
-                return await service.prune_old_documents(retention_days, dry_run)
+                return await service.prune_old_documents(
+                    retention_days, dry_run, knowledge_base_ids=tuple(knowledge_base_ids)
+                )
 
     async def close(self) -> None:
         """关闭 Ollama 与 Qdrant 写入 client，不修改任何远程业务数据。

@@ -9,6 +9,7 @@ import tiktoken
 from langchain_core.documents import Document
 
 from agent_lab.domain.enums import DocumentType
+from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.models.document import DocumentRecord
 from agent_lab.models.source import SourceRecord
 from agent_lab.pipeline.document_builder import DocumentBuilder
@@ -29,10 +30,12 @@ def build_record(*, content_text: str = "正文内容") -> DocumentRecord:
     )
     return DocumentRecord(
         id=uuid4(),
+        knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID,
         source_id=source_id,
         source=source,
         external_id="article/42",
         document_type=DocumentType.ARTICLE,
+        mime_type="text/plain",
         title="示例标题",
         url="https://example.com/article/42",
         published_at=datetime(2026, 8, 13, 1, 2, 3, tzinfo=UTC),
@@ -54,6 +57,7 @@ def test_builder_maps_record_to_langchain_document() -> None:
     assert document.page_content == "第一段。\n\n第二段。"
     assert document.metadata == {
         "document_id": str(record.id),
+        "knowledge_base_id": str(DEFAULT_NEWS_KNOWLEDGE_BASE_ID),
         "source_id": str(record.source_id),
         "source_provider": "freshrss_main",
         "source_external_id": "feed/2",
@@ -62,6 +66,7 @@ def test_builder_maps_record_to_langchain_document() -> None:
         "title": "示例标题",
         "source_name": "示例来源",
         "document_type": "article",
+        "mime_type": "text/plain",
         "url": "https://example.com/article/42",
         "authors": ["作者甲"],
         "labels": ["宏观"],
@@ -74,12 +79,26 @@ def test_builder_rejects_empty_content() -> None:
         DocumentBuilder().build(build_record(content_text=" \n "))
 
 
-def test_builder_rejects_missing_source() -> None:
+def test_builder_maps_record_without_source_to_optional_source_fields() -> None:
+    """没有外部来源的通用文档也要能构建；来源字段落 None，归属保留。"""
+
     record = build_record()
     record.source = None  # type: ignore[assignment]
+    record.source_id = None
+    record.external_id = None
+    record.url = None
 
-    with pytest.raises(ValueError, match="必须包含来源"):
-        DocumentBuilder().build(record)
+    document = DocumentBuilder().build(record)
+
+    assert document.metadata["knowledge_base_id"] == str(
+        DEFAULT_NEWS_KNOWLEDGE_BASE_ID
+    )
+    assert document.metadata["source_id"] is None
+    assert document.metadata["source_provider"] is None
+    assert document.metadata["source_external_id"] is None
+    assert document.metadata["source_name"] is None
+    assert document.metadata["document_external_id"] is None
+    assert document.metadata["url"] is None
 
 
 def test_chunker_generates_stable_ids_and_relationship_metadata() -> None:

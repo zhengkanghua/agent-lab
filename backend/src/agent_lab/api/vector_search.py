@@ -22,6 +22,7 @@ from agent_lab.api.error_contract import (
     VectorSearchErrorResponse,
     build_vector_search_error_response,
 )
+from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.schemas.vector_search import (
     VectorSearchRequest,
     VectorSearchResult,
@@ -44,6 +45,8 @@ router = APIRouter(tags=["vector-search"])
         "GET /documents/{document_id}。"
     ),
     responses={
+        status.HTTP_404_NOT_FOUND: {"model": VectorSearchErrorResponse, "description": "知识库不存在。"},
+        status.HTTP_409_CONFLICT: {"model": VectorSearchErrorResponse, "description": "知识库已停用。"},
         status.HTTP_502_BAD_GATEWAY: {
             "model": VectorSearchErrorResponse,
             "description": "Embedding 或 Qdrant 上游响应失败。",
@@ -67,7 +70,7 @@ async def vector_search(
     搜索链路：
     1. service.search() 先把 query 交给 Ollama 的 bge-m3 模型转成 1024 维向量；
     2. 再用向量查 Qdrant 的 current Alias——一个不存数据的「指针」，指向真正保存
-       数据的物理 Collection（news_chunks_langchain_v1_001），部署时统一切换。
+       数据的物理 Collection（knowledge_chunks_langchain_v1_001），部署时统一切换。
 
     Args:
         search_request: HTTP JSON body 解析出的 query、Top-K、可选 threshold 和 filters。
@@ -89,7 +92,14 @@ async def vector_search(
 
     try:
         # 核心就一步：把请求交给共享 Service（内部做 query 向量化 + Qdrant 查询）
-        return await service.search(search_request)
+        # 旧 HTTP 调用方可能没有范围；兼容规则只存在于边界层，明确落到新闻库，
+        # 防止 Qdrant 在缺少过滤器时把共享 Collection 中的其他库一并返回。
+        scoped_request = search_request.with_knowledge_base_scope(
+            search_request.knowledge_base_id
+            or search_request.filters.knowledge_base_id
+            or DEFAULT_NEWS_KNOWLEDGE_BASE_ID
+        )
+        return await service.search(scoped_request)
     except SEARCH_UPSTREAM_EXCEPTIONS as exc:
         # 已知的上游失败：只记录稳定异常类型（不调 str(exc)，避免敏感内容进日志），
         # 然后交给共享错误表映射成脱敏的 502/503/504 响应

@@ -12,6 +12,11 @@ GET  /health                              应用与 PostgreSQL 连通性（无�
 POST /auth/login                          账号密码登录，签发 HttpOnly Cookie（无需登录）
 POST /auth/logout                         撤销当前 Token
 GET  /auth/me                             当前账号的最小身份与权限字段
+GET  /knowledge-bases                     知识库配置列表（默认只列启用库）
+POST /knowledge-bases                     创建知识库（超级用户）
+PATCH /knowledge-bases/{kb_id}            改名称、说明或启停；无物理删除（超级用户）
+GET  /sources                             外部来源列表与绑定状态（超级用户）
+PATCH /sources/{source_id}/knowledge-base 修改来源的知识库绑定（超级用户）
 POST /vector-search                       Chunk 级只读语义检索
 POST /document-search                     文档分组只读语义检索
 GET  /documents/{document_id}             按需读取 PostgreSQL 完整正文
@@ -37,11 +42,28 @@ POST   /scheduled-jobs/validate-cron      校验 cron 并预览未来 3 次执�
 ```
 
 除 ``/health`` 和 ``/auth/login`` 外都需要有效登录 Cookie。搜索与全文要求普通启用
-账号，``/pipeline/run-once``、``/admin/users``、``/scheduled-jobs`` 与 ``/agent`` 要求
-``is_superuser=true``。**没有 ``/auth/register``**，账号只能由超级用户或 CLI 创建。
+账号，``/pipeline/run-once``、``/admin/users``、``/scheduled-jobs``、``/knowledge-bases``
+的管理写接口、``/sources`` 与 ``/agent`` 要求 ``is_superuser=true``。**没有 ``/auth/register``**，
+账号只能由超级用户或 CLI 创建。
 
 ``/agent`` 定成超级用户不是因为它有写权限（它没有，见 ADR 0003），而是因为每次对话都是
 真金白银的模型调用，且自定义系统提示词等于让调用方直接改模型行为。放宽容易、收紧难。
+
+## KnowledgeBase 范围
+
+`knowledge_bases` 表按稳定业务键管理多个逻辑知识库，Source 与 Document 通过
+`knowledge_base_id` 外键归属，Qdrant 每个 Point 的 Payload 保存同一个 ID，共享
+Collection 靠它过滤隔离。知识库用例的契约、端口和适配器组织在 `knowledge/`，
+导入与重建应用在其中，索引、搜索、清理和 Source 配置复用 `services/` 中的端口用例；HTTP 与任务入口从 composition 装配取服务，
+领域层不依赖 FastAPI、SQLAlchemy 或 Qdrant。
+
+范围解析的边界规则：两个检索接口在 HTTP 边界把缺省范围固定解析为稳定键为 `news`
+的知识库（兼容旧调用方），并把顶层范围合并进 Qdrant 过滤器；`knowledge/` 内部的
+应用服务不接受隐式范围。`prune_old_documents` 任务参数显式声明清理范围，缺省只
+解析到新闻库；删除待办恢复与候选挑选使用同一范围。查询前通过只读端口核验目标，
+不存在返回 404 `knowledge_base_not_found`，停用返回 409 `knowledge_base_inactive`；
+此时不请求 Embedding 或 Qdrant。阶段一 Agent 也明确使用 news。停用库仍可显式维护清理，
+Source 配置只允许新绑定启用库，已有绑定保留。
 
 ## 账号与权限
 
@@ -63,7 +85,7 @@ POST   /scheduled-jobs/validate-cron      校验 cron 并预览未来 3 次执�
 FRESHRSS_SYNC_CATEGORIES=["新闻","财经","宏观数据"]
 ```
 
-``FreshRSSImportService.import_recent_per_source()`` 从至少属于一个允许分类的每个订阅源
+``SourceImportService.import_recent_per_source()`` 使用 FreshRSS 适配器，从至少属于一个允许分类的已绑定启用来源
 读取一页。首次运行保存最近的有界基线；之后使用 FreshRSS numeric ``continuation`` 从已
 提交 checkpoint 之后按旧到新追赶，因此两次手动运行之间到达的新闻不会因「只看最近 N
 篇」被静默越过。同一订阅属于多个允许分类时只处理一次；``source_id + external_id``
@@ -71,7 +93,9 @@ FRESHRSS_SYNC_CATEGORIES=["新闻","财经","宏观数据"]
 
 「文档 + checkpoint」在同一个数据库事务提交，checkpoint 用条件 UPDATE 推进（WHERE 带读到
 的旧值），因此外部 cron 或多实例并发时不会把游标退回旧值。条件不满足不算错误：文档仍幂等
-提交，只是本次不报告游标推进（竞态窗口的完整说明见 ``_save_source_page`` docstring）。
+提交，只是本次不报告游标推进。新来源只登记、不拉文章；停用库保留绑定和 checkpoint。
+每次发现都会幂等更新 Source 展示元数据，不依赖是否有新文章；名称或地址变化沿用 revision 和重新索引规则。
+网络请求不持有数据库事务，保存时锁定 Source 和 KnowledgeBase 复核启用状态，避免网络期间停用后仍写入。
 
 ## 正文质量规范化
 
@@ -99,6 +123,9 @@ SourceDocument
         ↓ Repository
 DocumentRecord
     SQLAlchemy ORM 模型，对应 PostgreSQL documents 表
+        ↓ PostgreSQL 适配器（事务内预加载来源）
+DocumentSnapshot
+    与事务生命周期独立的文档快照
         ↓ DocumentBuilder
 LangChain Document
     完整的 RAG 文档对象
@@ -593,7 +620,7 @@ last_processing_error
 
 ## 手动写入入口
 
-七个 CLI 子命令（``agent-lab``）都是显式、一次性、有界的，命令用法见
+CLI 子命令（``agent-lab``）均为显式一次性执行，常规同步/索引为有界批次，重建遍历全部文档。命令用法见
 [`../README.md`](../README.md) 的「手动写入命令」。
 
 CLI 与 HTTP 共用 ``pipeline/limits.py`` 的有界参数：
@@ -616,7 +643,10 @@ indexed/skipped/failed 数量以及按 ``error_type`` 聚合的失败，不返�
 ``ok=false``（HTTP 仍为 200）；订阅列表、配置或 lifecycle 等批次级错误使用脱敏 5xx。写 API 按
 请求创建独立 ``PipelineWriteRuntime``。
 
-每次命令或请求只处理一个有界批次，不暗中循环等待新任务。
+常规 Pipeline 命令或请求只处理一个有界批次。``rebuild-index --generation N`` 是显式全量维护入口，
+取得 sync/index 后分页读取全部 Document，独立目标逐篇核验 Payload 与总数，数据库版本再次核对后原子切 Alias，
+最后更新索引成功快照。目标必须是新 generation，不复用失败目标；账号、会话、任务配置和 Source 游标保持不变。
+构建失败不发布；发布阶段不确定结果保留占用，先人工核实。日常索引跟随已发布且规格相符的 current 目标。
 
 ## 定时任务与调度器
 
@@ -683,7 +713,7 @@ api（HTTP 校验、按请求 Runtime、错误契约；不实现 Embedding/Qdran
 ``agent.runtime`` → ``agent.middleware`` → ``api.error_contract`` → ``dependencies``），而本模块
 只从 ``app.state`` 取现成对象、从不构造也不 ``isinstance``。
 
-``FreshRSSImportService`` 只编排抓取、映射和事务，不处理 Chunk；``DocumentBuilder`` 只做 ORM 到
+``SourceImportService`` 编排来源准入与事务，FreshRSS 适配器负责分页和协议映射；``DocumentBuilder`` 只做纯快照到
 RAG Document 的内存转换；``DocumentChunker`` 只负责切分。调用方依赖 Pipeline 门面，不在业务代码
 里散落创建框架切分器。
 
@@ -691,6 +721,7 @@ RAG Document 的内存转换；``DocumentChunker`` 只负责切分。调用方�
 
 ```text
 sources          Feed、机构或其他文档来源，以及来源级 sync_checkpoint 与推进时间
+knowledge_bases  逻辑知识库的稳定业务键、展示信息和启停配置
 documents        清洗正文、来源关联、当前处理状态，以及 Qdrant 索引 revision/成功快照
 users            内部登录邮箱、Argon2 密码 Hash、启用/超级用户状态和唯一环境托管标记
 access_tokens    浏览器登录产生的可撤销随机 Token、创建时间和所属用户

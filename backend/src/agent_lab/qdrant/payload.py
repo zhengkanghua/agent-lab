@@ -39,12 +39,10 @@ class QdrantPayloadMapper:
     # 也不写入半残 Payload；chunk_index/chunk_count 另行校验，它们是 Chunk 级而非文档级。
     REQUIRED_FIELDS = (
         "document_id",
-        "source_id",
-        "source_provider",
-        "document_external_id",
+        "knowledge_base_id",
         "document_type",
+        "mime_type",
         "title",
-        "url",
         "content_hash",
     )
 
@@ -90,7 +88,8 @@ class QdrantPayloadMapper:
 
         # 3、抽取并强类型校验关键字段（UUID / 内容哈希 / Chunk 序号）
         document_id = self._required_uuid(metadata, "document_id")
-        source_id = self._required_uuid(metadata, "source_id")
+        knowledge_base_id = self._required_uuid(metadata, "knowledge_base_id")
+        source_id = self._optional_uuid(metadata, "source_id")
         content_hash = self._required_string(metadata, "content_hash")
         if len(content_hash) != 64 or any(
             character not in "0123456789abcdef" for character in content_hash.lower()
@@ -113,15 +112,15 @@ class QdrantPayloadMapper:
             "chunk_index": chunk_index,
             "chunk_count": chunk_count,
             "title": self._required_string(metadata, "title"),
-            "url": self._required_string(metadata, "url"),
+            "url": self._optional_string(metadata, "url"),
             "document_type": self._required_string(metadata, "document_type"),
+            "mime_type": self._required_string(metadata, "mime_type"),
+            "knowledge_base_id": knowledge_base_id,
             "source_id": source_id,
-            "source_provider": self._required_string(metadata, "source_provider"),
-            "source_name": self._required_string(metadata, "source_name"),
-            "source_external_id": self._required_string(metadata, "source_external_id"),
-            "document_external_id": self._required_string(
-                metadata, "document_external_id"
-            ),
+            "source_provider": self._optional_string(metadata, "source_provider"),
+            "source_name": self._optional_string(metadata, "source_name"),
+            "source_external_id": self._optional_string(metadata, "source_external_id"),
+            "document_external_id": self._optional_string(metadata, "document_external_id"),
             "authors": self._required_string_list(metadata, "authors"),
             "labels": self._required_string_list(metadata, "labels"),
             "index_schema_version": self._spec.schema_version,
@@ -171,6 +170,22 @@ class QdrantPayloadMapper:
             raise QdrantPayloadError(
                 f"Chunk 元数据字段 {field!r} 必须是 UUID 字符串。"
             ) from exc
+
+    @classmethod
+    def _optional_uuid(cls, metadata: Mapping[str, Any], field: str) -> str | None:
+        value = metadata.get(field)
+        if value in (None, ""):
+            return None
+        return cls._required_uuid(metadata, field)
+
+    @staticmethod
+    def _optional_string(metadata: Mapping[str, Any], field: str) -> str | None:
+        value = metadata.get(field)
+        if value in (None, ""):
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise QdrantPayloadError(f"Chunk 元数据字段 {field!r} 必须是字符串。")
+        return value
 
     @staticmethod
     def _required_int(metadata: Mapping[str, Any], field: str) -> int:

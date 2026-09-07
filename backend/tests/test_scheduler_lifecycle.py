@@ -12,6 +12,7 @@ import pytest
 
 from agent_lab import scheduler_main
 from agent_lab.domain.write_scope import WriteRecoveryRequiredError
+from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.pipeline.write_runtime import PipelineWriteRuntime
 from agent_lab.scheduler_maintenance import inspect_or_recover
 from agent_lab.services.write_coordination import WriteCoordinator
@@ -43,7 +44,9 @@ def test_only_requested_dependencies_are_created_and_all_are_closed(monkeypatch,
         elif step == "index":
             assert await runtime.index_only(batch_size=1, stale_after=timedelta(minutes=1)) == "index-result"
         else:
-            assert await runtime.prune_old_documents(retention_days=180, dry_run=True) == "retention-result"
+            assert await runtime.prune_old_documents(
+                retention_days=180, dry_run=True, knowledge_base_ids=[DEFAULT_NEWS_KNOWLEDGE_BASE_ID]
+            ) == "retention-result"
         await runtime.close()
     asyncio.run(verify())
     assert importer.call_count == (step == "sync")
@@ -62,7 +65,9 @@ def test_retention_service_creation_failure_still_closes_created_client(monkeypa
     async def verify():
         try:
             with pytest.raises(ValueError):
-                await runtime.prune_old_documents(retention_days=180, dry_run=True)
+                await runtime.prune_old_documents(
+                retention_days=180, dry_run=True, knowledge_base_ids=[DEFAULT_NEWS_KNOWLEDGE_BASE_ID]
+            )
         finally:
             await runtime.close()
     asyncio.run(verify())

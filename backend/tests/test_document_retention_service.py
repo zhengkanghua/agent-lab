@@ -7,11 +7,14 @@ from uuid import UUID
 
 import pytest
 
+from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.repositories.document_retention_repository import RetentionCandidate
 from agent_lab.services.document_retention_service import DocumentRetentionService, PruneResult
 
 NOW = datetime(2026, 9, 5, tzinfo=UTC)
 OLD = NOW - timedelta(days=200)
+# 范围测试使用的第二个库；领域层只预置新闻库，其余库 ID 由配置生成。
+TECH_KNOWLEDGE_BASE_ID = UUID("10000000-0000-4000-8000-000000000011")
 
 
 class FakeRepository:
@@ -22,22 +25,33 @@ class FakeRepository:
             UUID(int=i): RetentionCandidate(UUID(int=i), 1, OLD)
             for i in range(1, count + 1)
         }
+        # 归属默认为新闻库；范围测试用 ownership 把部分文档挪到其他库。
+        self.ownership: dict[UUID, UUID] = {}
         self.intents = {}
+        self.intent_ownership: dict[UUID, UUID] = {}
         self.queries = []
         self.writes = []
         self.fail_finish = False
 
-    async def candidates(self, cutoff, after, limit):
+    def knowledge_base_of(self, document_id: UUID) -> UUID:
+        return self.ownership.get(document_id, DEFAULT_NEWS_KNOWLEDGE_BASE_ID)
+
+    async def candidates(self, cutoff, after, limit, *, knowledge_base_ids):
         self.queries.append((cutoff, after, limit))
         assert len(self.queries) < 40, "候选遍历没有推进"
         return sorted([
             item for item in self.documents.values()
             if item.retention_date < cutoff and item.document_id not in self.intents
+            and self.knowledge_base_of(item.document_id) in knowledge_base_ids
             and (after is None or (item.retention_date, item.document_id) > (after.retention_date, after.document_id))
         ], key=lambda item: (item.retention_date, item.document_id))[:limit]
 
-    async def pending(self, after, limit):
-        return [self.intents[key] for key in sorted(self.intents) if after is None or key > after][:limit]
+    async def pending(self, after, limit, *, knowledge_base_ids):
+        return [
+            self.intents[key] for key in sorted(self.intents)
+            if (after is None or key > after)
+            and self.intent_ownership.get(key, self.knowledge_base_of(key)) in knowledge_base_ids
+        ][:limit]
 
     async def prepare(self, candidates, cutoff):
         self.writes.append("prepare")
@@ -46,7 +60,9 @@ class FakeRepository:
             retention_date=item.retention_date, cutoff_date=cutoff,
             qdrant_deleted=False, error_type=None,
         ) for item in candidates]
-        self.intents.update({item.document_id: item for item in records})
+        for item in records:
+            self.intents[item.document_id] = item
+            self.intent_ownership[item.document_id] = self.knowledge_base_of(item.document_id)
         return records
 
     async def mark_qdrant_deleted(self, records):
@@ -97,8 +113,12 @@ class FakeQdrant:
         # 生产 Qdrant 只有完成确认，不返回删除数量。
 
 
-def prune(repo, store, *, dry_run=False):
-    return asyncio.run(DocumentRetentionService(repo, store, clock=lambda: NOW).prune_old_documents(180, dry_run))
+def prune(repo, store, *, dry_run=False, knowledge_base_ids=(DEFAULT_NEWS_KNOWLEDGE_BASE_ID,)):
+    return asyncio.run(
+        DocumentRetentionService(repo, store, clock=lambda: NOW).prune_old_documents(
+            180, dry_run, knowledge_base_ids=knowledge_base_ids
+        )
+    )
 
 
 @pytest.mark.parametrize("dry_run", [True, False])
@@ -189,6 +209,61 @@ def test_retention_days_validation(days):
     with pytest.raises(ValueError, match="retention_days"):
         asyncio.run(DocumentRetentionService(repo, store).prune_old_documents(days))
     assert repo.queries == []
+
+
+def test_empty_scope_is_rejected_before_any_query():
+    repo, store = FakeRepository(), FakeQdrant()
+    with pytest.raises(ValueError, match="清理范围"):
+        prune(repo, store, knowledge_base_ids=())
+    assert repo.queries == [] and repo.writes == []
+
+
+def test_scope_limits_deletion_to_listed_knowledge_bases_only():
+    """参数外的库不会被清理：候选、删除和未完成意图恢复都限定在范围内。"""
+
+    repo, store = FakeRepository(4), FakeQdrant()
+    news_id, tech_id = UUID(int=1), UUID(int=2)
+    repo.ownership[tech_id] = TECH_KNOWLEDGE_BASE_ID
+
+    result = prune(repo, store, knowledge_base_ids=(TECH_KNOWLEDGE_BASE_ID,))
+
+    # 只有技术库文档进入删除链路；新闻库文档保留，也未写删除意图。
+    assert result.documents_deleted == 1
+    assert news_id in repo.documents
+    assert news_id not in repo.intents
+    assert tech_id not in repo.documents
+
+    # 范围外的未完成意图原样保留，等待覆盖该库的任务实例恢复。
+    repo, store = FakeRepository(4), FakeQdrant()
+    news_id, tech_id = UUID(int=1), UUID(int=2)
+    repo.ownership[tech_id] = TECH_KNOWLEDGE_BASE_ID
+    asyncio.run(repo.prepare([repo.documents[news_id], repo.documents[tech_id]], NOW))
+    repo.writes.clear()
+    result = prune(repo, store, knowledge_base_ids=(TECH_KNOWLEDGE_BASE_ID,))
+    assert result.documents_deleted == 1
+    assert news_id in repo.intents and news_id in repo.documents
+
+
+def test_scope_covers_every_listed_knowledge_base_with_shared_retention():
+    """多库共用同一保留周期：列表内每个库都按同一 cutoff 清理。"""
+
+    repo, store = FakeRepository(4), FakeQdrant()
+    repo.ownership[UUID(int=1)] = DEFAULT_NEWS_KNOWLEDGE_BASE_ID
+    repo.ownership[UUID(int=2)] = TECH_KNOWLEDGE_BASE_ID
+    repo.ownership[UUID(int=3)] = TECH_KNOWLEDGE_BASE_ID
+    # 第四篇属于未列入范围的第三个库，绝不继承任何已配置策略。
+    OUT_OF_SCOPE_ID = UUID("10000000-0000-4000-8000-000000000012")
+    repo.ownership[UUID(int=4)] = OUT_OF_SCOPE_ID
+
+    result = prune(
+        repo,
+        store,
+        knowledge_base_ids=(DEFAULT_NEWS_KNOWLEDGE_BASE_ID, TECH_KNOWLEDGE_BASE_ID),
+    )
+
+    assert result.documents_deleted == 3
+    assert repo.queries and all(query[0] == NOW - timedelta(days=180) for query in repo.queries)
+    assert UUID(int=4) in repo.documents
 
 
 def test_result_distinguishes_document_and_point_counts():

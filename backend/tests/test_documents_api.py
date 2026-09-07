@@ -46,8 +46,10 @@ def record(*, source: Any = "available") -> Any:
     )
     return SimpleNamespace(
         id=uuid4(),
+        knowledge_base_id=uuid4(),
         content_hash="a" * 64,
         index_revision=4,
+        mime_type="text/plain",
         title="政策利率维持不变",
         url="https://example.com/news",
         source=source_value,
@@ -100,8 +102,10 @@ def test_document_detail_returns_full_plain_text_and_metadata() -> None:
     body = response.json()
     assert body == {
         "document_id": str(item.id),
+        "knowledge_base_id": str(item.knowledge_base_id),
         "content_hash": "a" * 64,
         "revision": 4,
+        "mime_type": "text/plain",
         "title": "政策利率维持不变",
         "url": "https://example.com/news",
         "source_name": "测试来源",
@@ -113,16 +117,19 @@ def test_document_detail_returns_full_plain_text_and_metadata() -> None:
     assert repository.calls == [item.id]
 
 
-def test_document_detail_missing_document_and_source_are_stable_404s() -> None:
+def test_document_detail_missing_document_is_stable_404_and_source_is_optional() -> None:
     missing = FakeRepository(None)
     missing_response = run(request(build_app(missing), f"/documents/{uuid4()}"))
     assert missing_response.status_code == 404
     assert missing_response.json() == {"detail": "文档不存在。"}
 
+    # 没有 Source 的通用 Document 仍可读取：来源展示名按契约落空值，不算错误。
     without_source = record(source=None)
     source_response = run(request(build_app(FakeRepository(without_source)), f"/documents/{without_source.id}"))
-    assert source_response.status_code == 404
-    assert source_response.json() == {"detail": "文档不存在。"}
+    assert source_response.status_code == 200
+    body = source_response.json()
+    assert body["document_id"] == str(without_source.id)
+    assert body["source_name"] is None
 
 
 def test_document_detail_database_failure_is_sanitized() -> None:

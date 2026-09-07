@@ -52,6 +52,7 @@ from agent_lab.schemas.document_search import (
     DocumentSearchResult,
 )
 from agent_lab.schemas.vector_search import MAX_QUERY_CHARACTERS, VectorSearchFilters
+from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.services.vector_search_service import VectorSearchService
 
 
@@ -103,7 +104,9 @@ def build_search_news_tool(service: VectorSearchService) -> BaseTool:
             matches_per_document=SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT,
             filters=_time_filters(within_days),
         )
-        results = await service.search_documents(request)
+        results = await service.search_documents(
+            request.with_knowledge_base_scope(DEFAULT_NEWS_KNOWLEDGE_BASE_ID)
+        )
         return _format_results(results)
 
     return search_news

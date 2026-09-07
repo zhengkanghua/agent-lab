@@ -25,6 +25,7 @@ from qdrant_client.http.exceptions import UnexpectedResponse
 from agent_lab.config.ollama_embedding import OllamaEmbeddingSettings
 from agent_lab.config.qdrant import QdrantSettings
 from agent_lab.domain.enums import DocumentType
+from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.pipeline.ollama_embedding_provider import (
     OllamaEmbeddingProvider,
 )
@@ -50,6 +51,7 @@ from agent_lab.services.vector_search_service import (
     QueryVectorValidationError,
     VectorSearchService,
 )
+from tests.knowledge_helpers import ActiveKnowledgeBaseScope
 
 
 def run(coroutine: Any) -> Any:
@@ -90,7 +92,7 @@ def qdrant_settings(*, environment: str = "search_test") -> QdrantSettings:
         api_key=SecretStr("search-secret-must-not-leak"),
         request_timeout_seconds=7,
         environment=environment,
-        collection_schema_version="v1",
+        collection_schema_version="v2",
         collection_generation=1,
         vector_dimension=3,
         distance="Cosine",
@@ -127,12 +129,14 @@ def build_payload(
     payload: dict[str, Any] = {
         "page_content": f"新闻正文 chunk {chunk_index}",
         "document_id": str(document_id or uuid4()),
+        "knowledge_base_id": str(DEFAULT_NEWS_KNOWLEDGE_BASE_ID),
         "content_hash": "a" * 64,
         "chunk_index": chunk_index,
         "chunk_count": chunk_count,
         "title": f"示例新闻 {chunk_index}",
         "url": "https://example.com/news",
         "document_type": document_type,
+        "mime_type": "text/plain",
         "source_id": str(source_id or uuid4()),
         "source_provider": source_provider,
         "source_name": "示例来源",
@@ -140,7 +144,7 @@ def build_payload(
         "document_external_id": "article/42",
         "authors": ["作者甲"],
         "labels": labels if labels is not None else ["宏观", "利率"],
-        "index_schema_version": "v1",
+        "index_schema_version": "v2",
         "embedding_model": "bge-m3:567m",
     }
     if published_at is not None:
@@ -179,6 +183,7 @@ def build_runtime_components(
     fake_embeddings: FakeEmbeddings,
     client: AsyncQdrantClient | Any,
     environment: str = "search_test",
+    knowledge_base_scope=None,
 ) -> tuple[VectorSearchService, QdrantVectorSearch, VectorIndexSpec, QdrantSettings]:
     """组装不访问网络的搜索 Service 与 Qdrant 组件。"""
 
@@ -190,6 +195,7 @@ def build_runtime_components(
         embedding_provider=provider,
         vector_search=component,
         spec=spec,
+        knowledge_base_scope=knowledge_base_scope or ActiveKnowledgeBaseScope(),
     )
     return service, component, spec, settings
 
@@ -291,6 +297,81 @@ def test_each_filter_uses_the_expected_qdrant_model() -> None:
     )
 
 
+def test_knowledge_base_filter_is_encoded_as_an_exact_match() -> None:
+    knowledge_base_id = uuid4()
+
+    built = QdrantVectorSearch._build_filter(  # noqa: SLF001
+        VectorSearchFilters(knowledge_base_id=knowledge_base_id)
+    )
+
+    assert built is not None
+    assert built.must == [  # type: ignore[union-attr]
+        models.FieldCondition(
+            key="knowledge_base_id",
+            match=models.MatchValue(value=str(knowledge_base_id)),
+        )
+    ]
+
+
+def test_shared_collection_search_does_not_cross_knowledge_bases() -> None:
+    async def verify() -> None:
+        fake_embeddings = FakeEmbeddings([1.0, 0.0, 0.0])
+        client = AsyncQdrantClient(location=":memory:")
+        service, _component, spec, settings = build_runtime_components(
+            fake_embeddings=fake_embeddings,
+            client=client,
+        )
+        collection = settings.collection_name
+        await client.create_collection(collection, vectors_config=spec.vector_params)
+        await client.update_collection_aliases(
+            [
+                models.CreateAliasOperation(
+                    create_alias=models.CreateAlias(
+                        collection_name=collection,
+                        alias_name=settings.collection_alias,
+                    )
+                )
+            ]
+        )
+        news_point = uuid4()
+        other_point = uuid4()
+        other_knowledge_base_id = uuid4()
+        await client.upsert(
+            collection_name=settings.collection_alias,
+            points=[
+                build_point(
+                    point_id=news_point,
+                    vector=[1.0, 0.0, 0.0],
+                    payload=build_payload(
+                        knowledge_base_id=str(DEFAULT_NEWS_KNOWLEDGE_BASE_ID)
+                    ),
+                ),
+                build_point(
+                    point_id=other_point,
+                    vector=[1.0, 0.0, 0.0],
+                    payload=build_payload(
+                        knowledge_base_id=str(other_knowledge_base_id)
+                    ),
+                ),
+            ],
+        )
+
+        try:
+            results = await service.search(
+                VectorSearchRequest(
+                    query="只查新闻库",
+                    filters=VectorSearchFilters(
+                        knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID
+                    ),
+                )
+            )
+            assert [result.chunk_id for result in results] == [news_point]
+        finally:
+            await client.close()
+
+    run(verify())
+
+
 @pytest.mark.parametrize(
     ("field", "filters", "expected"),
     [
@@ -359,7 +440,7 @@ def test_query_service_uses_embed_query_and_qdrant_current_alias() -> None:
                     )
                 ],
             )
-            results = await service.search(VectorSearchRequest(query="安全 query"))
+            results = await service.search(VectorSearchRequest(query="安全 query", knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID))
             assert fake_embeddings.query_calls == ["安全 query"]
             assert fake_embeddings.document_calls == []
             assert results[0].chunk_id == point_id
@@ -407,10 +488,10 @@ def test_memory_qdrant_cosine_score_threshold_and_order_are_preserved() -> None:
         try:
             await client.upsert(settings.collection_alias, points)
             all_results = await service.search(
-                VectorSearchRequest(query="排序", top_k=3)
+                VectorSearchRequest(query="排序", top_k=3, knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID)
             )
             threshold_results = await service.search(
-                VectorSearchRequest(query="阈值", top_k=3, score_threshold=0.7)
+                VectorSearchRequest(query="阈值", top_k=3, score_threshold=0.7, knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID)
             )
             assert [result.chunk_id for result in all_results] == [
                 UUID(str(point.id)) for point in points
@@ -476,6 +557,7 @@ def test_memory_qdrant_combined_filters_and_missing_published_at_semantics() -> 
             await client.upsert(settings.collection_alias, [matching, missing_time, wrong_source])
             request = VectorSearchRequest(
                 query="组合过滤",
+                knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID,
                 filters=VectorSearchFilters(
                     source_id=source_id,
                     source_provider="provider_a",
@@ -532,9 +614,10 @@ def test_search_service_rejects_invalid_query_vectors_before_qdrant_call() -> No
             embedding_provider=provider,  # type: ignore[arg-type]
             vector_search=component,
             spec=spec,
+            knowledge_base_scope=ActiveKnowledgeBaseScope(),
         )
         with pytest.raises(QueryVectorValidationError, match=message):
-            run(service.search(VectorSearchRequest(query="向量校验")))
+            run(service.search(VectorSearchRequest(query="向量校验", knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID)))
         assert provider.query_calls == ["向量校验"]
 
 
@@ -654,7 +737,7 @@ def test_search_response_requires_uuid_and_complete_typed_payload() -> None:
         (SimpleNamespace(id=valid_point_id, score=1.0, payload={**valid_payload, "chunk_index": 2}), "响应契约"),
         # index_schema_version 不进 VectorSearchResult，所以它的把关全靠 _map_point 里
         # 对 Payload 的等值比较：写坏、缺失都必须拒绝，否则会把别的索引空间的数据搜出来。
-        (SimpleNamespace(id=valid_point_id, score=1.0, payload={**valid_payload, "index_schema_version": "v2"}), "非预期的索引"),
+        (SimpleNamespace(id=valid_point_id, score=1.0, payload={**valid_payload, "index_schema_version": "v3"}), "非预期的索引"),
         (SimpleNamespace(id=valid_point_id, score=1.0, payload={key: value for key, value in valid_payload.items() if key != "index_schema_version"}), "非预期的索引"),
     ]
     for point, message in cases:
@@ -765,7 +848,7 @@ def test_search_has_no_qdrant_write_methods_or_physical_collection_name() -> Non
 
         async def query_points(self, **kwargs: Any) -> Any:
             self.calls.append("query_points")
-            assert kwargs["collection_name"] == "news_chunks_read_only_test_current"
+            assert kwargs["collection_name"] == "knowledge_chunks_read_only_test_current"
             return SimpleNamespace(
                 points=[
                     models.ScoredPoint(

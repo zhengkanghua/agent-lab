@@ -72,6 +72,10 @@ class DocumentSearchRequest(BaseModel):
             "百分比。"
         ),
     )
+    knowledge_base_id: UUID | None = Field(
+        default=None,
+        description="KnowledgeBase 范围；普通 HTTP 边界缺省时解析为 news。",
+    )
     filters: VectorSearchFilters = Field(
         default_factory=VectorSearchFilters,
         description=(
@@ -91,6 +95,31 @@ class DocumentSearchRequest(BaseModel):
     _validate_threshold = field_validator("score_threshold", mode="before")(
         require_numeric_threshold
     )
+
+    @model_validator(mode="after")
+    def validate_knowledge_base_scope(self) -> "DocumentSearchRequest":
+        """拒绝顶层范围和过滤器范围互相矛盾，避免出现意外的跨库查询。"""
+
+        nested = self.filters.knowledge_base_id
+        if (
+            self.knowledge_base_id is not None
+            and nested is not None
+            and self.knowledge_base_id != nested
+        ):
+            raise ValueError("knowledge_base_id 与 filters.knowledge_base_id 必须一致")
+        return self
+
+    def with_knowledge_base_scope(self, knowledge_base_id: UUID) -> "DocumentSearchRequest":
+        """返回同时填充顶层和过滤器范围的副本，供 HTTP 边界传给应用 Service。"""
+
+        return self.model_copy(
+            update={
+                "knowledge_base_id": knowledge_base_id,
+                "filters": self.filters.model_copy(
+                    update={"knowledge_base_id": knowledge_base_id}
+                ),
+            }
+        )
 
 
 class DocumentSearchMatch(BaseModel):
@@ -158,6 +187,9 @@ class DocumentSearchResult(BaseModel):
     document_id: UUID = Field(
         description="关联 PostgreSQL documents.id 的新闻文档 UUID。",
     )
+    knowledge_base_id: UUID = Field(
+        description="该文档实际归属的 KnowledgeBase UUID；用于确认共享 Collection 的范围隔离。",
+    )
     content_hash: str = Field(
         pattern=r"^[0-9a-fA-F]{64}$",
         description="Qdrant 命中版本的正文 SHA-256，用于和全文接口返回值校验。",
@@ -166,12 +198,14 @@ class DocumentSearchResult(BaseModel):
         min_length=1,
         description="来自 Qdrant Payload 的新闻标题。",
     )
-    url: AnyHttpUrl = Field(
-        description="来自 Qdrant Payload 的 HTTP(S) 原文地址。",
+    mime_type: str = Field(min_length=1, description="来自 Qdrant Payload 的文档 MIME 格式。")
+    url: AnyHttpUrl | None = Field(
+        description="来自 Qdrant Payload 的可选 HTTP(S) 原文地址；没有外部地址时为空。",
     )
-    source_name: str = Field(
+    source_name: str | None = Field(
+        default=None,
         min_length=1,
-        description="来自 Qdrant Payload 的来源展示名称。",
+        description="来自 Qdrant Payload 的可选来源展示名称；没有 Source 时为空。",
     )
     published_at: datetime | None = Field(
         default=None,
@@ -205,13 +239,22 @@ class DocumentSearchResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    @field_validator("title", "source_name")
+    @field_validator("title")
     @classmethod
     def reject_blank_metadata(cls, value: str) -> str:
         """拒绝类型正确但只包含空白的展示字段。"""
 
         if not value.strip():
             raise ValueError("文档元数据字符串不能为空白")
+        return value
+
+    @field_validator("source_name")
+    @classmethod
+    def reject_blank_source_name(cls, value: str | None) -> str | None:
+        """Source 名称存在时不得是空白。"""
+
+        if value is not None and not value.strip():
+            raise ValueError("来源名称不能为空白")
         return value
 
     @field_validator("authors", "labels", mode="before")
@@ -237,6 +280,7 @@ class DocumentDetailResponse(BaseModel):
     """从 PostgreSQL 按需读取的一篇新闻完整纯正文响应。"""
 
     document_id: UUID = Field(description="PostgreSQL documents.id。")
+    knowledge_base_id: UUID = Field(description="Document 实际归属的 KnowledgeBase UUID。")
     content_hash: str = Field(
         pattern=r"^[0-9a-fA-F]{64}$",
         description="当前 PostgreSQL 正文的 SHA-256，用于和搜索索引版本校验。",
@@ -247,8 +291,13 @@ class DocumentDetailResponse(BaseModel):
         description="当前文档的业务 revision；来自 documents.index_revision。",
     )
     title: str = Field(min_length=1, description="当前 PostgreSQL 新闻标题。")
-    url: AnyHttpUrl = Field(description="当前 PostgreSQL 原文地址。")
-    source_name: str = Field(min_length=1, description="关联 source 的展示名称。")
+    mime_type: str = Field(min_length=1, description="当前 PostgreSQL 文档的 MIME 格式。")
+    url: AnyHttpUrl | None = Field(description="当前 PostgreSQL 可选原文地址。")
+    source_name: str | None = Field(
+        default=None,
+        min_length=1,
+        description="关联 Source 的可选展示名称；没有 Source 时为空。",
+    )
     published_at: datetime | None = Field(
         default=None,
         description="当前 PostgreSQL 声明的可空带时区发布时间。",
@@ -271,13 +320,22 @@ class DocumentDetailResponse(BaseModel):
             raise ValueError("published_at 必须包含时区信息")
         return value
 
-    @field_validator("title", "source_name", "content_text")
+    @field_validator("title", "content_text")
     @classmethod
     def require_detail_text(cls, value: str) -> str:
         """拒绝详情契约中的空白文本。"""
 
         if not value.strip():
             raise ValueError("文档详情文本必须包含非空白字符")
+        return value
+
+    @field_validator("source_name")
+    @classmethod
+    def reject_blank_optional_source_name(cls, value: str | None) -> str | None:
+        """Source 名称存在时不得是空白。"""
+
+        if value is not None and not value.strip():
+            raise ValueError("来源名称不能为空白")
         return value
 
 

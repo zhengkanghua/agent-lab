@@ -15,6 +15,7 @@ import pytest
 from fastapi import FastAPI
 
 from agent_lab.api.error_contract import VectorSearchErrorResponse
+from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.pipeline.ollama_embedding_provider import (
     EmbeddingResponseError,
     OllamaAuthenticationError,
@@ -59,6 +60,7 @@ def result() -> VectorSearchResult:
         score=0.91,
         page_content="政策利率新闻正文",
         document_id=uuid4(),
+        knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID,
         content_hash="a" * 64,
         chunk_index=0,
         chunk_count=1,
@@ -67,6 +69,7 @@ def result() -> VectorSearchResult:
         published_at=datetime(2026, 8, 14, tzinfo=UTC),
         source_updated_at=None,
         document_type="article",
+        mime_type="text/plain",
         source_id=uuid4(),
         source_provider="integration_test",
         source_name="测试来源",
@@ -195,6 +198,49 @@ def test_empty_results_are_a_successful_empty_array() -> None:
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_http_search_defaults_missing_scope_to_news_filter() -> None:
+    """旧请求缺少范围时只能命中固定新闻库，不能把共享 Collection 当成全库。"""
+
+    service = FakeSearchService(results=[])
+    app, _runtime = app_for(service)
+
+    response = run(
+        request(
+            app,
+            "POST",
+            "/vector-search",
+            json={"query": "默认范围"},
+        )
+    )
+
+    assert response.status_code == 200
+    forwarded = service.requests[0]
+    assert forwarded.knowledge_base_id == DEFAULT_NEWS_KNOWLEDGE_BASE_ID
+    assert forwarded.filters.knowledge_base_id == DEFAULT_NEWS_KNOWLEDGE_BASE_ID
+
+
+def test_http_search_preserves_explicit_scope() -> None:
+    """显式范围同时进入请求顶层和 Qdrant 过滤器。"""
+
+    service = FakeSearchService(results=[])
+    app, _runtime = app_for(service)
+    knowledge_base_id = uuid4()
+
+    response = run(
+        request(
+            app,
+            "POST",
+            "/vector-search",
+            json={"query": "指定范围", "knowledge_base_id": str(knowledge_base_id)},
+        )
+    )
+
+    assert response.status_code == 200
+    forwarded = service.requests[0]
+    assert forwarded.knowledge_base_id == knowledge_base_id
+    assert forwarded.filters.knowledge_base_id == knowledge_base_id
 
 
 @pytest.mark.parametrize(

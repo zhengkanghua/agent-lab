@@ -7,7 +7,7 @@ Cosine 相似度打分排序）。
 
 本模块位于应用 Service 层，负责把这两步按正确顺序串起来：调用 Provider 的
 ``embed_query``、按 ``VectorIndexSpec`` 校验 query 向量、再委托只使用 current Alias
-的 Qdrant 组件。它不调用 document embedding、不读取或修改 PostgreSQL、不写 Qdrant、
+的向量检索端口。查询前通过范围端口读取 KnowledgeBase 状态，不修改 PostgreSQL、不写 Qdrant、
 不改变 processing_status，也不执行 Retriever、生成式 LLM 或 RAG 问答——搜索就是
 纯读取，不做任何写操作。
 """
@@ -15,24 +15,18 @@ Cosine 相似度打分排序）。
 import math
 from collections.abc import Sequence
 from numbers import Real
+from uuid import UUID
 
-from agent_lab.pipeline.ollama_embedding_provider import (
-    OllamaEmbeddingProvider,
-)
-from agent_lab.qdrant.index_spec import (
-    VectorIndexConfigurationError,
-    VectorIndexSpec,
-)
-from agent_lab.qdrant.search import (
-    QdrantDocumentSearchGroup,
-    QdrantVectorSearch,
-)
+from agent_lab.knowledge.ports import EmbeddingProvider, IndexSpecification, KnowledgeBaseScope, VectorSearch
+from agent_lab.knowledge.domain import VectorIndexConfigurationError
+from agent_lab.knowledge.document_contracts import DocumentSearchGroup
 from agent_lab.schemas.document_search import (
     DocumentSearchMatch,
     DocumentSearchRequest,
     DocumentSearchResult,
 )
 from agent_lab.schemas.vector_search import (
+    VectorSearchFilters,
     VectorSearchRequest,
     VectorSearchResult,
 )
@@ -55,9 +49,10 @@ class VectorSearchService:
     def __init__(
         self,
         *,
-        embedding_provider: OllamaEmbeddingProvider,
-        vector_search: QdrantVectorSearch,
-        spec: VectorIndexSpec,
+        embedding_provider: EmbeddingProvider,
+        vector_search: VectorSearch,
+        spec: IndexSpecification,
+        knowledge_base_scope: KnowledgeBaseScope,
     ) -> None:
         """绑定同一模型空间中的 Provider、Qdrant 查询组件和索引规格。
 
@@ -91,6 +86,7 @@ class VectorSearchService:
         self._embedding_provider = embedding_provider
         self._vector_search = vector_search
         self._spec = spec
+        self._knowledge_base_scope = knowledge_base_scope
 
     async def search(
         self,
@@ -120,12 +116,16 @@ class VectorSearchService:
             QdrantVectorSearchError: Qdrant 认证、连接、超时、目标、配置或响应失败。
 
         Notes:
-            本方法不执行 PostgreSQL I/O。它先执行一次 Ollama/Embedding 网络 I/O，
+            先经范围端口读取 KnowledgeBase 的启用状态，再执行一次 Embedding 网络 I/O，
             成功校验后再执行一次 Qdrant current Alias 只读 I/O；不执行任何写操作，
             不自动创建 Collection、不切换 Alias、不修改 processing_status。
         """
 
-        # 1、把问题文本变成向量，顺便验掉坏数据（维度、NaN、全零）。
+        filters = await self._filters_with_request_scope(
+            request.filters,
+            request.knowledge_base_id,
+        )
+        # 范围确认后才访问上游，停用库不产生 Embedding 或 Qdrant 请求。
         validated_vector = await self._embed_and_validate_query(request.query)
         # 2、拿向量去 Qdrant current Alias 查 Chunk，保持 Qdrant 的 score 顺序返回，
         #    不聚合、不重排——那是 search_documents 的活。
@@ -133,7 +133,7 @@ class VectorSearchService:
             validated_vector,
             top_k=request.top_k,
             score_threshold=request.score_threshold,
-            filters=request.filters,
+            filters=filters,
         )
 
     async def search_documents(
@@ -144,7 +144,7 @@ class VectorSearchService:
 
         执行顺序与 ``search`` 相同，但第二步调用 Qdrant 正式 grouped query：
         ``document_limit`` 控制不同文档数量，``matches_per_document`` 控制每组相关
-        Chunk 数。该方法不访问 PostgreSQL，因此不会产生全文查询的 N+1 开销。
+        Chunk 数。仅经范围端口读取知识库配置，不读取逐篇正文，没有全文查询的 N+1 开销。
 
         Args:
             request: 已由 Pydantic 校验的文档搜索请求。
@@ -158,11 +158,14 @@ class VectorSearchService:
             QdrantVectorSearchError: grouped query 上游失败或响应契约非法。
 
         Notes:
-            只执行一次 Ollama query Embedding 和一次 Qdrant grouped 只读查询；完整正文
+            范围检查后执行一次 query Embedding 和一次 grouped 只读查询；完整正文
             必须由调用方稍后请求 ``GET /documents/{document_id}`` 才访问 PostgreSQL。
         """
 
-        # 1、与 search 完全相同的第一步：query 向量化并校验。
+        filters = await self._filters_with_request_scope(
+            request.filters,
+            request.knowledge_base_id,
+        )
         validated_vector = await self._embed_and_validate_query(request.query)
         # 2、换成 grouped query：Qdrant 按 document_id 分组，每篇只出一组，
         #    组内保留 matches_per_document 条最相关的 Chunk。
@@ -171,10 +174,25 @@ class VectorSearchService:
             document_limit=request.document_limit,
             matches_per_document=request.matches_per_document,
             score_threshold=request.score_threshold,
-            filters=request.filters,
+            filters=filters,
         )
         # 3、把基础设施对象搬成对外 DTO，只搬字段，不再校验。
         return [self._map_document_group(group) for group in groups]
+
+    async def _filters_with_request_scope(
+        self,
+        filters: VectorSearchFilters,
+        knowledge_base_id: UUID | None,
+    ) -> VectorSearchFilters:
+        """普通用例要求明确启用范围；HTTP 和阶段一 Agent 在各自边界补 news。"""
+
+        knowledge_base_id = knowledge_base_id or filters.knowledge_base_id
+        if knowledge_base_id is None:
+            raise ValueError("知识库检索必须明确指定范围。")
+        await self._knowledge_base_scope.require_active(knowledge_base_id)
+        if filters.knowledge_base_id == knowledge_base_id:
+            return filters
+        return filters.model_copy(update={"knowledge_base_id": knowledge_base_id})
 
     async def _embed_and_validate_query(self, query: str) -> list[float]:
         """把 query 文本变成一个可以直接交给 Qdrant 的合法向量。
@@ -203,10 +221,10 @@ class VectorSearchService:
         return self._validate_query_vector(query_vector)
 
     @staticmethod
-    def _map_document_group(group: QdrantDocumentSearchGroup) -> DocumentSearchResult:
+    def _map_document_group(group: DocumentSearchGroup) -> DocumentSearchResult:
         """把基础设施分组纯映射成公开文档 DTO。
 
-        这里只做字段搬运，不校验分组不变量。``QdrantDocumentSearchGroup`` 由
+        这里只做字段搬运，不校验分组不变量。``DocumentSearchGroup`` 由
         ``search_groups`` 构造，那里已经在信任边界上验完「组非空、组内 document_id
         一致、chunk_id 不重复、文档级元数据一致、matches 按 score 降序」。因此可以
         直接取 ``matches[0]`` 当 best match，并用它的文档级字段代表整篇文档。
@@ -229,8 +247,10 @@ class VectorSearchService:
         #    降序（search_groups 保证），所以取第 0 条即可，不用再排。
         return DocumentSearchResult(
             document_id=group.document_id,
+            knowledge_base_id=first.knowledge_base_id,
             content_hash=first.content_hash,
             title=first.title,
+            mime_type=first.mime_type,
             url=first.url,
             source_name=first.source_name,
             published_at=first.published_at,

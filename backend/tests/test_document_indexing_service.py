@@ -1,15 +1,14 @@
 """DocumentIndexingService 状态编排、版本保护和失败处理的离线测试。"""
 
 import asyncio
-from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
 import pytest
 from langchain_core.documents import Document
 
-import agent_lab.services.document_indexing_service as service_module
-from agent_lab.models.document import DocumentRecord
+from agent_lab.knowledge.document_contracts import DocumentSnapshot
+from agent_lab.domain.enums import DocumentType
 from agent_lab.pipeline.ollama_embedding_provider import ChunkEmbedding
 from agent_lab.qdrant.index_spec import VectorIndexSpec
 from agent_lab.qdrant.index_spec import VectorIndexConfigurationError
@@ -25,18 +24,23 @@ def run(coroutine: Any) -> Any:
     return asyncio.run(coroutine)
 
 
-def build_record(*, revision: int = 3) -> DocumentRecord:
-    """构造索引 Service 所需的最小 ORM 文档快照。"""
+def build_record(*, revision: int = 3) -> DocumentSnapshot:
+    """构造索引 Service 所需的独立文档快照。"""
 
-    return DocumentRecord(
+    return DocumentSnapshot(
         id=uuid4(),
-        source_id=uuid4(),
+        knowledge_base_id=uuid4(),
+        source_id=None,
+        source=None,
+        document_type=DocumentType.OTHER,
+        mime_type="text/plain",
+        published_at=None,
+        source_updated_at=None,
         external_id="article/42",
         title="示例新闻",
         url="https://example.com/news/42",
-        authors=[],
-        labels=[],
-        image_urls=[],
+        authors=(),
+        labels=(),
         content_text="新闻正文",
         content_hash="a" * 64,
         index_revision=revision,
@@ -52,7 +56,7 @@ class FakeRepository:
         claimed: bool = True,
         marked_indexed: bool = True,
         marked_failed: bool = True,
-        loaded_record: DocumentRecord | None = None,
+        loaded_record: DocumentSnapshot | None = None,
     ) -> None:
         self.claimed = claimed
         self.marked_indexed = marked_indexed
@@ -60,8 +64,8 @@ class FakeRepository:
         self.loaded_record = loaded_record
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def get_with_source(self, document_id: Any) -> DocumentRecord | None:
-        self.calls.append(("get_with_source", {"document_id": document_id}))
+    async def get_for_indexing(self, document_id: Any) -> DocumentSnapshot | None:
+        self.calls.append(("get_for_indexing", {"document_id": document_id}))
         return self.loaded_record
 
     async def claim_for_indexing(self, **kwargs: Any) -> bool:
@@ -91,7 +95,7 @@ class FakeChunkPipeline:
         self.chunk_size = 512
         self.chunk_overlap = 96
 
-    def build_chunks(self, record: DocumentRecord) -> list[Document]:
+    def build_chunks(self, record: DocumentSnapshot) -> list[Document]:
         self.calls += 1
         return [self.chunk]
 
@@ -178,28 +182,14 @@ def build_service(
     return service, pipeline, provider, store
 
 
-def install_repository(
-    monkeypatch: pytest.MonkeyPatch,
-    repository: FakeRepository,
-) -> None:
-    """让 Service 构造 fake Repository，避免访问真实 PostgreSQL。"""
-
-    monkeypatch.setattr(
-        service_module,
-        "DocumentRepository",
-        lambda _session: repository,
-    )
-
-
 def test_success_marks_indexed_only_after_qdrant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     record = build_record()
     repository = FakeRepository()
-    install_repository(monkeypatch, repository)
     service, pipeline, provider, store = build_service(repository=repository)
 
-    result = run(service.index_record(SimpleNamespace(), record))  # type: ignore[arg-type]
+    result = run(service.index_record(repository, record))  # type: ignore[arg-type]
 
     assert result.indexed is True
     assert result.skipped is False
@@ -212,7 +202,7 @@ def test_success_marks_indexed_only_after_qdrant(
         "document_id": record.id,
         "index_revision": 3,
         "content_hash": "a" * 64,
-        "schema_version": "v1",
+        "schema_version": "v2",
     }
 
 
@@ -221,10 +211,9 @@ def test_claim_conflict_skips_all_expensive_work(
 ) -> None:
     record = build_record()
     repository = FakeRepository(claimed=False)
-    install_repository(monkeypatch, repository)
     service, pipeline, provider, store = build_service(repository=repository)
 
-    result = run(service.index_record(SimpleNamespace(), record))  # type: ignore[arg-type]
+    result = run(service.index_record(repository, record))  # type: ignore[arg-type]
 
     assert result.skipped is True
     assert result.indexed is False
@@ -239,7 +228,6 @@ def test_embedding_failure_marks_current_revision_failed(
 ) -> None:
     record = build_record()
     repository = FakeRepository()
-    install_repository(monkeypatch, repository)
     provider = FakeEmbeddingProvider(error=RuntimeError("remote body secret-value"))
     service, _pipeline, _provider, store = build_service(
         repository=repository,
@@ -247,7 +235,7 @@ def test_embedding_failure_marks_current_revision_failed(
     )
 
     with pytest.raises(RuntimeError, match="secret-value"):
-        run(service.index_record(SimpleNamespace(), record))  # type: ignore[arg-type]
+        run(service.index_record(repository, record))  # type: ignore[arg-type]
 
     assert store.calls == []
     assert [name for name, _ in repository.calls] == ["claim", "failed"]
@@ -261,7 +249,6 @@ def test_qdrant_failure_marks_failed_after_embedding(
 ) -> None:
     record = build_record()
     repository = FakeRepository()
-    install_repository(monkeypatch, repository)
     store = FakePointStore(error=ValueError("Qdrant 写入失败"))
     service, _pipeline, provider, _store = build_service(
         repository=repository,
@@ -269,7 +256,7 @@ def test_qdrant_failure_marks_failed_after_embedding(
     )
 
     with pytest.raises(ValueError, match="Qdrant 写入失败"):
-        run(service.index_record(SimpleNamespace(), record))  # type: ignore[arg-type]
+        run(service.index_record(repository, record))  # type: ignore[arg-type]
 
     assert provider.calls == 1
     assert [name for name, _ in repository.calls] == ["claim", "failed"]
@@ -280,10 +267,9 @@ def test_revision_change_after_qdrant_releases_new_version(
 ) -> None:
     record = build_record(revision=7)
     repository = FakeRepository(marked_indexed=False)
-    install_repository(monkeypatch, repository)
     service, _pipeline, _provider, _store = build_service(repository=repository)
 
-    result = run(service.index_record(SimpleNamespace(), record))  # type: ignore[arg-type]
+    result = run(service.index_record(repository, record))  # type: ignore[arg-type]
 
     assert result.indexed is False
     assert result.skipped is True
@@ -303,7 +289,6 @@ def test_dimension_mismatch_never_calls_qdrant(
 ) -> None:
     record = build_record()
     repository = FakeRepository()
-    install_repository(monkeypatch, repository)
     provider = FakeEmbeddingProvider(vector=[1.0, 0.0, 0.0, 0.0])
     service, _pipeline, _provider, store = build_service(
         repository=repository,
@@ -311,7 +296,7 @@ def test_dimension_mismatch_never_calls_qdrant(
     )
 
     with pytest.raises(ValueError, match="与索引规格"):
-        run(service.index_record(SimpleNamespace(), record))  # type: ignore[arg-type]
+        run(service.index_record(repository, record))  # type: ignore[arg-type]
 
     assert store.calls == []
     assert [name for name, _ in repository.calls] == ["claim", "failed"]
@@ -322,12 +307,11 @@ def test_empty_chunk_result_is_failed_without_deleting_qdrant_points(
 ) -> None:
     record = build_record()
     repository = FakeRepository()
-    install_repository(monkeypatch, repository)
     service, pipeline, provider, store = build_service(repository=repository)
     pipeline.build_chunks = lambda _record: []  # type: ignore[method-assign]
 
     with pytest.raises(ValueError, match="未返回任何分块"):
-        run(service.index_record(SimpleNamespace(), record))  # type: ignore[arg-type]
+        run(service.index_record(repository, record))  # type: ignore[arg-type]
 
     assert provider.calls == 0
     assert store.calls == []
@@ -339,14 +323,13 @@ def test_index_document_loads_record_before_indexing(
 ) -> None:
     record = build_record()
     repository = FakeRepository(loaded_record=record)
-    install_repository(monkeypatch, repository)
     service, _pipeline, _provider, _store = build_service(repository=repository)
 
-    result = run(service.index_document(SimpleNamespace(), record.id))  # type: ignore[arg-type]
+    result = run(service.index_document(repository, record.id))  # type: ignore[arg-type]
 
     assert result.indexed is True
     assert [name for name, _ in repository.calls] == [
-        "get_with_source",
+        "get_for_indexing",
         "claim",
         "indexed",
     ]

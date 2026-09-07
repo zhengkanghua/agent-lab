@@ -16,13 +16,13 @@ from qdrant_client.http import models
 
 from agent_lab.config.ollama_embedding import OllamaEmbeddingSettings
 from agent_lab.config.qdrant import QdrantSettings
+from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.qdrant.index_spec import (
     VectorIndexConfigurationError,
     VectorIndexSpec,
 )
 from agent_lab.qdrant.lifecycle import (
     PAYLOAD_INDEX_SCHEMAS,
-    QdrantAliasConflictError,
     QdrantCollectionLifecycle,
     build_qdrant_client,
 )
@@ -53,7 +53,7 @@ def qdrant_settings(
         api_key=SecretStr(""),
         request_timeout_seconds=5,
         environment=environment,
-        collection_schema_version="v1",
+        collection_schema_version="v2",
         collection_generation=generation,
         write_batch_size=batch_size,
         vector_dimension=1024,
@@ -79,12 +79,14 @@ def build_chunk(
     document_id = document_id or str(uuid4())
     metadata: dict[str, Any] = {
         "document_id": document_id,
+        "knowledge_base_id": str(DEFAULT_NEWS_KNOWLEDGE_BASE_ID),
         "source_id": str(uuid4()),
         "source_provider": "freshrss_main",
         "source_external_id": "feed/2",
         "document_external_id": "article/42",
         "content_hash": "a" * 64,
         "document_type": "article",
+        "mime_type": "text/plain",
         "title": "示例新闻",
         "url": "https://example.com/news/42",
         "source_name": "示例来源",
@@ -122,8 +124,8 @@ def test_qdrant_settings_defaults_and_names(
 
     assert str(settings.base_url) == "http://localhost:6333/"
     assert settings.api_key.get_secret_value() == ""
-    assert settings.collection_name == "news_chunks_dev_v1_001"
-    assert settings.collection_alias == "news_chunks_dev_current"
+    assert settings.collection_name == "knowledge_chunks_dev_v2_001"
+    assert settings.collection_alias == "knowledge_chunks_dev_current"
     assert settings.vector_dimension == 1024
     assert settings.distance == "Cosine"
 
@@ -141,8 +143,8 @@ def test_qdrant_settings_parse_environment_and_hide_secret(
 
     settings = QdrantSettings(_env_file=None)
 
-    assert settings.collection_name == "news_chunks_prod_v2_007"
-    assert settings.collection_alias == "news_chunks_prod_current"
+    assert settings.collection_name == "knowledge_chunks_prod_v2_007"
+    assert settings.collection_alias == "knowledge_chunks_prod_current"
     assert settings.write_batch_size == 12
     assert secret not in repr(settings)
     assert secret not in str(settings)
@@ -240,11 +242,12 @@ def test_payload_mapper_keeps_news_time_and_explicit_fields() -> None:
     assert payload["source_updated_at"] == "2026-08-13T02:03:04+00:00"
     assert payload["document_id"] == chunk.metadata["document_id"]
     assert payload["labels"] == ["宏观", "利率"]
-    assert payload["index_schema_version"] == "v1"
+    assert payload["index_schema_version"] == "v2"
     assert payload["embedding_model"] == "bge-m3:567m"
     assert set(payload) == {
         "page_content",
         "document_id",
+        "knowledge_base_id",
         "content_hash",
         "chunk_index",
         "chunk_count",
@@ -253,6 +256,7 @@ def test_payload_mapper_keeps_news_time_and_explicit_fields() -> None:
         "published_at",
         "source_updated_at",
         "document_type",
+        "mime_type",
         "source_id",
         "source_provider",
         "source_name",
@@ -313,6 +317,7 @@ def test_payload_mapper_rejects_missing_or_invalid_fields(
 def test_payload_index_plan_contains_news_time() -> None:
     assert PAYLOAD_INDEX_SCHEMAS == {
         "document_id": models.PayloadSchemaType.KEYWORD,
+        "knowledge_base_id": models.PayloadSchemaType.UUID,
         "source_id": models.PayloadSchemaType.UUID,
         "source_provider": models.PayloadSchemaType.KEYWORD,
         "document_type": models.PayloadSchemaType.KEYWORD,
@@ -365,15 +370,15 @@ def test_lifecycle_migrates_legacy_document_uuid_index_to_keyword() -> None:
 
     run(
         lifecycle._ensure_payload_indexes(  # noqa: SLF001
-            "news_chunks_test_v1_001",
+            "knowledge_chunks_test_v1_001",
             SimpleNamespace(payload_schema=payload_schema),
         )
     )
 
-    assert client.deleted == [("news_chunks_test_v1_001", "document_id")]
+    assert client.deleted == [("knowledge_chunks_test_v1_001", "document_id")]
     assert client.created == [
         (
-            "news_chunks_test_v1_001",
+            "knowledge_chunks_test_v1_001",
             "document_id",
             models.PayloadSchemaType.KEYWORD,
         )
@@ -390,10 +395,10 @@ def test_real_local_qdrant_lifecycle_creates_collection_alias_and_indexes() -> N
             aliases = await client.get_aliases()
             info = await client.get_collection(physical_name)
 
-            assert physical_name == "news_chunks_test_v1_001"
+            assert physical_name == "knowledge_chunks_test_v2_001"
             assert [
                 (alias.alias_name, alias.collection_name) for alias in aliases.aliases
-            ] == [("news_chunks_test_current", physical_name)]
+            ] == [("knowledge_chunks_test_current", physical_name)]
             assert info.config.params.vectors.size == 3  # type: ignore[union-attr]
             assert info.config.params.vectors.distance == models.Distance.COSINE  # type: ignore[union-attr]
             assert info.config.metadata == spec().collection_metadata
@@ -453,7 +458,7 @@ def test_lifecycle_rejects_alias_pointing_to_another_collection() -> None:
             ]
         )
         try:
-            with pytest.raises(QdrantAliasConflictError, match="指向"):
+            with pytest.raises(VectorIndexConfigurationError, match="元数据"):
                 await QdrantCollectionLifecycle(
                     client, settings, spec()
                 ).ensure_current_collection()
@@ -469,7 +474,7 @@ def test_lifecycle_switches_current_alias_atomically() -> None:
         settings = qdrant_settings(generation=1)
         lifecycle = QdrantCollectionLifecycle(client, settings, spec())
         await lifecycle.ensure_current_collection()
-        new_collection = "news_chunks_test_v1_002"
+        new_collection = "knowledge_chunks_test_v1_002"
         try:
             await lifecycle.ensure_collection(new_collection)
             await lifecycle.switch_current_alias(new_collection)
@@ -490,7 +495,7 @@ def test_lifecycle_does_not_create_missing_alias_target() -> None:
         client = AsyncQdrantClient(location=":memory:")
         settings = qdrant_settings()
         lifecycle = QdrantCollectionLifecycle(client, settings, spec())
-        missing = "news_chunks_test_v1_999"
+        missing = "knowledge_chunks_test_v1_999"
         try:
             with pytest.raises(QdrantLifecycleError, match="不存在"):
                 await lifecycle.switch_current_alias(missing)
@@ -634,7 +639,7 @@ def test_store_uses_alias_and_replaces_stale_points() -> None:
                 limit=10,
             )
 
-            assert store.collection_name == "news_chunks_test_current"
+            assert store.collection_name == "knowledge_chunks_test_current"
             assert first.deleted_ids == ()
             assert second.deleted_ids == (old_chunks[2].id,)
             assert {str(record.id) for record in records} == {

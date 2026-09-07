@@ -48,7 +48,8 @@ class DocumentRepository:
             document_id: PostgreSQL ``documents.id`` 主键。
 
         Returns:
-            可直接交给 ``DocumentBuilder`` 的 ORM 文档；不存在时返回 ``None``。
+            已加载来源的 ORM 文档；适配器在事务退出前转换为 DocumentSnapshot。
+            不存在时返回 ``None``。
 
         Raises:
             Exception: PostgreSQL 查询失败时传播。
@@ -104,6 +105,7 @@ class DocumentRepository:
         document: SourceDocument,
         *,
         source_id: UUID,
+        knowledge_base_id: UUID | None = None,
     ) -> DocumentRecord:
         """按来源和外部 ID 幂等保存文档。
 
@@ -131,10 +133,12 @@ class DocumentRepository:
         values = {
             "id": uuid4(),
             "source_id": source_id,
+            "knowledge_base_id": knowledge_base_id or document.knowledge_base_id,
             "external_id": document.external_id,
             "document_type": document.document_type,
+            "mime_type": document.mime_type,
             "title": document.title,
-            "url": str(document.url),
+            "url": str(document.url) if document.url else None,
             "published_at": document.published_at,
             "source_updated_at": document.source_updated_at,
             "authors": list(document.authors),
@@ -150,6 +154,7 @@ class DocumentRepository:
         # 3、「会影响向量/切分结果」的字段是否变化：变了就重建/重埋向量
         index_inputs_changed = or_(
             DocumentRecord.document_type.is_distinct_from(excluded.document_type),
+            DocumentRecord.mime_type.is_distinct_from(excluded.mime_type),
             DocumentRecord.title.is_distinct_from(excluded.title),
             DocumentRecord.url.is_distinct_from(excluded.url),
             DocumentRecord.published_at.is_distinct_from(excluded.published_at),
@@ -170,6 +175,7 @@ class DocumentRepository:
                 constraint="uq_documents_source_external_id",
                 set_={
                     "document_type": excluded.document_type,
+                    "mime_type": excluded.mime_type,
                     "title": excluded.title,
                     "url": excluded.url,
                     "published_at": excluded.published_at,

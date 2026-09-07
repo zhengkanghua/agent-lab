@@ -18,7 +18,7 @@ from sqlalchemy import delete, select, text, update
 from agent_lab.models.write_operation import WriteOperationRecord
 from agent_lab.services.execution_cleanup import finish_cleanup
 from agent_lab.domain.write_scope import (
-    WriteRecoveryRequiredError, WriteScope, ensure_write_confirmed, write_scope as _scope,
+    WriteRecoveryRequiredError, WriteResourceBusyError, WriteScope, ensure_write_confirmed, write_scope as _scope,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class WriteCoordinator:
         self._poll_seconds = poll_seconds
 
     @asynccontextmanager
-    async def hold(self, resources: tuple[str, ...]):
+    async def hold(self, resources: tuple[str, ...], *, wait: bool = True):
         parent = _scope.get()
         if parent is not None:
             if not set(resources) <= set(parent.resources):
@@ -61,6 +61,8 @@ class WriteCoordinator:
         try:
             logger.info("写操作等待资源 operation_id=%s run_id=%s resources=%s owner=%s", operation_id, current_run_id.get(), scope.resources, OWNER)
             while not await self._acquire(operation_id, scope.resources):
+                if not wait:
+                    raise WriteResourceBusyError()
                 await asyncio.sleep(self._poll_seconds)
             acquired = True
             logger.info("写操作已取得资源 operation_id=%s run_id=%s resources=%s", operation_id, current_run_id.get(), scope.resources)

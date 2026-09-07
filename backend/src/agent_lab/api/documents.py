@@ -81,9 +81,8 @@ async def get_document(
             detail="文档服务不可用。",
         ) from exc
 
-    # 2、source_id 是非空外键，但历史数据或人工修复可能留下 relationship 缺失；
-    #    对外统一按「文档不可用」处理，不暴露数据库结构细节。
-    if record is None or record.source is None:
+    # 2、Document 本身可以没有外部 Source；只有真正不存在的记录才返回 404。
+    if record is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="文档不存在。",
@@ -94,11 +93,13 @@ async def get_document(
     try:
         return DocumentDetailResponse(
             document_id=record.id,
+            knowledge_base_id=record.knowledge_base_id,
             content_hash=record.content_hash,
             revision=record.index_revision,
             title=record.title,
+            mime_type=record.mime_type,
             url=record.url,
-            source_name=record.source.name,
+            source_name=record.source.name if record.source else None,
             published_at=record.published_at,
             authors=list(record.authors),
             labels=list(record.labels),

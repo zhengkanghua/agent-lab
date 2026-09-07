@@ -18,7 +18,7 @@ from agent_lab.services.news_pipeline_execution_service import (
     NewsSyncExecutionResult,
     PendingIndexExecutionResult,
 )
-from agent_lab.services.freshrss_import_service import SourceSyncFailure
+from agent_lab.knowledge.document_contracts import SourceSyncFailure
 
 
 def run(coroutine: Any) -> Any:

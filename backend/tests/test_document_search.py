@@ -18,6 +18,7 @@ from pydantic import SecretStr, ValidationError
 from qdrant_client.http import models
 
 from agent_lab.api.vector_search import VectorSearchErrorResponse
+from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.config.ollama_embedding import OllamaEmbeddingSettings
 from agent_lab.config.qdrant import QdrantSettings
 from agent_lab.qdrant.index_spec import VectorIndexSpec
@@ -50,7 +51,7 @@ def settings() -> QdrantSettings:
         api_key=SecretStr(""),
         request_timeout_seconds=5,
         environment="document_search_test",
-        collection_schema_version="v1",
+        collection_schema_version="v2",
         collection_generation=1,
         vector_dimension=3,
         distance="Cosine",
@@ -84,6 +85,7 @@ def payload(
     return {
         "page_content": f"{score_label}片段 {chunk_index}",
         "document_id": str(document_id),
+        "knowledge_base_id": str(DEFAULT_NEWS_KNOWLEDGE_BASE_ID),
         "content_hash": content_hash,
         "chunk_index": chunk_index,
         "chunk_count": chunk_count,
@@ -91,6 +93,7 @@ def payload(
         "url": "https://example.com/news",
         "published_at": "2026-08-14T00:00:00+00:00",
         "document_type": "article",
+        "mime_type": "text/plain",
         "source_id": str(uuid4()),
         "source_provider": "test",
         "source_name": "测试来源",
@@ -98,7 +101,7 @@ def payload(
         "document_external_id": f"article/{document_id}",
         "authors": [],
         "labels": ["宏观"],
-        "index_schema_version": "v1",
+        "index_schema_version": "v2",
         "embedding_model": "bge-m3:567m",
     }
 
@@ -160,6 +163,8 @@ class GroupedClient:
 def build_service(client: GroupedClient) -> tuple[VectorSearchService, EmbeddingStub]:
     """组装只读文档搜索 Service。"""
 
+    from tests.knowledge_helpers import ActiveKnowledgeBaseScope
+
     spec = VectorIndexSpec.from_settings(settings(), ollama_settings())
     provider = EmbeddingStub()
     component = QdrantVectorSearch(client, settings(), spec)
@@ -168,6 +173,7 @@ def build_service(client: GroupedClient) -> tuple[VectorSearchService, Embedding
             embedding_provider=provider,  # type: ignore[arg-type]
             vector_search=component,
             spec=spec,
+            knowledge_base_scope=ActiveKnowledgeBaseScope(),
         ),
         provider,
     )
@@ -195,6 +201,7 @@ def test_document_search_groups_and_sorts_documents_and_matches() -> None:
         service.search_documents(
             DocumentSearchRequest(
                 query="利率变化",
+                knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID,
                 document_limit=2,
                 matches_per_document=2,
                 score_threshold=0.6,
@@ -215,13 +222,50 @@ def test_document_search_groups_and_sorts_documents_and_matches() -> None:
     assert call["limit"] == 2
     assert call["group_size"] == 2
     assert call["score_threshold"] == pytest.approx(0.6)
-    assert call["query_filter"].must[0].key == "labels"
+    assert {condition.key: condition for condition in call["query_filter"].must} == {
+        "knowledge_base_id": models.FieldCondition(
+            key="knowledge_base_id",
+            match=models.MatchValue(value=str(DEFAULT_NEWS_KNOWLEDGE_BASE_ID)),
+        ),
+        "labels": models.FieldCondition(key="labels", match=models.MatchAny(any=["宏观"])),
+    }
 
 
 def test_document_search_empty_groups_returns_empty_list() -> None:
     service, _provider = build_service(GroupedClient([]))
 
-    assert run(service.search_documents(DocumentSearchRequest(query="无结果"))) == []
+    assert run(service.search_documents(DocumentSearchRequest(query="无结果", knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID))) == []
+
+
+def test_document_search_service_applies_top_level_knowledge_base_scope() -> None:
+    document_id = uuid4()
+    client = GroupedClient(
+        [
+            SimpleNamespace(
+                id=str(document_id),
+                hits=[point(document_id, 0.8, chunk_index=0, chunk_count=1)],
+            )
+        ]
+    )
+    service, _provider = build_service(client)
+    knowledge_base_id = uuid4()
+
+    results = run(
+        service.search_documents(
+            DocumentSearchRequest(
+                query="指定知识库",
+                knowledge_base_id=knowledge_base_id,
+            )
+        )
+    )
+
+    assert len(results) == 1
+    query_filter = client.calls[0]["query_filter"]
+    assert query_filter is not None
+    assert models.FieldCondition(
+        key="knowledge_base_id",
+        match=models.MatchValue(value=str(knowledge_base_id)),
+    ) in query_filter.must
 
 
 def test_equal_best_scores_break_ties_by_document_id_for_determinism() -> None:
@@ -237,7 +281,7 @@ def test_equal_best_scores_break_ties_by_document_id_for_determinism() -> None:
     )
     service, _provider = build_service(client)
 
-    results = run(service.search_documents(DocumentSearchRequest(query="并列分数")))
+    results = run(service.search_documents(DocumentSearchRequest(query="并列分数", knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID)))
 
     assert [result.document_id for result in results] == [first, second]
 
@@ -317,7 +361,7 @@ def test_grouped_response_rejects_broken_group_contracts(
     service, _provider = build_service(GroupedClient(build_groups(document_id, other_id)))
 
     with pytest.raises(QdrantSearchResponseError, match=message):
-        run(service.search_documents(DocumentSearchRequest(query="校验")))
+        run(service.search_documents(DocumentSearchRequest(query="校验", knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID)))
 
 
 def test_document_search_request_rejects_sensitive_invalid_query_without_echo() -> None:
@@ -380,6 +424,31 @@ def test_document_search_http_forwards_limits_and_empty_success() -> None:
     assert response.json() == []
     assert service.requests[0].document_limit == 7
     assert service.requests[0].matches_per_document == 4
+    assert service.requests[0].knowledge_base_id == DEFAULT_NEWS_KNOWLEDGE_BASE_ID
+    assert service.requests[0].filters.knowledge_base_id == DEFAULT_NEWS_KNOWLEDGE_BASE_ID
+
+
+def test_document_search_http_preserves_explicit_knowledge_base_scope() -> None:
+    """显式 KnowledgeBase ID 传入后必须成为 Qdrant 的强制过滤条件。"""
+
+    service = FakeDocumentSearchService()
+    app = allow_reader(create_offline_app(runtime_factory=lambda: FakeRuntime(service)))
+    knowledge_base_id = uuid4()
+
+    response = run(
+        http_request(
+            app,
+            json={
+                "query": "指定范围",
+                "knowledge_base_id": str(knowledge_base_id),
+            },
+        )
+    )
+
+    assert response.status_code == 200
+    forwarded = service.requests[0]
+    assert forwarded.knowledge_base_id == knowledge_base_id
+    assert forwarded.filters.knowledge_base_id == knowledge_base_id
 
 
 def test_document_search_http_preserves_known_upstream_error_mapping() -> None:

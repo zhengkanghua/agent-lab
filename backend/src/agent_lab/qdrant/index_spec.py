@@ -17,10 +17,7 @@ from qdrant_client.http import models
 from agent_lab.config.qdrant import QdrantSettings
 from agent_lab.config.ollama_embedding import OllamaEmbeddingSettings
 from agent_lab.pipeline.document_chunker import DocumentChunker
-
-
-class VectorIndexConfigurationError(RuntimeError):
-    """Qdrant Collection 与代码期望的索引契约不一致。"""
+from agent_lab.knowledge.domain import VectorIndexConfigurationError
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,14 +30,14 @@ class VectorIndexSpec:
     实例不可变（frozen），可在多个异步任务之间安全共享。
     """
 
-    schema_version: str = "v1"
+    schema_version: str = "v2"
     embedding_model: str = "bge-m3:567m"
     dimension: int = 1024
     distance: models.Distance = models.Distance.COSINE
     tokenizer: str = DocumentChunker.DEFAULT_ENCODING_NAME
     chunk_size: int = DocumentChunker.DEFAULT_CHUNK_SIZE
     chunk_overlap: int = DocumentChunker.DEFAULT_CHUNK_OVERLAP
-    payload_schema_version: str = "v1"
+    payload_schema_version: str = "v2"
 
     @classmethod
     def from_settings(

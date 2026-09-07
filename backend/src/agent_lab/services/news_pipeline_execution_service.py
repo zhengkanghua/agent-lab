@@ -16,19 +16,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from agent_lab.repositories.document_repository import DocumentRepository
 from agent_lab.services.document_indexing_service import (
     DocumentIndexingService,
 )
-from agent_lab.services.freshrss_import_service import FreshRSSImportService
-from agent_lab.services.freshrss_import_service import SourceSyncFailure
-from agent_lab.services.write_coordination import WriteCoordinator, ensure_write_confirmed
+from agent_lab.knowledge.importing import SourceImportService
+from agent_lab.knowledge.document_contracts import SourceSyncFailure
+from agent_lab.knowledge.ports import IndexingWorkFactory, KnowledgeWriteCoordinator
+from agent_lab.domain.write_scope import ensure_write_confirmed
 
 logger = logging.getLogger(__name__)
 
-type AsyncSessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 type UtcClock = Callable[[], datetime]
 
 
@@ -98,10 +95,10 @@ class NewsPipelineExecutionService:
 
     def __init__(
         self,
-        session_factory: AsyncSessionFactory,
+        indexing_work: IndexingWorkFactory,
         *,
         clock: UtcClock | None = None,
-        coordinator: WriteCoordinator | None = None,
+        coordinator: KnowledgeWriteCoordinator | None = None,
     ) -> None:
         """绑定 Session factory 和可测试时钟，不执行外部 I/O。
 
@@ -113,7 +110,7 @@ class NewsPipelineExecutionService:
             构造过程不执行 PostgreSQL、FreshRSS、Embedding 或 Qdrant I/O，也不写数据。
         """
 
-        self._session_factory = session_factory
+        self._indexing_work = indexing_work
         self._clock = clock or (lambda: datetime.now(UTC))
         self._coordinator = coordinator
 
@@ -122,14 +119,14 @@ class NewsPipelineExecutionService:
         return self._coordinator.hold(resources) if self._coordinator else nullcontext()
 
     async def sync_news(
-        self, import_service: FreshRSSImportService, *, limit_per_source: int,
+        self, import_service: SourceImportService, *, limit_per_source: int,
     ) -> NewsSyncExecutionResult:
         async with self.writing(("sync",)):
             return await self._sync_news(import_service, limit_per_source=limit_per_source)
 
     async def _sync_news(
         self,
-        import_service: FreshRSSImportService,
+        import_service: SourceImportService,
         *,
         limit_per_source: int,
     ) -> NewsSyncExecutionResult:
@@ -159,11 +156,7 @@ class NewsPipelineExecutionService:
 
         if limit_per_source < 1:
             raise ValueError("limit_per_source 必须大于零.")
-        async with self._session_factory() as session:
-            import_result = await import_service.import_recent_per_source(
-                session,
-                limit_per_source=limit_per_source,
-            )
+        import_result = await import_service.import_recent_per_source(limit_per_source=limit_per_source)
         logger.info(
             "FreshRSS 同步完成 sources=%d documents=%d failed_sources=%d",
             import_result.source_count,
@@ -228,8 +221,7 @@ class NewsPipelineExecutionService:
         if now.utcoffset() is None:
             raise ValueError("执行时钟必须返回一个包含时区信息的 datetime 对象。")
 
-        async with self._session_factory() as session:
-            repository = DocumentRepository(session)
+        async with self._indexing_work() as repository:
             # 1、回收「僵尸任务」：把 processing 超过阈值的文档重新放回 pending
             requeued_count = await repository.requeue_stale_processing(
                 started_before=now - stale_after,
@@ -246,8 +238,8 @@ class NewsPipelineExecutionService:
         for document_id in candidate_ids:
             ensure_write_confirmed()
             try:
-                async with self._session_factory() as session:
-                    result = await indexing_service.index_document(session, document_id)
+                async with self._indexing_work() as repository:
+                    result = await indexing_service.index_document(repository, document_id)
                 if result.indexed:
                     indexed_count += 1
                     logger.info("已索引文档 id=%s", document_id)

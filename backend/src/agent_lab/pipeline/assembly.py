@@ -8,14 +8,14 @@ from agent_lab.db.session import async_session_factory
 from agent_lab.pipeline.write_runtime import PipelineWriteRuntime
 from agent_lab.qdrant.runtime import DocumentIndexingRuntime
 from agent_lab.repositories.scheduled_job_repository import ScheduledJobStore
-from agent_lab.services.freshrss_import_service import FreshRSSImportService
+from agent_lab.knowledge.composition import build_source_import_service
 from agent_lab.services.scheduler_runner import ScheduledJobRunner
 
 
 def build_pipeline_write_runtime():
     return PipelineWriteRuntime.lazy(
         session_factory=async_session_factory,
-        freshrss_factory=lambda: FreshRSSImportService(get_freshrss_settings()),
+        freshrss_factory=lambda: build_source_import_service(get_freshrss_settings()),
         indexing_factory=lambda: DocumentIndexingRuntime.build(get_qdrant_settings(), get_ollama_embedding_settings()),
         qdrant_settings_factory=get_qdrant_settings,
     )

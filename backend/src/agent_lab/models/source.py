@@ -11,13 +11,14 @@ from uuid import UUID, uuid4
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from agent_lab.db.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from agent_lab.models.document import DocumentRecord
+    from agent_lab.models.knowledge_base import KnowledgeBaseRecord
 
 
 class SourceRecord(TimestampMixin, Base):
@@ -81,6 +82,12 @@ class SourceRecord(TimestampMixin, Base):
         nullable=True,
         comment="来源主页地址。",
     )
+    knowledge_base_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("knowledge_bases.id", ondelete="RESTRICT"),
+        nullable=True,
+        comment="来源当前绑定的 KnowledgeBase；为空表示尚未配置。",
+    )
     sync_checkpoint: Mapped[str | None] = mapped_column(
         String(128),
         nullable=True,
@@ -99,4 +106,7 @@ class SourceRecord(TimestampMixin, Base):
     # documents.source_id，删除/更新策略由该外键和业务 Service 共同控制。
     documents: Mapped[list[DocumentRecord]] = relationship(
         back_populates="source",
+    )
+    knowledge_base: Mapped[KnowledgeBaseRecord | None] = relationship(
+        back_populates="sources",
     )

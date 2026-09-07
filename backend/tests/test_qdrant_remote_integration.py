@@ -39,27 +39,30 @@ def test_remote_qdrant_alias_lifecycle_and_point_round_trip() -> None:
             base_url=base_url,
             api_key=SecretStr(api_key),
             environment=f"integration_{suffix}",
-            collection_schema_version="v1",
+            collection_schema_version="v2",
             collection_generation=1,
             vector_dimension=3,
             distance="Cosine",
         )
-        spec = VectorIndexSpec(dimension=3)
+        spec = VectorIndexSpec(dimension=3, schema_version="v2")
         client = build_qdrant_client(settings)
         lifecycle = QdrantCollectionLifecycle(client, settings, spec)
         store = QdrantChunkStore(client, settings, spec)
         document_id = str(uuid4())
+        knowledge_base_id = str(uuid4())
         chunk = Document(
             id=str(uuid4()),
             page_content="远程 Qdrant 隔离测试文本",
             metadata={
                 "document_id": document_id,
+                "knowledge_base_id": knowledge_base_id,
                 "source_id": str(uuid4()),
                 "source_provider": "integration_test",
                 "source_external_id": f"feed/{suffix}",
                 "document_external_id": f"article/{suffix}",
                 "content_hash": "a" * 64,
                 "document_type": "article",
+                "mime_type": "text/plain",
                 "title": "远程 Qdrant 集成测试新闻",
                 "url": "https://example.com/qdrant-integration",
                 "source_name": "远程集成测试来源",
@@ -85,6 +88,8 @@ def test_remote_qdrant_alias_lifecycle_and_point_round_trip() -> None:
             assert len(records) == 1
             assert records[0].vector == pytest.approx([0.6, 0.8, 0.0])
             assert records[0].payload["published_at"] == "2026-08-13T01:02:03+00:00"
+            assert records[0].payload["knowledge_base_id"] == knowledge_base_id
+            assert records[0].payload["index_schema_version"] == "v2"
         finally:
             aliases = await client.get_aliases()
             if any(alias.alias_name == settings.collection_alias for alias in aliases.aliases):

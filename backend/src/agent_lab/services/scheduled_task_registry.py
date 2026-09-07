@@ -9,8 +9,10 @@
 
 from typing import Any
 from collections.abc import Awaitable, Callable
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.services import scheduled_tasks
 
 from agent_lab.pipeline.limits import (
@@ -60,7 +62,12 @@ class IndexPendingTaskParams(BaseModel):
 
 
 class PruneOldDocumentsTaskParams(BaseModel):
-    """``prune_old_documents`` 任务的执行参数：删除超过保留期的旧新闻。"""
+    """``prune_old_documents`` 任务的执行参数：删除超过保留期的旧文档。
+
+    清理范围由 ``knowledge_base_ids`` 显式声明；缺省只解析到新闻知识库，兼容
+    旧任务配置，绝不解释为全库清理。列表中的多个库共用同一个 ``retention_days``，
+    不同保留周期需要配置多个任务实例。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -74,6 +81,24 @@ class PruneOldDocumentsTaskParams(BaseModel):
         default=True,
         description="预演模式：True 时只统计不删除，查看执行记录确认后再关闭。",
     )
+    knowledge_base_ids: list[UUID] = Field(
+        default_factory=lambda: [DEFAULT_NEWS_KNOWLEDGE_BASE_ID],
+        min_length=1,
+        description=(
+            "清理范围的 KnowledgeBase ID 列表；缺省只作用于新闻知识库。"
+            "列表中的库共用同一保留周期，空列表无法表达保留策略，被拒绝。"
+        ),
+    )
+
+    @field_validator("knowledge_base_ids")
+    @classmethod
+    def deduplicate_scope(cls, value: list[UUID]) -> list[UUID]:
+        """重复 ID 只保留首次出现，保持配置意图稳定且可审计。"""
+
+        deduplicated = list(dict.fromkeys(value))
+        if not deduplicated:
+            raise ValueError("清理范围至少要包含一个知识库。")
+        return deduplicated
 
 
 class TaskTypeSpec:
@@ -117,7 +142,7 @@ class TaskTypeSpec:
 
         if raw is None:
             raw = {}
-        return self.params_model.model_validate(raw).model_dump()
+        return self.params_model.model_validate(raw).model_dump(mode="json")
 
 
 TASK_TYPE_SPECS: dict[str, TaskTypeSpec] = {
@@ -137,7 +162,7 @@ TASK_TYPE_SPECS: dict[str, TaskTypeSpec] = {
         ),
         TaskTypeSpec(
             task_type="prune_old_documents",
-            description="数据保留策略：删除发布时间超过保留期的旧新闻及其向量索引（默认预演模式）。",
+            description="数据保留策略：删除指定知识库中发布时间超过保留期的旧文档及其向量索引（默认预演模式，缺省只清理新闻库）。",
             params_model=PruneOldDocumentsTaskParams,
             execute=scheduled_tasks.prune_old_documents,
         ),

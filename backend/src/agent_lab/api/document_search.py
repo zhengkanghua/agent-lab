@@ -20,6 +20,7 @@ from agent_lab.api.error_contract import (
     VectorSearchErrorResponse,
     build_vector_search_error_response,
 )
+from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.schemas.document_search import (
     DocumentSearchRequest,
     DocumentSearchResult,
@@ -42,6 +43,8 @@ router = APIRouter(tags=["document-search"])
         "GET /documents/{document_id}。"
     ),
     responses={
+        status.HTTP_404_NOT_FOUND: {"model": VectorSearchErrorResponse, "description": "知识库不存在。"},
+        status.HTTP_409_CONFLICT: {"model": VectorSearchErrorResponse, "description": "知识库已停用。"},
         status.HTTP_502_BAD_GATEWAY: {
             "model": VectorSearchErrorResponse,
             "description": "Embedding 或 Qdrant 上游响应失败。",
@@ -85,7 +88,14 @@ async def document_search(
     """
 
     try:
-        return await service.search_documents(search_request)
+        # 兼容旧 HTTP 调用方：缺省范围固定解析到 news，并同时写入过滤器。
+        # 归一化只发生在边界层，内部 Service 不会对无范围调用暗加新闻条件。
+        scoped_request = search_request.with_knowledge_base_scope(
+            search_request.knowledge_base_id
+            or search_request.filters.knowledge_base_id
+            or DEFAULT_NEWS_KNOWLEDGE_BASE_ID
+        )
+        return await service.search_documents(scoped_request)
     except SEARCH_UPSTREAM_EXCEPTIONS as exc:
         # 只记录稳定异常类型；错误映射函数不会读取第三方异常文本。
         logger.warning("文档检索上游故障：%s", type(exc).__name__)

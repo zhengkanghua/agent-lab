@@ -5,6 +5,7 @@ LangChain 的 ``Document``。它负责隔离 FreshRSS、BLS、SEC 等外部格�
 """
 
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator
 
@@ -46,9 +47,17 @@ class SourceDocument(BaseModel):
         min_length=1,
         description="文档在数据提供方中的唯一标识。",
     )
+    knowledge_base_id: UUID | None = Field(
+        default=None,
+        description="导入目标 KnowledgeBase；来源发现阶段尚未绑定时为空。",
+    )
     document_type: DocumentType = Field(
         default=DocumentType.ARTICLE,
         description="文档业务类型，用于后续过滤和选择处理规则。",
+    )
+    mime_type: str = Field(
+        default="text/plain", min_length=1,
+        description="文档内容格式，与业务类型独立；规范化的 FreshRSS 正文为 text/plain。",
     )
     title: str = Field(min_length=1, description="文档标题。")
     url: AnyHttpUrl = Field(description="文档原始页面地址。")

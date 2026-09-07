@@ -18,7 +18,7 @@ LangChain Document Chunk (多个，可检索)
 
 from langchain_core.documents import Document
 
-from agent_lab.models.document import DocumentRecord
+from agent_lab.knowledge.document_contracts import DocumentSnapshot
 from agent_lab.pipeline.document_builder import DocumentBuilder
 from agent_lab.pipeline.document_chunker import DocumentChunker
 
@@ -75,12 +75,11 @@ class DocumentChunkPipeline:
 
         return self._document_chunker.encoding_name
 
-    def build_chunks(self, record: DocumentRecord) -> list[Document]:
-        """把一条已加载来源关系的 ORM 文档转换为 Chunk 列表。
+    def build_chunks(self, record: DocumentSnapshot) -> list[Document]:
+        """把纯文档快照转换为 Chunk 列表。
 
         Args:
-            record: ``documents`` 表实体。调用方查询时必须提前加载 ``source``
-                relationship；本同步方法不会补发数据库查询。
+            record: 当前正文和来源元数据的独立快照，本方法不会发起数据库查询。
 
         Returns:
             按原文顺序排列的 LangChain Chunk Document 列表。ID、父子关系和

@@ -1,6 +1,5 @@
 """旧 Document 的有游标遍历和删除意图，事务均在网络调用前后结束。"""
 
-from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
@@ -9,23 +8,29 @@ from sqlalchemy import delete, exists, func, select, tuple_, update
 from agent_lab.domain.enums import ProcessingStatus
 from agent_lab.models.document import DocumentRecord
 from agent_lab.models.write_operation import DocumentDeletionRecord
+from agent_lab.knowledge.document_contracts import DocumentDeletion, RetentionCandidate
 
 
-@dataclass(frozen=True)
-class RetentionCandidate:
-    document_id: UUID
-    revision: int
-    retention_date: datetime
+def _deletion_snapshot(record: DocumentDeletionRecord) -> DocumentDeletion:
+    return DocumentDeletion(record.document_id, record.revision, record.cutoff_date, record.retention_date, record.qdrant_deleted)
 
 
 class DocumentRetentionRepository:
     def __init__(self, session) -> None:
         self._session = session
 
-    async def candidates(self, cutoff: datetime, after: RetentionCandidate | None, limit: int):
+    async def candidates(
+        self,
+        cutoff: datetime,
+        after: RetentionCandidate | None,
+        limit: int,
+        *,
+        knowledge_base_ids: tuple[UUID, ...],
+    ):
         retention_date = func.coalesce(DocumentRecord.published_at, DocumentRecord.created_at)
         statement = select(DocumentRecord.id, DocumentRecord.index_revision, retention_date).where(
             DocumentRecord.processing_status == ProcessingStatus.INDEXED,
+            DocumentRecord.knowledge_base_id.in_(knowledge_base_ids),
             retention_date < cutoff,
             ~exists().where(DocumentDeletionRecord.document_id == DocumentRecord.id),
         )
@@ -36,14 +41,28 @@ class DocumentRetentionRepository:
         await self._session.rollback()
         return result
 
-    async def pending(self, after: UUID | None, limit: int):
-        statement = select(DocumentDeletionRecord).order_by(DocumentDeletionRecord.document_id).limit(limit)
+    async def pending(
+        self,
+        after: UUID | None,
+        limit: int,
+        *,
+        knowledge_base_ids: tuple[UUID, ...],
+    ):
+        # 意图表本身没有归属字段，恢复范围经 document_id 回联归属行限定：
+        # 范围外的未完成意图不会被本次任务处理，留给覆盖该库的实例恢复。
+        statement = (
+            select(DocumentDeletionRecord)
+            .join(DocumentRecord, DocumentRecord.id == DocumentDeletionRecord.document_id)
+            .where(DocumentRecord.knowledge_base_id.in_(knowledge_base_ids))
+            .order_by(DocumentDeletionRecord.document_id)
+            .limit(limit)
+        )
         if after is not None:
             statement = statement.where(DocumentDeletionRecord.document_id > after)
         records = list((await self._session.scalars(statement)).all())
-        self._session.expunge_all()
+        snapshots = [_deletion_snapshot(record) for record in records]
         await self._session.rollback()
-        return records
+        return snapshots
 
     async def prepare(self, candidates: list[RetentionCandidate], cutoff: datetime):
         """复核状态与版本，先提交意图；之后同步/索引不得修改这些目标。"""
@@ -64,10 +83,9 @@ class DocumentRetentionRepository:
                 self._session.add(record)
                 records.append(record)
         await self._session.commit()
-        self._session.expunge_all()
-        return records
+        return [_deletion_snapshot(record) for record in records]
 
-    async def finish(self, records: list[DocumentDeletionRecord]) -> int:
+    async def finish(self, records: list[DocumentDeletion]) -> int:
         """Qdrant 已确认删除后，条件删除 Document 并移除待办；不盲删新版。"""
         count = 0
         for record in records:
@@ -86,14 +104,14 @@ class DocumentRetentionRepository:
         await self._session.commit()
         return count
 
-    async def mark_qdrant_deleted(self, records: list[DocumentDeletionRecord]) -> None:
+    async def mark_qdrant_deleted(self, records: list[DocumentDeletion]) -> None:
         """在独立短事务保存远端确认，数据库删除失败后仍能识别这一步。"""
         await self._session.execute(update(DocumentDeletionRecord).where(
             DocumentDeletionRecord.document_id.in_([record.document_id for record in records]),
         ).values(qdrant_deleted=True))
         await self._session.commit()
 
-    async def verify(self, records: list[DocumentDeletionRecord]) -> None:
+    async def verify(self, records: list[DocumentDeletion]) -> None:
         """恢复待办也先核实当前数据；互斥保护持续到网络删除与数据库收尾结束。"""
         for record in records:
             document = await self._session.scalar(select(DocumentRecord).where(

@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 
 from agent_lab.config.qdrant import QdrantSettings
 from agent_lab.domain.enums import ProcessingStatus
+from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.models.document import DocumentRecord
 from agent_lab.models.write_operation import DocumentDeletionRecord
 from agent_lab.qdrant.lifecycle import build_qdrant_client
@@ -36,7 +37,7 @@ def test_remote_delete_then_postgres_failure_recovers_without_orphan_points(isol
         pytest.fail("必须显式指定 SCHEDULER_TEST_QDRANT_URL。", pytrace=False)
     settings = QdrantSettings(
         _env_file=None, base_url=url, api_key=os.environ.get("SCHEDULER_TEST_QDRANT_API_KEY", ""),
-        environment=f"scheduler_test_{uuid4().hex}", collection_schema_version="v1",
+        environment=f"scheduler_test_{uuid4().hex}", collection_schema_version="v2",
         collection_generation=1, vector_dimension=2, distance="Cosine", write_batch_size=50,
     )
 
@@ -55,7 +56,7 @@ def test_remote_delete_then_postgres_failure_recovers_without_orphan_points(isol
             await client.update_collection_aliases([models.CreateAliasOperation(create_alias=models.CreateAlias(collection_name=settings.collection_name, alias_name=settings.collection_alias))])
             aliased = True
             await client.create_payload_index(settings.collection_alias, "document_id", models.PayloadSchemaType.KEYWORD, wait=True)
-            await client.upsert(settings.collection_alias, [models.PointStruct(id=str(uuid4()), vector=[1.0, 0.0], payload={"document_id": str(document.id)}) for document in documents for _ in range(2)], wait=True)
+            await client.upsert(settings.collection_alias, [models.PointStruct(id=str(uuid4()), vector=[1.0, 0.0], payload={"document_id": str(document.id), "knowledge_base_id": str(document.knowledge_base_id)}) for document in documents for _ in range(2)], wait=True)
             store = QdrantDeletionStore(client, settings)
             coordinator = WriteCoordinator(sessions)
 
@@ -65,7 +66,7 @@ def test_remote_delete_then_postgres_failure_recovers_without_orphan_points(isol
 
             async with coordinator.hold(("sync", "index")):
                 async with sessions() as session:
-                    result = await DocumentRetentionService(FailingFinish(session), store, clock=lambda: now).prune_old_documents(180, False)
+                    result = await DocumentRetentionService(FailingFinish(session), store, clock=lambda: now).prune_old_documents(180, False, knowledge_base_ids=(DEFAULT_NEWS_KNOWLEDGE_BASE_ID,))
                     assert result.documents_deleted == 0 and result.qdrant_points_deleted == 6
                     assert await session.scalar(select(func.count()).select_from(DocumentRecord)) == 3
                     intents = (await session.scalars(select(DocumentDeletionRecord))).all()
@@ -73,7 +74,7 @@ def test_remote_delete_then_postgres_failure_recovers_without_orphan_points(isol
             assert await store.count_by_document_ids([str(item.id) for item in documents]) == 0
             async with coordinator.hold(("sync", "index")):
                 async with sessions() as session:
-                    resumed = await DocumentRetentionService(DocumentRetentionRepository(session), store, clock=lambda: now).prune_old_documents(180, False)
+                    resumed = await DocumentRetentionService(DocumentRetentionRepository(session), store, clock=lambda: now).prune_old_documents(180, False, knowledge_base_ids=(DEFAULT_NEWS_KNOWLEDGE_BASE_ID,))
                     assert resumed.documents_deleted == 3 and resumed.qdrant_points_deleted == 0
                     assert await session.scalar(select(func.count()).select_from(DocumentRecord)) == 0
                     assert await session.scalar(select(func.count()).select_from(DocumentDeletionRecord)) == 0

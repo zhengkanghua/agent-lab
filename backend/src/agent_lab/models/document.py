@@ -32,6 +32,7 @@ from agent_lab.domain.enums import DocumentType, ProcessingStatus
 
 if TYPE_CHECKING:
     from agent_lab.models.source import SourceRecord
+    from agent_lab.models.knowledge_base import KnowledgeBaseRecord
 
 
 def enum_values(enum_class: type[DocumentType] | type[ProcessingStatus]) -> list[str]:
@@ -69,7 +70,7 @@ class DocumentRecord(TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint(
             "document_type IN ('article', 'press_release', 'economic_release', "
-            "'filing', 'research_report', 'policy_document')",
+            "'filing', 'research_report', 'policy_document', 'other')",
             name="ck_documents_document_type",
         ),
         CheckConstraint(
@@ -100,16 +101,22 @@ class DocumentRecord(TimestampMixin, Base):
         default=uuid4,
         comment="Python 服务生成的文档主键。",
     )
-    source_id: Mapped[UUID] = mapped_column(
+    knowledge_base_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("knowledge_bases.id", ondelete="RESTRICT"),
+        nullable=False,
+        comment="Document 实际归属的 KnowledgeBase。",
+    )
+    source_id: Mapped[UUID | None] = mapped_column(
         Uuid,
         ForeignKey("sources.id", ondelete="RESTRICT"),
-        nullable=False,
-        comment="关联 sources.id。",
+        nullable=True,
+        comment="可选的外部来源；人工或文件 Document 可以为空。",
     )
-    external_id: Mapped[str] = mapped_column(
+    external_id: Mapped[str | None] = mapped_column(
         String(512),
-        nullable=False,
-        comment="文档在来源中的唯一标识，例如 FreshRSS article id。",
+        nullable=True,
+        comment="可选的来源内稳定外部标识。",
     )
     document_type: Mapped[DocumentType] = mapped_column(
         Enum(
@@ -125,7 +132,11 @@ class DocumentRecord(TimestampMixin, Base):
         comment="文档类型，以受代码约束的字符串保存。",
     )
     title: Mapped[str] = mapped_column(Text, nullable=False, comment="文档标题。")
-    url: Mapped[str] = mapped_column(Text, nullable=False, comment="原始文档地址。")
+    url: Mapped[str | None] = mapped_column(Text, nullable=True, comment="可选原始文档地址。")
+    mime_type: Mapped[str] = mapped_column(
+        String(127), nullable=False, default="text/plain", server_default="text/plain",
+        comment="文档内容格式，例如 text/plain、application/pdf。",
+    )
     published_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
@@ -218,4 +229,5 @@ class DocumentRecord(TimestampMixin, Base):
 
     # relationship 只描述 ORM 对象导航，不会新增数据库列；真正的数据库关联由
     # source_id 外键承担。Pipeline 使用该属性前必须 eager-load，避免异步懒加载。
-    source: Mapped[SourceRecord] = relationship(back_populates="documents")
+    source: Mapped[SourceRecord | None] = relationship(back_populates="documents")
+    knowledge_base: Mapped[KnowledgeBaseRecord] = relationship()

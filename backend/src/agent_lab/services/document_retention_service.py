@@ -4,10 +4,12 @@ import logging
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 from agent_lab.domain.write_scope import WriteRecoveryRequiredError
-from agent_lab.repositories.document_retention_repository import DocumentRetentionRepository
-from agent_lab.services.write_coordination import ensure_write_confirmed
+from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
+from agent_lab.knowledge.ports import DeletionStore, RetentionRepository
+from agent_lab.domain.write_scope import ensure_write_confirmed
 
 logger = logging.getLogger(__name__)
 
@@ -39,13 +41,26 @@ class PruneResult:
 class DocumentRetentionService:
     """持有一次清理的 Repository 与公开 Qdrant 删除能力，不装配依赖。"""
 
-    def __init__(self, repository: DocumentRetentionRepository, qdrant_store, *, clock=None) -> None:
+    def __init__(self, repository: RetentionRepository, qdrant_store: DeletionStore, *, clock=None) -> None:
         self._repository = repository
         self._qdrant_store = qdrant_store
         self._clock = clock or (lambda: datetime.now(UTC))
         self._batch_size = 50
 
-    async def prune_old_documents(self, retention_days: int, dry_run: bool = True) -> PruneResult:
+    async def prune_old_documents(
+        self,
+        retention_days: int,
+        dry_run: bool = True,
+        *,
+        knowledge_base_ids: tuple[UUID, ...] = (DEFAULT_NEWS_KNOWLEDGE_BASE_ID,),
+    ) -> PruneResult:
+        """只清理 ``knowledge_base_ids`` 列出的知识库；范围外的文档不受本策略影响。
+
+        缺省范围是新闻知识库，兼容旧调用方；恢复删除意图与挑选新目标使用同一个
+        范围，范围外的未完成意图保留等待对应范围的任务实例处理。
+        """
+        if not knowledge_base_ids:
+            raise ValueError("清理范围至少要包含一个知识库。")
         if not 30 <= retention_days <= 730:
             raise ValueError("retention_days 必须介于 30 和 730 之间。")
         cutoff = self._clock() - timedelta(days=retention_days)
@@ -97,14 +112,19 @@ class DocumentRetentionService:
                     raise
 
         # 先恢复上次未完成的意图；预演绝不写意图，也不执行恢复删除。
+        # 范围过滤保证「参数外的库永远不会被本次任务处理」也适用于意图恢复。
         if not dry_run:
             after_id = None
-            while records := await self._repository.pending(after_id, self._batch_size):
+            while records := await self._repository.pending(
+                after_id, self._batch_size, knowledge_base_ids=knowledge_base_ids
+            ):
                 after_id = records[-1].document_id
                 await process(records)
 
         after = None
-        while candidates := await self._repository.candidates(cutoff, after, self._batch_size):
+        while candidates := await self._repository.candidates(
+            cutoff, after, self._batch_size, knowledge_base_ids=knowledge_base_ids
+        ):
             after = candidates[-1]
             records = candidates if dry_run else await self._repository.prepare(candidates, cutoff)
             await process(records)

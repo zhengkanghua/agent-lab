@@ -2,12 +2,12 @@
 
 先分清两个概念（本项目最重要的设计之一）：
 - 物理 Collection：真正保存 Point/向量/Payload 的地方，名字带版本号
-  （news_chunks_langchain_v1_001）；
-- current Alias：一个「指针/别名」，应用永远通过它读写，部署时统一切换到新的
+  （knowledge_chunks_dev_v2_001）；
+- current Alias：一个「指针/别名」，日常应用通过它读写，部署时统一切换到新的
   物理 Collection，实现零停机的索引重建。
 
-本模块是「唯一」允许操作物理 Collection 名称的边界：负责创建/校验 Collection、
-建 Payload 过滤索引、原子切换 Alias。它不写新闻 Point、不生成 Embedding、不搜索、
+本模块负责创建/校验物理 Collection、建 Payload 过滤索引、原子切换 Alias；
+重建适配器另外向尚未发布的物理目标写入并验收 Point。本模块不生成 Embedding、不搜索、
 不改 PostgreSQL processing_status。
 """
 
@@ -36,6 +36,9 @@ PAYLOAD_INDEX_SCHEMAS: Mapping[str, models.PayloadSchemaType] = {
     # Qdrant 的 grouped query 要求 group_by 字段具备 keyword/integer 索引；
     # Payload 仍保存规范化 UUID 字符串，keyword 同时支持按文档精确过滤。
     "document_id": models.PayloadSchemaType.KEYWORD,
+    # 归属过滤字段：普通检索与清理都按 knowledge_base_id 精确匹配，共享 Collection
+    # 依赖这个索引避免全表扫描；语义与 source_id 相同，使用 UUID 索引。
+    "knowledge_base_id": models.PayloadSchemaType.UUID,
     "source_id": models.PayloadSchemaType.UUID,
     "source_provider": models.PayloadSchemaType.KEYWORD,
     "document_type": models.PayloadSchemaType.KEYWORD,
@@ -79,9 +82,8 @@ def build_qdrant_client(settings: QdrantSettings) -> AsyncQdrantClient:
 class QdrantCollectionLifecycle:
     """集中执行物理 Collection 创建、规格校验和 current Alias 切换。
 
-    核心约束：应用运行时（写 Point / 搜索）只能使用 Alias；只有本类在创建/重建时
-    直接使用物理 Collection 名。这样「数据去哪了、Alias 指向谁」只有一个地方能改，
-    其他地方想绕过也绕不过（拿不到物理名）。
+    日常写入和搜索使用 Alias；显式重建适配器可以向未发布的物理目标写 Point，
+    验收后由本类切换 Alias。
     实例可复用；每个方法的 Qdrant 网络 I/O 都是异步的，不做 PostgreSQL/Embedding I/O。
     """
 
@@ -115,12 +117,16 @@ class QdrantCollectionLifecycle:
 
         return self._settings.collection_alias
 
+    async def current_target(self) -> str | None:
+        """只读当前已发布目标，供重建入口核对发布期间的外部变更。"""
+        return await self._alias_target(self.collection_alias)
+
     async def ensure_current_collection(self) -> str:
         """创建或校验当前物理 Collection，并确保 current Alias 正确指向它。
 
         基本逻辑：
             1. 查询 current Alias 当前指向哪个物理 Collection
-            2. 如果 Alias 指向了错误的 Collection，报冲突
+            2. Alias 已存在时校验并跟随其目标，允许同规格的新 generation
             3. 检查目标物理 Collection 是否存在
             4. 不存在：创建 Collection
             5. 存在：读取 Collection 配置并校验
@@ -132,7 +138,6 @@ class QdrantCollectionLifecycle:
             当前物理 Collection 名称；调用方通常不应使用它进行业务读写。
 
         Raises:
-            QdrantAliasConflictError: current Alias 已指向另一 Collection。
             QdrantLifecycleError: 创建、读取、索引或 Alias 操作失败。
             VectorIndexConfigurationError: 已有 Collection 的规格不匹配。
 
@@ -141,18 +146,16 @@ class QdrantCollectionLifecycle:
             和 Payload index；后续调用只校验，不会删除或重建已有数据。
         """
 
-        # 1、查 current Alias 现在指向谁；指向了别的 Collection → 冲突，显式报错
+        # 1、优先使用已发布目标，规格不兼容时由校验明确拒绝。
         alias_target = await self._alias_target(self.collection_alias)
-        if alias_target is not None and alias_target != self.collection_name:
-            raise QdrantAliasConflictError(
-                f"Alias {self.collection_alias!r} 指向 {alias_target!r}，"
-                f"而不是期望的 {self.collection_name!r}。"
-            )
+        if alias_target is not None:
+            # 同规格重建后跟随已发布目标；不要求长期运行进程同步更新 generation 配置。
+            await self.ensure_collection(alias_target)
+            return alias_target
         # 2、创建（或校验）物理 Collection + Payload index
         await self.ensure_collection(self.collection_name)
         # 3、Alias 还没建过 → 创建它指向物理 Collection（幂等：已指向就直接用）
-        if alias_target is None:
-            await self._create_alias(self.collection_alias, self.collection_name)
+        await self._create_alias(self.collection_alias, self.collection_name)
         return self.collection_name
 
     async def ensure_collection(self, collection_name: str) -> None:

@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 
 from agent_lab.config.scheduler import SchedulerSettings
+from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.schemas.scheduled_jobs import JobRunResponse
 from agent_lab.services.scheduled_job_service import ScheduledJobService
 from agent_lab.services.scheduled_task_errors import (
@@ -26,7 +27,10 @@ def test_retention_uses_registered_execution_with_boolean_dry_run():
         runner = make_runner(store, runtime)
         run_id = await runner.trigger_now(job)
         await runner.close()
-        runtime.prune_old_documents.assert_awaited_once_with(retention_days=180, dry_run=True)
+        # 缺省范围的旧任务参数规范化后固定解析到新闻库，不扩大为全库清理。
+        runtime.prune_old_documents.assert_awaited_once_with(
+            retention_days=180, dry_run=True, knowledge_base_ids=[DEFAULT_NEWS_KNOWLEDGE_BASE_ID]
+        )
         assert store.find(run_id).stats["dry_run"] is True
         assert runtime.closed and not runtime.index_calls and not runtime.sync_calls
     asyncio.run(scenario())

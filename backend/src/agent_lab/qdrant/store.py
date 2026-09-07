@@ -15,7 +15,6 @@ Embedding、不修改 PostgreSQL 状态；完整状态编排由上层 DocumentIn
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
 from numbers import Real
 from typing import Any
 from uuid import UUID
@@ -28,24 +27,11 @@ from agent_lab.config.qdrant import QdrantSettings
 from agent_lab.qdrant.index_spec import VectorIndexSpec
 from agent_lab.qdrant.payload import QdrantPayloadMapper
 from agent_lab.domain.write_scope import remote_write
+from agent_lab.knowledge.document_contracts import ReplaceChunksResult
 
 
 class QdrantPointStoreError(RuntimeError):
     """Point upsert、扫描或删除失败，或数据不符合 Qdrant 写入契约。"""
-
-
-@dataclass(frozen=True, slots=True)
-class ReplaceChunksResult:
-    """记录一次单篇新闻替换操作实际 upsert 和删除的 Point ID。
-
-    结果只存在于当前索引任务内存中，不保存 Vector 或 Payload；它用于 Service 报告和
-    测试幂等行为，不能当作 Qdrant 事务日志。只有方法无异常返回时，ID 元组才表示
-    current Alias 下本次已确认完成的操作。
-    """
-
-    document_id: str
-    upserted_ids: tuple[str, ...]
-    deleted_ids: tuple[str, ...]
 
 
 class QdrantDeletionStore:
@@ -108,6 +94,8 @@ class QdrantChunkStore:
         settings: QdrantSettings,
         spec: VectorIndexSpec,
         payload_mapper: QdrantPayloadMapper | None = None,
+        *,
+        rebuild_collection: str | None = None,
     ) -> None:
         """绑定 Qdrant client，并锁定 Alias、维度和 Payload 映射规则。
 
@@ -122,7 +110,10 @@ class QdrantChunkStore:
         self._settings = settings
         self._spec = spec
         self._payload_mapper = payload_mapper or QdrantPayloadMapper(spec)
-        self._collection_alias = settings.collection_alias
+        # 只有重建适配器提供物理目标；普通装配固定使用 current Alias。
+        if rebuild_collection is not None and rebuild_collection != settings.collection_name:
+            raise ValueError("重建目标必须是配置中的独立 generation。")
+        self._collection_alias = rebuild_collection or settings.collection_alias
 
     @property
     def collection_name(self) -> str:

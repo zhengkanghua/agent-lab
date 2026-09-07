@@ -23,7 +23,7 @@ class SourceRepository:
 
     实例与调用方事务工作单元同生命周期，不跨并发任务共享。``provider + external_id``
     是来源唯一键；实际来源变化会让已有文档重新排队，完全相同同步保持 updated_at 和
-    revision 不变。Repository 不提交事务，由上层 FreshRSSImportService 统一提交或回滚。
+    revision 不变。Repository 不提交事务，由上层 SourceImportService 工作单元提交或回滚。
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -138,6 +138,14 @@ class SourceRepository:
             SourceRecord.external_id == external_id,
         )
         return await self._session.scalar(statement)
+
+    async def get_for_update(self, source_id: UUID) -> SourceRecord | None:
+        """写入页面前取得当前绑定，行锁覆盖后续 checkpoint 提交。"""
+
+        return await self._session.scalar(
+            select(SourceRecord).where(SourceRecord.id == source_id)
+            .with_for_update().execution_options(populate_existing=True)
+        )
 
     async def update_sync_checkpoint(
         self,

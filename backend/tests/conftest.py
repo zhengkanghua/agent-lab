@@ -12,6 +12,7 @@ INTEGRATION_SWITCHES = {
     "test_ollama_embedding_integration.py": "RUN_OLLAMA_INTEGRATION_TEST",
     "test_qdrant_remote_integration.py": "RUN_QDRANT_REMOTE_INTEGRATION_TEST",
     "test_scheduler_postgres_integration.py": "RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST",
+    "test_knowledge_postgres_integration.py": "RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST",
     "test_scheduler_retention_integration.py": "RUN_SCHEDULER_QDRANT_INTEGRATION_TEST",
     "test_agent_thread_ownership_integration.py": "RUN_POSTGRES_AGENT_THREAD_INTEGRATION_TEST",
 }

@@ -29,6 +29,8 @@ from agent_lab.domain.enums import ProcessingStatus
 from agent_lab.domain.source_document import SourceDocument, SourceInfo
 from agent_lab.domain.write_scope import DocumentDeletionPendingError
 from agent_lab.models.document import DocumentRecord
+from agent_lab.models.knowledge_base import KnowledgeBaseRecord
+from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.models.scheduled_job import JobRunRecord, ScheduledJobRecord
 from agent_lab.models.source import SourceRecord
 from agent_lab.models.write_operation import DocumentDeletionRecord, WriteOperationRecord
@@ -74,8 +76,11 @@ def isolated_database():
     async def create():
         async with engine.begin() as connection:
             await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
-            tables = [model.__table__ for model in (SourceRecord, DocumentRecord, ScheduledJobRecord, JobRunRecord, WriteOperationRecord, DocumentDeletionRecord)]
+            tables = [model.__table__ for model in (KnowledgeBaseRecord, SourceRecord, DocumentRecord, ScheduledJobRecord, JobRunRecord, WriteOperationRecord, DocumentDeletionRecord)]
             await connection.run_sync(lambda sync: Base.metadata.create_all(sync, tables=tables))
+            await connection.execute(KnowledgeBaseRecord.__table__.insert().values(
+                id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID, key="news", name="新闻", is_active=True,
+            ))
 
     async def cleanup():
         try:
@@ -479,14 +484,14 @@ def test_cleanup_waits_for_index_and_blocks_new_sync(isolated_database):
         output.join_thread()
 
 
-async def seed_documents(sessions, dates_and_statuses):
+async def seed_documents(sessions, dates_and_statuses, *, knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID):
     """只创建合成来源与 Document；调用方的 schema 完全隔离。"""
     async with sessions() as session:
-        source = SourceRecord(id=uuid4(), provider="synthetic", external_id=uuid4().hex, name="Synthetic")
+        source = SourceRecord(id=uuid4(), provider="synthetic", external_id=uuid4().hex, name="Synthetic", knowledge_base_id=knowledge_base_id)
         session.add(source)
         await session.flush()
         documents = [DocumentRecord(
-            id=uuid4(), source_id=source.id, external_id=str(index), title="Synthetic",
+            id=uuid4(), knowledge_base_id=knowledge_base_id, source_id=source.id, external_id=str(index), title="Synthetic",
             url="https://example.invalid/test", content_text="synthetic body", content_hash="a" * 64,
             published_at=published, created_at=created, processing_status=status,
             index_revision=1, indexed_revision=1 if status == ProcessingStatus.INDEXED else None,
@@ -511,27 +516,29 @@ def test_retention_boundaries_pending_guards_and_conditional_finish(isolated_dat
         ])
         async with db.sessions() as session:
             repository = DocumentRetentionRepository(session)
-            first = await repository.candidates(cutoff, None, 1)
-            second = await repository.candidates(cutoff, first[-1], 1)
+            scope = (DEFAULT_NEWS_KNOWLEDGE_BASE_ID,)
+            first = await repository.candidates(cutoff, None, 1, knowledge_base_ids=scope)
+            second = await repository.candidates(cutoff, first[-1], 1, knowledge_base_ids=scope)
             assert {candidate.document_id for candidate in first + second} == {item.id for item in documents[:2]}
-            assert await repository.candidates(cutoff, second[-1], 1) == []
+            assert await repository.candidates(cutoff, second[-1], 1, knowledge_base_ids=scope) == []
             intents = await repository.prepare(first + second, cutoff)
             target = documents[0]
+            target_id = target.id
             source = await session.get(SourceRecord, target.source_id)
             incoming = SourceDocument(external_id=target.external_id, title="Changed", url=target.url, content_text="new body", source=SourceInfo(provider=source.provider, external_id=source.external_id, name=source.name))
             with pytest.raises(DocumentDeletionPendingError):
-                await DocumentRepository(session).upsert(incoming, source_id=target.source_id)
+                await DocumentRepository(session).upsert(incoming, source_id=target.source_id, knowledge_base_id=target.knowledge_base_id)
             await session.rollback()
             # 模拟一个绕过正式入口的状态/版本变化，验证恢复仍不会盲删。
-            await session.execute(update(DocumentRecord).where(DocumentRecord.id == target.id).values(index_revision=2, processing_status=ProcessingStatus.FAILED))
+            await session.execute(update(DocumentRecord).where(DocumentRecord.id == target_id).values(index_revision=2, processing_status=ProcessingStatus.FAILED))
             await session.commit()
-            assert target.id not in await DocumentRepository(session).list_index_candidate_ids(limit=20)
-            assert not await DocumentRepository(session).claim_for_indexing(document_id=target.id, expected_revision=2)
+            assert target_id not in await DocumentRepository(session).list_index_candidate_ids(limit=20)
+            assert not await DocumentRepository(session).claim_for_indexing(document_id=target_id, expected_revision=2)
             with pytest.raises(RuntimeError):
                 await repository.verify(intents)
             with pytest.raises(RuntimeError):
                 await repository.finish(intents)
             await session.rollback()
-            assert await session.get(DocumentRecord, target.id) is not None
+            assert await session.get(DocumentRecord, target_id) is not None
             assert await session.scalar(select(func.count()).select_from(DocumentDeletionRecord)) == 2
     run(verify())

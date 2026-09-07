@@ -31,11 +31,14 @@ from agent_lab.api.agent_chat import router as agent_chat_router
 from agent_lab.api.agent_threads import router as agent_threads_router
 from agent_lab.api.auth import router as auth_router
 from agent_lab.api.health import router as health_router
+from agent_lab.api.knowledge_bases import router as knowledge_bases_router
+from agent_lab.api.sources import router as sources_router
 from agent_lab.api.document_search import router as document_search_router
 from agent_lab.api.documents import router as documents_router
 from agent_lab.api.dependencies import VectorSearchRuntimeUnavailableError
 from agent_lab.api.error_contract import (
     build_agent_chat_error_response,
+    build_knowledge_base_error_response,
     build_vector_search_error_response,
 )
 from agent_lab.api.pipeline import router as pipeline_router
@@ -55,6 +58,7 @@ from agent_lab.config.qdrant import get_qdrant_settings
 from agent_lab.config.scheduler import get_scheduler_settings
 from agent_lab.config.settings import get_settings
 from agent_lab.db.session import async_session_factory, engine
+from agent_lab.knowledge.domain import KnowledgeBaseError
 from agent_lab.pipeline.write_runtime import PipelineWriteRuntime
 from agent_lab.qdrant.runtime import VectorSearchRuntime
 from agent_lab.services.scheduler_runner import ScheduledJobRunner
@@ -77,6 +81,10 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "health",
         "description": "只检查应用与 PostgreSQL 基础连接，不访问 Ollama 或 Qdrant。",
+    },
+    {
+        "name": "knowledge-bases",
+        "description": "知识库配置列表与超级用户创建、编辑和启停管理。",
     },
     {
         "name": "vector-search",
@@ -136,9 +144,12 @@ def build_vector_search_runtime() -> VectorSearchRuntime:
         只读取本地配置并构造 client，不执行 PostgreSQL、Ollama/Embedding 或 Qdrant I/O。
     """
 
+    from agent_lab.knowledge.composition import build_knowledge_base_service
+
     return VectorSearchRuntime.build(
         get_qdrant_settings(),
         get_ollama_embedding_settings(),
+        knowledge_base_scope=build_knowledge_base_service(),
     )
 
 
@@ -509,7 +520,15 @@ def create_app(
 
         return build_agent_chat_error_response(error)
 
+    @application.exception_handler(KnowledgeBaseError)
+    async def knowledge_base_error(_request: Request, error: KnowledgeBaseError) -> JSONResponse:
+        """把内部组件的预期失败转换为脱敏 HTTP 契约。"""
+
+        return build_knowledge_base_error_response(error)
+
     application.include_router(auth_router)
+    application.include_router(knowledge_bases_router)
+    application.include_router(sources_router, dependencies=[Depends(current_superuser)])
     application.include_router(health_router)
     application.include_router(
         vector_search_router,
