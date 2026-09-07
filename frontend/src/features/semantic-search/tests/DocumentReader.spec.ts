@@ -6,6 +6,7 @@ import DocumentReader from '../components/DocumentReader.vue'
 
 const result = {
   documentId: '20000000-0000-4000-8000-000000000001',
+  knowledgeBaseId: '10000000-0000-4000-8000-000000000010',
   contentHash: 'a'.repeat(64),
   title: '政策利率维持不变',
   url: 'https://example.com/news',
@@ -27,6 +28,7 @@ const result = {
 
 const detail = {
   documentId: result.documentId,
+  knowledgeBaseId: result.knowledgeBaseId,
   contentHash: 'b'.repeat(64),
   revision: 2,
   title: result.title,

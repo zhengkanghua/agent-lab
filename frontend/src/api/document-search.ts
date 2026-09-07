@@ -89,10 +89,12 @@ function isDocumentSearchResultDto(value: unknown): value is DocumentSearchResul
 
   if (
     !isUuid(value.document_id) ||
+    !isUuid(value.knowledge_base_id) ||
     !isSha256(value.content_hash) ||
     !hasText(value.title) ||
-    !isHttpUrl(value.url) ||
-    !hasText(value.source_name) ||
+    !hasText(value.mime_type) ||
+    !(value.url === null || isHttpUrl(value.url)) ||
+    !(value.source_name == null || hasText(value.source_name)) ||
     !isNullableString(value.published_at) ||
     !isStringArray(value.authors) ||
     !isStringArray(value.labels) ||

@@ -49,11 +49,13 @@ function isDocumentDetailDto(value: unknown): value is DocumentDetailDto {
 
   return (
     isUuid(value.document_id) &&
+    isUuid(value.knowledge_base_id) &&
     isSha256(value.content_hash) &&
     isPositiveInteger(value.revision) &&
     hasText(value.title) &&
-    isHttpUrl(value.url) &&
-    hasText(value.source_name) &&
+    hasText(value.mime_type) &&
+    (value.url === null || isHttpUrl(value.url)) &&
+    (value.source_name == null || hasText(value.source_name)) &&
     isNullableString(value.published_at) &&
     isStringArray(value.authors) &&
     isStringArray(value.labels) &&

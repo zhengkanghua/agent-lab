@@ -49,7 +49,7 @@ function requestFullText(event: MouseEvent): void {
     <div class="result-main">
       <header class="result-header">
         <div class="result-meta">
-          <span class="source-name">{{ result.sourceName }}</span>
+          <span class="source-name">{{ result.sourceName ?? '未指定来源' }}</span>
           <span class="meta-item">
             <Clock3 :size="13" aria-hidden="true" />
             {{ formatPublishedAt(result.publishedAt) }}
@@ -136,10 +136,11 @@ function requestFullText(event: MouseEvent): void {
           <BookOpenText :size="16" aria-hidden="true" />
           阅读全文
         </button>
-        <a :href="result.url" target="_blank" rel="noopener noreferrer">
+        <a v-if="result.url" :href="result.url" target="_blank" rel="noopener noreferrer">
           <ExternalLink :size="15" aria-hidden="true" />
           访问原文
         </a>
+        <span v-else class="origin-missing">未提供原文链接</span>
       </footer>
     </div>
   </article>

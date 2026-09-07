@@ -1,5 +1,5 @@
 import type { ScheduledTaskTypeDto } from '@/api/scheduled-jobs'
-import { isRecord } from '@/api/json-guards'
+import { isRecord, isUuid } from '@/api/json-guards'
 
 export interface JobFormValues {
   key: string
@@ -10,6 +10,7 @@ export interface JobFormValues {
   staleAfterMinutes: number
   retentionDays: number
   dryRun: boolean
+  knowledgeBaseIds: string[]
   enabled: boolean
 }
 
@@ -17,11 +18,20 @@ export type JobFormErrors = Partial<Record<keyof JobFormValues | 'cron', string>
 
 /** 只声明已有表单的字段适配，类型清单与数值约束来自后端。 */
 type ParameterField =
-  'limitPerSource' | 'batchSize' | 'staleAfterMinutes' | 'retentionDays' | 'dryRun'
+  | 'limitPerSource'
+  | 'batchSize'
+  | 'staleAfterMinutes'
+  | 'retentionDays'
+  | 'dryRun'
+  | 'knowledgeBaseIds'
 export const FORM_FIELDS: Record<string, Record<string, ParameterField>> = {
   freshrss_sync: { limit_per_source: 'limitPerSource' },
   index_pending: { batch_size: 'batchSize', stale_after_minutes: 'staleAfterMinutes' },
-  prune_old_documents: { retention_days: 'retentionDays', dry_run: 'dryRun' },
+  prune_old_documents: {
+    retention_days: 'retentionDays',
+    dry_run: 'dryRun',
+    knowledge_base_ids: 'knowledgeBaseIds',
+  },
 }
 
 export function supportsJobForm(taskType: string): boolean {
@@ -72,6 +82,15 @@ export function validateParams(values: JobFormValues, spec?: ScheduledTaskTypeDt
     const { min, max } = parameterBounds(spec, field)
     if (schema.type === 'boolean') {
       if (typeof value !== 'boolean') errors[key] = '请选择预演状态。'
+    } else if (schema.type === 'array') {
+      // 清理范围多选：后端拒绝空列表，这里同样要求至少选一个库。
+      if (
+        !Array.isArray(value) ||
+        value.length === 0 ||
+        !value.every((item) => typeof item === 'string' && isUuid(item))
+      ) {
+        errors[key] = '请至少选择一个知识库。'
+      }
     } else if (
       typeof value !== 'number' ||
       !Number.isInteger(value) ||
@@ -85,7 +104,7 @@ export function validateParams(values: JobFormValues, spec?: ScheduledTaskTypeDt
   return errors
 }
 
-export function buildParams(values: JobFormValues): Record<string, number | boolean> {
+export function buildParams(values: JobFormValues): Record<string, number | boolean | string[]> {
   return Object.fromEntries(
     Object.entries(FORM_FIELDS[values.taskType] ?? {}).map(([field, key]) => [field, values[key]]),
   )

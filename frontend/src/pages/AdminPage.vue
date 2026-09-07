@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import AdminShell from '@/layouts/AdminShell.vue'
 import UserAdminPage from './UserAdminPage.vue'
 import ScheduledJobsPage from './ScheduledJobsPage.vue'
+import KnowledgeBasesPage from './KnowledgeBasesPage.vue'
+import SourcesPage from './SourcesPage.vue'
 
 /**
  * 后台控制台：一条路由（/admin/:section?），板块由路径参数区分。
@@ -15,13 +17,15 @@ import ScheduledJobsPage from './ScheduledJobsPage.vue'
 const route = useRoute()
 const router = useRouter()
 
-const SECTIONS = ['users', 'scheduled-jobs'] as const
+const SECTIONS = ['users', 'scheduled-jobs', 'knowledge-bases', 'sources'] as const
 
 type AdminSection = (typeof SECTIONS)[number]
 
 const SECTION_META: Record<AdminSection, { title: string; subtitle: string }> = {
   users: { title: '账号管理', subtitle: '访问控制' },
   'scheduled-jobs': { title: '定时任务', subtitle: '数据自动化' },
+  'knowledge-bases': { title: '知识库', subtitle: '知识管理' },
+  sources: { title: '来源管理', subtitle: '订阅绑定' },
 }
 
 const section = computed<AdminSection>(() => {
@@ -48,5 +52,7 @@ const heading = computed(() => SECTION_META[section.value])
   <AdminShell :heading-title="heading.title" :heading-subtitle="heading.subtitle">
     <UserAdminPage v-if="section === 'users'" />
     <ScheduledJobsPage v-else-if="section === 'scheduled-jobs'" />
+    <KnowledgeBasesPage v-else-if="section === 'knowledge-bases'" />
+    <SourcesPage v-else-if="section === 'sources'" />
   </AdminShell>
 </template>

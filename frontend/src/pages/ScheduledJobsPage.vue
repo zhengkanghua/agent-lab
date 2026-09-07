@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { Check, Plus, RefreshCw } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import { authSession } from '@/features/auth'
+import { listKnowledgeBases, type KnowledgeBaseDto } from '@/api/knowledge-bases'
 import {
   JobDirectoryTable,
   JobForm,
@@ -15,6 +16,19 @@ import {
  * 创建与编辑共用 JobForm（受控字段归 useJobForm），行内操作归 useScheduledJobDirectory。 */
 
 const directory = useScheduledJobDirectory({ accountId: authSession.user.value?.id ?? 'anonymous' })
+
+/* 维护清理允许显式选择停用库，选项必须覆盖任务中已有的全部范围。 */
+const knowledgeBaseOptions = ref<KnowledgeBaseDto[]>([])
+const knowledgeBaseError = ref('')
+
+async function loadKnowledgeBases(): Promise<void> {
+  try {
+    knowledgeBaseOptions.value = await listKnowledgeBases(true)
+    knowledgeBaseError.value = ''
+  } catch {
+    knowledgeBaseError.value = '知识库选项加载失败，清理范围暂不可选。'
+  }
+}
 
 const createPanel = ref(false)
 
@@ -48,6 +62,7 @@ const editForm = useJobForm({
 
 onMounted(() => {
   directory.load()
+  void loadKnowledgeBases()
 })
 
 function openCreate(): void {
@@ -79,6 +94,14 @@ function openCreate(): void {
       </BaseButton>
     </div>
 
+    <p v-if="knowledgeBaseError" role="alert">
+      {{ knowledgeBaseError }}
+      <BaseButton variant="ghost" @click="loadKnowledgeBases">
+        <template #icon><RefreshCw :size="16" aria-hidden="true" /></template>
+        重试
+      </BaseButton>
+    </p>
+
     <JobForm
       v-if="createPanel"
       mode="create"
@@ -91,6 +114,8 @@ function openCreate(): void {
       :stale-after-minutes="createForm.staleAfterMinutes.value"
       :retention-days="createForm.retentionDays.value"
       :dry-run="createForm.dryRun.value"
+      :knowledge-base-ids="createForm.knowledgeBaseIds.value"
+      :knowledge-base-options="knowledgeBaseOptions"
       :task-types="directory.taskTypes.value"
       :enabled="createForm.enabled.value"
       :errors="createForm.errors.value"
@@ -104,6 +129,7 @@ function openCreate(): void {
       @update:stale-after-minutes="createForm.staleAfterMinutes.value = $event"
       @update:retention-days="createForm.retentionDays.value = $event"
       @update:dry-run="createForm.dryRun.value = $event"
+      @update:knowledge-base-ids="createForm.knowledgeBaseIds.value = $event"
       @update:enabled="createForm.enabled.value = $event"
       @submit="createForm.submit()"
       @close="createForm.close()"
@@ -122,6 +148,7 @@ function openCreate(): void {
       :row-errors="directory.rowErrors.value"
       :expanded="directory.expanded.value"
       :edit-form="editForm"
+      :knowledge-base-options="knowledgeBaseOptions"
       :awaited-run-ids="directory.awaitedRunIds"
       @refresh="directory.load"
       @toggle-enabled="directory.toggleEnabled"
@@ -139,6 +166,7 @@ function openCreate(): void {
       @update:stale-after-minutes="editForm.staleAfterMinutes.value = $event"
       @update:retention-days="editForm.retentionDays.value = $event"
       @update:dry-run="editForm.dryRun.value = $event"
+      @update:knowledge-base-ids="editForm.knowledgeBaseIds.value = $event"
       @update:enabled="editForm.enabled.value = $event"
     />
   </section>

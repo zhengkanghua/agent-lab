@@ -19,6 +19,7 @@ function makeRecord(overrides: Partial<SearchRecord> = {}): SearchRecord {
 
 const documentResult: NewsDocumentResult = {
   documentId: '20000000-0000-4000-8000-000000000001',
+  knowledgeBaseId: '10000000-0000-4000-8000-000000000010',
   contentHash: 'a'.repeat(64),
   title: '一篇新闻',
   url: 'https://example.com/news',

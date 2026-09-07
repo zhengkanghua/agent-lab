@@ -14,6 +14,7 @@ const mockedFetchDocument = vi.mocked(fetchDocument)
 
 const result = {
   documentId: '20000000-0000-4000-8000-000000000001',
+  knowledgeBaseId: '10000000-0000-4000-8000-000000000010',
   contentHash: 'a'.repeat(64),
   title: '政策利率维持不变',
   url: 'https://example.com/news',
@@ -34,7 +35,9 @@ const result = {
 }
 
 const detail = {
+  mime_type: 'text/plain',
   document_id: result.documentId,
+  knowledge_base_id: result.knowledgeBaseId,
   content_hash: 'b'.repeat(64),
   revision: 4,
   title: result.title,

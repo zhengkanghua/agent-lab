@@ -78,6 +78,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/knowledge-bases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 列出知识库
+         * @description 默认返回启用库，超级用户可用 include_inactive 读取全部配置。
+         */
+        get: operations["list_knowledge_bases_knowledge_bases_get"];
+        put?: never;
+        /**
+         * 创建知识库
+         * @description 创建具有唯一稳定键的逻辑知识库配置。
+         */
+        post: operations["create_knowledge_base_knowledge_bases_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/knowledge-bases/{knowledge_base_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * 修改知识库配置
+         * @description 修改名称、说明或启停状态；稳定键不可修改，不提供物理删除。
+         */
+        patch: operations["update_knowledge_base_knowledge_bases__knowledge_base_id__patch"];
+        trace?: never;
+    };
+    "/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 列出外部来源 */
+        get: operations["list_sources_sources_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sources/{source_id}/knowledge-base": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 修改来源 KnowledgeBase 绑定 */
+        patch: operations["bind_source_sources__source_id__knowledge_base_patch"];
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -1083,6 +1161,12 @@ export interface components {
              */
             document_id: string;
             /**
+             * Knowledge Base Id
+             * Format: uuid
+             * @description Document 实际归属的 KnowledgeBase UUID。
+             */
+            knowledge_base_id: string;
+            /**
              * Content Hash
              * @description 当前 PostgreSQL 正文的 SHA-256，用于和搜索索引版本校验。
              */
@@ -1098,16 +1182,20 @@ export interface components {
              */
             title: string;
             /**
-             * Url
-             * Format: uri
-             * @description 当前 PostgreSQL 原文地址。
+             * Mime Type
+             * @description 当前 PostgreSQL 文档的 MIME 格式。
              */
-            url: string;
+            mime_type: string;
+            /**
+             * Url
+             * @description 当前 PostgreSQL 可选原文地址。
+             */
+            url: string | null;
             /**
              * Source Name
-             * @description 关联 source 的展示名称。
+             * @description 关联 Source 的可选展示名称；没有 Source 时为空。
              */
-            source_name: string;
+            source_name?: string | null;
             /**
              * Published At
              * @description 当前 PostgreSQL 声明的可空带时区发布时间。
@@ -1194,6 +1282,11 @@ export interface components {
              * @description 可选的原始 Cosine score 下限；必须是 [-1, 1] 的有限数值，不是概率或百分比。
              */
             score_threshold?: number | null;
+            /**
+             * Knowledge Base Id
+             * @description KnowledgeBase 范围；普通 HTTP 边界缺省时解析为 news。
+             */
+            knowledge_base_id?: string | null;
             /** @description 复用 VectorSearchFilters 的来源、类型、标签和发布时间条件；条件在Qdrant 候选集内执行。 */
             filters?: components["schemas"]["VectorSearchFilters"];
         };
@@ -1218,6 +1311,12 @@ export interface components {
              */
             document_id: string;
             /**
+             * Knowledge Base Id
+             * Format: uuid
+             * @description 该文档实际归属的 KnowledgeBase UUID；用于确认共享 Collection 的范围隔离。
+             */
+            knowledge_base_id: string;
+            /**
              * Content Hash
              * @description Qdrant 命中版本的正文 SHA-256，用于和全文接口返回值校验。
              */
@@ -1228,16 +1327,20 @@ export interface components {
              */
             title: string;
             /**
-             * Url
-             * Format: uri
-             * @description 来自 Qdrant Payload 的 HTTP(S) 原文地址。
+             * Mime Type
+             * @description 来自 Qdrant Payload 的文档 MIME 格式。
              */
-            url: string;
+            mime_type: string;
+            /**
+             * Url
+             * @description 来自 Qdrant Payload 的可选 HTTP(S) 原文地址；没有外部地址时为空。
+             */
+            url: string | null;
             /**
              * Source Name
-             * @description 来自 Qdrant Payload 的来源展示名称。
+             * @description 来自 Qdrant Payload 的可选来源展示名称；没有 Source 时为空。
              */
-            source_name: string;
+            source_name?: string | null;
             /**
              * Published At
              * @description 来自 Qdrant Payload 的可空带时区发布时间。
@@ -1276,7 +1379,7 @@ export interface components {
          * @description 统一文档的业务类型。
          * @enum {string}
          */
-        DocumentType: "article" | "press_release" | "economic_release" | "filing" | "research_report" | "policy_document";
+        DocumentType: "article" | "press_release" | "economic_release" | "filing" | "research_report" | "policy_document" | "other";
         /** ErrorModel */
         ErrorModel: {
             /** Detail */
@@ -1364,6 +1467,120 @@ export interface components {
              * @description 心跳失联只表示需要核实，不授权抢占或重做业务。
              */
             readonly needs_attention: boolean;
+        };
+        /**
+         * KnowledgeBaseCreateRequest
+         * @description 创建知识库；稳定键创建后不可修改，名称和描述可单独维护。
+         */
+        KnowledgeBaseCreateRequest: {
+            /**
+             * Key
+             * @description 稳定业务键，只使用小写字母、数字和连字符，创建后不可修改。
+             */
+            key: string;
+            /**
+             * Name
+             * @description 知识库展示名称。
+             */
+            name: string;
+            /**
+             * Description
+             * @description 可选说明。
+             */
+            description?: string | null;
+            /**
+             * Is Active
+             * @description 知识库是否启用。
+             * @default true
+             */
+            is_active: boolean;
+        };
+        /**
+         * KnowledgeBaseErrorResponse
+         * @description 不包含数据库、请求正文或异常文本的稳定错误。
+         */
+        KnowledgeBaseErrorResponse: {
+            /**
+             * Code
+             * @description 稳定错误码。
+             * @enum {string}
+             */
+            code: "knowledge_base_not_found" | "knowledge_base_inactive" | "knowledge_base_key_conflict" | "knowledge_base_storage_unavailable" | "knowledge_base_forbidden" | "invalid_request";
+            /**
+             * Detail
+             * @description 安全的中文错误概述。
+             */
+            detail: string;
+            /**
+             * Retryable
+             * @description 稍后重试是否可能恢复。
+             */
+            retryable: boolean;
+        };
+        /**
+         * KnowledgeBaseResponse
+         * @description 知识库配置的公开视图，不包含数据库内部对象。
+         */
+        KnowledgeBaseResponse: {
+            /**
+             * Id
+             * Format: uuid
+             * @description KnowledgeBase 的全局 UUID。
+             */
+            id: string;
+            /**
+             * Key
+             * @description 不可修改的稳定业务键。
+             */
+            key: string;
+            /**
+             * Name
+             * @description 知识库展示名称。
+             */
+            name: string;
+            /**
+             * Description
+             * @description 可选说明。
+             */
+            description: string | null;
+            /**
+             * Is Active
+             * @description 知识库是否启用。
+             */
+            is_active: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             * @description 创建时间。
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             * @description 最后一次实际修改时间。
+             */
+            updated_at: string;
+        };
+        /**
+         * KnowledgeBaseUpdateRequest
+         * @description 仅修改明确提交的配置；description 为 null 时清空说明。
+         */
+        KnowledgeBaseUpdateRequest: {
+            /**
+             * Name
+             * @description 新的展示名称。
+             */
+            name?: string | null;
+            /**
+             * Description
+             * @description 新的说明；null 表示清空。
+             */
+            description?: string | null;
+            /**
+             * Is Active
+             * @description 是否启用。
+             */
+            is_active?: boolean | null;
         };
         /**
          * PipelineErrorResponse
@@ -1721,6 +1938,58 @@ export interface components {
             };
         };
         /**
+         * SourceErrorResponse
+         * @description 来源绑定失败的稳定脱敏错误。
+         */
+        SourceErrorResponse: {
+            /** Code */
+            code: string;
+            /** Detail */
+            detail: string;
+            /** Retryable */
+            retryable: boolean;
+        };
+        /**
+         * SourceKnowledgeBaseBindingRequest
+         * @description 把来源绑定到一个目标库；null 表示解除绑定。
+         */
+        SourceKnowledgeBaseBindingRequest: {
+            /**
+             * Knowledge Base Id
+             * @description 目标 KnowledgeBase ID；null 表示解除绑定。
+             */
+            knowledge_base_id: string | null;
+        };
+        /**
+         * SourceResponse
+         * @description 来源元数据、同步状态和当前绑定状态。
+         */
+        SourceResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Provider */
+            provider: string;
+            /** External Id */
+            external_id: string;
+            /** Name */
+            name: string;
+            /** Feed Url */
+            feed_url: string | null;
+            /** Home Url */
+            home_url: string | null;
+            /** Knowledge Base Id */
+            knowledge_base_id: string | null;
+            /** Knowledge Base Key */
+            knowledge_base_key: string | null;
+            /** Sync Checkpoint */
+            sync_checkpoint: string | null;
+            /** Sync Checkpoint Updated At */
+            sync_checkpoint_updated_at: string | null;
+        };
+        /**
          * UserAdminCreateRequest
          * @description 超级用户创建一个封闭内部账号的请求。
          */
@@ -1880,7 +2149,7 @@ export interface components {
              * @description 由 API 异常映射产生的必需稳定错误码；不可空，用于客户端区分 Embedding、Qdrant、timeout、配置和响应契约失败。
              * @enum {string}
              */
-            code: "search_runtime_unavailable" | "embedding_authentication_failed" | "embedding_unavailable" | "embedding_timeout" | "embedding_model_not_found" | "embedding_response_invalid" | "qdrant_authentication_failed" | "qdrant_unavailable" | "qdrant_timeout" | "qdrant_target_missing" | "qdrant_configuration_invalid" | "qdrant_response_invalid" | "qdrant_service_error";
+            code: "knowledge_base_not_found" | "knowledge_base_inactive" | "knowledge_base_storage_unavailable" | "search_runtime_unavailable" | "embedding_authentication_failed" | "embedding_unavailable" | "embedding_timeout" | "embedding_model_not_found" | "embedding_response_invalid" | "qdrant_authentication_failed" | "qdrant_unavailable" | "qdrant_timeout" | "qdrant_target_missing" | "qdrant_configuration_invalid" | "qdrant_response_invalid" | "qdrant_service_error";
             /**
              * Detail
              * @description 由 API 层生成的必需安全中文错误概述；不可空，不包含用户 query、密钥、Vector、新闻正文或第三方原始响应。
@@ -1904,6 +2173,11 @@ export interface components {
          *     实例只存在于一次搜索请求的内存中，字段来自调用方而不是 PostgreSQL 查询。
          */
         VectorSearchFilters: {
+            /**
+             * Knowledge Base Id
+             * @description KnowledgeBase 范围；普通 HTTP 边界缺省时解析为 news。
+             */
+            knowledge_base_id?: string | null;
             /**
              * Source Id
              * @description 可选来源过滤值，来自调用方；格式为 PostgreSQL sources.id UUID，Qdrant 按 Payload source_id 精确匹配，用于限定单一来源。
@@ -1959,6 +2233,11 @@ export interface components {
              * @description 可选 Qdrant Cosine score 下限；为空时不设阈值，存在时必须是 [-1, 1] 有限数值。它不是概率，生产阈值需用真实新闻评测后决定。
              */
             score_threshold?: number | null;
+            /**
+             * Knowledge Base Id
+             * @description 可选 KnowledgeBase 范围；普通 HTTP 边界缺省时解析为固定的 news KnowledgeBase。
+             */
+            knowledge_base_id?: string | null;
             /** @description 调用方提供的可选 Payload 过滤集合；不可空对象，各条件在 Qdrant 中执行，不会先取大量结果再由 Python 筛选。 */
             filters?: components["schemas"]["VectorSearchFilters"];
         };
@@ -2000,6 +2279,12 @@ export interface components {
              */
             document_id: string;
             /**
+             * Knowledge Base Id
+             * Format: uuid
+             * @description 来自 Qdrant Point Payload.knowledge_base_id 的必需 UUID；不可空，限定命中所属 KnowledgeBase，防止共享 Collection 发生跨库返回。
+             */
+            knowledge_base_id: string;
+            /**
              * Content Hash
              * @description 来自 Qdrant Point Payload.content_hash 的必需 64 位 SHA-256 十六进制；不可空，用于识别命中 Chunk 所属的正文版本。
              */
@@ -2021,10 +2306,9 @@ export interface components {
             title: string;
             /**
              * Url
-             * Format: uri
-             * @description 来自 Qdrant Point Payload.url 的必需 HTTP(S) 原文地址；不可空，用于回到来源页面，不进入 Embedding。
+             * @description 来自 Qdrant Point Payload.url 的可空 HTTP(S) 原文地址；无外部地址时为 null，有地址时用于回到来源页面，不进入 Embedding。
              */
-            url: string;
+            url: string | null;
             /**
              * Published At
              * @description 来自 Qdrant Point Payload.published_at 的可选带时区发布时间；Payload 缺失时为 None，用于展示和时间过滤，不会用抓取时间伪造。
@@ -2038,31 +2322,35 @@ export interface components {
             /** @description 来自 Qdrant Point Payload.document_type 的必需业务枚举；不可空，用于展示命中文档类型并对应精确过滤值。 */
             document_type: components["schemas"]["DocumentType"];
             /**
-             * Source Id
-             * Format: uuid
-             * @description 来自 Qdrant Point Payload.source_id 的必需 UUID；不可空，关联 PostgreSQL sources.id 并对应来源过滤条件。
+             * Mime Type
+             * @description 文档内容的 MIME 格式，与 document_type 业务类型独立。
              */
-            source_id: string;
+            mime_type: string;
+            /**
+             * Source Id
+             * @description 来自 Qdrant Point Payload.source_id 的可空 UUID；有 Source 时关联 PostgreSQL sources.id 并对应来源过滤条件，无 Source 时为 null。
+             */
+            source_id: string | null;
             /**
              * Source Provider
-             * @description 来自 Qdrant Point Payload.source_provider 的必需非空 keyword；不可空，标识接入提供方并对应精确过滤条件。
+             * @description 来自 Qdrant Point Payload.source_provider 的可空 keyword；有 Source 时标识接入提供方并对应精确过滤条件。
              */
-            source_provider: string;
+            source_provider: string | null;
             /**
              * Source Name
-             * @description 来自 Qdrant Point Payload.source_name 的必需非空展示名称；不可空，用于向调用方说明新闻来源。
+             * @description 来自 Qdrant Point Payload.source_name 的可空展示名称；有 Source 时用于向调用方说明文档来源。
              */
-            source_name: string;
+            source_name: string | null;
             /**
              * Source External Id
-             * @description 来自 Qdrant Point Payload.source_external_id 的必需非空外部来源标识；不可空，用于审计接入系统中的来源身份。
+             * @description 来自 Qdrant Point Payload.source_external_id 的可空外部来源标识；存在时用于审计接入系统中的来源身份。
              */
-            source_external_id: string;
+            source_external_id: string | null;
             /**
              * Document External Id
-             * @description 来自 Qdrant Point Payload.document_external_id 的必需非空外部文档标识；不可空，用于审计来源系统中的文章身份。
+             * @description 来自 Qdrant Point Payload.document_external_id 的可空外部文档标识；存在时用于审计来源系统中的文档身份。
              */
-            document_external_id: string;
+            document_external_id: string | null;
             /**
              * Authors
              * @description 来自 Qdrant Point Payload.authors 的必需字符串列表；不可为 null、允许空列表，用于结果展示，不进入当前 Embedding。
@@ -2250,6 +2538,250 @@ export interface operations {
             };
         };
     };
+    list_knowledge_bases_knowledge_bases_get: {
+        parameters: {
+            query?: {
+                include_inactive?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseResponse"][];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    create_knowledge_base_knowledge_bases_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeBaseCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    update_knowledge_base_knowledge_bases__knowledge_base_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                knowledge_base_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeBaseUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    list_sources_sources_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceResponse"][];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceErrorResponse"];
+                };
+            };
+        };
+    };
+    bind_source_sources__source_id__knowledge_base_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceKnowledgeBaseBindingRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceErrorResponse"];
+                };
+            };
+        };
+    };
     health_health_get: {
         parameters: {
             query?: never;
@@ -2290,6 +2822,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VectorSearchResult"][];
+                };
+            };
+            /** @description 知识库不存在。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VectorSearchErrorResponse"];
+                };
+            };
+            /** @description 知识库已停用。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VectorSearchErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2350,6 +2900,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DocumentSearchResult"][];
+                };
+            };
+            /** @description 知识库不存在。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VectorSearchErrorResponse"];
+                };
+            };
+            /** @description 知识库已停用。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VectorSearchErrorResponse"];
                 };
             };
             /** @description Validation Error */

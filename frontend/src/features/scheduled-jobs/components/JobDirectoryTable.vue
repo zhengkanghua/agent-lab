@@ -2,6 +2,7 @@
 import { CalendarClock, RefreshCw } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
+import type { KnowledgeBaseDto } from '@/api/knowledge-bases'
 import type { JobRunDto, ScheduledJobDto, ScheduledJobTaskType } from '@/api/scheduled-jobs'
 import type { ExpandedPanel, ScheduledJobLoadState } from '../composables/useScheduledJobDirectory'
 import type { UseJobFormReturn } from '../composables/useJobForm'
@@ -22,6 +23,8 @@ const props = defineProps<{
   expanded: ExpandedPanel | null
   /** 编辑表单状态（页面持有）；展开编辑的行会拿到它。 */
   editForm: UseJobFormReturn | null
+  /** 清理范围多选的候选项（启用中的知识库）。 */
+  knowledgeBaseOptions: KnowledgeBaseDto[]
   awaitedRunIds: ReadonlyMap<string, string>
 }>()
 
@@ -43,6 +46,7 @@ const emit = defineEmits<{
   'update:staleAfterMinutes': [value: number]
   'update:retentionDays': [value: number]
   'update:dryRun': [value: boolean]
+  'update:knowledgeBaseIds': [value: string[]]
   'update:enabled': [value: boolean]
 }>()
 
@@ -107,6 +111,7 @@ function editFormFor(job: ScheduledJobDto): UseJobFormReturn | null {
         :error="rowErrors[job.id] ?? ''"
         :expanded="expanded"
         :edit-form="editFormFor(job)"
+        :knowledge-base-options="knowledgeBaseOptions"
         :awaited-run-ids="awaitedRunIds"
         @toggle-enabled="(job, value) => emit('toggle-enabled', job, value)"
         @run-now="emit('run-now', $event)"
@@ -123,6 +128,7 @@ function editFormFor(job: ScheduledJobDto): UseJobFormReturn | null {
         @update:stale-after-minutes="emit('update:staleAfterMinutes', $event)"
         @update:retention-days="emit('update:retentionDays', $event)"
         @update:dry-run="emit('update:dryRun', $event)"
+        @update:knowledge-base-ids="emit('update:knowledgeBaseIds', $event)"
         @update:enabled="emit('update:enabled', $event)"
       />
     </div>

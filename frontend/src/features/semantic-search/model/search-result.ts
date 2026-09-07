@@ -3,10 +3,11 @@ import type { DocumentSearchMatchDto, DocumentSearchResultDto } from '@/api/docu
 /** 检索结果打开全文时所需的稳定文档身份和回退元数据。 */
 export interface NewsReadableResult {
   documentId: string
+  knowledgeBaseId: string
   contentHash: string
   title: string
-  url: string
-  sourceName: string
+  url: string | null
+  sourceName: string | null
   publishedAt: string | null
   labels: string[]
   authors: string[]
@@ -30,10 +31,11 @@ export interface NewsDocumentResult extends NewsReadableResult {
 export function toNewsDocumentResult(dto: DocumentSearchResultDto): NewsDocumentResult {
   return {
     documentId: dto.document_id,
+    knowledgeBaseId: dto.knowledge_base_id,
     contentHash: dto.content_hash,
     title: dto.title,
     url: dto.url,
-    sourceName: dto.source_name,
+    sourceName: dto.source_name ?? null,
     publishedAt: dto.published_at ?? null,
     labels: [...dto.labels],
     authors: [...dto.authors],

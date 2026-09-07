@@ -11,7 +11,7 @@ export interface JobSubmitPayload {
   key?: string
   taskType: ScheduledJobTaskType
   cronExpr: string
-  params: Record<string, number | boolean>
+  params: Record<string, number | boolean | string[]>
   enabled: boolean
 }
 
@@ -34,6 +34,7 @@ export function useJobForm(options: UseJobFormOptions) {
   const staleAfterMinutes = ref(0)
   const retentionDays = ref(0)
   const dryRun = ref(true)
+  const knowledgeBaseIds = ref<string[]>([])
   const enabled = ref(true)
   const errors = ref<JobFormErrors>({})
   const formError = ref('')
@@ -46,6 +47,10 @@ export function useJobForm(options: UseJobFormOptions) {
     staleAfterMinutes.value = Number(params.stale_after_minutes ?? 0)
     retentionDays.value = Number(params.retention_days ?? 0)
     dryRun.value = params.dry_run !== false
+    // 清理范围回填：历史配置可能没有该字段，落空数组由校验要求补选。
+    knowledgeBaseIds.value = Array.isArray(params.knowledge_base_ids)
+      ? params.knowledge_base_ids.map(String)
+      : []
   }
 
   function setTaskType(type: string): void {
@@ -107,6 +112,7 @@ export function useJobForm(options: UseJobFormOptions) {
       staleAfterMinutes: staleAfterMinutes.value,
       retentionDays: retentionDays.value,
       dryRun: dryRun.value,
+      knowledgeBaseIds: knowledgeBaseIds.value,
       enabled: enabled.value,
     }
     errors.value = validateParams(
@@ -148,6 +154,7 @@ export function useJobForm(options: UseJobFormOptions) {
     staleAfterMinutes,
     retentionDays,
     dryRun,
+    knowledgeBaseIds,
     enabled,
     errors,
     formError,

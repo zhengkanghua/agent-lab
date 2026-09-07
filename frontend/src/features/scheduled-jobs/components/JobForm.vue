@@ -6,6 +6,7 @@ import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 import BaseInput from '@/shared/ui/BaseInput.vue'
 import BaseSelect from '@/shared/ui/BaseSelect.vue'
+import type { KnowledgeBaseDto } from '@/api/knowledge-bases'
 import {
   type ScheduledTaskTypeDto,
   type ScheduledJobDto,
@@ -35,6 +36,9 @@ const props = defineProps<{
   staleAfterMinutes: number
   retentionDays: number
   dryRun: boolean
+  /** 清理范围多选的当前值，启用和停用库都可维护清理。 */
+  knowledgeBaseIds: string[]
+  knowledgeBaseOptions: KnowledgeBaseDto[]
   taskTypes: ScheduledTaskTypeDto[]
   enabled: boolean
   errors: JobFormErrors
@@ -51,6 +55,7 @@ const emit = defineEmits<{
   'update:staleAfterMinutes': [value: number]
   'update:retentionDays': [value: number]
   'update:dryRun': [value: boolean]
+  'update:knowledgeBaseIds': [value: string[]]
   'update:enabled': [value: boolean]
   submit: []
   close: []
@@ -102,6 +107,29 @@ const dryRunDraft = computed({
   set: (value: boolean) => emit('update:dryRun', value),
 })
 
+const unresolvedScopeIds = computed(() =>
+  props.knowledgeBaseIds.filter(
+    (id) => !props.knowledgeBaseOptions.some((option) => option.id === id),
+  ),
+)
+const scopeOptions = computed(() => [
+  ...props.knowledgeBaseOptions,
+  ...unresolvedScopeIds.value.map((id) => ({
+    id,
+    name: `未找到的知识库 ${id}`,
+    key: id,
+    is_active: null,
+  })),
+])
+
+/** 单个知识库的勾选切换；值数组保持选项顺序，提交形状与后端一致。 */
+function toggleKnowledgeBase(id: string, checked: boolean): void {
+  const next = checked
+    ? [...props.knowledgeBaseIds, id]
+    : props.knowledgeBaseIds.filter((item) => item !== id)
+  emit('update:knowledgeBaseIds', next)
+}
+
 const {
   state: previewState,
   previewTimes,
@@ -122,6 +150,7 @@ const previewText = computed(() => {
 /** cron 没校验通过就不发出提交；具体原因已经在预览区里写明。 */
 function onSubmit(): void {
   if (!previewCanSubmit.value || props.submitting || !selectedSpec.value) return
+  if (props.taskType === 'prune_old_documents' && unresolvedScopeIds.value.length > 0) return
   emit('submit')
 }
 </script>
@@ -258,12 +287,42 @@ function onSubmit(): void {
           <small>{{ retentionBounds.min }}–{{ retentionBounds.max }} 天</small>
           <em v-if="errors.retentionDays" class="field-error">{{ errors.retentionDays }}</em>
         </label>
+        <fieldset class="field-control scope-field">
+          <legend>清理范围</legend>
+          <div class="scope-options">
+            <label v-for="option in scopeOptions" :key="option.id" class="check-control">
+              <input
+                type="checkbox"
+                :value="option.id"
+                :checked="knowledgeBaseIds.includes(option.id)"
+                :disabled="submitting"
+                :aria-label="`清理知识库 ${option.name}`"
+                @change="
+                  toggleKnowledgeBase(option.id, ($event.target as HTMLInputElement).checked)
+                "
+              />
+              <span>
+                <strong
+                  >{{ option.name }}{{ option.is_active === false ? '（已停用）' : '' }}</strong
+                >
+                <small>{{ option.key }}</small>
+              </span>
+            </label>
+          </div>
+          <em v-if="unresolvedScopeIds.length" class="field-error"
+            >部分知识库未找到，清理范围需要更新。</em
+          >
+          <small>未选中的库不会被本任务清理；列表中的库共用同一保留周期。</small>
+          <em v-if="errors.knowledgeBaseIds" class="field-error">
+            {{ errors.knowledgeBaseIds }}
+          </em>
+        </fieldset>
         <label class="check-control">
           <input v-model="dryRunDraft" name="dry-run" type="checkbox" :disabled="submitting" />
           <span
             ><strong>仅预演</strong
             ><small>{{
-              dryRun ? '预计删除已完成索引的旧新闻' : '将实际删除已完成索引的旧新闻及其索引'
+              dryRun ? '预计删除已完成索引的旧文档' : '将实际删除已完成索引的旧文档及其索引'
             }}</small></span
           >
         </label>
@@ -377,6 +436,22 @@ function onSubmit(): void {
   color: var(--text-tertiary);
   font-size: 0.67rem;
   font-weight: 450;
+}
+
+.scope-field {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.scope-field legend {
+  padding: 0;
+  margin-bottom: 8px;
+}
+
+.scope-options {
+  display: grid;
+  gap: 8px;
 }
 
 .submit-command {

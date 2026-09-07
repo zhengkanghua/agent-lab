@@ -37,7 +37,9 @@ const match = {
 }
 
 const dto = {
+  mime_type: 'text/plain',
   document_id: '20000000-0000-4000-8000-000000000001',
+  knowledge_base_id: '10000000-0000-4000-8000-000000000010',
   content_hash: 'a'.repeat(64),
   title: '政策利率维持不变',
   url: 'https://example.com/news',

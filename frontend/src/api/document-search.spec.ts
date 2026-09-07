@@ -10,7 +10,9 @@ const match = {
 }
 
 const result = {
+  mime_type: 'text/plain',
   document_id: '20000000-0000-4000-8000-000000000001',
+  knowledge_base_id: '10000000-0000-4000-8000-000000000010',
   content_hash: 'a'.repeat(64),
   title: '政策利率维持不变',
   url: 'https://example.com/news',
@@ -26,6 +28,39 @@ const result = {
 
 describe('searchDocuments', () => {
   afterEach(() => vi.unstubAllGlobals())
+
+  it.each([
+    { url: null },
+    { source_name: null },
+    { source_name: undefined },
+    { url: null, source_name: null },
+  ])('accepts mixed results with optional metadata %j', async (metadata) => {
+    const body = [result, { ...result, ...metadata }]
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(body))))
+    await expect(
+      searchDocuments({ query: '资料', documentLimit: 10, matchesPerDocument: 3 }),
+    ).resolves.toEqual(JSON.parse(JSON.stringify(body)))
+  })
+
+  it.each([
+    { url: 'javascript:alert(1)' },
+    { url: undefined },
+    { source_name: ' ' },
+    { source_name: 123 },
+    { document_id: 'invalid' },
+    { knowledge_base_id: undefined },
+    { mime_type: undefined },
+    { mime_type: ' ' },
+    { title: undefined },
+  ])('rejects invalid or missing metadata %j', async (metadata) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response(JSON.stringify([{ ...result, ...metadata }]))),
+    )
+    await expect(
+      searchDocuments({ query: '资料', documentLimit: 10, matchesPerDocument: 3 }),
+    ).rejects.toMatchObject({ code: 'response_invalid' })
+  })
 
   it('sends document and per-document limits to the grouped endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue(

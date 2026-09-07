@@ -15,6 +15,8 @@ const match = {
 
 function documentResult(title: string) {
   return {
+    mime_type: 'text/plain',
+    knowledge_base_id: '10000000-0000-4000-8000-000000000010',
     document_id:
       title === '第一篇'
         ? '20000000-0000-4000-8000-000000000001'

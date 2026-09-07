@@ -72,7 +72,12 @@ describe('AdminShell', () => {
     expect(menu.text()).toContain('账号管理')
 
     const labels = wrapper.findAll('.menu-item').map((item) => item.attributes('href'))
-    expect(labels).toEqual(['/admin/users', '/admin/scheduled-jobs'])
+    expect(labels).toEqual([
+      '/admin/users',
+      '/admin/knowledge-bases',
+      '/admin/sources',
+      '/admin/scheduled-jobs',
+    ])
   })
 
   it('顶栏标题与分区说明来自 props（一条路由没有逐子 meta 了）', async () => {

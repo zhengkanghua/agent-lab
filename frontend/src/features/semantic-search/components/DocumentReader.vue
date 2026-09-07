@@ -50,6 +50,12 @@ const errorCopy = computed(() =>
   resolveErrorCopy(props.error, { byStatus: COPY_BY_STATUS, fallback: FALLBACK_COPY }),
 )
 
+// 详情接口的来源与链接都是可选字段：详情缺省时回退搜索结果行，两边都没有就不渲染链接。
+const readerUrl = computed(() => props.detail?.url ?? props.result?.url ?? null)
+const readerSourceName = computed(
+  () => props.detail?.sourceName ?? props.result?.sourceName ?? '未指定来源',
+)
+
 watch(
   () => props.open,
   async (open) => {
@@ -138,7 +144,7 @@ function handleKeydown(event: KeyboardEvent): void {
           <div class="reader-scroll">
             <div class="reader-title-block">
               <div class="reader-meta">
-                <span class="reader-source">{{ detail?.sourceName ?? result.sourceName }}</span>
+                <span class="reader-source">{{ readerSourceName }}</span>
                 <span>
                   <Clock3 :size="13" aria-hidden="true" />
                   {{ formatPublishedAt(detail?.publishedAt ?? result.publishedAt) }}
@@ -146,14 +152,16 @@ function handleKeydown(event: KeyboardEvent): void {
               </div>
               <h2 id="reader-title">{{ detail?.title ?? result.title }}</h2>
               <a
+                v-if="readerUrl"
                 class="reader-origin"
-                :href="detail?.url ?? result.url"
+                :href="readerUrl"
                 target="_blank"
                 rel="noopener noreferrer"
               >
                 访问原文
                 <ExternalLink :size="15" aria-hidden="true" />
               </a>
+              <span v-else class="reader-origin is-missing">未提供原文链接</span>
             </div>
 
             <div v-if="hashMismatch" class="version-warning" role="status">

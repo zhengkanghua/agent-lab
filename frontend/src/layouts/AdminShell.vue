@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { ArrowLeft, CalendarClock, LogOut, Menu, ShieldCheck, UsersRound, X } from '@lucide/vue'
+import {
+  ArrowLeft,
+  CalendarClock,
+  Library,
+  LogOut,
+  Menu,
+  Rss,
+  ShieldCheck,
+  UsersRound,
+  X,
+} from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { authSession, useLogout } from '@/features/auth'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
@@ -32,6 +42,8 @@ const props = withDefaults(
 
 const adminMenuItems = [
   { to: { name: 'admin', params: { section: 'users' } }, label: '账号管理', icon: UsersRound },
+  { to: { name: 'admin', params: { section: 'knowledge-bases' } }, label: '知识库', icon: Library },
+  { to: { name: 'admin', params: { section: 'sources' } }, label: '来源管理', icon: Rss },
   {
     to: { name: 'admin', params: { section: 'scheduled-jobs' } },
     label: '定时任务',

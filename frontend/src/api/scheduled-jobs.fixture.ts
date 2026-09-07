@@ -23,12 +23,21 @@ export const taskTypes: ScheduledTaskTypeDto[] = [
   },
   {
     task_type: 'prune_old_documents',
-    description: '清理新闻',
-    defaults: { retention_days: 180, dry_run: true },
+    description: '数据保留策略：删除指定知识库中超过保留期的旧文档及其向量索引（默认预演）',
+    defaults: {
+      retention_days: 180,
+      dry_run: true,
+      knowledge_base_ids: ['10000000-0000-4000-8000-000000000010'],
+    },
     params_schema: {
       properties: {
         retention_days: { type: 'integer', minimum: 30, maximum: 730 },
         dry_run: { type: 'boolean' },
+        knowledge_base_ids: {
+          type: 'array',
+          items: { type: 'string', format: 'uuid' },
+          minItems: 1,
+        },
       },
     },
   },

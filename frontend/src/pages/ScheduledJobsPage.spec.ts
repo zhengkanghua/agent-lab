@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { taskTypes } from '@/api/scheduled-jobs.fixture'
 import { ApiError } from '@/api/client'
+import { newsKnowledgeBase, techKnowledgeBase } from '@/api/knowledge-bases.fixture'
 
 enableAutoUnmount(afterEach)
 
@@ -18,6 +19,7 @@ const api = vi.hoisted(() => ({
   triggerScheduledJob: vi.fn(),
   listScheduledJobRuns: vi.fn(),
   validateCron: vi.fn(),
+  listKnowledgeBases: vi.fn(),
 }))
 
 /* 部分替换：类型常量（SCHEDULED_JOB_TASK_TYPES 等）用真模块，只有 7 个网络函数换成替身。
@@ -55,6 +57,10 @@ vi.mock('../features/auth/auth-session', () => ({
     }),
     initialize: session.initialize,
   },
+}))
+
+vi.mock('@/api/knowledge-bases', () => ({
+  listKnowledgeBases: api.listKnowledgeBases,
 }))
 
 import ScheduledJobsPage from './ScheduledJobsPage.vue'
@@ -113,9 +119,30 @@ async function mountPage() {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
   vi.clearAllMocks()
   sessionStorage.clear()
   api.listScheduledTaskTypes.mockResolvedValue(taskTypes)
+  api.listKnowledgeBases.mockResolvedValue([
+    {
+      id: '10000000-0000-4000-8000-000000000010',
+      key: 'news',
+      name: '新闻',
+      description: null,
+      is_active: true,
+      created_at: '2026-09-06T00:00:00Z',
+      updated_at: '2026-09-06T00:00:00Z',
+    },
+    {
+      id: '10000000-0000-4000-8000-000000000011',
+      key: 'tech-notes',
+      name: '技术资料',
+      description: null,
+      is_active: true,
+      created_at: '2026-09-06T00:00:00Z',
+      updated_at: '2026-09-06T00:00:00Z',
+    },
+  ])
   api.getScheduledJobRun.mockImplementation(async (jobId: string, runId: string) => ({
     ...syncJob.last_run,
     id: runId,
@@ -142,9 +169,94 @@ beforeEach(() => {
 afterEach(() => {
   document.body.replaceChildren()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('ScheduledJobsPage', () => {
+  it('shows every saved scope and can retain only an inactive knowledge base', async () => {
+    api.listKnowledgeBases.mockResolvedValue([newsKnowledgeBase, techKnowledgeBase])
+    api.listScheduledJobs.mockResolvedValue([
+      {
+        ...syncJob,
+        key: 'retention-inactive',
+        task_type: 'prune_old_documents',
+        enabled: false,
+        params: {
+          retention_days: 90,
+          dry_run: true,
+          knowledge_base_ids: [newsKnowledgeBase.id, techKnowledgeBase.id],
+        },
+      },
+    ])
+    const wrapper = await mountPage()
+    expect(api.listKnowledgeBases).toHaveBeenCalledWith(true)
+    await wrapper.get('button[aria-label="编辑 retention-inactive"]').trigger('click')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(wrapper.text()).toContain('接下来 3 次')
+    const news = wrapper.get<HTMLInputElement>('input[aria-label="清理知识库 新闻"]')
+    const tech = wrapper.get<HTMLInputElement>('input[aria-label="清理知识库 技术资料"]')
+    expect(news.element.checked).toBe(true)
+    expect(tech.element.checked).toBe(true)
+    expect(wrapper.text()).toContain('技术资料（已停用）')
+    await news.setValue(false)
+    await tech.setValue(false)
+    await wrapper.get('form.job-form').trigger('submit')
+    await flushPromises()
+    expect(api.updateScheduledJob).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('请至少选择一个知识库')
+    await tech.setValue(true)
+    await wrapper.get('form.job-form').trigger('submit')
+    await flushPromises()
+    expect(api.updateScheduledJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: {
+          retention_days: 90,
+          dry_run: true,
+          knowledge_base_ids: [techKnowledgeBase.id],
+        },
+      }),
+    )
+  })
+
+  it('makes an unresolved saved scope visible and removable before saving', async () => {
+    const unknownId = '10000000-0000-4000-8000-000000000099'
+    api.listScheduledJobs.mockResolvedValue([
+      {
+        ...syncJob,
+        key: 'retention-unknown',
+        task_type: 'prune_old_documents',
+        enabled: false,
+        params: {
+          retention_days: 90,
+          dry_run: true,
+          knowledge_base_ids: [newsKnowledgeBase.id, unknownId],
+        },
+      },
+    ])
+    const wrapper = await mountPage()
+    await wrapper.get('button[aria-label="编辑 retention-unknown"]').trigger('click')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(wrapper.text()).toContain('接下来 3 次')
+    const unknown = wrapper.get<HTMLInputElement>(`input[value="${unknownId}"]`)
+    expect(unknown.element.checked).toBe(true)
+    expect(wrapper.text()).toContain(`未找到的知识库 ${unknownId}`)
+    await wrapper.get('form.job-form').trigger('submit')
+    await flushPromises()
+    expect(api.updateScheduledJob).not.toHaveBeenCalled()
+    await unknown.setValue(false)
+    await wrapper.get('form.job-form').trigger('submit')
+    await flushPromises()
+    expect(api.updateScheduledJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: {
+          retention_days: 90,
+          dry_run: true,
+          knowledge_base_ids: [newsKnowledgeBase.id],
+        },
+      }),
+    )
+  })
+
   it('renders the job list with Beijing-time display copy', async () => {
     const wrapper = await mountPage()
 
@@ -226,8 +338,9 @@ describe('ScheduledJobsPage', () => {
     const cronInput = wrapper.get('input[name="job-cron"]').element as HTMLInputElement
     expect(cronInput.value).toBe('*/10 * * * *')
 
-    // cron 预览有 300ms 防抖；等预览通过（提交闸门打开）再提交。
-    await vi.waitFor(() => expect(wrapper.text()).toContain('接下来 3 次'))
+    // 推进防抖计时，让预览完成后再提交。
+    await vi.advanceTimersByTimeAsync(300)
+    expect(wrapper.text()).toContain('接下来 3 次')
     await wrapper.get('form.job-form').trigger('submit')
     await flushPromises()
     expect(api.updateScheduledJob).toHaveBeenCalledWith(
@@ -263,15 +376,66 @@ describe('ScheduledJobsPage', () => {
     ])
     const wrapper = await mountPage()
     await wrapper.get('button[aria-label="编辑 retention"]').trigger('click')
-    await vi.waitFor(() => expect(wrapper.text()).toContain('接下来 3 次'))
+    await vi.advanceTimersByTimeAsync(300)
+    expect(wrapper.text()).toContain('接下来 3 次')
     expect((wrapper.get('input[name="retention-days"]').element as HTMLInputElement).value).toBe(
       '180',
     )
+    // 旧配置没有范围字段：回填为空，校验强制要求至少补选一个库。
+    await wrapper.get('form.job-form').trigger('submit')
+    await flushPromises()
+    expect(api.updateScheduledJob).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('请至少选择一个知识库')
+    await wrapper.get('input[aria-label="清理知识库 新闻"]').setValue(true)
     await wrapper.get('input[name="dry-run"]').setValue(false)
     await wrapper.get('form.job-form').trigger('submit')
     await flushPromises()
     expect(api.updateScheduledJob).toHaveBeenCalledWith(
-      expect.objectContaining({ params: { retention_days: 180, dry_run: false }, enabled: false }),
+      expect.objectContaining({
+        params: {
+          retention_days: 180,
+          dry_run: false,
+          knowledge_base_ids: ['10000000-0000-4000-8000-000000000010'],
+        },
+        enabled: false,
+      }),
+    )
+  })
+
+  it('renders scope checkboxes from stored knowledge_base_ids on edit', async () => {
+    api.listScheduledJobs.mockResolvedValue([
+      {
+        ...syncJob,
+        key: 'retention-multi',
+        task_type: 'prune_old_documents',
+        enabled: false,
+        params: {
+          retention_days: 90,
+          dry_run: true,
+          knowledge_base_ids: [
+            '10000000-0000-4000-8000-000000000010',
+            '10000000-0000-4000-8000-000000000011',
+          ],
+        },
+      },
+    ])
+    const wrapper = await mountPage()
+    await wrapper.get('button[aria-label="编辑 retention-multi"]').trigger('click')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(wrapper.text()).toContain('接下来 3 次')
+    expect(wrapper.findAll('input[aria-label^="清理知识库"]').length).toBe(2)
+    // 取消勾选其中一个后提交，范围只保留剩下的库。
+    await wrapper.get('input[aria-label="清理知识库 技术资料"]').setValue(false)
+    await wrapper.get('form.job-form').trigger('submit')
+    await flushPromises()
+    expect(api.updateScheduledJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: {
+          retention_days: 90,
+          dry_run: true,
+          knowledge_base_ids: ['10000000-0000-4000-8000-000000000010'],
+        },
+      }),
     )
   })
 

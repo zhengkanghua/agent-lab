@@ -26,6 +26,7 @@ function baseValues(overrides: Partial<JobFormValues> = {}): JobFormValues {
     staleAfterMinutes: 60,
     retentionDays: 180,
     dryRun: true,
+    knowledgeBaseIds: ['10000000-0000-4000-8000-000000000010'],
     enabled: true,
     ...overrides,
   }
@@ -79,6 +80,17 @@ describe('validateParams', () => {
     expect(validateParams(baseValues({ taskType: 'mystery' })).taskType).toBeDefined()
     expect(validateParams(baseValues({ cronExpr: 'bad cron' })).cron).toBeDefined()
   })
+
+  it('requires a non-empty UUID scope for prune_old_documents', () => {
+    const pruneForm = baseValues({ taskType: 'prune_old_documents', key: 'prune' })
+    expect(validateParams(pruneForm)).toEqual({})
+
+    const noScope = validateParams(baseValues({ ...pruneForm, knowledgeBaseIds: [] }))
+    expect(noScope.knowledgeBaseIds).toBeDefined()
+
+    const badScope = validateParams(baseValues({ ...pruneForm, knowledgeBaseIds: ['not-a-uuid'] }))
+    expect(badScope.knowledgeBaseIds).toBeDefined()
+  })
 })
 
 describe('buildParams', () => {
@@ -87,5 +99,9 @@ describe('buildParams', () => {
     expect(
       buildParams(baseValues({ taskType: 'index_pending', batchSize: 7, staleAfterMinutes: 30 })),
     ).toEqual({ batch_size: 7, stale_after_minutes: 30 })
+    const scope = ['10000000-0000-4000-8000-000000000010']
+    expect(
+      buildParams(baseValues({ taskType: 'prune_old_documents', knowledgeBaseIds: scope })),
+    ).toEqual({ retention_days: 180, dry_run: true, knowledge_base_ids: scope })
   })
 })

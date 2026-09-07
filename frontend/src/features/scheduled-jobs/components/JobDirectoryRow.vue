@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { History, Pencil, Play, Trash2 } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
+import type { KnowledgeBaseDto } from '@/api/knowledge-bases'
 import type { JobRunDto, ScheduledJobDto, ScheduledJobTaskType } from '@/api/scheduled-jobs'
 import type { UseJobFormReturn } from '../composables/useJobForm'
 import { formatBeijingTime, formatLastRunSummary, taskTypeLabel } from '../model/job-copy'
@@ -25,6 +26,8 @@ const props = defineProps<{
   expanded: { jobId: string; kind: 'edit' | 'history' } | null
   /** 编辑表单状态（页面持有）；只有当前行是编辑目标时才有值。 */
   editForm: UseJobFormReturn | null
+  /** 清理范围多选的候选项（启用中的知识库）。 */
+  knowledgeBaseOptions: KnowledgeBaseDto[]
   awaitedRunIds: ReadonlyMap<string, string>
 }>()
 
@@ -47,6 +50,7 @@ const emit = defineEmits<{
   'update:staleAfterMinutes': [value: number]
   'update:retentionDays': [value: number]
   'update:dryRun': [value: boolean]
+  'update:knowledgeBaseIds': [value: string[]]
   'update:enabled': [value: boolean]
 }>()
 
@@ -191,6 +195,8 @@ function onDeleteClick(): void {
       :stale-after-minutes="editForm.staleAfterMinutes.value"
       :retention-days="editForm.retentionDays.value"
       :dry-run="editForm.dryRun.value"
+      :knowledge-base-ids="editForm.knowledgeBaseIds.value"
+      :knowledge-base-options="knowledgeBaseOptions"
       :task-types="editForm.taskTypes.value"
       :enabled="editForm.enabled.value"
       :errors="editForm.errors.value"
@@ -204,6 +210,7 @@ function onDeleteClick(): void {
       @update:stale-after-minutes="emit('update:staleAfterMinutes', $event)"
       @update:retention-days="emit('update:retentionDays', $event)"
       @update:dry-run="emit('update:dryRun', $event)"
+      @update:knowledge-base-ids="emit('update:knowledgeBaseIds', $event)"
       @update:enabled="emit('update:enabled', $event)"
       @submit="emit('submit-edit', job)"
       @close="emit('toggle-edit', job)"
