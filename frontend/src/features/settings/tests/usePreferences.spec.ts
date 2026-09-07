@@ -1,12 +1,24 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PREFERENCES, PREFERENCES_STORAGE_KEY } from '../model/preferences'
 import { usePreferences } from '../composables/usePreferences'
 
 describe('usePreferences（应用级单例 + localStorage 持久化）', () => {
   beforeEach(() => {
-    localStorage.clear()
     // 偏好是模块级单例，用例间手工复位，避免顺序相关的假失败。
     Object.assign(usePreferences().preferences, DEFAULT_PREFERENCES)
+    localStorage.clear()
+  })
+
+  it.each([
+    { key: PREFERENCES_STORAGE_KEY, expected: 20 },
+    { key: 'signaldesk.preferences.v0', expected: DEFAULT_PREFERENCES.documentLimit },
+  ])('初始化从 $key 读取时，数量为 $expected', async ({ key, expected }) => {
+    localStorage.setItem(key, JSON.stringify({ documentLimit: 20 }))
+    vi.resetModules()
+
+    const { usePreferences: useLoadedPreferences } = await import('../composables/usePreferences')
+
+    expect(useLoadedPreferences().preferences.documentLimit).toBe(expected)
   })
 
   it('两次调用拿到同一份状态：检索页读到的就是设置页写下的', () => {

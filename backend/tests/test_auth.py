@@ -10,6 +10,7 @@ import httpx
 import pytest
 from fastapi_users import exceptions
 from pydantic import SecretStr, ValidationError
+from sqlalchemy import func, text
 
 from agent_lab.auth.dependencies import (
     get_database_strategy,
@@ -227,20 +228,34 @@ def test_user_manager_enforces_minimum_password_rules() -> None:
 
 
 def test_auth_tables_define_required_comments_and_indexes() -> None:
-    """认证表保持仓库要求的列注释、主外键和授权查询索引。"""
+    """认证表保留列注释、账号唯一性和查询索引，允许新增或重命名索引。"""
 
     from agent_lab.models.user import AccessTokenRecord
 
     assert all(column.comment for column in UserRecord.__table__.columns)
     assert all(column.comment for column in AccessTokenRecord.__table__.columns)
-    assert {index.name for index in UserRecord.__table__.indexes} == {
-        "uq_users_email_lower",
-        "uq_users_single_environment_admin",
-    }
-    assert {index.name for index in AccessTokenRecord.__table__.indexes} == {
-        "ix_access_tokens_created_at",
-        "ix_access_tokens_user_id",
-    }
+    user_indexes = UserRecord.__table__.indexes
+    assert any(
+        index.unique
+        and len(index.expressions) == 1
+        and index.expressions[0].compare(func.lower(text("email")))
+        and index.dialect_options["postgresql"]["where"] is None
+        for index in user_indexes
+    ), "邮箱需要不区分大小写的唯一索引"
+    assert any(
+        index.unique
+        and list(index.columns.keys()) == ["is_environment_admin"]
+        and index.dialect_options["postgresql"]["where"] is not None
+        and index.dialect_options["postgresql"]["where"].compare(text("is_environment_admin"))
+        for index in user_indexes
+    ), "只对环境管理员启用唯一约束，普通账号不受该约束限制"
+    for column in ("created_at", "user_id"):
+        assert any(
+            not index.unique
+            and list(index.columns.keys())[:1] == [column]
+            and index.dialect_options["postgresql"]["where"] is None
+            for index in AccessTokenRecord.__table__.indexes
+        ), f"Token 缺少以 {column} 为首列的查询索引"
 
 
 def test_auth_settings_allow_environment_admin_to_be_omitted() -> None:

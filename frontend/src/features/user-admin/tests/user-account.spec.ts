@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import type { UserAdminDto } from '@/api/user-admin'
 import { formatCreatedAt, sortUsers, summarizeUsers } from '../model/user-account'

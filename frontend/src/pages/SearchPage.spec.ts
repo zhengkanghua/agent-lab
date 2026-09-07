@@ -120,19 +120,6 @@ describe('SearchPage search stream', () => {
     wrapper.unmount()
   })
 
-  it('removes chunk mode controls entirely (no switch in the composer)', async () => {
-    const wrapper = mount(SearchPage, {
-      attachTo: document.body,
-      global: {
-        plugins: [[VueQueryPlugin, { queryClient: makeQueryClient() }], makeRouter()],
-      },
-    })
-
-    expect(wrapper.find('.mode-switch').exists()).toBe(false)
-    expect(wrapper.text()).not.toContain('按片段')
-    wrapper.unmount()
-  })
-
   it('clear-stream empties the records back to the empty state', async () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve(

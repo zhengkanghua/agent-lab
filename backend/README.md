@@ -279,7 +279,13 @@ Invoke-RestMethod -Method Post `
 
 ## 测试
 
-默认测试完全离线，不访问 PostgreSQL、FreshRSS、Ollama 或 Qdrant：
+开发中先运行受影响的测试文件，需要定位单个用例时追加 `-k <用例名片段>`。连续小修改不逐次执行全量测试：
+
+```powershell
+uv run pytest -q tests/test_scheduler_runner.py
+```
+
+默认测试完全离线，不访问 PostgreSQL、FreshRSS、Ollama 或 Qdrant。需要完整离线回归时执行：
 
 ```powershell
 uv run pytest -q

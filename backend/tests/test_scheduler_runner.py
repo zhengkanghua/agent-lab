@@ -10,6 +10,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -18,7 +19,6 @@ from agent_lab.config.scheduler import SchedulerSettings
 from agent_lab.ingestion.freshrss_client import FreshRSSAuthenticationError
 from agent_lab.models.scheduled_job import ScheduledJobRecord
 from agent_lab.services.scheduled_task_errors import ScheduledJobAlreadyRunningError, ScheduledJobUnknownTypeError
-from agent_lab.services.scheduled_task_registry import get_task_type_spec
 from agent_lab.services.scheduler_runner import SKIPPED_PREVIOUS_RUNNING_REASON, ScheduledJobRunner
 
 
@@ -50,12 +50,13 @@ def make_job(
 
 
 class FakeStore:
-    """在内存里记录执行历史的 Store 替身，语义与 ScheduledJobStore 对齐。"""
+    """提供 Runner 用例需要的内存记录，不复制生产 Store 的任务类型和参数校验。"""
 
     def __init__(self) -> None:
         self.jobs: dict[UUID, ScheduledJobRecord] = {}
         self.runs: list[SimpleNamespace] = []
         self.prunes: list[tuple[UUID, int]] = []
+        self.terminal_events: dict[UUID, asyncio.Event] = {}
 
     async def load_enabled_jobs(self) -> list[ScheduledJobRecord]:
         return [job for job in self.jobs.values() if job.enabled]
@@ -93,6 +94,7 @@ class FakeStore:
             error_type=None,
         )
         self.runs.append(record)
+        self.terminal_events[record.id] = asyncio.Event()
         return record.id
 
     async def finish_run(
@@ -110,6 +112,7 @@ class FakeStore:
                 record.finished_at = finished_at
                 record.stats = stats
                 record.error_type = error_type
+                self.terminal_events[run_id].set()
                 return
 
     async def prune_runs(self, job_id: UUID, *, keep: int) -> None:
@@ -127,10 +130,6 @@ class FakeStore:
             return None
         if any(record.job_id == job_id and record.status == "running" for record in self.runs):
             raise ScheduledJobAlreadyRunningError(job_id)
-        spec = get_task_type_spec(job.task_type)
-        if spec is None:
-            raise ScheduledJobUnknownTypeError()
-        spec.validate_params(job.params)
         run_id = await self.start_run(job_id, trigger_type=trigger_type, started_at=started_at)
         return job, run_id
 
@@ -205,16 +204,14 @@ def make_runner(
 
 
 async def wait_for_terminal(store: FakeStore, run_id: UUID, *, timeout: float = 2.0) -> SimpleNamespace:
-    """轮询直到该执行记录离开 running 状态，避免测试挂死。"""
+    """由终态保存通知唤醒；超时仅用于报告后台执行未完成。"""
 
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while loop.time() < deadline:
-        record = store.find(run_id)
-        if record is not None and record.status != "running":
-            return record
-        await asyncio.sleep(0.01)
-    raise AssertionError("执行记录在超时内未进入终态")
+    record = store.find(run_id)
+    assert record is not None
+    if record.status == "running":
+        await asyncio.wait_for(store.terminal_events[run_id].wait(), timeout)
+    assert record.status != "running"
+    return record
 
 
 class TestUnifiedExecution:
@@ -308,15 +305,21 @@ class TestUnifiedExecution:
 
         run(scenario())
 
-    def test_unknown_task_type_is_rejected_before_acceptance(self) -> None:
+    def test_claim_failure_is_returned_without_starting_business(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         store, runtime = FakeStore(), FakeWriteRuntime()
         runner = make_runner(store, runtime)
-        job = make_job(task_type="no_such_type")
+        job = make_job()
         store.jobs[job.id] = job
+        monkeypatch.setattr(
+            store, "claim_run", AsyncMock(side_effect=ScheduledJobUnknownTypeError())
+        )
 
         async def scenario() -> None:
             with pytest.raises(ScheduledJobUnknownTypeError):
                 await runner.trigger_now(job)
+            await runner.close()
             assert store.runs == []
             # 未执行任何业务步骤。
             assert runtime.sync_calls == []
@@ -351,10 +354,9 @@ class TestOverlapPolicy:
         store.jobs[job.id] = job
 
         async def scenario() -> None:
-            # 1、先起一轮手动执行，靠 gate 卡在同步步骤里（running 态）。
+            # 受理返回时记录已经是 running；gate 保证业务不会提前完成。
             running_id = await runner.trigger_now(job)
-            await asyncio.sleep(0.05)
-            # 2、模拟 cron 到点：上一轮还没结束，必须记 skipped 且不起第三步。
+            # 模拟 cron 到点：上一轮还没结束，必须记 skipped。
             await runner._run_scheduled(job.id)
             gate.set()
             await wait_for_terminal(store, running_id)
@@ -363,7 +365,7 @@ class TestOverlapPolicy:
             assert len(skipped) == 1
             assert skipped[0].trigger_type == "scheduled"
             assert skipped[0].stats == {"reason": SKIPPED_PREVIOUS_RUNNING_REASON}
-            # 跳过的那轮没有真正执行业务步骤（gate 放行前只有一次 sync 调用）。
+            # 跳过的那轮不执行业务步骤，总共只有一次 sync 调用。
             assert len(runtime.sync_calls) == 1
 
         run(scenario())
@@ -378,7 +380,6 @@ class TestOverlapPolicy:
 
         async def scenario() -> None:
             first = await runner.trigger_now(job)
-            await asyncio.sleep(0.05)
             with pytest.raises(ScheduledJobAlreadyRunningError):
                 await runner.trigger_now(job)
             gate.set()

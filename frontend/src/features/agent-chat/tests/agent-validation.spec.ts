@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import { MAX_SYSTEM_PROMPT_CHARACTERS } from '@/api/agent-chat'
 import {

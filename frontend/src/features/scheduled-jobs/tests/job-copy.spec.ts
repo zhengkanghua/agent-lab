@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import type { JobRunDto, ScheduledJobDto } from '@/api/scheduled-jobs'
 import { formatBeijingTime, formatLastRunSummary, formatRunStats } from '../model/job-copy'

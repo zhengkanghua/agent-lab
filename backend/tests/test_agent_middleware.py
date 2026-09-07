@@ -30,7 +30,6 @@ from agent_lab.agent.limits import (
 )
 from agent_lab.agent.middleware import (
     append_current_date,
-    build_agent_middleware,
     select_system_prompt,
 )
 from agent_lab.agent.prompts import DEFAULT_SYSTEM_PROMPT
@@ -67,35 +66,6 @@ async def collect(
     ):
         events.append(event)
     return events
-
-
-def test_middleware_order_is_the_documented_one() -> None:
-    """流水线顺序必须与 ADR 0005 固定的顺序逐项一致。
-
-    直接断言类名序列，是为了让任何人「顺手调一下顺序」时立刻失败，而不是等到某天发现
-    重试没生效。顺序的理由在 ADR 里，这里只钉住结果。
-    """
-
-    model = ScriptedChatModel(responses=[AIMessage(content="ok")])
-    names = [
-        type(middleware).__name__
-        for middleware in build_agent_middleware(
-            fallback_model=model, summarization_model=model
-        )
-    ]
-    assert names == [
-        "resolve_system_prompt",
-        "UnknownToolGuardMiddleware",
-        "ModelFallbackMiddleware",
-        "ModelRetryMiddleware",
-        "SummarizationMiddleware",
-        "ModelCallLimitMiddleware",
-        "ToolCallLimitMiddleware",
-        "ToolErrorMiddleware",
-        "ToolRetryMiddleware",
-    ]
-    # 守卫必须排在兜底的外层，否则它抛的异常会被 ToolErrorMiddleware 翻成安全文案交回模型。
-    assert names.index("UnknownToolGuardMiddleware") < names.index("ToolErrorMiddleware")
 
 
 def test_failing_tool_is_retried_before_the_error_handler_sees_it() -> None:

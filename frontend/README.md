@@ -104,16 +104,29 @@ Playwright route mock 只用于隔离验证前端状态，不能作为后端已�
 
 定时任务页面通过后端类型元数据取得默认值和参数范围，表单仍是少量显式适配。编辑须先停用并等待当前任务执行结束；手动触发按回执 ID 查询，关闭面板或离开页面不取消服务端执行。回执仅按账号保存在当前标签页的 `sessionStorage`，重新进入页面继续查询；浏览器存储不可用时仍可通过服务端历史查看，不自动重发请求。
 
+开发中按改动选择测试文件或目录，不逐次运行全套：
+
 ```powershell
-npm run typecheck
+npm run test:run -- src/features/semantic-search/tests/SearchResultCard.spec.ts
+npm test -- src/features/semantic-search/tests
+npx eslint src/features/semantic-search/tests/SearchResultCard.spec.ts --max-warnings 0
+npx prettier --check src/features/semantic-search/tests/SearchResultCard.spec.ts
+```
+
+类型变化时可单独运行 `npm run typecheck`。需要完整回归或发布时执行：
+
+```powershell
 npm run lint
 npm run format:check
 npm run test:run
 npm run build
 ```
 
-`vue-tsc` 的 `-b` 是必需的：本项目是 solution 风格 tsconfig（根 tsconfig 只有 `references`），
+`build` 已包含类型检查，同一份代码无需再单独执行 `typecheck`。`vue-tsc` 的 `-b` 是必需的：本项目是 solution 风格 tsconfig（根 tsconfig 只有 `references`），
 不加 `-b` 读不到子项目，会报 0 个错误并正常退出。
+
+组件测试默认使用 `jsdom`；不依赖 DOM 的纯函数与源码检查用文件头
+`// @vitest-environment node` 选择 Node 环境。计时行为使用虚拟计时器，避免真实等待防抖或超时。
 
 `src/api/generated/openapi.ts` 由后端 `/openapi.json` 使用 `openapi-typescript` 生成（文件头有
 生成声明）。后端契约变化后，在后端服务运行时重新执行：

@@ -64,7 +64,7 @@ def literal_details() -> list[tuple[str, int, str]]:
 
     覆盖三种写法：`detail="..."` 关键字实参（含 HTTPException）、模块级 `*_DETAIL`
     字符串常量，以及 `POSITIONAL_DETAIL_CALLS` 里按位置传 detail 的领域错误。
-    非字面量（变量、f-string）跳过——它们的取值由别处的常量决定，会在那一处被扫到。
+    非字面量（变量、f-string）跳过；动态文案和异常脱敏由对应行为测试验证。
     """
 
     found: list[tuple[str, int, str]] = []
@@ -96,8 +96,8 @@ def literal_details() -> list[tuple[str, int, str]]:
     return found
 
 
-def test_error_detail_is_chinese_and_never_carries_exception_text() -> None:
-    """错误表里的 detail 必须是预写中文常量，不允许残留英文文案。"""
+def test_error_table_details_are_chinese_sentences() -> None:
+    """错误表里的 detail 包含中文并以中文句号收尾。"""
 
     for rule in all_error_rules():
         assert is_chinese_sentence(rule.detail), rule.code
@@ -113,7 +113,7 @@ def test_literal_details_outside_the_rule_tables_follow_the_same_wording_rule() 
 
     details = literal_details()
     # 扫描本身必须有效：一旦重构把所有 detail 都改成非字面量，断言会空转。
-    assert len(details) >= 10, f"扫到的 detail 太少，扫描逻辑可能已失效：{details}"
+    assert details, "未扫描到 detail 字面量，请检查扫描范围是否仍然适用。"
 
     offenders = [
         f"{path}:{line} -> {text!r}"

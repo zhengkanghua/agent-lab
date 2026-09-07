@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import { ApiError } from '@/api/client'
 import { presentAgentError } from '../model/agent-error'

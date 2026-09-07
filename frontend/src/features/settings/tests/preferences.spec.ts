@@ -1,8 +1,8 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import { MAX_SYSTEM_PROMPT_CHARACTERS } from '@/api/agent-chat'
 import {
   DEFAULT_PREFERENCES,
-  PREFERENCES_STORAGE_KEY,
   sanitizePreferences,
   validateAgentSystemPrompt,
 } from '../model/preferences'
@@ -46,9 +46,5 @@ describe('preferences 模型', () => {
     expect(validateAgentSystemPrompt('x'.repeat(MAX_SYSTEM_PROMPT_CHARACTERS + 1))).toContain(
       '不能超过',
     )
-  })
-
-  it('存储键带版本号，键名改了旧数据不会被误读', () => {
-    expect(PREFERENCES_STORAGE_KEY).toBe('signaldesk.preferences.v1')
   })
 })

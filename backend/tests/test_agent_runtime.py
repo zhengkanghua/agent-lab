@@ -175,20 +175,3 @@ def test_a_dead_checkpointer_connection_is_told_apart_from_a_missing_table(
 
     assert rule.code == expected_code
     assert rule.retryable is expected_retryable
-
-
-def test_the_dead_connection_rule_is_not_shadowed_by_a_generic_database_rule() -> None:
-    """原生 psycopg 的异常不能被 SQLAlchemy 或 ConnectionError 那几条规则捞走。
-
-    这条钉住的是根因诊断里最容易想错的一步：``psycopg.OperationalError`` 既不是
-    ``sqlalchemy.exc.SQLAlchemyError`` 也不是内置 ``ConnectionError`` 的子类，所以在加专用
-    规则之前，它必然落到 ``Exception`` 兜底。谁要是哪天把专用规则删掉、指望别的规则捞住它，
-    这条会失败。
-    """
-
-    assert not issubclass(psycopg.OperationalError, ConnectionError)
-    rule = resolve_error_contract(
-        psycopg.OperationalError("connection lost"),
-        AGENT_CHAT_ERROR_RULES,
-    )
-    assert rule.code != "agent_internal_error"

@@ -45,15 +45,23 @@ describe('SearchResultCard', () => {
     expect(wrapper.find('a').attributes('href')).toBe(result.url)
   })
 
-  it('allows a long best match to be expanded', async () => {
+  it('expands the full best-match text and collapses it again', async () => {
     const wrapper = mount(SearchResultCard, {
       props: { result, rank: 0 },
     })
     const expandButton = wrapper.get('.best-expand')
+    const excerpt = wrapper.get('.result-excerpt')
+    const collapsedText = excerpt.text()
 
-    expect(expandButton.text()).toContain('展开最佳片段')
+    expect(collapsedText.length).toBeGreaterThan(0)
+    expect(collapsedText.length).toBeLessThan(result.bestMatch.excerpt.length)
+    expect(expandButton.attributes('aria-expanded')).toBe('false')
     await expandButton.trigger('click')
-    expect(expandButton.text()).toContain('收起最佳片段')
+    expect(excerpt.text()).toBe(result.bestMatch.excerpt)
+    expect(expandButton.attributes('aria-expanded')).toBe('true')
+    await expandButton.trigger('click')
+    expect(excerpt.text()).toBe(collapsedText)
+    expect(expandButton.attributes('aria-expanded')).toBe('false')
   })
 
   it('expands and collapses the other related matches in the same result', async () => {
@@ -95,9 +103,9 @@ describe('SearchResultCard', () => {
     expect(wrapper.emitted('read')?.[0]?.[1]).toBeTruthy()
   })
 
-  it('keeps long titles, missing time, and many labels readable', () => {
+  it('renders the full title and labels with a fallback for missing time', () => {
     const longTitle = '很长的新闻标题'.repeat(24)
-    const labels = Array.from({ length: 18 }, (_, index) => `标签-${index + 1}`)
+    const labels = Array.from({ length: 18 }, (_, index) => `第 ${index + 1} 个标签`)
     const wrapper = mount(SearchResultCard, {
       props: {
         result: { ...result, title: longTitle, publishedAt: null, labels },
@@ -107,6 +115,8 @@ describe('SearchResultCard', () => {
 
     expect(wrapper.get('.result-title').text()).toBe(longTitle)
     expect(wrapper.text()).toContain('时间未提供')
-    expect(wrapper.findAll('.label-list li')).toHaveLength(labels.length)
+    for (const label of labels) {
+      expect(wrapper.text()).toContain(label)
+    }
   })
 })
