@@ -17,12 +17,12 @@ PostgreSQL 里，下次 `index-pending` 会接着处理。
 
 ## 第一段：同步入库
 
-`services/freshrss_import_service.py`
+`knowledge/importing.py`，外部协议在 `knowledge/adapters/freshrss.py`。
 
-1. 按订阅列表逐个来源处理。
-2. 每个来源：读增量 ID 页 → 拉条目 → `ingestion/freshrss_mapper.py` 映射成领域对象 →
+1. 按订阅列表发现 Source；新来源只登记，未绑定或绑定库停用时不请求文章、不推进游标。
+2. 已绑定启用库的来源：读增量 ID 页 → 拉条目 → `ingestion/freshrss_mapper.py` 映射成领域对象 →
    `ingestion/content_quality.py` 过滤 → `repositories/document_repository.py` 幂等写入。
-3. 同一事务里更新该来源的 checkpoint（同步进度游标）。
+3. 保存前在短事务中锁定来源及目标库复核状态；文档使用该绑定 ID，同一事务更新 checkpoint。
 
 **失败边界是「单个订阅」。** 一个来源报错只回滚它自己，checkpoint 不前进，下次重跑；
 其他来源已提交的数据不受影响。所以部分成功是正常终态，不是异常。
@@ -45,7 +45,8 @@ PostgreSQL 里，下次 `index-pending` 会接着处理。
 ## 谁来调这两段
 
 `services/news_pipeline_execution_service.py` 是 CLI 三个命令背后的执行器：开短生命周期
-Session、取索引候选、**回收超时卡在 processing 的任务**、逐篇调用索引 Service。
+工作单元、取索引候选、**回收超时卡在 processing 的任务**、逐篇调用索引 Service；
+PostgreSQL 适配器在事务内提取独立 DocumentSnapshot，后续切分和向量化不访问 ORM。
 
 这些写入口先参加共同的写资源协调。同类写操作串行，同步和索引可并行；清理排他取得二者，避免旧索引在清理之后重新写回。
 
@@ -57,5 +58,5 @@ Session、取索引候选、**回收超时卡在 processing 的任务**、逐篇
 
 - 没有后台自动重试。cron 到点与手动触发都会发起执行（见 ADR 0014/0017 的定时任务调度器），但每一轮仍是有界批次，失败靠下一轮 cron 或人工兜底。
 - Chunk 和向量不落 PostgreSQL，只在 Qdrant。
-- Qdrant Collection 和 Alias 的创建切换归 `qdrant/lifecycle.py`，不在本链路里。
+- Qdrant Collection 和 Alias 的创建切换归 `qdrant/lifecycle.py`；`rebuild-index` 通过重建用例先构建并验收新 generation，再发布 Alias。它覆盖存量 indexed 文档，不以普通待索引批次代替全量重建。
 - 有未完成删除待办的 Document 不参与同步更新或索引认领；同步遇到这种目标会回滚该来源页，checkpoint 不越过它。清理与任务执行恢复见 [定时任务执行](scheduled-job-execution.md)。

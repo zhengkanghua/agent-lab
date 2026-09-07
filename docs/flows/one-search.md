@@ -10,8 +10,8 @@
 第二次  GET  /documents/{id}    用户展开某篇时才要正文
 ```
 
-第一次请求**完全不碰 PostgreSQL**，只走 Ollama 加 Qdrant。这是刻意的：如果检索时顺手把
-每篇正文查出来，20 条结果就是 20 次数据库查询（N+1），而用户通常只展开一两篇。
+第一次请求先用 PostgreSQL 核验 KnowledgeBase 是否存在且启用，再走 Ollama 和 Qdrant。
+搜索不逐篇回查正文，避免每条命中增加一次数据库查询；用户打开全文时才读取 Document。
 
 代价是列表页拿不到正文。要展示摘要就只能用 Qdrant payload 里已有的字段，不能临时回表。
 
@@ -26,6 +26,7 @@ SearchPage.vue
           ═══ HTTP ═══
           api/document_search.py          Pydantic 校验
             └─ services/vector_search_service.py
+                ├─ KnowledgeBaseScope    核验明确范围（HTTP 缺省与当前 Agent 使用 news）
                 ├─ Ollama    query 向量化 + 按索引规格校验向量
                 └─ qdrant/search.py       grouped query，一次只读查询
 ```
@@ -34,7 +35,7 @@ SearchPage.vue
 刷新即清空），但**单条记录的那次 `/document-search` 请求链路不变**——本图即单次检索的请求
 链。不再有「按片段」模式，前端只走按新闻分组。
 
-后端两步，顺序固定：**先向量化，再查 Qdrant**。向量化后还要对着当前索引规格
+后端顺序固定：**核验知识库、向量化、查询 Qdrant**。向量化后还要对着当前索引规格
 （维度、模型）校验一遍，不合就直接报错——避免用错模型的向量去查，那会返回看似正常
 但完全不相关的结果。
 
@@ -66,6 +67,7 @@ Qdrant 的 grouped query 按 `document_id` 分组，`document_limit` 控制返�
 | --- | --- |
 | 查询为空或超长 | 前端 `features/semantic-search/model/search-validation.ts` 直接拦，不发请求 |
 | 参数不合法 | 422，后端 Pydantic |
+| KnowledgeBase 不存在或停用 | 分别为 404 或 409，不请求向量服务 |
 | Ollama 挂了或超时 | 503 |
 | Qdrant 挂了或响应契约非法 | 503 |
 | 索引规格不匹配 | 503（配置问题，不是临时故障，重试无用） |
@@ -82,7 +84,7 @@ Qdrant 的 grouped query 按 `document_id` 分组，`document_limit` 控制返�
 
 - 本文这条链路只读检索，不生成回答：`/document-search` 只返回检索到的原文片段，前端也只在
   页内做多轮检索流展示。`/vector-search` 后端仍保留，但前端检索页不再调用它。模型作答是另一条
-  链路（`POST /agent/chat`，SSE），它复用同一个 `DocumentSearchService` 作为工具，但走不同的
+  链路（`POST /agent/chat`，SSE），它复用同一个 `VectorSearchService.search_documents` 作为工具，但走不同的
   路由、不同的权限（仅超级用户）和不同的响应形状。
 - 检索页的多轮「检索流」是纯页面状态：记录只在内存里向下累积，刷新或离开即清空，不写后端、
   不留库。Agent 链路也不写业务表和 Qdrant，唯一的写入是会话历史落在 checkpointer 自己的

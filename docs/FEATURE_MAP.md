@@ -20,6 +20,8 @@
 | 语义检索（按新闻分组，检索页多轮累积的检索流） | `/` | `POST /document-search` | `api/document_search.py` → `services/vector_search_service.py`；前端 `api/document-search.ts`、`features/semantic-search/composables/useSearchStream.ts`、`components/SearchComposer.vue`、`components/SearchRecordTurn.vue`、`pages/SearchPage.vue` | `tests/test_document_search.py`、`src/api/document-search.spec.ts`、`src/features/semantic-search/tests/useSearchStream.spec.ts`、`SearchComposer.spec.ts`、`SearchRecordTurn.spec.ts`、`src/pages/SearchPage.spec.ts` |
 | 读取单篇文档 | `/`（检索流某条记录内展开） | `GET /documents/{document_id}` | `api/documents.py` → `repositories/document_repository.py`；前端 `api/documents.ts`、`features/semantic-search/composables/useDocumentReader.ts` | `tests/test_documents_api.py`、`src/api/documents.spec.ts` |
 | 用户管理（增删改、改密、踢会话） | `/admin/users` | `GET /admin/users`、`POST /admin/users`、`PATCH /admin/users/{user_id}`、`POST /admin/users/{user_id}/password`、`DELETE /admin/users/{user_id}/sessions` | `api/user_admin.py` → `services/user_admin_service.py`；前端 `api/user-admin.ts`、`pages/UserAdminPage.vue` | `tests/test_user_admin.py`、`src/api/user-admin.spec.ts`、`src/pages/UserAdminPage.spec.ts` |
+| KnowledgeBase 配置管理（创建、编辑、启停） | `/admin/knowledge-bases` | `GET /knowledge-bases`、`POST /knowledge-bases`、`PATCH /knowledge-bases/{knowledge_base_id}` | `api/knowledge_bases.py` → `knowledge/`；前端 `api/knowledge-bases.ts`、`features/knowledge-bases/`、`pages/KnowledgeBasesPage.vue` | `tests/test_knowledge_bases.py`、`src/api/knowledge-bases.spec.ts`、`src/pages/KnowledgeBasesPage.spec.ts` |
+| 来源管理与 KnowledgeBase 绑定（列表、绑定、解绑） | `/admin/sources` | `GET /sources`、`PATCH /sources/{source_id}/knowledge-base` | `api/sources.py` → `services/source_binding_service.py`；前端 `api/sources.ts`、`features/sources/`、`pages/SourcesPage.vue` | `tests/test_source_binding.py`、`tests/test_freshrss_incremental_sync.py`、`src/api/sources.spec.ts`、`src/pages/SourcesPage.spec.ts` |
 | 手工触发同步加索引 | 无页面 | `POST /pipeline/run-once` | `api/pipeline.py` → `services/news_pipeline_execution_service.py` | `tests/test_pipeline_api.py`、`tests/test_news_pipeline_execution.py` |
 | 定时任务管理与同步、索引、清理执行 | `/admin/scheduled-jobs`（超级用户） | `/scheduled-jobs` 配置管理、`/task-types`、`/validate-cron`、`/{job_id}/trigger`、`/{job_id}/runs`、`/{job_id}/runs/{run_id}` | [执行链路](flows/scheduled-job-execution.md)；`scheduled_job_service.py`、`scheduler_runner.py`、`scheduled_job_executor.py`、`scheduled_task_registry.py`、`write_coordination.py`、相关 Repository | `test_scheduled_jobs_api.py`、`test_scheduler_safety.py`、`test_scheduler_lifecycle.py`、`test_document_retention_service.py`；`test_scheduler_postgres_integration.py`、`test_scheduler_retention_integration.py`（显式隔离地址，默认跳过） |
 | Agent 对话（模型自己调检索工具再作答，SSE 流式） | `/agent` | `POST /agent/chat` | `api/agent_chat.py` → `agent/runtime.py`、`agent/streaming.py`、`agent/tools/`；前端 `api/agent-chat.ts`、`features/agent-chat/`、`pages/AgentChatPage.vue` | `tests/test_agent_chat_api.py`、`tests/test_agent_streaming.py`、`tests/test_agent_tools.py`、`tests/test_agent_middleware.py`、`src/api/agent-chat.spec.ts`、`src/features/agent-chat/tests/`、`src/pages/AgentChatPage.spec.ts` |
@@ -50,7 +52,7 @@ Agent 那几行的能力边界见 [`adr/0003-agent-v1-is-read-only.md`](adr/0003
 
 用户管理这一行前后端两列写的都是 `/admin/users`，不是抄错：前端页面路由和后端 API 前缀刚好同名，
 浏览器实际请求 `/api/admin/users`。后端路由的 `tags=["user-admin"]` 只是 OpenAPI 分组标签，不是路径。
-后台在前端只有一条路由 `/admin/:section?`（users=账号管理、scheduled-jobs=定时任务），
+后台在前端只有一条路由 `/admin/:section?`（users=账号管理、knowledge-bases=知识库、sources=来源管理、scheduled-jobs=定时任务），
 两个地址是同一条路由的分区，注册表见 `pages/AdminPage.vue`。
 
 ## 命令行能力
@@ -58,8 +60,9 @@ Agent 那几行的能力边界见 [`adr/0003-agent-v1-is-read-only.md`](adr/0003
 | 命令 | 做什么 | 主要代码 | 测试 |
 | --- | --- | --- | --- |
 | `create-user` | 建账号 | `cli.py` → `services/user_admin_service.py` | `tests/test_cli.py` |
-| `sync-news` | 从 FreshRSS 拉新闻进库 | `cli.py` → `services/freshrss_import_service.py`、`ingestion/` | `tests/test_cli.py`、`tests/test_freshrss_incremental_sync.py` |
+| `sync-news` | 从 FreshRSS 按 Source 绑定导入 Document | `cli.py` → `knowledge/composition.py`、`knowledge/importing.py`、`knowledge/adapters/freshrss.py` | `tests/test_cli.py`、`tests/test_freshrss_incremental_sync.py` |
 | `index-pending` | 给待处理文档补向量索引 | `cli.py` → `services/document_indexing_service.py`、`pipeline/`、`qdrant/` | `tests/test_cli.py`、`tests/test_document_indexing_service.py` |
+| `rebuild-index` | 全量重建新 generation，验收后发布 Alias | `cli.py` → `knowledge/rebuilding.py`、`knowledge/adapters/rebuilding.py`、`qdrant/rebuilding.py` | `tests/test_index_rebuild.py`、`tests/test_knowledge_postgres_integration.py` |
 | `run-once` | 同步加索引跑一轮 | `cli.py` → `services/news_pipeline_execution_service.py` | `tests/test_cli.py`、`tests/test_news_pipeline_execution.py` |
 | `init-checkpointer` | 建 Agent 会话历史表（部署一次，幂等） | `cli.py` → `agent/checkpointer.py` | `tests/test_agent_checkpointer.py` |
 | `prune-orphan-threads` | 清掉没有归属记录的会话历史（**默认只预演**，加 `--yes` 才删，不可恢复） | `cli.py` → `agent/checkpointer.py`、`services/agent_thread_service.py` | `tests/test_cli.py` |
