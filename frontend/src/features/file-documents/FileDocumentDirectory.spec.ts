@@ -54,6 +54,30 @@ function listResponse(items: FileDocumentDto[]) {
 }
 
 describe('文件资料管理', () => {
+  it('文件接口未提供时显示服务提示，服务恢复后刷新可以读到列表', async () => {
+    let available = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).includes('/knowledge-bases')) return Response.json([newsKnowledgeBase])
+        return available
+          ? listResponse([file])
+          : Response.json({ detail: 'Not Found' }, { status: 404 })
+      }),
+    )
+    const wrapper = mountDirectory()
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('文件管理服务尚未就绪')
+    expect(wrapper.find('tbody').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('还没有上传文档')
+
+    available = true
+    await click(wrapper, '刷新状态')
+    await flushPromises()
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(wrapper.get('tbody').text()).toContain(file.upload_filename)
+  })
+
   it('替换冲突结束旧编辑，重新选择后使用刷新得到的 revision', async () => {
     let item = { ...file }
     const revisions: FormDataEntryValue[] = []

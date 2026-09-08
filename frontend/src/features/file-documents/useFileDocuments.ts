@@ -108,7 +108,13 @@ export function useFileDocuments() {
     hasMore: computed(() => query.data.value?.has_more ?? false),
     maxFileBytes: computed(() => query.data.value?.max_file_bytes),
     loading: query.isPending,
-    loadError: computed(() => (query.error.value ? '文件列表加载失败，请刷新后重试。' : null)),
+    loadError: computed(() => {
+      const error = query.error.value
+      if (!error) return null
+      if (error instanceof ApiError && error.status === 404)
+        return '文件管理服务尚未就绪，请联系管理员检查服务部署。'
+      return '文件列表加载失败，请刷新后重试。'
+    }),
     directoryError: computed(() =>
       directory.error.value ? '知识库目录加载失败，请重新加载。' : null,
     ),
