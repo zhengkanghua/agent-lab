@@ -80,13 +80,13 @@
   --border-strong: #d1d5d7;
 
   /* 7、语义层——强调与状态。 */
-  --accent: #0d9488;
+  --accent: var(--teal-600);
   /* 已弃用别名（2026-09，决策见 docs/adr/0007 追加节）：src/ 下已无使用方，
      仅为外部遗留引用保留过渡期，新代码禁止引用，删时连同深浅两个覆盖块一起删。 */
-  --accent-primary: #0d9488;
-  --accent-hover: #0f766e;
-  --accent-soft: #f0fdfa;
-  --accent-ring: rgb(13 148 136 / 24%);
+  --accent-primary: var(--accent);
+  --accent-hover: var(--teal-700);
+  --accent-soft: var(--teal-100);
+  --accent-ring: rgb(15 110 99 / 24%);
   --success: var(--teal-600);
   --danger: var(--brick-600);
   --danger-soft: var(--brick-100);
@@ -102,9 +102,9 @@
 
   /* 9、非颜色 token 不分层：它们没有主题维度，多一层只是多一次跳转。 */
   /* 圆角 */
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
   --radius-pill: 999px;
   /* 已弃用别名（2026-09，同 --accent-primary）：与 --radius-pill 完全重名重复。 */
   --radius-full: var(--radius-pill);
@@ -177,10 +177,10 @@
 [data-theme='dark'] {
   /* 1、色阶层：同上深色映射 */
   --neutral-50: #14181a;
-  --neutral-100: #1f2523;
-  --neutral-200: #2f3634;
-  --neutral-300: #4d5654;
-  --neutral-400: #5c6663;
+  --neutral-100: #1e2426;
+  --neutral-200: #2b3335;
+  --neutral-300: #394447;
+  --neutral-400: #566467;
   --neutral-500: #7b8481;
   --neutral-600: #b4bbb9;
   --neutral-700: #d8dcdb;
@@ -189,7 +189,7 @@
   --neutral-950: #fbfbfa;
 
   /* 2、强调色：深色下需要提亮 */
-  --teal-100: #0b574e;
+  --teal-100: #183f3a;
   --teal-400: #4fb3a3;
   --teal-600: #5fc9ba;
   --teal-700: #7dd4c7;
@@ -206,7 +206,7 @@
   --surface-sunken: var(--neutral-200);
   --surface-sunken-hover: var(--neutral-300);
   --surface-overlay: rgb(20 24 26 / 80%);
-  --surface-scrim: rgb(20 24 26 / 80%);
+  --surface-scrim: rgb(20 24 26 / 96%);
   --surface-inverse: var(--neutral-900);
   --surface-secondary: var(--neutral-100);
   --surface-tertiary: var(--neutral-200);
@@ -217,7 +217,7 @@
   /* 5、语义层——文字：覆盖写死的浅色代码 */
   --text-primary: var(--neutral-950);
   --text-secondary: var(--neutral-700);
-  --text-tertiary: var(--neutral-500);
+  --text-tertiary: #9aa7a9;
   --text-on-accent: var(--neutral-50);
   /* 同上：深色下反转块是浅底，字用深色端。 */
   --text-on-inverse: var(--neutral-50);

@@ -8,9 +8,8 @@ import ThemeToggle from '@/shared/ui/ThemeToggle.vue'
 
 /* 登录后前台三页（检索 / Agent 对话 / 设置）共用的外壳：跳转链接、顶栏。
  *
- * 收编各页自写一份顶栏的差异集中在四处：品牌文案与图标、mode-note 的有无、导航入口、
- * 窄屏断点。前三处做成入口，不为了统一抹平；断点原先开放成 compactAt prop，
- * 旧账号页消失后已无人传第二档，收成一个 560px 常量（消融）。
+ * 品牌文案与图标、mode-note 的有无、导航入口由页面提供。
+ * 顶栏随可用宽度收起次要文字，账号设置与功能入口始终保留。
  *
  * 正文由调用方放进默认插槽，连 <main> 一起——那上面的类是各页自己的骨架
  * （检索页单列流、设置页左导航右内容），scoped 样式必须写在各页里才生效。
@@ -96,8 +95,6 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
           </div>
 
           <div class="account-control">
-            <slot name="nav" />
-
             <RouterLink
               v-for="link in visibleNavLinks"
               :key="link.label"
@@ -170,6 +167,7 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
   gap: 11px;
   color: inherit;
   text-decoration: none;
+  min-width: 0;
 }
 
 .brand-copy strong {
@@ -194,6 +192,7 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
 
 .topbar-actions {
   gap: 18px;
+  flex-shrink: 0;
 }
 
 .account-control {
@@ -232,8 +231,9 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
 .topbar-nav-link {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
@@ -288,6 +288,20 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
   white-space: nowrap;
 }
 
+@media (max-width: 900px) {
+  .mode-note,
+  .account-identity span {
+    display: none;
+  }
+
+  .account-identity {
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+  }
+}
+
 @media (max-width: 560px) {
   .app-shell {
     --app-topbar-height: 63px;
@@ -295,16 +309,25 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
 
   .topbar-inner {
     min-height: 62px;
+    gap: 8px;
   }
 
-  .brand-copy small,
-  .mode-detail,
-  .account-identity {
+  .brand-copy small {
     display: none;
   }
 
-  .mode-note {
-    font-size: 0.72rem;
+  .brand-lockup {
+    gap: 8px;
+  }
+
+  .brand-copy strong {
+    font-size: 0.875rem;
+    line-height: 1.3;
+  }
+
+  .brand-mark {
+    width: 32px;
+    height: 32px;
   }
 
   .topbar-actions {
@@ -312,7 +335,15 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
   }
 
   .account-control {
-    padding-left: 8px;
+    gap: 4px;
+    padding-left: 0;
+    border-left: 0;
+  }
+}
+
+@media (max-width: 380px) {
+  .brand-mark {
+    display: none;
   }
 }
 </style>

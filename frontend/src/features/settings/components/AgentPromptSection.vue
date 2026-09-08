@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onScopeDispose, ref } from 'vue'
+import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { Bot, Check } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseField from '@/shared/ui/BaseField.vue'
@@ -22,7 +22,8 @@ import { usePreferences } from '../composables/usePreferences'
 const { preferences } = usePreferences()
 const { defaultPrompt, load: loadDefaultPrompt } = useDefaultAgentPrompt()
 
-const draft = ref(preferences.agentSystemPrompt)
+// 草稿归设置页持有，分区切换不会丢失，也不会提前改变实际使用的提示词。
+const draft = defineModel<string>({ required: true })
 const savedFlash = ref(false)
 let savedFlashTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -38,6 +39,10 @@ const validationError = computed(() => validateAgentSystemPrompt(draft.value))
 const isDirty = computed(() => draft.value !== preferences.agentSystemPrompt)
 
 const canSave = computed(() => isDirty.value && validationError.value === null)
+
+watch(draft, () => {
+  savedFlash.value = false
+})
 
 const statusLabel = computed(() =>
   preferences.agentSystemPrompt.trim().length > 0 ? '已启用自定义提示词' : '使用服务端默认提示词',
@@ -87,6 +92,7 @@ function clearPrompt(): void {
             已保存，下一轮对话生效
           </span>
         </Transition>
+        <span v-if="isDirty" class="unsaved-note" role="status">尚未保存</span>
       </div>
 
       <BaseField
@@ -166,9 +172,15 @@ function clearPrompt(): void {
 
 .status-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-4);
   margin-bottom: var(--space-4);
+}
+
+.unsaved-note {
+  color: var(--warning);
+  font-size: 0.76rem;
 }
 
 .status-badge {

@@ -49,7 +49,7 @@ function requestFullText(event: MouseEvent): void {
     <div class="result-main">
       <header class="result-header">
         <div class="result-meta">
-          <span v-if="result.knowledgeBaseName" class="source-name">{{
+          <span v-if="result.knowledgeBaseName" class="source-name knowledge-base-name">{{
             result.knowledgeBaseName
           }}</span>
           <span class="source-name">{{
@@ -159,28 +159,16 @@ function requestFullText(event: MouseEvent): void {
   display: grid;
   grid-template-columns: 50px minmax(0, 1fr);
   gap: 18px;
-  padding: 32px 0 28px;
+  padding: 22px 0;
   border: none;
   border-bottom: 1px solid var(--surface-sunken);
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  transition:
-    transform var(--duration-fast) var(--ease-out-smooth),
-    background-color var(--duration-fast) var(--ease-out-smooth),
-    box-shadow var(--duration-normal) var(--ease-out-smooth);
 }
 
 .result-card:last-child {
   border-bottom: none;
-}
-
-.result-card:hover {
-  transform: none;
-  /* 淡染一层 sunken：卡片底是透明的（页面底 --surface-base），30% 的 sunken
-     正好比底色深半档。用 color-mix 保持「极淡」的意图，不引入裸色值。 */
-  background: color-mix(in srgb, var(--surface-sunken) 30%, transparent);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
 
 .document-locator {
@@ -242,20 +230,25 @@ function requestFullText(event: MouseEvent): void {
   flex-wrap: wrap;
   gap: 7px 10px;
   min-width: 0;
+  max-width: 100%;
   color: var(--text-secondary);
   font-size: 0.73rem;
 }
 
 .source-name {
-  max-width: 260px;
+  max-width: min(260px, 100%);
   overflow: hidden;
-  padding: 3px 7px;
-  border-radius: 4px;
-  color: var(--accent-hover);
-  background: var(--accent-soft);
-  font-weight: 740;
+  color: var(--text-secondary);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.knowledge-base-name {
+  padding: 3px 7px;
+  border-radius: var(--radius-sm);
+  color: var(--accent-hover);
+  background: var(--accent-soft);
+  font-weight: 700;
 }
 
 .meta-item {
@@ -265,9 +258,9 @@ function requestFullText(event: MouseEvent): void {
 }
 
 .author-line {
-  max-width: 240px;
+  max-width: min(240px, 100%);
   overflow: hidden;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -290,17 +283,17 @@ function requestFullText(event: MouseEvent): void {
 }
 
 .result-title {
-  margin-top: 12px;
+  margin-top: 10px;
   overflow-wrap: anywhere;
   color: var(--text-primary);
-  font-size: 1.28rem;
+  font-size: 1.18rem;
   font-weight: 780;
   letter-spacing: 0;
   line-height: 1.36;
 }
 
 .best-match {
-  margin-top: 14px;
+  margin-top: 12px;
 }
 
 /* 「匹配位置」标题自己的颜色，与卡片强调色无关。 */
@@ -343,7 +336,7 @@ function requestFullText(event: MouseEvent): void {
   overflow-wrap: anywhere;
   color: var(--text-primary);
   font-size: 0.92rem;
-  line-height: 1.76;
+  line-height: 1.68;
   white-space: pre-line;
 }
 
@@ -455,8 +448,8 @@ function requestFullText(event: MouseEvent): void {
   align-items: center;
   flex-wrap: wrap;
   gap: 9px;
-  margin-top: 17px;
-  padding-top: 15px;
+  margin-top: 14px;
+  padding-top: 12px;
   border-top: 1px solid var(--surface-sunken);
 }
 
@@ -467,10 +460,10 @@ function requestFullText(event: MouseEvent): void {
   gap: 7px;
   min-height: 38px;
   padding: 7px 12px;
-  border: 1px solid var(--accent);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  color: var(--text-on-accent);
-  background: var(--accent);
+  color: var(--accent);
+  background: var(--surface-raised);
   font-size: 0.76rem;
   font-weight: 740;
   text-decoration: none;
@@ -481,7 +474,8 @@ function requestFullText(event: MouseEvent): void {
 }
 
 .read-button:hover {
-  background: var(--accent-hover);
+  border-color: var(--accent);
+  background: var(--accent-soft);
   transform: translateY(-1px);
 }
 
@@ -497,10 +491,10 @@ function requestFullText(event: MouseEvent): void {
   gap: 7px;
   min-height: 38px;
   padding: 7px 12px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
-  background: var(--surface-raised);
+  background: transparent;
   font-size: 0.76rem;
   font-weight: 740;
   text-decoration: none;
@@ -511,7 +505,7 @@ function requestFullText(event: MouseEvent): void {
 }
 
 .result-actions a:hover {
-  border-color: var(--accent);
+  background: var(--surface-hover);
   color: var(--accent);
   transform: translateY(-1px);
 }
@@ -522,10 +516,6 @@ function requestFullText(event: MouseEvent): void {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .result-card {
-    transition-property: background-color, box-shadow;
-  }
-
   .read-button,
   .result-actions a {
     transition-property: background-color, border-color, color;
@@ -537,6 +527,11 @@ function requestFullText(event: MouseEvent): void {
   .result-actions a:active {
     transform: none;
   }
+}
+
+.origin-missing {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
 }
 
 @container (max-width: 680px) {

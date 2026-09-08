@@ -105,11 +105,10 @@ const emit = defineEmits<{
   /* sticky 而不是固定高度加内部滚动：会话列表一页最多 20 条，装得下；
      内部滚动会在页面本身也能滚的时候产生两条滚动条，鼠标停在哪决定滚哪个，很难用。 */
   position: sticky;
+  align-self: start;
   top: calc(var(--app-topbar-height, 69px) + 18px);
   padding: 14px 8px 14px 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-raised);
+  border-right: 1px solid var(--border-subtle);
 }
 
 .sidebar-head {
@@ -127,7 +126,7 @@ const emit = defineEmits<{
   color: var(--text-tertiary);
   font-size: 0.7rem;
   font-weight: 720;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
 }
 
 .count {
@@ -175,6 +174,8 @@ const emit = defineEmits<{
 @media (max-width: 900px) {
   .thread-sidebar {
     position: static;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-subtle);
   }
 }
 </style>

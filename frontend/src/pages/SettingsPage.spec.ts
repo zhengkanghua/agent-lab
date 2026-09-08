@@ -14,10 +14,11 @@ vi.mock('@/api/agent-chat', () => ({
 
 const session = vi.hoisted(() => ({
   user: { value: null as { email: string; is_superuser: boolean } | null },
+  logout: vi.fn(),
 }))
 
 vi.mock('@/features/auth/auth-session', () => ({
-  authSession: { user: session.user, status: { value: 'authenticated' } },
+  authSession: { user: session.user, status: { value: 'authenticated' }, logout: session.logout },
 }))
 
 import SettingsPage from './SettingsPage.vue'
@@ -39,10 +40,13 @@ async function mountAt(path: string) {
   const router = makeRouter()
   await router.push(path)
   await router.isReady()
-  const wrapper = mount(SettingsPage, {
-    attachTo: document.body,
-    global: { plugins: [router] },
-  })
+  const wrapper = mount(
+    { template: '<RouterView />' },
+    {
+      attachTo: document.body,
+      global: { plugins: [router] },
+    },
+  )
   await flushPromises()
   return { wrapper, router }
 }
@@ -54,12 +58,14 @@ describe('SettingsPage', () => {
     api.fetchAgentDefaultPrompt.mockReset()
     api.fetchAgentDefaultPrompt.mockResolvedValue('你是新闻检索助手。')
     session.user.value = { email: 'admin@example.com', is_superuser: true }
+    session.logout.mockReset()
     Element.prototype.scrollIntoView = vi.fn()
     window.scrollTo = vi.fn()
   })
 
   afterEach(() => {
     document.body.replaceChildren()
+    vi.unstubAllGlobals()
   })
 
   it('默认落在账号分区：登录信息与改密表单都在', async () => {
@@ -71,10 +77,10 @@ describe('SettingsPage', () => {
     wrapper.unmount()
   })
 
-  it('顶栏有带标签的返回入口，不让人把退出键当返回用', async () => {
+  it('带标签的返回入口与退出按钮分开放置', async () => {
     const { wrapper } = await mountAt('/settings/account')
 
-    const back = wrapper.get('.account-control .base-button')
+    const back = wrapper.get('.settings-heading a')
     expect(back.text()).toContain('返回工作台')
     expect(back.attributes('href')).toBe('/')
     wrapper.unmount()
@@ -122,6 +128,55 @@ describe('SettingsPage', () => {
     expect(wrapper.find('#account-heading').exists()).toBe(true)
     expect(wrapper.find('#agent-prefs-heading').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('Agent 偏好')
+    wrapper.unmount()
+  })
+
+  it('分区切换保留提示词草稿，离开时可取消，保存后可直接离开', async () => {
+    const confirm = vi.fn().mockReturnValue(false)
+    vi.stubGlobal('confirm', confirm)
+    const { wrapper, router } = await mountAt('/settings/agent')
+    await wrapper.get('textarea').setValue('尚未保存的完整提示词')
+    await router.push('/settings/search')
+    await router.push('/settings/agent')
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('尚未保存的完整提示词')
+    expect(usePreferences().preferences.agentSystemPrompt).toBe('')
+    expect(confirm).not.toHaveBeenCalled()
+    await router.push('/')
+    expect(router.currentRoute.value.path).toBe('/settings/agent')
+    expect(confirm).toHaveBeenCalledOnce()
+    await wrapper.get('.editor-actions button').trigger('click')
+    await router.push('/')
+    expect(router.currentRoute.value.path).toBe('/')
+    expect(confirm).toHaveBeenCalledOnce()
+    wrapper.unmount()
+  })
+
+  it('有提示词草稿时刷新页面触发离开提醒', async () => {
+    const { wrapper } = await mountAt('/settings/agent')
+    await wrapper.get('textarea').setValue('需要保留的草稿')
+    const event = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('退出前确认未保存草稿，取消不发请求，退出失败仍保留草稿', async () => {
+    const confirm = vi.fn().mockReturnValue(false)
+    vi.stubGlobal('confirm', confirm)
+    const { wrapper } = await mountAt('/settings/agent')
+    await wrapper.get('textarea').setValue('退出前尚未保存的草稿')
+    const logout = wrapper.get('button[aria-label="退出登录"]')
+    await logout.trigger('click')
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(session.logout).not.toHaveBeenCalled()
+
+    confirm.mockReturnValue(true)
+    session.logout.mockRejectedValue(new Error('offline'))
+    await logout.trigger('click')
+    await flushPromises()
+    expect(session.logout).toHaveBeenCalledOnce()
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('退出前尚未保存的草稿')
+    expect(wrapper.text()).toContain('退出失败')
     wrapper.unmount()
   })
 

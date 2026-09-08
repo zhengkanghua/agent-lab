@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, ShieldCheck } from '@lucide/vue'
 import AppShell from '@/layouts/AppShell.vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
@@ -10,6 +10,7 @@ import {
   AgentPromptSection,
   SearchPreferencesSection,
   SettingsNav,
+  usePreferences,
   type SettingsSection,
 } from '@/features/settings'
 
@@ -26,6 +27,30 @@ const router = useRouter()
 const { loggingOut, logoutError, logout } = useLogout()
 
 const isSuperuser = computed(() => authSession.user.value?.is_superuser === true)
+const { preferences } = usePreferences()
+const agentPromptDraft = ref(preferences.agentSystemPrompt)
+const hasUnsavedPrompt = computed(
+  () => isSuperuser.value && agentPromptDraft.value !== preferences.agentSystemPrompt,
+)
+
+function confirmDiscardPrompt(): boolean {
+  return !hasUnsavedPrompt.value || window.confirm('提示词尚未保存，确定离开并放弃修改？')
+}
+
+onBeforeRouteLeave(confirmDiscardPrompt)
+
+async function requestLogout(): Promise<void> {
+  if (confirmDiscardPrompt()) await logout()
+}
+
+function warnBeforeUnload(event: BeforeUnloadEvent): void {
+  if (!hasUnsavedPrompt.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+
+onMounted(() => window.addEventListener('beforeunload', warnBeforeUnload))
+onScopeDispose(() => window.removeEventListener('beforeunload', warnBeforeUnload))
 
 const SECTION_KEYS: readonly SettingsSection[] = ['account', 'search', 'agent']
 
@@ -77,28 +102,28 @@ watch(
     skip-label="跳到设置内容"
     :logging-out="loggingOut"
     :logout-error="logoutError"
-    @logout="logout"
+    @logout="requestLogout"
   >
     <template #brand-icon><ShieldCheck :size="19" stroke-width="2.2" /></template>
 
-    <!-- 设置页是「深入」页面，没有显式的回去入口时，用户会把最右边的退出键当成
-         返回用（2026-09 老板实测点退出登出了）。给一个明确标签的返回按钮。 -->
-    <template #nav>
-      <BaseButton variant="ghost" size="sm" :to="{ name: 'search' }">
-        <template #icon><ArrowLeft :size="15" aria-hidden="true" /></template>
-        返回工作台
-      </BaseButton>
-    </template>
-
     <main id="settings-page" class="settings-page">
-      <h1 class="sr-only">设置中心</h1>
+      <header class="settings-heading">
+        <h1>设置中心</h1>
+        <BaseButton variant="ghost" size="sm" :to="{ name: 'search' }">
+          <template #icon><ArrowLeft :size="15" aria-hidden="true" /></template>
+          返回工作台
+        </BaseButton>
+      </header>
       <div class="settings-layout">
         <SettingsNav class="settings-rail" :section="section" :is-superuser="isSuperuser" />
 
         <div class="settings-content">
           <AccountSection v-if="section === 'account'" :user="authSession.user.value" />
           <SearchPreferencesSection v-else-if="section === 'search'" />
-          <AgentPromptSection v-else-if="section === 'agent' && isSuperuser" />
+          <AgentPromptSection
+            v-else-if="section === 'agent' && isSuperuser"
+            v-model="agentPromptDraft"
+          />
         </div>
       </div>
     </main>
@@ -110,6 +135,20 @@ watch(
   width: min(calc(100% - 48px), 960px);
   margin: 0 auto;
   padding: var(--space-6) 0 var(--space-8);
+}
+
+.settings-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: var(--space-6);
+}
+
+.settings-heading h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 720;
 }
 
 /* 左导航右内容：商业设置页的标准两栏。左栏自适应内容宽、sticky 跟随滚动，

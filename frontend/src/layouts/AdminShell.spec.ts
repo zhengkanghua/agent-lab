@@ -1,7 +1,9 @@
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+
+enableAutoUnmount(afterEach)
 
 const session = vi.hoisted(() => ({ user: { value: null as { email: string } | null } }))
 
@@ -52,6 +54,7 @@ async function mountShell() {
 
 beforeEach(() => {
   session.user.value = { email: 'admin@example.com' }
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
   vi.stubGlobal('scrollTo', vi.fn())
 })
 
@@ -107,12 +110,66 @@ describe('AdminShell', () => {
 
     const toggle = wrapper.get('button[aria-label="打开导航"]')
     expect(wrapper.get('.admin-sidebar').classes()).not.toContain('is-open')
+    expect(wrapper.get('.admin-sidebar').attributes('inert')).toBeDefined()
 
     await toggle.trigger('click')
     expect(wrapper.get('.admin-sidebar').classes()).toContain('is-open')
+    expect(wrapper.get('.admin-sidebar').attributes('inert')).toBeUndefined()
 
     await wrapper.get('.sidebar-overlay').trigger('click')
     expect(wrapper.get('.admin-sidebar').classes()).not.toContain('is-open')
+  })
+
+  it('打开抽屉后把焦点送入、Esc 关闭并把焦点还给汉堡键', async () => {
+    const { wrapper } = await mountShell()
+    const toggle = wrapper.get('button[aria-label="打开导航"]')
+
+    await toggle.trigger('click')
+    await flushPromises()
+    expect(document.activeElement).toBe(wrapper.get('button[aria-label="关闭导航"]').element)
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(wrapper.get('.admin-sidebar').classes()).not.toContain('is-open')
+    expect(document.activeElement).toBe(toggle.element)
+  })
+
+  it('抽屉内 Tab 在首尾控件之间循环，背景内容在打开时不可聚焦', async () => {
+    const { wrapper } = await mountShell()
+    await wrapper.get('button[aria-label="打开导航"]').trigger('click')
+    await flushPromises()
+
+    const sidebar = wrapper.get('.admin-sidebar').element
+    const controls = sidebar.querySelectorAll<HTMLElement>('a[href], button:not(:disabled)')
+    const last = controls[controls.length - 1]!
+    last.focus()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    expect(document.activeElement).toBe(controls[0])
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }),
+    )
+    expect(document.activeElement).toBe(last)
+    expect(wrapper.get('.admin-main-wrap').attributes('inert')).toBeDefined()
+  })
+
+  it.each(['desktop', 'unmount'])('离开抽屉模式时恢复原有滚动状态：%s', async (exit) => {
+    document.body.style.overflow = 'auto'
+    const { wrapper } = await mountShell()
+    await wrapper.get('button[aria-label="打开导航"]').trigger('click')
+    expect(document.body.style.overflow).toBe('hidden')
+
+    if (exit === 'desktop') {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 })
+      window.dispatchEvent(new Event('resize'))
+      await flushPromises()
+      expect(wrapper.get('.admin-sidebar').attributes('inert')).toBeUndefined()
+      expect(wrapper.get('.admin-main-wrap').attributes('inert')).toBeUndefined()
+      expect(wrapper.find('.sidebar-overlay').exists()).toBe(false)
+    } else {
+      wrapper.unmount()
+    }
+    expect(document.body.style.overflow).toBe('auto')
+    document.body.style.overflow = ''
   })
 
   it('未登录时不渲染账号邮箱，退出键仍在', async () => {

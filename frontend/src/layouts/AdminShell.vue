@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { nextTick, onMounted, onScopeDispose, ref, watch } from 'vue'
 import {
   ArrowLeft,
   CalendarClock,
@@ -9,6 +9,7 @@ import {
   Menu,
   Rss,
   ShieldCheck,
+  UserRound,
   UsersRound,
   X,
 } from '@lucide/vue'
@@ -57,23 +58,88 @@ const { loggingOut, logoutError, logout } = useLogout()
 
 /* 移动端抽屉：桌面常驻，窄屏收起为抽屉。 */
 const drawerOpen = ref(false)
-const previousScrollTop = ref(0)
+const isMobile = ref(window.innerWidth <= 900)
+const sidebar = ref<HTMLElement | null>(null)
+const menuToggle = ref<InstanceType<typeof BaseIconButton> | null>(null)
+const drawerClose = ref<InstanceType<typeof BaseIconButton> | null>(null)
+let previousBodyOverflow: string | null = null
+
 function openDrawer(): void {
-  previousScrollTop.value = window.scrollY
-  drawerOpen.value = true
+  if (isMobile.value) drawerOpen.value = true
 }
 function closeDrawer(): void {
   drawerOpen.value = false
-  window.scrollTo({ top: previousScrollTop.value })
 }
+
+function releaseDrawer(): void {
+  document.removeEventListener('keydown', handleDrawerKeydown)
+  if (previousBodyOverflow !== null) {
+    document.body.style.overflow = previousBodyOverflow
+    previousBodyOverflow = null
+  }
+}
+
+function handleDrawerKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeDrawer()
+    return
+  }
+  if (event.key !== 'Tab') return
+  const controls = sidebar.value?.querySelectorAll<HTMLElement>('a[href], button:not(:disabled)')
+  const first = controls?.[0]
+  const last = controls?.[controls.length - 1]
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last?.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first?.focus()
+  }
+}
+
+watch(drawerOpen, async (open) => {
+  if (open) {
+    previousBodyOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    document.addEventListener('keydown', handleDrawerKeydown)
+    await nextTick()
+    if (drawerOpen.value) drawerClose.value?.focus()
+  } else {
+    releaseDrawer()
+    await nextTick()
+    if (isMobile.value) menuToggle.value?.focus()
+  }
+})
+
+function updateViewport(): void {
+  isMobile.value = window.innerWidth <= 900
+  if (!isMobile.value) closeDrawer()
+}
+
+onMounted(() => window.addEventListener('resize', updateViewport))
+onScopeDispose(() => {
+  window.removeEventListener('resize', updateViewport)
+  releaseDrawer()
+})
 </script>
 
 <template>
   <div class="admin-shell">
-    <a class="skip-link" href="#admin-content">跳到内容</a>
+    <a class="skip-link" href="#admin-content" :inert="drawerOpen ? true : undefined">跳到内容</a>
 
     <!-- 侧边栏：桌面常驻，窄屏变成抽屉。 -->
-    <aside class="admin-sidebar" :class="{ 'is-open': drawerOpen }" aria-label="后台导航">
+    <aside
+      id="admin-navigation"
+      ref="sidebar"
+      class="admin-sidebar"
+      :class="{ 'is-open': drawerOpen }"
+      :inert="isMobile && !drawerOpen ? true : undefined"
+      :aria-hidden="isMobile && !drawerOpen ? true : undefined"
+      :role="isMobile ? 'dialog' : undefined"
+      :aria-modal="drawerOpen ? true : undefined"
+      aria-label="后台导航"
+    >
       <div class="sidebar-brand">
         <span class="sidebar-brand-mark" aria-hidden="true">
           <ShieldCheck :size="20" stroke-width="2.2" />
@@ -82,7 +148,12 @@ function closeDrawer(): void {
           <strong>Signal Desk</strong>
           <small>管理控制台</small>
         </span>
-        <BaseIconButton class="sidebar-close" label="关闭导航" @click="closeDrawer">
+        <BaseIconButton
+          ref="drawerClose"
+          class="sidebar-close"
+          label="关闭导航"
+          @click="closeDrawer"
+        >
           <X :size="18" aria-hidden="true" />
         </BaseIconButton>
       </div>
@@ -113,13 +184,21 @@ function closeDrawer(): void {
       v-if="drawerOpen"
       class="sidebar-overlay"
       aria-label="关闭导航"
+      tabindex="-1"
       @click="closeDrawer"
     ></button>
 
     <!-- 右侧内容区 -->
-    <div class="admin-main-wrap">
+    <div class="admin-main-wrap" :inert="drawerOpen ? true : undefined">
       <header class="admin-topbar">
-        <BaseIconButton class="menu-toggle" label="打开导航" @click="openDrawer">
+        <BaseIconButton
+          ref="menuToggle"
+          class="menu-toggle"
+          label="打开导航"
+          aria-controls="admin-navigation"
+          :aria-expanded="drawerOpen"
+          @click="openDrawer"
+        >
           <Menu :size="19" aria-hidden="true" />
         </BaseIconButton>
 
@@ -138,6 +217,7 @@ function closeDrawer(): void {
             :aria-label="`账号与设置 - ${authSession.user.value.email}`"
             :title="`账号与设置 - ${authSession.user.value.email}`"
           >
+            <UserRound :size="17" aria-hidden="true" />
             <span>{{ authSession.user.value.email }}</span>
           </RouterLink>
 
@@ -252,7 +332,7 @@ function closeDrawer(): void {
   color: var(--text-tertiary);
   font-size: 0.68rem;
   font-weight: 720;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
@@ -348,9 +428,13 @@ function closeDrawer(): void {
   align-items: center;
   gap: 10px;
   margin-left: auto;
+  flex-shrink: 0;
 }
 
 .account-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   max-width: 220px;
   padding: 6px 10px;
   border-radius: var(--radius-sm);
@@ -360,6 +444,11 @@ function closeDrawer(): void {
   transition:
     color 150ms ease,
     background-color 150ms ease;
+}
+
+.account-identity svg {
+  flex-shrink: 0;
+  color: var(--accent);
 }
 
 .account-identity:hover {
@@ -438,6 +527,13 @@ function closeDrawer(): void {
   }
 
   .account-identity {
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+  }
+
+  .account-identity span {
     display: none;
   }
 }
@@ -453,6 +549,10 @@ function closeDrawer(): void {
 
   .topbar-subtitle {
     display: none;
+  }
+
+  .topbar-actions {
+    gap: 4px;
   }
 }
 </style>

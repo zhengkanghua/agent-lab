@@ -117,25 +117,6 @@ describe('AppShell', () => {
     expect(labels).toEqual(['显示的'])
   })
 
-  it('nav 插槽的内容排在 navLinks 之前', async () => {
-    const { wrapper } = await mountShell(
-      { navLinks: [{ to: { name: 'search' }, label: '图标入口', icon: Bot }] },
-      { nav: () => h('a', { class: 'probe' }, '返回') },
-    )
-
-    const control = wrapper.get('.account-control').element
-    const order = Array.from(control.children)
-      .map((child) =>
-        child.classList.contains('probe')
-          ? 'slot'
-          : child.classList.contains('topbar-nav-link')
-            ? 'link'
-            : 'other',
-      )
-      .filter((mark) => mark !== 'other')
-    expect(order).toEqual(['slot', 'link'])
-  })
-
   it('省略 modeLabel 时整块不渲染', async () => {
     const { wrapper } = await mountShell()
     expect(wrapper.find('.mode-note').exists()).toBe(false)

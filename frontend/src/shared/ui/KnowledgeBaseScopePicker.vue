@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, useId } from 'vue'
-import { Library, RefreshCw } from '@lucide/vue'
+import { ChevronDown, Library, RefreshCw } from '@lucide/vue'
 import type { KnowledgeBaseDto } from '@/api/knowledge-bases'
 import type { KnowledgeBaseSelection } from '@/api/knowledge-scope'
 
@@ -40,6 +40,7 @@ function toggle(id: string, checked: boolean) {
     <details>
       <summary>
         <Library :size="15" aria-hidden="true" /><span>{{ label }}</span>
+        <ChevronDown class="scope-chevron" :size="15" aria-hidden="true" />
       </summary>
       <fieldset>
         <legend class="sr-only">检索知识库范围</legend>
@@ -110,7 +111,23 @@ summary {
   align-items: center;
   gap: 6px;
   min-height: 32px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
+}
+summary::-webkit-details-marker {
+  display: none;
+}
+summary:hover,
+.scope-refresh:hover:not(:disabled) {
+  color: var(--accent);
+  background: var(--surface-hover);
+}
+.scope-chevron {
+  margin-left: auto;
+}
+details[open] .scope-chevron {
+  transform: rotate(180deg);
 }
 summary span {
   overflow-wrap: anywhere;
@@ -152,6 +169,7 @@ input {
   display: grid;
   place-items: center;
   border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;

@@ -163,23 +163,28 @@ const adminLinks = [
   color: var(--text-tertiary);
   font-size: 0.68rem;
   font-weight: 720;
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
 }
 
 /* 窄屏：横向滚动条。描述文字撤掉，只留图标 + 名称。 */
 @media (max-width: 720px) {
   .settings-nav {
     overflow-x: auto;
+    min-width: 0;
   }
 
   .section-list {
     grid-auto-flow: column;
+    grid-auto-columns: max-content;
     justify-content: start;
     gap: 6px;
   }
 
   .section-link {
-    padding: 8px 12px;
+    min-height: 44px;
+    padding: 8px 10px;
+    gap: 7px;
+    white-space: nowrap;
   }
 
   .section-copy {
