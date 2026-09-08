@@ -305,8 +305,9 @@ Invoke-RestMethod -Method Post `
 跟随 current Alias，无需仅因 generation 变化而修改其配置。随机隔离验收通过不等于已在
 应用数据库执行升级或已完成正式发布。
 
-已经完成第一阶段 v2 升级的环境，第二阶段只需应用新增的两个迁移：
+已经完成第一阶段 v2 升级的环境，第二阶段应用以下迁移：
 ``c49a70d2e831`` 增加上传文件名并允许人工删除待办，``d63e0891f752`` 保存会话范围。
+``e74b9a310c65`` 同步遗留字段说明，使数据库与 ORM 元数据一致，不改字段约束或业务数据。
 已有会话回填为 news，新建会话默认所有启用知识库。新增 Payload 文件名是可空字段，
 已有 v2 Point 缺省仍可读取，不要求为本次多库范围或文件入口重建全部索引。
 升级仍须作为独立部署步骤，经确认后在应用启动前执行；本地测试不会升级共享 schema。
@@ -315,8 +316,8 @@ Invoke-RestMethod -Method Post `
 只检查本次迁移生成的 SQL、不连接数据库：
 
 ```powershell
-uv run alembic upgrade b38f9a7c6d21:d63e0891f752 --sql
-uv run alembic downgrade d63e0891f752:b38f9a7c6d21 --sql
+uv run alembic upgrade b38f9a7c6d21:head --sql
+uv run alembic downgrade head:b38f9a7c6d21 --sql
 ```
 
 ## 测试

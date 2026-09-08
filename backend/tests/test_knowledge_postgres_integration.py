@@ -18,6 +18,7 @@ from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import MetaData, func, select, text, update
 from sqlalchemy.exc import DBAPIError
 
@@ -186,6 +187,7 @@ def test_upgrade_from_previous_head_preserves_nonknowledge_records():
         engine, _ = database(os.environ["SCHEDULER_TEST_DATABASE_URL"], schema)
         config = Config()
         config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
+        head = ScriptDirectory.from_config(config).get_current_head()
 
         def upgrade(connection, revision):
             config.attributes["connection"] = connection
@@ -254,7 +256,7 @@ def test_upgrade_from_previous_head_preserves_nonknowledge_records():
                 assert document["mime_type"] == "text/plain" and document["content_text"] == "existing"
                 assert document["upload_filename"] is None
                 assert await connection.scalar(select(SourceRecord.knowledge_base_id)) == DEFAULT_NEWS_KNOWLEDGE_BASE_ID
-                assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "d63e0891f752"
+                assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == head
                 scope_query = text("SELECT scope FROM agent_threads WHERE thread_id = :thread_id")
                 assert await connection.scalar(scope_query, {"thread_id": thread_id}) == {
                     "mode": "selected", "knowledge_base_ids": [str(DEFAULT_NEWS_KNOWLEDGE_BASE_ID)],
@@ -274,7 +276,7 @@ def test_upgrade_from_previous_head_preserves_nonknowledge_records():
                 async with engine.begin() as connection:
                     await connection.run_sync(downgrade, "b38f9a7c6d21")
             async with engine.begin() as connection:
-                assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "d63e0891f752"
+                assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == head
                 assert await connection.scalar(scope_query, {"thread_id": new_thread_id}) == {"mode": "all"}
                 await connection.execute(DocumentDeletionRecord.__table__.delete().where(DocumentDeletionRecord.document_id == deletion_id))
                 await connection.run_sync(downgrade, "b38f9a7c6d21")

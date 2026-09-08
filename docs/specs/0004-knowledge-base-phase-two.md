@@ -290,4 +290,8 @@
 uv run pytest -q --tb=short --scheduler-configured-services tests/test_file_documents_integration.py tests/test_knowledge_postgres_integration.py::test_upgrade_from_previous_head_preserves_nonknowledge_records
 ```
 
-交付核对：A–F 的代码、HTTP/OpenAPI 契约、页面与文档已完成；文件和跨存储生命周期已通过真实调用链，Agent 范围、引用、终态和压缩通过确定性测试与浏览器验收。真实生成模型的 8 题事实支撑、推断标注与冲突说明尚未执行，相关门控测试及样本保留，不能宣称模型回答质量已通过。开发数据库的共享 schema 尚未升级，正式运行新后端前仍需应用新增迁移。按老板要求保留全部 spec，分后端、前端、文档三批在 main 本地提交，不推送。
+交付核对：A–F 的代码、HTTP/OpenAPI 契约、页面与文档已完成；文件和跨存储生命周期已通过真实调用链，Agent 范围、引用、终态和压缩通过确定性测试与浏览器验收。真实生成模型的 8 题事实支撑、推断标注与冲突说明尚未执行，相关门控测试及样本保留，不能宣称模型回答质量已通过。当时尚未升级应用数据库，后续实际升级记录见下文。按老板要求保留全部 spec，分后端、前端、文档三批在 main 本地提交，不推送。
+
+2026-09-08 老板明确本地配置连接的就是线上 PostgreSQL，授权助手直接升级该库，后续由老板 push 触发生产部署。实际库已从 b38f9a7c6d21 经两条结构迁移升至 d63e0891f752，再应用仅同步注释的 e74b9a310c65。新增字段、可空性与新会话 all 默认值核对通过，原有 2 个会话均保留 news 范围。首次完整 `alembic check` 发现 7 处第一阶段遗留列说明与 ORM 不一致，补充迁移修复后再次检查通过，输出 `No new upgrade operations detected.`；`alembic current` 确认 e74b9a310c65 (head)。
+
+补充迁移的升级/降级 SQL 已离线生成并核对，仅包含列注释和迁移版本记录更新。已有隔离迁移测试去掉写死的最新版本号，改为读取迁移图，保留旧会话范围、数据保留与降级回滚断言；语法检查通过。此次仅修列说明和验收版本定位，未重复前后端全量测试或 9 项调用链测试。没有改写业务正文、删除账号/会话或重建 Qdrant，也未执行真实模型质量评估、git push 或生产服务部署。补充迁移与本记录在 main 本地提交，全部 spec 保留。
