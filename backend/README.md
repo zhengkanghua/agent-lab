@@ -1,13 +1,13 @@
 # Agent Lab 后端
 
-本服务把 FreshRSS 新闻同步成 PostgreSQL 业务事实，用 LangChain 切分成 Chunk、经
+本服务将 FreshRSS 新闻和上传的文本/Markdown 资料保存为 PostgreSQL Document，用 LangChain 切分成 Chunk、经
 Ollama ``bge-m3:567m`` 生成 Embedding 写入 Qdrant，并对外提供受登录保护的**只读**语义
 检索接口。写入链路是显式手动入口（CLI 与一个同步 HTTP 接口），另有定时任务调度器按
 cron 自动触发同一套执行器（进程内或独立进程两种运行形态，见下文）。
 
 在检索之上还有一条 Agent 对话链路（``POST /agent/chat``，SSE）：一个 LangGraph 工具调用
-Agent 把上面的检索能力当工具用，由生成式 LLM 组织答案。它对业务数据同样只读，唯一的写入
-是四张 ``checkpoint*`` 会话历史表（见
+Agent 把上面的检索能力当工具用，在本次知识库范围内由生成式 LLM 组织带证据引用的答案。
+Tool 不修改 Document 或 Qdrant；会话归属和范围写 ``agent_threads``，消息及证据写四张 ``checkpoint*`` 表（见
 [ADR 0003 agent-v1-is-read-only](../docs/adr/0003-agent-v1-is-read-only.md)）。**没配 ``LLM_API_KEY``
 时只有 ``/agent/*`` 返回 503，检索接口照常工作**，所以只想用检索可以完全不管 LLM 配置。
 
@@ -22,6 +22,11 @@ Agent 把上面的检索能力当工具用，由生成式 LLM 组织答案。它
 对外接口清单见 [`docs/architecture.md`](docs/architecture.md) 的「对外 HTTP 接口」，
 或启动后访问 ``/docs``。
 
+文件管理走超级用户 ``/file-documents`` API：上传创建独立 Document，明确 ID/revision 替换，
+失败索引重新排队，按 ID 删除复用既有持久待办。文件不要求 Source 或外部 URL；保存成功后
+等待既有 ``index_pending`` 执行，不在上传请求内生成向量。格式和编码约束见 OpenAPI，
+跨模块流程见 [文件生命周期](../docs/flows/file-document-lifecycle.md)。
+
 ## 外部依赖
 
 服务自身不可独立运行，需要四个外部依赖，用 Agent 对话时还要第五个：
@@ -29,7 +34,7 @@ Agent 把上面的检索能力当工具用，由生成式 LLM 组织答案。它
 ```text
 PostgreSQL   业务事实、账号与登录 Token。独立 Database news_vector_lc。
              必须先执行 alembic upgrade head（当前 head 用 ``alembic heads`` 查看）。
-             Agent 会话的归属与列表元信息在 agent_threads 表（由 Alembic 管）；
+             Agent 会话的归属、选择范围与列表元信息在 agent_threads 表（由 Alembic 管）；
              会话历史内容在 checkpointer 自己的四张表，不由 Alembic 管（见下面「Alembic」）。
 FreshRSS     唯一的新闻来源。动态网页回源和站点 CSS selector 由它负责，
              Python Pipeline 里不能加站点判断。
@@ -112,7 +117,7 @@ LLM_MODEL               必须是 LLM_BASE_URL 那一侧真实存在的模型名
                         提问才报错，启动时看不出来。
 LLM_USER_AGENT          默认 agent-lab。留空则沿用 SDK 默认值，此时部分中转站会按
                         User-Agent 把 openai SDK 的默认标识拦成 403，见下文。
-LANGSMITH_TRACING       默认 false。设成 true 意味着提问内容和检索到的新闻正文会离开
+LANGSMITH_TRACING       默认 false。设成 true 意味着提问内容和检索到的文档正文会离开
                         本机、发往境外云服务，并且要同时配 LANGSMITH_API_KEY。
 ```
 
@@ -300,6 +305,20 @@ Invoke-RestMethod -Method Post `
 跟随 current Alias，无需仅因 generation 变化而修改其配置。随机隔离验收通过不等于已在
 应用数据库执行升级或已完成正式发布。
 
+已经完成第一阶段 v2 升级的环境，第二阶段只需应用新增的两个迁移：
+``c49a70d2e831`` 增加上传文件名并允许人工删除待办，``d63e0891f752`` 保存会话范围。
+已有会话回填为 news，新建会话默认所有启用知识库。新增 Payload 文件名是可空字段，
+已有 v2 Point 缺省仍可读取，不要求为本次多库范围或文件入口重建全部索引。
+升级仍须作为独立部署步骤，经确认后在应用启动前执行；本地测试不会升级共享 schema。
+降级会移除文件名和会话范围字段，必须先完成所有人工删除待办；不得据此宣称保留第二阶段功能。
+
+只检查本次迁移生成的 SQL、不连接数据库：
+
+```powershell
+uv run alembic upgrade b38f9a7c6d21:d63e0891f752 --sql
+uv run alembic downgrade d63e0891f752:b38f9a7c6d21 --sql
+```
+
 ## 测试
 
 开发中先运行受影响的测试文件，需要定位单个用例时追加 `-k <用例名片段>`。连续小修改不逐次执行全量测试：
@@ -350,10 +369,31 @@ uv run pytest -q tests/test_qdrant_remote_integration.py
 uv run pytest -q --tb=short --scheduler-configured-services `
   tests/test_knowledge_postgres_integration.py `
   tests/test_scheduler_postgres_integration.py `
-  tests/test_scheduler_retention_integration.py
+  tests/test_scheduler_retention_integration.py `
+  tests/test_file_documents_integration.py
 ```
 
 这组测试会生成常规 pytest/Python 缓存，不生成新闻导出文件。强制终止测试可能留下带 ``scheduler_test_`` 标识的资源，须先确认测试进程已退出再清理。离线测试不能证明多进程数据库锁、跨库恢复或实际部署；上面的隔离验证也只覆盖合成数据，不等于生产发布验收。
+
+第二阶段文件验证可只运行 ``tests/test_file_documents_integration.py``：覆盖上传到索引、检索、
+全文和替换，以及不同状态按 ID 删除、Qdrant 确认后数据库失败恢复、定时清理排除人工待办。
+样本资料与代表问题见 ``tests/fixtures/knowledge-base-phase-two/README.md``。
+真实回答验收也使用随机 PostgreSQL schema 和 Qdrant Collection/Alias，并调用当前配置的
+Embedding 与生成模型；只发送该目录中的合成资料和问题，不读取业务资料或访问 FreshRSS。
+该操作会写入隔离服务资源并产生模型调用，须先确认运行授权；默认测试中保持跳过。
+
+```powershell
+$env:RUN_KNOWLEDGE_ANSWER_ACCEPTANCE_TEST="1"
+try {
+  uv run pytest -q --tb=short --scheduler-configured-services tests/test_knowledge_answer_acceptance.py
+} finally {
+  Remove-Item Env:RUN_KNOWLEDGE_ANSWER_ACCEPTANCE_TEST
+}
+```
+
+测试记录检索、回答、回放、引用和耗时到 ``.pytest_cache/phase-two-answer-report.json``。
+自动检查范围与出处身份后，仍须逐题核对结论是否被原文支持、推断是否标注、冲突是否说明；
+报告中的人工语义核对状态初始为 pending，不能用引用 ID 校验通过代替。
 
 真实 PostgreSQL 的会话归属过滤与旧会话清理（验证归属只匹配自己的行；需已跑过
 ``alembic upgrade head``）：
@@ -380,6 +420,10 @@ uv run pytest -q tests/test_error_contract.py
 uv run pytest -q tests/test_agent_tools.py tests/test_agent_middleware.py `
   tests/test_agent_streaming.py tests/test_agent_chat_api.py `
   tests/test_agent_checkpointer.py
+
+# 第二阶段：文件入口、多库范围与证据跨流式/回放验证
+uv run pytest -q tests/test_file_documents.py tests/test_knowledge_search_scope.py `
+  tests/test_agent_evidence_scope.py
 
 # 认证、权限边界与账号管理契约
 uv run pytest -q tests/test_auth.py tests/test_user_admin.py
@@ -420,7 +464,7 @@ uv run alembic upgrade head
 自动生成的迁移必须人工审查。表清单见
 [`docs/architecture.md`](docs/architecture.md) 的「数据库表」。
 
-Agent 的会话数据分两处，别搞混：``agent_threads``（谁拥有哪个会话、标题、最后活跃时间）
+Agent 的会话数据分两处，别搞混：``agent_threads``（归属、选择范围、标题、最后活跃时间）
 **由 Alembic 管**，是普通业务表；会话的消息内容在 checkpointer 的四张表里，不由 Alembic 管。
 分开的理由见 [ADR 0009](../docs/adr/0009-agent-thread-ownership-in-own-table.md)。回滚建
 ``agent_threads`` 的那个迁移会让每个会话变成孤儿——历史还在，但谁都读不到也删不掉。

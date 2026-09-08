@@ -17,14 +17,16 @@
 | 账号密码登录、退出 | `/login` | `POST /auth/login`、`POST /auth/logout` | `api/auth.py`（FastAPI Users Cookie backend）、`auth/`；前端 `api/auth.ts`、`features/auth/auth-session.ts` | `tests/test_auth.py`、`src/features/auth/auth-session.spec.ts`、`src/pages/LoginPage.spec.ts` |
 | 读取当前登录身份 | 无独立页面，路由守卫用 | `GET /auth/me` | `api/auth.py`、`schemas/auth.py`；前端 `features/auth/auth-session.ts`、`app/router.ts` | `tests/test_auth.py`、`src/features/auth/auth-session.spec.ts` |
 | 账号自助（看自己信息、改自己密码） | `/settings/account`（`/account` 重定向并入） | `POST /auth/me/password` | `api/account.py` → `services/account_service.py`；前端 `api/account.ts`、`pages/SettingsPage.vue`、`features/settings/` | `tests/test_account.py`、`src/pages/SettingsPage.spec.ts` |
-| 语义检索（按新闻分组，检索页多轮累积的检索流） | `/` | `POST /document-search` | `api/document_search.py` → `services/vector_search_service.py`；前端 `api/document-search.ts`、`features/semantic-search/composables/useSearchStream.ts`、`components/SearchComposer.vue`、`components/SearchRecordTurn.vue`、`pages/SearchPage.vue` | `tests/test_document_search.py`、`src/api/document-search.spec.ts`、`src/features/semantic-search/tests/useSearchStream.spec.ts`、`SearchComposer.spec.ts`、`SearchRecordTurn.spec.ts`、`src/pages/SearchPage.spec.ts` |
-| 读取单篇文档 | `/`（检索流某条记录内展开） | `GET /documents/{document_id}` | `api/documents.py` → `repositories/document_repository.py`；前端 `api/documents.ts`、`features/semantic-search/composables/useDocumentReader.ts` | `tests/test_documents_api.py`、`src/api/documents.spec.ts` |
+| 多知识库语义检索（按 Document 分组，检索流） | `/` | `POST /document-search` | [检索链路](flows/one-search.md)；`api/document_search.py` → `services/vector_search_service.py`、`knowledge/scope.py`；前端 `api/document-search.ts`、`features/semantic-search/`、`shared/ui/KnowledgeBaseScopePicker.vue` | `tests/test_document_search.py`、`tests/test_knowledge_search_scope.py`、`src/api/document-search.spec.ts`、`src/features/semantic-search/tests/useSearchStream.spec.ts`、`src/pages/SearchPage.spec.ts` |
+| 读取单篇文档与当前原文对照 | `/`、`/agent`、`/admin/files` 的阅读器 | `GET /documents/{document_id}` | `api/documents.py` → `repositories/document_repository.py`；前端 `api/documents.ts`、`features/semantic-search/composables/useDocumentReader.ts`、`shared/ui/SafeMarkdown.vue` | `tests/test_documents_api.py`、`src/api/documents.spec.ts`、`src/features/semantic-search/tests/DocumentReader.spec.ts`、`src/pages/AgentChatPage.spec.ts` |
+| 文件上传、按 ID 替换、索引重试和删除 | `/admin/files` | `/file-documents`、`/{document_id}/file`、`/{document_id}/retry`、`/{document_id}` | [文件生命周期](flows/file-document-lifecycle.md)；`api/file_documents.py` → `knowledge/file_application.py`、`knowledge/adapters/files.py`；前端 `features/file-documents/`、`api/file-documents.ts` | `tests/test_file_documents.py`、`tests/test_file_documents_integration.py`（隔离真实资源，默认跳过）、`src/features/file-documents/FileDocumentDirectory.spec.ts` |
 | 用户管理（增删改、改密、踢会话） | `/admin/users` | `GET /admin/users`、`POST /admin/users`、`PATCH /admin/users/{user_id}`、`POST /admin/users/{user_id}/password`、`DELETE /admin/users/{user_id}/sessions` | `api/user_admin.py` → `services/user_admin_service.py`；前端 `api/user-admin.ts`、`pages/UserAdminPage.vue` | `tests/test_user_admin.py`、`src/api/user-admin.spec.ts`、`src/pages/UserAdminPage.spec.ts` |
 | KnowledgeBase 配置管理（创建、编辑、启停） | `/admin/knowledge-bases` | `GET /knowledge-bases`、`POST /knowledge-bases`、`PATCH /knowledge-bases/{knowledge_base_id}` | `api/knowledge_bases.py` → `knowledge/`；前端 `api/knowledge-bases.ts`、`features/knowledge-bases/`、`pages/KnowledgeBasesPage.vue` | `tests/test_knowledge_bases.py`、`src/api/knowledge-bases.spec.ts`、`src/pages/KnowledgeBasesPage.spec.ts` |
 | 来源管理与 KnowledgeBase 绑定（列表、绑定、解绑） | `/admin/sources` | `GET /sources`、`PATCH /sources/{source_id}/knowledge-base` | `api/sources.py` → `services/source_binding_service.py`；前端 `api/sources.ts`、`features/sources/`、`pages/SourcesPage.vue` | `tests/test_source_binding.py`、`tests/test_freshrss_incremental_sync.py`、`src/api/sources.spec.ts`、`src/pages/SourcesPage.spec.ts` |
 | 手工触发同步加索引 | 无页面 | `POST /pipeline/run-once` | `api/pipeline.py` → `services/news_pipeline_execution_service.py` | `tests/test_pipeline_api.py`、`tests/test_news_pipeline_execution.py` |
 | 定时任务管理与同步、索引、清理执行 | `/admin/scheduled-jobs`（超级用户） | `/scheduled-jobs` 配置管理、`/task-types`、`/validate-cron`、`/{job_id}/trigger`、`/{job_id}/runs`、`/{job_id}/runs/{run_id}` | [执行链路](flows/scheduled-job-execution.md)；`scheduled_job_service.py`、`scheduler_runner.py`、`scheduled_job_executor.py`、`scheduled_task_registry.py`、`write_coordination.py`、相关 Repository | `test_scheduled_jobs_api.py`、`test_scheduler_safety.py`、`test_scheduler_lifecycle.py`、`test_document_retention_service.py`；`test_scheduler_postgres_integration.py`、`test_scheduler_retention_integration.py`（显式隔离地址，默认跳过） |
 | Agent 对话（模型自己调检索工具再作答，SSE 流式） | `/agent` | `POST /agent/chat` | `api/agent_chat.py` → `agent/runtime.py`、`agent/streaming.py`、`agent/tools/`；前端 `api/agent-chat.ts`、`features/agent-chat/`、`pages/AgentChatPage.vue` | `tests/test_agent_chat_api.py`、`tests/test_agent_streaming.py`、`tests/test_agent_tools.py`、`tests/test_agent_middleware.py`、`src/api/agent-chat.spec.ts`、`src/features/agent-chat/tests/`、`src/pages/AgentChatPage.spec.ts` |
+| Agent 会话范围与证据引用 | `/agent`、`/agent/:threadId` | `PATCH /agent/threads/{thread_id}/scope`、`POST /agent/chat`、`GET /agent/threads/{thread_id}/messages` | [回答与引用链路](flows/agent-answer-evidence.md)；`agent/context.py`、`agent/evidence.py`、`agent/replay.py`、`agent/middleware.py`；前端 `useAgentChat.ts`、`AgentTurnCard.vue` | `tests/test_agent_evidence_scope.py`、`src/api/agent-threads.spec.ts`、`src/features/agent-chat/tests/useAgentChat.spec.ts`、`src/pages/AgentChatPage.spec.ts` |
 | 检索偏好（数量参数的默认值，改动即生效，只存本浏览器） | `/settings/search`（检索输入条有直达入口） | 无后端参与 | 前端 `features/settings/`、`pages/SettingsPage.vue` | `src/features/settings/tests/`、`src/pages/SettingsPage.spec.ts` |
 | Agent 偏好（自定义系统提示词，仅超级用户，只存本浏览器） | `/settings/agent`（输入条徽章直达） | 无后端参与（编辑不落库；随每轮 `/agent/chat` 请求发送） | 前端 `features/settings/`、`pages/SettingsPage.vue` | `src/features/settings/tests/`、`src/pages/SettingsPage.spec.ts` |
 | 读取 Agent 默认系统提示词 | `/settings/agent`（提示词编辑器内） | `GET /agent/default-prompt` | `api/agent_chat.py` → `agent/prompts.py`；前端 `features/settings/composables/useDefaultAgentPrompt.ts` | `tests/test_agent_chat_api.py`、`src/features/settings/tests/useDefaultAgentPrompt.spec.ts` |
@@ -32,28 +34,28 @@
 | 健康检查 | 无 | `GET /health` | `api/health.py` | `tests/test_error_contract.py` |
 
 `/vector-search`、`/document-search`、`/documents` 要求登录；`/pipeline`、`/admin/users`、
-`/scheduled-jobs`、`/agent` 要求超级用户。挂载点和依赖在 `backend/src/agent_lab/main.py` 的
+`/scheduled-jobs`、`/file-documents`、`/agent` 要求超级用户。挂载点和依赖在 `backend/src/agent_lab/main.py` 的
 `include_router` 处。设置中心的两个偏好分区是纯前端能力，只读已有接口
 （`GET /agent/default-prompt`），自己没有后端路由。
 
 定时任务的进程形态见 [ADR 0017](adr/0017-scheduler-runs-in-a-dedicated-process.md)，认领、写资源协调及恢复决策见 [ADR 0019](adr/0019-scheduled-execution-and-write-coordination.md)。
 
-检索页重构后去掉了「按片段」模式，前端只走 `POST /document-search`（按新闻分组）并在页内做
+检索页重构后去掉了「按片段」模式，前端只走 `POST /document-search`（按 Document 分组）并在页内做
 多轮累积（检索流）；后端 `/vector-search` 接口与后端单测仍保留，只是前端不再调用它，因此
 不再占「对外能力」一行。
 
 Agent 那几行的能力边界见 [`adr/0003-agent-v1-is-read-only.md`](adr/0003-agent-v1-is-read-only.md)：
-它只有两个只读工具，不写业务表也不写 Qdrant。会话历史落在 checkpointer 自己的四张表里，
+它只有两个只读工具，不修改 Document 或 Qdrant。会话历史落在 checkpointer 自己的四张表里，
 不由 Alembic 管（[`adr/0004`](adr/0004-checkpointer-tables-outside-alembic.md)）；**谁拥有哪个会话**
-另记在 Alembic 管的 `agent_threads` 表里（[`adr/0009`](adr/0009-agent-thread-ownership-in-own-table.md)）。
-每条 `/agent/*` 路由都先确认会话归属，不属于当前账号就 404——和「不存在」返回同一个码，
+与会话选择范围另记在 Alembic 管的 `agent_threads` 表里（[`adr/0009`](adr/0009-agent-thread-ownership-in-own-table.md)）。
+读取、修改或续聊已有会话时先确认归属，不属于当前账号就 404——和「不存在」返回同一个码，
 避免拿状态码差异枚举会话 id。`POST /agent/chat` 是流式的，所以它的归属校验必须在流开始之前
 完成，且不使用请求级数据库 Session（[`adr/0010`](adr/0010-sse-routes-use-short-lived-db-sessions.md)）。
 
 用户管理这一行前后端两列写的都是 `/admin/users`，不是抄错：前端页面路由和后端 API 前缀刚好同名，
 浏览器实际请求 `/api/admin/users`。后端路由的 `tags=["user-admin"]` 只是 OpenAPI 分组标签，不是路径。
-后台在前端只有一条路由 `/admin/:section?`（users=账号管理、knowledge-bases=知识库、sources=来源管理、scheduled-jobs=定时任务），
-两个地址是同一条路由的分区，注册表见 `pages/AdminPage.vue`。
+后台在前端只有一条路由 `/admin/:section?`（users=账号管理、knowledge-bases=知识库、sources=来源管理、files=文件资料、scheduled-jobs=定时任务），
+各地址是同一条路由的分区，注册表见 `pages/AdminPage.vue`。
 
 ## 命令行能力
 

@@ -1,10 +1,9 @@
 # Agent Lab
 
-仓库当前只有一个业务领域：新闻语义检索。后端的 Qdrant 与 Ollama 组件目前仍与新闻领域
-耦合（Payload 契约、Collection 命名、单份配置），尚未抽离为可被多业务领域、多 Collection
-复用的公共层；接入第二个业务领域前需要先完成抽离。
+仓库当前的业务领域是知识库语义检索：新闻与上传资料归属不同 KnowledgeBase，共用
+Document、Chunk 和同规格向量索引。PostgreSQL 保存当前文档，Qdrant 提供语义检索。
 
-该工作区把新闻向量服务与浏览器工作台作为两个独立运行时维护：
+该工作区把知识库服务与浏览器工作台作为两个独立运行时维护：
 
 ```text
 agent-lab/
@@ -13,16 +12,15 @@ agent-lab/
 └── docs/      # 平台级路线图与决策记录
 ```
 
-当前产品提供两条链路，都只读：只读新闻语义检索，以及一个会自己调用检索工具再作答的
-Agent 对话。浏览器默认使用相对路径
-`POST /api/document-search` 获取按新闻分组的相关片段；检索页没有「按片段」模式切换，
+检索页和 Agent 对话都支持选择所有启用知识库或指定几个知识库。浏览器使用相对路径
+`POST /api/document-search` 获取按 Document 分组的相关片段；检索页没有「按片段」模式切换，
 取舍见 `docs/adr/0013-search-page-multi-round-record-stream.md`。
 阅读视图打开时调用 `GET /api/documents/{document_id}` 读取
 PostgreSQL 完整正文。检索链路本身不调用生成式 LLM。
 
 Agent 对话走 `POST /api/agent/chat`，以 SSE 返回模型输出与工具调用轨迹；会话历史由
 LangGraph checkpointer 存在 PostgreSQL 的四张 `checkpoint*` 表里。Agent 只有两个只读工具
-（检索新闻、读取全文），不写业务表也不写 Qdrant——见
+（检索文档、读取全文），不修改 Document 或 Qdrant——见
 [`docs/adr/0003-agent-v1-is-read-only.md`](docs/adr/0003-agent-v1-is-read-only.md)。这条链路
 只对超级用户开放：每次对话都是真金白银的模型调用，自定义系统提示词等于让调用方直接改
 模型行为。开发环境由 Vite 去掉 `/api` 前缀后代理到
@@ -30,7 +28,16 @@ LangGraph checkpointer 存在 PostgreSQL 的四张 `checkpoint*` 表里。Agent 
 后端使用 PostgreSQL 可撤销 Token 和 HttpOnly Cookie，不开放注册。部署 Secret 或
 `backend/.env` 托管唯一保底超级管理员，服务启动时自动创建/同步；该管理员登录后可在
 `/admin/users` 创建和管理其他账号。普通账号只能读取，超级用户额外拥有账号管理、
-Agent 对话与手动 Pipeline 权限，CLI 只保留为恢复入口。
+Agent 对话、知识库/来源/文件管理与手动 Pipeline 权限，CLI 只保留为恢复入口。
+
+超级用户在 `/admin/files` 上传 `.txt`、`.md`，指定归属知识库，查看当前正文和索引状态，
+或按 Document ID 替换、重试索引、删除。同名上传是独立文档，替换使用 revision 检查并发；
+保存成功后仍需既有索引任务处理，才会进入检索结果。
+
+Agent 为每次提问保存实际范围和可核对的引用。点击引用可对照当时取得的片段与当前原文；
+原文更新、删除或知识库停用时明确提示。会话范围另存于 `agent_threads`，较早问答压缩后
+不再逐条回看，也不作为新回答的证据。链路见 [文件资料](docs/flows/file-document-lifecycle.md)
+和 [Agent 回答与引用](docs/flows/agent-answer-evidence.md)。
 
 ## 本地启动
 

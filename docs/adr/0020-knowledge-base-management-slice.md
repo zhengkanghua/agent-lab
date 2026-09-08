@@ -9,7 +9,7 @@
 - 管理 API 由超级用户创建、编辑和启停 KnowledgeBase；列表默认只返回启用库，读取停用配置必须明确传参。当前不提供物理删除。
 - 导入、索引、检索、Source 绑定和清理用例依赖纯数据契约与端口，PostgreSQL、FreshRSS、Qdrant、LangChain/Ollama 留在适配器与装配层。DocumentSnapshot 在数据库事务结束前构造，不让 ORM 生命周期进入索引用例。
 - 停用库拒绝新增绑定、来源导入和检索，已有数据保留且可显式维护清理。同步网络前检查一次，保存时在短事务中锁定并复核；Source 绑定参加 sync/index 持久写协调。
-- 普通内部搜索必须明确范围；HTTP 缺省与当前 Agent Tool 都明确传 news。范围不存在返回 404，停用返回 409，均在 Embedding/Qdrant 之前失败。检索页面选择器和 Agent 可选跨库参数仍属后续交付。
+- 普通内部搜索必须明确范围；新页面显式选择所有启用库或非空 ID 集合，服务端解析一次范围快照后交给 Qdrant 统一分组和排序。旧 HTTP 缺省仍明确传 news，不让旧调用方悄然跨库。范围不存在返回 404，停用或无启用库返回 409，均在 Embedding/Qdrant 之前失败。Agent 新会话默认所有启用库，既有会话迁移保留 news；每次运行取得不可变快照，Tool 只能继续缩小范围。
 - 索引和 Payload 采用 v2；多个 KnowledgeBase 共用同规格 Collection。重建占用 sync/index，完整构建并验收新 generation 后发布 current Alias，之后条件更新成功快照。构建失败保留原 Alias，发布或确认不确定时保留占用供人工核实；旧 Collection 不自动删除。
 
 ## 原因与边界
@@ -20,11 +20,13 @@ KnowledgeBase 的配置是所有数据隔离的共同前置。来源页面、清
 
 ## 当前进度
 
-检索边界切片已接入：`POST /vector-search` 和 `POST /document-search` 在 HTTP 边界把缺省范围固定解析为 `news` 的稳定 UUID；调用方可以显式传入 `knowledge_base_id`，文档级请求的顶层范围会与 Qdrant 过滤器合并。两种请求都拒绝顶层范围与嵌套过滤范围不一致的输入。
+检索边界已扩展：`POST /vector-search` 和 `POST /document-search` 接受显式 `scope`，返回结果与实际知识库展示快照；旧缺省/单库请求保留数组响应和 news 缺省值。新旧范围并存必须一致，空选择或显式 null 不退化为无过滤查询。页面保存各检索记录的选择、实际集合与名称，后续改名或切换选择不改写历史。
 
-Qdrant 搜索过滤器把 `knowledge_base_id` 编码为精确匹配，搜索响应要求每个 Point 携带该字段；范围端口统一查询数据库启用状态。未知 UUID 与停用目标都明确失败，不退化为全库查询。合成多库用例覆盖普通搜索和阶段一 Agent 的新闻范围。
+Qdrant 搜索过滤器把单个 `knowledge_base_id` 编码为精确匹配，把集合编码为 MatchAny，搜索响应要求每个 Point 携带归属字段；范围端口统一查询数据库启用状态。未知 UUID 与停用目标都明确失败，不退化为全库查询。查询开始后以本次快照解释，下一次重新解析。默认搜索全部不改变定时清理缺省只作用于 news 的边界。
 
 归属、配置页面、清理范围及通用 Payload 已接入；`mime_type` 与可空 Source/URL 贯穿构建、Payload 和读取响应。验证与部署状态以测试记录和施工规格为准，ADR 不把离线测试通过解释为真实数据库迁移或生产重建完成。
+
+2026-09-08 第二阶段扩展文件入口：文本与 Markdown 通过独立管理用例创建或按 ID/revision 替换 Document，复用既有索引与删除协调。文件没有 Source 也可读取全文；停用库拒绝读取及新增/替换。文件名为可选索引元数据，兼容当前 v2 Payload，不因增加该字段清空或重建索引。会话范围独立保存，旧问答与摘要不能作为新运行的证据，见 [ADR 0021](0021-agent-run-evidence-and-replay.md)。
 
 ## 消融结论
 

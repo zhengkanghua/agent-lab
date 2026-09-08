@@ -45,6 +45,15 @@ $env:BACKEND_PROXY_TARGET='http://127.0.0.1:8788'; npm run dev  # 终端二：�
 流式节奏），不能作为后端已更新或部署成功的依据。想连真实后端时不设 `BACKEND_PROXY_TARGET`
 （默认代理到 `127.0.0.1:8000`）即可。
 
+第二阶段 mock 提供两个启用知识库和一个停用库，支持范围选择、文件新增/替换/删除与引用阅读。
+文件和会话只保存在进程内存，重启即复位；上传显示等待索引，不模拟真实索引执行。
+内置运行手册刻意让引用片段与当前全文不同，用于检查“原文已更新”提示。回答为固定资料生成，
+不代表真实模型质量。截图统一可写到仓库 `output/playwright/`：
+
+```powershell
+npm run dev:shots -- --out ../output/playwright
+```
+
 ## 怎么跑（两种）
 
 都请在 `frontend/` 下执行，且 dev server 先跑着。
@@ -95,8 +104,9 @@ mock 的字段必须跟得上前端 `src/api/generated/openapi.ts`（由后端 `
 - `/admin/users` 列表里的每个用户都要含 `updated_at`（前端 `isUserAdminDto` 校验），
   少了会让整个后台目录报「无法读取账号列表」。
 - Agent 对话是 SSE：`/agent/chat` 的 body 是若干 `data: {...json...}` 帧，帧间空行 `\n\n`
-  分隔；事件类型写在 JSON 的 `event` 字段（`token` / `tool_call` / `tool_result` / `done`），
-  不是 SSE 的 `event:` 字段。`done` 必须带合法 UUID 的 `thread_id`。
+  分隔；事件类型写在 JSON 的 `event` 字段，包含 `run_started`、`token`、`tool_call`、
+  `tool_result` 和 `done`，不是 SSE 的 `event:` 字段。`run_started` 给出范围与运行 ID，
+  `done` 必须带 `thread_id`、最终 `answer` 和 `status`；引用与回放字段必须同步。
 
 ## 边界与常见坑
 

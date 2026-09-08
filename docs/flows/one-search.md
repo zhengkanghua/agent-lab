@@ -10,7 +10,7 @@
 第二次  GET  /documents/{id}    用户展开某篇时才要正文
 ```
 
-第一次请求先用 PostgreSQL 核验 KnowledgeBase 是否存在且启用，再走 Ollama 和 Qdrant。
+第一次请求先用 PostgreSQL 解析实际启用 KnowledgeBase 范围，再走 Ollama 和 Qdrant。
 搜索不逐篇回查正文，避免每条命中增加一次数据库查询；用户打开全文时才读取 Document。
 
 代价是列表页拿不到正文。要展示摘要就只能用 Qdrant payload 里已有的字段，不能临时回表。
@@ -26,14 +26,18 @@ SearchPage.vue
           ═══ HTTP ═══
           api/document_search.py          Pydantic 校验
             └─ services/vector_search_service.py
-                ├─ KnowledgeBaseScope    核验明确范围（HTTP 缺省与当前 Agent 使用 news）
+                ├─ KnowledgeBaseScope    解析所有启用库或非空集合；旧 HTTP 缺省 news
                 ├─ Ollama    query 向量化 + 按索引规格校验向量
                 └─ qdrant/search.py       grouped query，一次只读查询
 ```
 
 检索页重构后把每次搜索追加成一条「检索记录」形成向下长的检索流（最新贴顶、旧记录折叠、
 刷新即清空），但**单条记录的那次 `/document-search` 请求链路不变**——本图即单次检索的请求
-链。不再有「按片段」模式，前端只走按新闻分组。
+链。不再有「按片段」模式，前端只走按 Document 分组。
+
+新页面明确发送 `scope`，新响应包含实际范围快照及结果；旧 HTTP 不带 scope 时保持 news 缺省
+和数组响应。每条检索记录保留提交选择、实际集合和名称，随后改选或改名不重写已有记录。
+Agent 复用范围解析，但选择保存在会话中，每次运行冻结后只允许 Tool 进一步缩小。
 
 后端顺序固定：**核验知识库、向量化、查询 Qdrant**。向量化后还要对着当前索引规格
 （维度、模型）校验一遍，不合就直接报错——避免用错模型的向量去查，那会返回看似正常
@@ -67,7 +71,9 @@ Qdrant 的 grouped query 按 `document_id` 分组，`document_limit` 控制返�
 | --- | --- |
 | 查询为空或超长 | 前端 `features/semantic-search/model/search-validation.ts` 直接拦，不发请求 |
 | 参数不合法 | 422，后端 Pydantic |
+| 空选择、目录加载失败 | 页面阻止提交并提供重新选择或刷新入口 |
 | KnowledgeBase 不存在或停用 | 分别为 404 或 409，不请求向量服务 |
+| 没有启用 KnowledgeBase | 409，不请求向量服务 |
 | Ollama 挂了或超时 | 503 |
 | Qdrant 挂了或响应契约非法 | 503 |
 | 索引规格不匹配 | 503（配置问题，不是临时故障，重试无用） |
@@ -87,5 +93,5 @@ Qdrant 的 grouped query 按 `document_id` 分组，`document_limit` 控制返�
   链路（`POST /agent/chat`，SSE），它复用同一个 `VectorSearchService.search_documents` 作为工具，但走不同的
   路由、不同的权限（仅超级用户）和不同的响应形状。
 - 检索页的多轮「检索流」是纯页面状态：记录只在内存里向下累积，刷新或离开即清空，不写后端、
-  不留库。Agent 链路也不写业务表和 Qdrant，唯一的写入是会话历史落在 checkpointer 自己的
-  四张表里（ADR 0003、0004）。
+  不留库。Agent 的 Tool 不修改 Document 或 Qdrant；会话归属与选择范围写 `agent_threads`，
+  消息和证据关系写 checkpointer（ADR 0003、0004、0021）。
