@@ -1,5 +1,6 @@
 import type { components } from './generated/openapi'
 import { ApiError, requestJson } from './client'
+import { isResolvedScope, type KnowledgeBaseSelection } from './knowledge-scope'
 import {
   hasText,
   isFiniteNumber,
@@ -16,6 +17,7 @@ import {
 export type DocumentSearchRequest = components['schemas']['DocumentSearchRequest']
 export type DocumentSearchResultDto = components['schemas']['DocumentSearchResult']
 export type DocumentSearchMatchDto = components['schemas']['DocumentSearchMatch']
+export type ScopedDocumentSearchResponse = components['schemas']['ScopedDocumentSearchResponse']
 
 /**
  * 数量参数的契约边界。与后端一一对应：document_limit 是 1..100，matches_per_document 是
@@ -46,6 +48,7 @@ export interface SearchDocumentsOptions {
   query: string
   documentLimit: number
   matchesPerDocument: number
+  scope?: KnowledgeBaseSelection
   signal?: AbortSignal
 }
 
@@ -53,12 +56,14 @@ export async function searchDocuments({
   query,
   documentLimit,
   matchesPerDocument,
+  scope = { mode: 'all' },
   signal,
-}: SearchDocumentsOptions): Promise<DocumentSearchResultDto[]> {
+}: SearchDocumentsOptions): Promise<ScopedDocumentSearchResponse> {
   const payload: DocumentSearchRequest = {
     query,
     document_limit: documentLimit,
     matches_per_document: matchesPerDocument,
+    scope,
   }
 
   const response = await requestJson<unknown>('/document-search', {
@@ -67,21 +72,21 @@ export async function searchDocuments({
     signal,
   })
 
-  if (!Array.isArray(response)) {
+  if (!isRecord(response) || !isResolvedScope(response.scope) || !Array.isArray(response.results)) {
     throw new ApiError({
       message: 'The search service returned an unexpected result shape.',
       code: 'response_invalid',
     })
   }
 
-  if (!response.every(isDocumentSearchResultDto)) {
+  if (!response.results.every(isDocumentSearchResultDto)) {
     throw new ApiError({
       message: 'The search service returned an invalid document result.',
       code: 'response_invalid',
     })
   }
 
-  return response
+  return { scope: response.scope, results: response.results }
 }
 
 function isDocumentSearchResultDto(value: unknown): value is DocumentSearchResultDto {

@@ -3,6 +3,8 @@ import { ref } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentChatEvent, StreamAgentChatOptions } from '@/api/agent-chat'
+import { agentDone, agentEvidence, agentStarted } from '@/api/agent-chat.fixture'
+import { newsKnowledgeBase, techKnowledgeBase } from '@/api/knowledge-bases.fixture'
 
 const api = vi.hoisted(() => ({
   streamAgentChat: vi.fn(),
@@ -19,9 +21,15 @@ const threadsApi = vi.hoisted(() => ({
   listAgentThreads: vi.fn(),
   getAgentThreadMessages: vi.fn(),
   deleteAgentThread: vi.fn(),
+  updateAgentThreadScope: vi.fn(),
 }))
 
 vi.mock('../api/agent-threads', () => threadsApi)
+
+const knowledgeApi = vi.hoisted(() => ({ listKnowledgeBases: vi.fn() }))
+const documentsApi = vi.hoisted(() => ({ fetchDocument: vi.fn() }))
+vi.mock('../api/knowledge-bases', () => knowledgeApi)
+vi.mock('../api/documents', () => documentsApi)
 
 const session = vi.hoisted(() => ({ logout: vi.fn() }))
 
@@ -130,8 +138,17 @@ describe('AgentChatPage', () => {
     threadsApi.listAgentThreads.mockReset()
     threadsApi.listAgentThreads.mockResolvedValue({ items: [], total: 0 })
     threadsApi.getAgentThreadMessages.mockReset()
+    threadsApi.getAgentThreadMessages.mockRejectedValue(new Error('本用例未提供历史同步结果'))
     threadsApi.deleteAgentThread.mockReset()
-    scripted([{ event: 'done', thread_id: THREAD_ID }])
+    threadsApi.updateAgentThreadScope.mockReset()
+    threadsApi.updateAgentThreadScope.mockResolvedValue(undefined)
+    knowledgeApi.listKnowledgeBases.mockReset()
+    knowledgeApi.listKnowledgeBases.mockResolvedValue([
+      newsKnowledgeBase,
+      { ...techKnowledgeBase, is_active: true },
+    ])
+    documentsApi.fetchDocument.mockReset()
+    scripted([agentDone()])
     // jsdom 没有实现 scrollIntoView。
     Element.prototype.scrollIntoView = vi.fn()
   })
@@ -179,7 +196,7 @@ describe('AgentChatPage', () => {
     scripted([
       { event: 'token', text: '央行' },
       { event: 'token', text: '维持利率不变。' },
-      { event: 'done', thread_id: THREAD_ID },
+      agentDone('央行维持利率不变。'),
     ])
     const { wrapper } = await mountPage()
 
@@ -188,7 +205,7 @@ describe('AgentChatPage', () => {
     await flushPromises()
 
     expect(wrapper.get('.question-text').text()).toBe('央行利率')
-    // 答案正文改由 MarkdownAnswer 渲染，容器类名跟着换成 .answer-body。
+    // Done 携带持久化后的最终答案，页面不能只依赖临时 token。
     expect(wrapper.get('.answer-body').text()).toBe('央行维持利率不变。')
     expect(wrapper.find('.empty-state').exists()).toBe(false)
     wrapper.unmount()
@@ -216,13 +233,14 @@ describe('AgentChatPage', () => {
       },
       {
         event: 'tool_result',
+        evidence: [],
         tool_call_id: 'call-1',
         tool: 'search_news',
         content: '找到 2 篇。',
         failed: false,
       },
       { event: 'token', text: '维持不变。' },
-      { event: 'done', thread_id: THREAD_ID },
+      agentDone('维持不变。'),
     ])
     const { wrapper } = await mountPage()
 
@@ -238,7 +256,7 @@ describe('AgentChatPage', () => {
   })
 
   it('第二轮带上第一轮拿到的会话 id', async () => {
-    scripted([{ event: 'done', thread_id: THREAD_ID }], [{ event: 'done', thread_id: THREAD_ID }])
+    scripted([agentDone()], [agentDone()])
     const { wrapper } = await mountPage()
 
     await wrapper.get('.message-input').setValue('第一问')
@@ -286,10 +304,7 @@ describe('AgentChatPage', () => {
           retryable: true,
         },
       ],
-      [
-        { event: 'token', text: '这次成了' },
-        { event: 'done', thread_id: THREAD_ID },
-      ],
+      [{ event: 'token', text: '这次成了' }, agentDone('这次成了')],
     )
     const { wrapper } = await mountPage()
 
@@ -403,16 +418,12 @@ describe('AgentChatPage', () => {
     wrapper.unmount()
   })
 
-  it('输入区下方常驻「可能有误」与「只读」的细则，且每一轮都在', async () => {
-    /* 这两句原来一句挂在空态、一句挂在页脚。空态那句在第一轮答案出现后就消失，
-       而「回答可能有误」对每一轮都成立；页脚在这一页已经撤掉（底部固定输入区之下
-       再放页脚，用户要多滚一屏才看得到）。所以合并到输入区下面的细则行，
-       并且这条用例特意在提问之后断言它还在。 */
+  it('输入区持续提示回答可能有误，并引导用户核对引用', async () => {
     const { wrapper } = await mountPage()
     const note = () => wrapper.get('.dock-note').text()
 
     expect(note()).toContain('可能有误')
-    expect(note()).toContain('只读数据')
+    expect(note()).toContain('点击引用')
     expect(wrapper.find('.site-footer').exists()).toBe(false)
 
     await wrapper.get('.message-input').setValue('央行利率')
@@ -423,10 +434,55 @@ describe('AgentChatPage', () => {
     wrapper.unmount()
   })
 
+  it('点击有效引用展示当时片段与当前正文，原文变化时明确提示', async () => {
+    const answer = `备份保留 7 天。[[${agentEvidence.citation_id}]]`
+    scripted([
+      agentStarted(),
+      { event: 'token', text: '重试前的临时文字' },
+      { ...agentDone(answer), citations: [agentEvidence] },
+    ])
+    documentsApi.fetchDocument.mockResolvedValue({
+      document_id: agentEvidence.document_id,
+      knowledge_base_id: agentEvidence.knowledge_base_id,
+      knowledge_base_name: agentEvidence.knowledge_base_name,
+      content_hash: 'b'.repeat(64),
+      revision: 2,
+      title: '更新后的运行手册',
+      mime_type: 'text/markdown',
+      upload_filename: '运行手册.md',
+      url: null,
+      source_name: null,
+      published_at: null,
+      authors: [],
+      labels: [],
+      content_text: '# 当前规定\n备份保留 14 天。',
+    })
+    const { wrapper } = await mountPage()
+    await wrapper.get('.message-input').setValue('备份保留多久？')
+    await wrapper.get('.agent-form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.get('.answer-body').text()).not.toContain('临时文字')
+    await wrapper.get('.answer-body a').trigger('click')
+    await flushPromises()
+
+    expect(documentsApi.fetchDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ documentId: agentEvidence.document_id }),
+    )
+    const dialog = document.body.querySelector('[role="dialog"]')
+    expect(dialog?.textContent).toContain('当时引用的片段')
+    expect(dialog?.textContent).toContain(agentEvidence.excerpt)
+    expect(dialog?.textContent).toContain('原文已更新')
+    expect(dialog?.querySelector('article')?.textContent).toContain('备份保留 14 天。')
+    expect(wrapper.get('.answer-body').text()).toContain('备份保留 7 天。')
+    wrapper.unmount()
+  })
+
   describe('会话记录', () => {
     const REPLAY = {
       thread_id: THREAD_ID,
-      turns: [{ question: '之前问过的', answer: '之前答过的' }],
+      turns: [{ question: '之前问过的', answer: '之前答过的', status: 'completed' }],
+      scope: { mode: 'all' },
       summarized: false,
       summary: null,
     }
@@ -535,16 +591,16 @@ describe('AgentChatPage', () => {
       wrapper.unmount()
     })
 
-    it('新建会话后不会再去回放它一遍', async () => {
-      // 补地址那次 replace 会触发监听路由的 watch。不守卫的话它立刻回放这个刚建出来的会话，
-      // 把刚流式生成的那一轮覆盖成从服务端读回来的版本。
+    it('新建会话补地址不重复载入，结束时同步一次持久化记录', async () => {
+      threadsApi.getAgentThreadMessages.mockResolvedValue(REPLAY)
       const { wrapper } = await mountPage()
 
       await wrapper.get('.message-input').setValue('央行利率')
       await wrapper.get('.agent-form').trigger('submit')
       await flushPromises()
 
-      expect(threadsApi.getAgentThreadMessages).not.toHaveBeenCalled()
+      expect(threadsApi.getAgentThreadMessages).toHaveBeenCalledOnce()
+      expect(wrapper.text()).toContain('之前答过的')
       wrapper.unmount()
     })
 
@@ -569,7 +625,7 @@ describe('AgentChatPage', () => {
       })
       const { wrapper } = await mountThreadPage()
 
-      expect(wrapper.get('.history-note').text()).toContain('压缩成摘要')
+      expect(wrapper.get('.history-note').text()).toContain('原始问答不再提供回看')
       wrapper.unmount()
     })
 

@@ -1,12 +1,12 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { VueMarkdown, type CustomAttrs } from '@crazydos/vue-markdown'
 import remarkGfm from 'remark-gfm'
 
-/* 只渲染 Agent 答案正文的 Markdown。
+/* Agent 答案与上传 Markdown 文档共用的安全渲染。
  *
- * 为什么只给答案正文：工具入参、工具返回内容、用户提问三处继续走纯文本插值。
- * 前两者是外部抓来的新闻原文与模型的原始输出，把它们当 Markdown 解析等于让上游内容
- * 决定本页的排版；用户提问按 Markdown 渲染更怪——他打的星号就是星号。
+ * 答案和明确为 Markdown 格式的文档需要保留结构；工具入参、工具返回内容、用户提问
+ * 继续走纯文本插值，避免把轨迹中的原始输出和用户输入当成排版指令。
  *
  * 三个 prop 配置都是实测定下来的，不是抄默认值：
  *
@@ -15,7 +15,7 @@ import remarkGfm from 'remark-gfm'
  *    `<img onerror>`）确实会被转义成文本——因为没装 rehype-raw，raw 节点进不了 hast，
  *    这条安全。但 Markdown 链接语法里的 javascript: URL 会原样渲染成活的 href：
  *    `[点这里](javascript:...)` → `<a href="javascript:...">`。答案正文是模型输出，
- *    模型可以被检索到的新闻内容影响，所以这是真实注入面。开 sanitize 后同一输入
+ *    模型可以被检索到的文档内容影响，上传文档也来自外部，所以这是真实注入面。开 sanitize 后同一输入
  *    渲染成 `<a>点这里</a>`，href 被摘掉。
  *
  * 2. 不引入 rehype-raw。装上它 raw 节点就会变成真 HTML，第 1 条的转义保护随之消失。
@@ -28,11 +28,65 @@ import remarkGfm from 'remark-gfm'
  * 异步组件的挂起态，代价比这里省下的解析时间大。
  */
 
-defineProps<{
+const props = defineProps<{
   markdown: string
   /** 流式中在末尾显示光标块。落定后撤掉。 */
   streaming?: boolean
+  /** 只由服务端已核验的本次引用提供；普通文件阅读不传。 */
+  citationIds?: string[]
 }>()
+
+const emit = defineEmits<{ citation: [id: string, trigger: HTMLElement] }>()
+const citationNumbers = computed(
+  () => new Map((props.citationIds ?? []).map((id, index) => [id, index + 1])),
+)
+
+// 只转换 Markdown 解析后的文本节点，代码与已有链接保持原样；不自行解析 Markdown。
+interface MarkdownNode {
+  type: string
+  value?: string
+  url?: string
+  children?: MarkdownNode[]
+}
+
+function remarkCitations() {
+  return function transform(node: MarkdownNode): void {
+    if (
+      (node.type === 'link' || node.type === 'definition') &&
+      node.url?.startsWith('#evidence-')
+    ) {
+      // 原有链接不拥有引用身份；清空保留前缀后的 ID，让下游摘除 href。
+      node.url = '#evidence-'
+    }
+    if (!node.children || node.type === 'link' || node.type === 'linkReference') return
+    node.children = node.children.flatMap((child) => {
+      if (child.type !== 'text' || !child.value) {
+        transform(child)
+        return [child]
+      }
+      const parts: MarkdownNode[] = []
+      let start = 0
+      for (const match of child.value.matchAll(/\[\[(E[0-9a-f]{12})\]\]/g)) {
+        const id = match[1]!
+        const number = citationNumbers.value.get(id)
+        if (number === undefined) continue
+        parts.push({ type: 'text', value: child.value.slice(start, match.index) })
+        parts.push({
+          type: 'link',
+          url: `#evidence-${id}`,
+          children: [{ type: 'text', value: `[${number}]` }],
+        })
+        start = match.index + match[0].length
+      }
+      parts.push({ type: 'text', value: child.value.slice(start) })
+      return parts
+    })
+  }
+}
+
+const remarkPlugins = computed(() =>
+  props.citationIds?.length ? [remarkGfm, remarkCitations] : [remarkGfm],
+)
 
 /* 外链开新标签页，站内链接不动。
  *
@@ -41,9 +95,28 @@ defineProps<{
  * rel 两个值都要：noopener 断掉 window.opener 提权，noreferrer 不漏当前地址。
  */
 const linkAttrs: CustomAttrs = {
+  // 图片仅保留说明文字，不因阅读文档或回答而自动访问外部地址。
+  img: (node) => ({
+    src: undefined,
+    srcset: undefined,
+    alt: `${node.properties?.alt || '图片'}（未加载）`,
+  }),
   a: (node) => {
     const href = node.properties?.href
     if (typeof href !== 'string') return {}
+    if (href.startsWith('#evidence-')) {
+      const id = href.slice('#evidence-'.length)
+      const number = citationNumbers.value.get(id)
+      if (number === undefined) return { href: undefined }
+      return {
+        class: 'verified-citation',
+        title: `查看引用 ${number}`,
+        onClick: (event: MouseEvent) => {
+          event.preventDefault()
+          emit('citation', id, event.currentTarget as HTMLElement)
+        },
+      }
+    }
     // sanitize 之后 href 只可能是安全协议或相对路径，这里只需判断是否同源。
     // 相对路径解析后 origin 与当前页相同，自然落到 false。
     let external = false
@@ -63,7 +136,7 @@ const linkAttrs: CustomAttrs = {
     :class="{ 'is-streaming': streaming }"
     :markdown="markdown"
     sanitize
-    :remark-plugins="[remarkGfm]"
+    :remark-plugins="remarkPlugins"
     :custom-attrs="linkAttrs"
   />
 </template>
@@ -148,6 +221,16 @@ const linkAttrs: CustomAttrs = {
 
 .markdown-answer :deep(a:hover) {
   color: var(--accent-hover);
+}
+
+.markdown-answer :deep(.verified-citation) {
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: var(--accent-soft);
+  font-size: 0.82em;
+  font-weight: 720;
+  text-decoration: none;
+  white-space: nowrap;
 }
 
 /* 行内码与代码块共用等宽字体，但底色不同：行内的要在正文流里可辨认又不打断阅读，

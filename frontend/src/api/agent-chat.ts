@@ -8,6 +8,8 @@ import {
   toApiError,
 } from './client'
 import { hasText, isRecord, isUuid } from './json-guards'
+import { isResolvedScope, type KnowledgeBaseSelection } from './knowledge-scope'
+import { isCitationList, isInvalidCitationList } from './agent-evidence'
 
 export type AgentChatRequest = components['schemas']['AgentChatRequest']
 export type AgentChatEvent = components['schemas']['AgentChatEventEnvelope']
@@ -51,6 +53,7 @@ export interface StreamAgentChatOptions {
   threadId?: string | null
   /** 覆盖本次运行的系统提示词；省略或空白表示用服务端默认的那份。 */
   systemPrompt?: string | null
+  scope?: KnowledgeBaseSelection
   signal?: AbortSignal
 }
 
@@ -71,10 +74,12 @@ export async function* streamAgentChat({
   message,
   threadId,
   systemPrompt,
+  scope,
   signal,
 }: StreamAgentChatOptions): AsyncGenerator<AgentChatEvent, void, void> {
   const payload: AgentChatRequest = { message }
   if (threadId) payload.thread_id = threadId
+  if (scope) payload.scope = scope
   if (systemPrompt && systemPrompt.trim()) payload.system_prompt = systemPrompt
 
   // 内部 controller 同时承载三个中止来源：调用方的 signal、连接超时、空闲超时。
@@ -236,6 +241,8 @@ function isAgentChatEvent(value: unknown): value is AgentChatEvent {
   if (!isRecord(value)) return false
 
   switch (value.event) {
+    case 'run_started':
+      return isUuid(value.thread_id) && isUuid(value.run_id) && isResolvedScope(value.scope)
     case 'token':
       return typeof value.text === 'string'
     case 'tool_call':
@@ -251,10 +258,18 @@ function isAgentChatEvent(value: unknown): value is AgentChatEvent {
         hasText(value.tool_call_id) &&
         hasText(value.tool) &&
         typeof value.content === 'string' &&
-        (value.failed === undefined || typeof value.failed === 'boolean')
+        (value.failed === undefined || typeof value.failed === 'boolean') &&
+        (value.scope == null || isResolvedScope(value.scope)) &&
+        (value.evidence === undefined || isCitationList(value.evidence))
       )
     case 'done':
-      return isUuid(value.thread_id)
+      return (
+        isUuid(value.thread_id) &&
+        typeof value.answer === 'string' &&
+        (value.status === 'completed' || value.status === 'incomplete') &&
+        (value.citations === undefined || isCitationList(value.citations)) &&
+        (value.invalid_citations === undefined || isInvalidCitationList(value.invalid_citations))
+      )
     case 'error':
       // thread_id 和 done 一样是必需的：失败的那一轮也已经有会话行，前端要靠它把重试
       // 发回同一个会话。

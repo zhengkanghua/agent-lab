@@ -1,6 +1,7 @@
 import { computed, onScopeDispose, ref, watch } from 'vue'
 import { streamAgentChat, type AgentChatEvent } from '@/api/agent-chat'
-import { getAgentThreadMessages } from '@/api/agent-threads'
+import { getAgentThreadMessages, updateAgentThreadScope } from '@/api/agent-threads'
+import { copySelection, isSelection, type KnowledgeBaseSelection } from '@/api/knowledge-scope'
 import { ApiError, isAbortError } from '@/api/client'
 import { presentAgentError, type AgentErrorPresentation } from '../model/agent-error'
 import {
@@ -32,6 +33,8 @@ export interface UseAgentChatOptions {
    * 解耦，测试也能自由替身。
    */
   getSystemPrompt?: () => string
+  getScopeError?: () => string | null
+  saveScope?: typeof updateAgentThreadScope
 }
 
 const CANCELLED_TRACE_NOTE = '本轮对话已取消，这次工具调用的结果未送达。'
@@ -54,6 +57,8 @@ export function useAgentChat({
   stream = streamAgentChat,
   loadThreadMessages = getAgentThreadMessages,
   getSystemPrompt = () => '',
+  getScopeError = () => null,
+  saveScope = updateAgentThreadScope,
 }: UseAgentChatOptions = {}) {
   const draft = ref('')
   // 用深层 ref 而不是检索页那样的 shallowRef：流式过程要原地改写最后一轮的 answer 和
@@ -69,6 +74,13 @@ export function useAgentChat({
   const threadError = ref<AgentErrorPresentation | null>(null)
   // 早期历史被压缩掉时为真。界面必须如实说明，不能让人以为看到的就是全部。
   const isHistoryTruncated = ref(false)
+  const historySummary = ref<string | null>(null)
+  const historySyncError = ref<string | null>(null)
+  const selection = ref<KnowledgeBaseSelection>({ mode: 'all' })
+  const savingScope = ref(false)
+  const scopeSaveError = ref<string | null>(null)
+  let scopeEditVersion = 0
+  let pendingScopeSave: Promise<void> = Promise.resolve()
 
   let runSequence = 0
   let loadSequence = 0
@@ -79,21 +91,34 @@ export function useAgentChat({
   // 读历史期间也不许发送：那时 threadId 还没设上，发出去会被当成新会话，用户以为自己在
   // 续聊、实际上开了一个新的，而且旧会话的历史马上会覆盖掉界面。
   const canSend = computed(
-    () => draft.value.trim().length > 0 && status.value !== 'streaming' && !isLoadingThread.value,
+    () =>
+      draft.value.trim().length > 0 &&
+      status.value !== 'streaming' &&
+      !isLoadingThread.value &&
+      !savingScope.value &&
+      !getScopeError(),
   )
   const isStreaming = computed(() => status.value === 'streaming')
 
   watch(draft, (value) => {
-    if (inputError.value && !validateMessage(value)) {
+    if (inputError.value && !validateMessage(value) && !getScopeError()) {
       inputError.value = null
     }
   })
 
   async function send(): Promise<void> {
-    inputError.value = validateMessage(draft.value)
-    if (inputError.value || status.value === 'streaming' || isLoadingThread.value) return
+    inputError.value = validateMessage(draft.value) || getScopeError()
+    if (
+      inputError.value ||
+      status.value === 'streaming' ||
+      isLoadingThread.value ||
+      savingScope.value
+    )
+      return
 
     const question = draft.value.trim()
+    const submittedSelection = copySelection(selection.value)
+    const submittedScopeVersion = scopeEditVersion
     const runId = ++runSequence
     const controller = new AbortController()
     activeController = controller
@@ -110,21 +135,28 @@ export function useAgentChat({
         message: question,
         threadId: threadId.value,
         systemPrompt: getSystemPrompt(),
+        scope: submittedSelection,
         signal: controller.signal,
       })) {
         // 已被取消或已被更新的一轮不再往界面上写：break 会走生成器的 finally，
         // 顺带取消 reader、关掉连接。
         if (runId !== runSequence) break
         applyEvent(live, event)
+        if (event.event === 'run_started' && submittedScopeVersion !== scopeEditVersion) {
+          // 新会话还没拿到 ID 时发生的改选，也要保存为下一次提问的选择。
+          void persistSelection(event.thread_id, copySelection(selection.value), scopeEditVersion)
+        }
+        if (event.event === 'done' || event.event === 'error') break
       }
 
       if (runId !== runSequence) return
 
       if (live.status === 'streaming') {
-        // 流正常结束但没有 done 事件（例如服务端直接断开）。当成完成处理，已收到的
-        // 回答仍然留在界面上——它是真的模型输出，丢掉比留着更糟。
-        live.status = 'done'
+        // 已收到的片段保留，但没有服务端终态就不能当作完整答案。
+        live.status = 'incomplete'
         settlePendingTraces(live, FAILED_TRACE_NOTE)
+      } else if (live.status === 'done' || live.status === 'incomplete') {
+        await synchronizeHistory(runId)
       }
     } catch (error) {
       if (runId !== runSequence) return
@@ -156,6 +188,12 @@ export function useAgentChat({
 
   function applyEvent(turn: AgentTurn, event: AgentChatEvent): void {
     switch (event.event) {
+      case 'run_started':
+        threadId.value = event.thread_id
+        turn.runId = event.run_id
+        turn.scope = event.scope
+        scopeSaveError.value = null
+        break
       case 'token':
         turn.answer += event.text
         break
@@ -168,7 +206,10 @@ export function useAgentChat({
       case 'done':
         // 服务端在新建会话时才生成新 id，续聊时回的是同一个，直接覆盖即可。
         threadId.value = event.thread_id
-        turn.status = 'done'
+        turn.answer = event.answer
+        turn.status = event.status === 'completed' ? 'done' : 'incomplete'
+        turn.citations = event.citations ?? []
+        turn.invalidCitations = event.invalid_citations ?? []
         settlePendingTraces(turn, FAILED_TRACE_NOTE)
         break
       case 'error':
@@ -186,6 +227,56 @@ export function useAgentChat({
         )
         settlePendingTraces(turn, FAILED_TRACE_NOTE)
         break
+    }
+  }
+
+  /** 逐次保存有效选择，防止快速改选的旧请求晚到后覆盖新选择。 */
+  function persistSelection(
+    targetThreadId: string,
+    value: KnowledgeBaseSelection,
+    version: number,
+  ): Promise<void> {
+    if (!isSelection(value)) return Promise.resolve()
+    savingScope.value = true
+    pendingScopeSave = pendingScopeSave.then(async () => {
+      try {
+        await saveScope(targetThreadId, value)
+        if (version === scopeEditVersion && threadId.value === targetThreadId)
+          scopeSaveError.value = null
+      } catch {
+        if (version === scopeEditVersion && threadId.value === targetThreadId)
+          scopeSaveError.value = '范围保存未确认；请重新选择，或重新打开会话核对。'
+      } finally {
+        if (version === scopeEditVersion) savingScope.value = false
+      }
+    })
+    return pendingScopeSave
+  }
+
+  function updateSelection(value: KnowledgeBaseSelection): Promise<void> {
+    selection.value = copySelection(value)
+    scopeEditVersion += 1
+    scopeSaveError.value = null
+    savingScope.value = false
+    return threadId.value
+      ? persistSelection(threadId.value, copySelection(value), scopeEditVersion)
+      : Promise.resolve()
+  }
+
+  /** 流结束后只同步当前 checkpoint，不重新问模型，也不重读原文改写旧回答。 */
+  async function synchronizeHistory(runId = runSequence): Promise<void> {
+    const target = threadId.value
+    if (!target) return
+    try {
+      const replay = await loadThreadMessages(target, activeController?.signal)
+      if (runId !== runSequence || target !== threadId.value) return
+      turns.value = turnsFromReplay(replay.turns, HISTORY_TRACE_NOTE)
+      isHistoryTruncated.value = replay.summarized
+      historySummary.value = replay.summary ?? null
+      historySyncError.value = null
+    } catch {
+      if (runId === runSequence && target === threadId.value)
+        historySyncError.value = '会话状态同步失败，当前可能仍显示已压缩的临时记录。请重试同步。'
     }
   }
 
@@ -232,6 +323,11 @@ export function useAgentChat({
     inputError.value = null
     threadError.value = null
     isHistoryTruncated.value = false
+    historySummary.value = null
+    historySyncError.value = null
+    scopeSaveError.value = null
+    scopeEditVersion += 1
+    savingScope.value = false
     status.value = 'idle'
     isLoadingThread.value = true
 
@@ -241,6 +337,8 @@ export function useAgentChat({
 
       turns.value = turnsFromReplay(replay.turns ?? [], HISTORY_TRACE_NOTE)
       isHistoryTruncated.value = replay.summarized
+      historySummary.value = replay.summary ?? null
+      selection.value = copySelection(replay.scope)
       threadId.value = targetThreadId
     } catch (error) {
       if (loadId !== loadSequence || isAbortError(error)) return
@@ -279,6 +377,12 @@ export function useAgentChat({
     inputError.value = null
     threadError.value = null
     isHistoryTruncated.value = false
+    historySummary.value = null
+    historySyncError.value = null
+    selection.value = { mode: 'all' }
+    scopeEditVersion += 1
+    savingScope.value = false
+    scopeSaveError.value = null
     isLoadingThread.value = false
     status.value = 'idle'
   }
@@ -309,6 +413,13 @@ export function useAgentChat({
     isLoadingThread,
     threadError,
     isHistoryTruncated,
+    historySummary,
+    historySyncError,
+    synchronizeHistory,
+    selection,
+    savingScope,
+    scopeSaveError,
+    updateSelection,
     remainingCharacters,
     canSend,
     isStreaming,

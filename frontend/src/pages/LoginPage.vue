@@ -77,7 +77,7 @@ async function retrySessionCheck(): Promise<void> {
           </span>
           <span class="brand-copy">
             <strong>Signal Desk</strong>
-            <small>新闻语义研究台</small>
+            <small>知识库语义研究台</small>
           </span>
         </a>
         <span class="access-label">受限访问</span>
@@ -87,7 +87,7 @@ async function retrySessionCheck(): Promise<void> {
     <main class="login-wrap login-main">
       <section class="login-context" aria-labelledby="login-title">
         <p class="login-kicker">内部研究工作台</p>
-        <h1 id="login-title">进入新闻研究台</h1>
+        <h1 id="login-title">进入资料研究台</h1>
         <p class="login-intro">使用平台管理员为你创建的账号继续。</p>
 
         <div class="signal-register" aria-hidden="true">

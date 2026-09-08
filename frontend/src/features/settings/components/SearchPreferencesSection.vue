@@ -50,8 +50,8 @@ const hasCustomized = computed(
     <div class="field-group">
       <BaseField
         id="pref-document-limit"
-        label="每次检索返回的新闻数量"
-        hint="一次检索覆盖多少篇不同的新闻。数量越多，单次检索越慢。"
+        label="每次检索返回的文档数量"
+        hint="一次检索覆盖多少篇不同的文档。数量越多，单次检索越慢。"
       >
         <template #default="{ control }">
           <BaseSelect v-bind="control" v-model="documentLimit" class="narrow-select">
@@ -64,8 +64,8 @@ const hasCustomized = computed(
 
       <BaseField
         id="pref-matches-per-document"
-        label="每篇新闻保留的相关片段"
-        hint="折叠面板里每篇新闻最多展开多少条原文片段。"
+        label="每篇文档保留的相关片段"
+        hint="折叠面板里每篇文档最多展开多少条原文片段。"
       >
         <template #default="{ control }">
           <BaseSelect v-bind="control" v-model="matchesPerDocument" class="narrow-select">

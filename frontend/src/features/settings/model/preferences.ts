@@ -19,9 +19,9 @@ import {
  */
 
 export interface UserPreferences {
-  /** 每次检索返回的不同新闻数量（契约边界见 @/api/document-search）。 */
+  /** 每次检索返回的不同文档数量（契约边界见 @/api/document-search）。 */
   documentLimit: number
-  /** 每篇新闻保留的相关片段数。 */
+  /** 每篇文档保留的相关片段数。 */
   matchesPerDocument: number
   /** 自定义系统提示词。空串表示使用服务端默认的那份。 */
   agentSystemPrompt: string

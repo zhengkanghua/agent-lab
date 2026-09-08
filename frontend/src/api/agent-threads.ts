@@ -1,6 +1,8 @@
 import type { components } from './generated/openapi'
 import { ApiError, requestJson } from './client'
 import { hasText, isNonNegativeInteger, isRecord, isUuid } from './json-guards'
+import { isResolvedScope, isSelection, type KnowledgeBaseSelection } from './knowledge-scope'
+import { isCitationList, isInvalidCitationList } from './agent-evidence'
 
 export type AgentThreadSummaryDto = components['schemas']['AgentThreadSummary']
 export type AgentThreadListDto = components['schemas']['AgentThreadListResponse']
@@ -63,6 +65,8 @@ export async function getAgentThreadMessages(
   if (
     !isRecord(response) ||
     !isUuid(response.thread_id) ||
+    response.thread_id.toLowerCase() !== threadId.toLowerCase() ||
+    !isSelection(response.scope) ||
     !Array.isArray(response.turns) ||
     !response.turns.every(isReplayTurn) ||
     typeof response.summarized !== 'boolean'
@@ -70,6 +74,18 @@ export async function getAgentThreadMessages(
     throw invalidThreadResponse('会话服务返回的历史记录格式不正确。')
   }
   return response as unknown as AgentThreadMessagesDto
+}
+
+export async function updateAgentThreadScope(
+  threadId: string,
+  scope: KnowledgeBaseSelection,
+): Promise<void> {
+  const value = await requestJson<unknown>(`/agent/threads/${encodeURIComponent(threadId)}/scope`, {
+    method: 'PATCH',
+    body: JSON.stringify(scope),
+  })
+  if (!isSelection(value))
+    throw invalidThreadResponse('会话范围保存结果无法确认，请重新打开会话核对。')
 }
 
 /** 删除一个会话及其历史。删除不可撤销，调用方负责先向用户确认。 */
@@ -100,6 +116,11 @@ function isReplayTurn(value: unknown): value is AgentReplayTurnDto {
     // answer 允许空串：首轮就失败的会话存下来只有提问，没有回答。用 hasText 会把这种
     // 合法历史判成格式错误，界面上表现为「打不开自己的会话」。
     typeof value.answer === 'string' &&
+    (value.status === 'completed' || value.status === 'incomplete') &&
+    (value.scope == null || isResolvedScope(value.scope)) &&
+    (value.run_id == null || isUuid(value.run_id)) &&
+    (value.citations === undefined || isCitationList(value.citations)) &&
+    (value.invalid_citations === undefined || isInvalidCitationList(value.invalid_citations)) &&
     (value.traces === undefined ||
       (Array.isArray(value.traces) && value.traces.every(isReplayTrace)))
   )
@@ -109,6 +130,7 @@ function isReplayTrace(value: unknown): value is AgentReplayTraceDto {
   return (
     isRecord(value) &&
     hasText(value.tool) &&
+    (value.scope == null || isResolvedScope(value.scope)) &&
     // content 为 null 表示历史里只有调用没有结果，是合法状态。
     (value.content === null || value.content === undefined || typeof value.content === 'string')
   )

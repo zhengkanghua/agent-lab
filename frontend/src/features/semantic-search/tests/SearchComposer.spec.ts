@@ -56,7 +56,7 @@ describe('SearchComposer', () => {
     expect(wrapper.find('.mode-switch').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('按片段')
     // Submit button no longer has text, so we check aria-label instead
-    expect(wrapper.get('.search-submit').attributes('aria-label')).toBe('搜索新闻')
+    expect(wrapper.get('.search-submit').attributes('aria-label')).toBe('搜索文档')
   })
 
   it('shows the clear-stream button only after there are records', async () => {

@@ -63,6 +63,7 @@ describe('conversation', () => {
 
     applyToolResult(turn, {
       event: 'tool_result',
+      evidence: [],
       tool_call_id: 'call-2',
       tool: 'search_news',
       content: '乙的结果',
@@ -80,6 +81,7 @@ describe('conversation', () => {
 
     applyToolResult(turn, {
       event: 'tool_result',
+      evidence: [],
       tool_call_id: 'call-2',
       tool: 'read_document',
       content: '全文。',
@@ -95,6 +97,7 @@ describe('conversation', () => {
 
     applyToolResult(turn, {
       event: 'tool_result',
+      evidence: [],
       tool_call_id: 'call-unknown',
       tool: 'search_news',
       content: '孤立结果',
@@ -119,6 +122,7 @@ describe('conversation', () => {
 
     applyToolResult(turn, {
       event: 'tool_result',
+      evidence: [],
       tool_call_id: 'call-other',
       tool: 'search_news',
       content: '别处的结果',
@@ -136,6 +140,7 @@ describe('conversation', () => {
     appendToolCall(turn, { event: 'tool_call', tool_call_id: 'call-2', tool: 'read_document' })
     applyToolResult(turn, {
       event: 'tool_result',
+      evidence: [],
       tool_call_id: 'call-1',
       tool: 'search_news',
       content: '查到了。',
@@ -149,11 +154,11 @@ describe('conversation', () => {
   })
 
   describe('turnsFromReplay', () => {
-    it('保持轮次顺序，全部标成 done 且不带 error', () => {
+    it('保持轮次顺序和服务端完成状态，不编造错误', () => {
       const turns = turnsFromReplay(
         [
-          { question: '第一问', answer: '第一答' },
-          { question: '第二问', answer: '第二答' },
+          { question: '第一问', answer: '第一答', status: 'completed' },
+          { question: '第二问', answer: '第二答', status: 'incomplete' },
         ],
         '未送达。',
       )
@@ -162,7 +167,8 @@ describe('conversation', () => {
         ['第一问', '第一答'],
         ['第二问', '第二答'],
       ])
-      expect(turns.every((turn) => turn.status === 'done' && turn.error === null)).toBe(true)
+      expect(turns.map((turn) => turn.status)).toEqual(['done', 'incomplete'])
+      expect(turns.every((turn) => turn.error === null)).toBe(true)
     })
 
     it('每一轮和每条轨迹都拿到互不相同的本地 id', () => {
@@ -187,7 +193,7 @@ describe('conversation', () => {
       const [turn] = turnsFromReplay([{ question: '没答成', answer: '' }], '未送达。')
 
       expect(turn?.answer).toBe('')
-      expect(turn?.status).toBe('done')
+      expect(turn?.status).toBe('incomplete')
     })
 
     it('没有结果的轨迹用给定说明收尾并标成失败', () => {

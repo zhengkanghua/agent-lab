@@ -5,6 +5,8 @@ import AppShell from '@/layouts/AppShell.vue'
 import { authSession, useLogout } from '@/features/auth'
 import { usePreferences } from '@/features/settings'
 import BaseSuggestionList from '@/shared/ui/BaseSuggestionList.vue'
+import KnowledgeBaseScopePicker from '@/shared/ui/KnowledgeBaseScopePicker.vue'
+import { useKnowledgeBaseScope } from '@/shared/composables/useKnowledgeBaseScope'
 import {
   DocumentReader,
   SearchComposer,
@@ -29,12 +31,15 @@ import {
 
 const composerRef = ref<InstanceType<typeof SearchComposer> | null>(null)
 const reader = useDocumentReader()
+const scope = useKnowledgeBaseScope()
 
 // 数量参数是设置中心的持久偏好：提交那一刻读到什么值，这一轮就用什么值。
 const { preferences } = usePreferences()
 const stream = useSearchStream({
   getDocumentLimit: () => preferences.documentLimit,
   getMatchesPerDocument: () => preferences.matchesPerDocument,
+  getScope: () => scope.selection.value,
+  getScopeError: () => scope.error.value,
 })
 
 const { loggingOut, logoutError, logout } = useLogout()
@@ -123,13 +128,13 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
 <template>
   <AppShell
     brand-title="Signal Desk"
-    brand-subtitle="新闻语义研究台"
+    brand-subtitle="知识库工作台"
     brand-label="Signal Desk 首页"
     brand-href="/"
     main-id="search-workspace"
     skip-label="跳到检索工作台"
     :nav-links="navLinks"
-    mode-label="按新闻检索"
+    mode-label="文档检索"
     mode-detail="只给原文"
     :logging-out="loggingOut"
     :logout-error="logoutError"
@@ -138,7 +143,7 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
     <template #brand-icon><Search :size="19" stroke-width="2.2" /></template>
 
     <main id="search-workspace" class="workspace" :class="{ 'is-empty': !hasRecords }">
-      <h1 class="sr-only">新闻语义检索</h1>
+      <h1 class="sr-only">知识库语义检索</h1>
 
       <!-- 顶部常驻输入条。检索页不渲染页脚：底部要让位给向下长的检索流。 -->
       <div class="composer-dock" :class="{ 'is-sticky': hasRecords }">
@@ -150,8 +155,16 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
           :remaining-characters="stream.remainingCharacters.value"
           :has-records="hasRecords"
           :preference-summary="preferenceSummary"
+          :disabled="scope.error.value !== null"
           @submit="submitSearch"
           @clear="clearStream"
+        />
+        <KnowledgeBaseScopePicker
+          v-model="scope.selection.value"
+          :knowledge-bases="scope.knowledgeBases.value"
+          :error="scope.error.value"
+          :loading="scope.loading.value"
+          @refresh="scope.refresh"
         />
       </div>
 

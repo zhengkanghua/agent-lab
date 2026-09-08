@@ -6,6 +6,7 @@ import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
 import type { NewsDocumentResult } from '../model/search-result'
 import { isErrorRetryable, recordHitCount, type SearchRecord } from '../model/search-record'
 import SearchResultCard from './SearchResultCard.vue'
+import { scopeLabel } from '@/api/knowledge-scope'
 
 /* 检索流里的一条检索记录（Q5 乙 / Q8 / Q9 / Q10 甲）。
  *
@@ -77,6 +78,7 @@ function toggle(): void {
         <span class="record-meta">{{ statusMeta }}</span>
       </div>
     </header>
+    <p v-if="record.scope" class="record-scope">{{ scopeLabel(record.scope) }}</p>
 
     <!-- 展开内容。collapsed 用 v-if 整块去掉，不留 aria-hidden 的空标签。 -->
     <div v-if="expanded" class="record-body">
@@ -255,6 +257,13 @@ function toggle(): void {
 
 .record-body {
   padding: 4px 0 24px;
+}
+
+.record-scope {
+  margin: 0 14px 6px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
 }
 
 .state-panel {

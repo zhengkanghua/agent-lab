@@ -3,10 +3,14 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentChatEvent, StreamAgentChatOptions } from '@/api/agent-chat'
 import { ApiError } from '@/api/client'
+import { agentDone, agentStarted, agentEvidence, agentScope } from '@/api/agent-chat.fixture'
+import { newsKnowledgeBase, techKnowledgeBase } from '@/api/knowledge-bases.fixture'
+import type { KnowledgeBaseSelection } from '@/api/knowledge-scope'
 import {
   useAgentChat,
   type AgentChatStream,
   type AgentThreadLoader,
+  type UseAgentChatOptions,
 } from '../composables/useAgentChat'
 
 const THREAD_ID = '30000000-0000-4000-8000-000000000001'
@@ -16,14 +20,19 @@ const OTHER_THREAD_ID = '30000000-0000-4000-8000-000000000002'
 function mountHarness(
   stream: AgentChatStream,
   loader?: AgentThreadLoader,
-  options: { getSystemPrompt?: () => string } = {},
+  options: Omit<UseAgentChatOptions, 'stream' | 'loadThreadMessages'> = {},
 ) {
   let composable: ReturnType<typeof useAgentChat> | undefined
   const Harness = defineComponent({
     setup() {
       composable = useAgentChat({
         stream,
-        ...(loader ? { loadThreadMessages: loader } : {}),
+        // 流状态用例默认模拟同步失败，保留临时界面；成功同步在专门用例中提供持久历史。
+        loadThreadMessages:
+          loader ??
+          (async () => {
+            throw new Error('此用例未提供持久历史')
+          }),
         ...options,
       })
       return () => h('div')
@@ -57,12 +66,19 @@ function scriptedLoader(...results: unknown[]): AgentThreadLoader & { calls: str
  * 前端怎么办」。返回处收一次 cast，把松散的字面量交给按 DTO 定型的读取器。
  */
 function replay(
-  turns: Array<{ question: string; answer: string; traces?: unknown[] }>,
-  extra: { summarized?: boolean; summary?: string | null } = {},
+  turns: Array<{
+    question: string
+    answer: string
+    traces?: unknown[]
+    status?: 'completed' | 'incomplete'
+    citations?: unknown[]
+  }>,
+  extra: { summarized?: boolean; summary?: string | null; scope?: KnowledgeBaseSelection } = {},
 ): ReplayResult {
   return {
     thread_id: THREAD_ID,
-    turns,
+    turns: turns.map((turn) => ({ status: 'completed', ...turn })),
+    scope: extra.scope ?? { mode: 'all' },
     summarized: extra.summarized ?? false,
     summary: extra.summary ?? null,
   } as ReplayResult
@@ -89,6 +105,173 @@ function failingStream(error: unknown): AgentChatStream {
 }
 
 describe('useAgentChat', () => {
+  it('Done 用持久化答案校正失败尝试的临时文字，并保留引用与未完成状态', async () => {
+    const { wrapper, chat } = mountHarness(
+      scriptedStream([
+        agentStarted(),
+        { event: 'token', text: '失败尝试的临时文字' },
+        {
+          ...agentDone('保留 7 天。[[E0123456789ab]]'),
+          status: 'incomplete',
+          citations: [agentEvidence],
+          invalid_citations: ['Effffffffffff'],
+        },
+      ]),
+    )
+    chat.draft.value = '保留多久'
+    await chat.send()
+    expect(chat.turns.value[0]).toMatchObject({
+      answer: '保留 7 天。[[E0123456789ab]]',
+      status: 'incomplete',
+      scope: agentScope,
+      citations: [agentEvidence],
+      invalidCitations: ['Effffffffffff'],
+    })
+    expect(chat.historySyncError.value).toContain('同步失败')
+    wrapper.unmount()
+  })
+
+  it('收尾同步压缩后的近期问答，背景摘要不创建引用', async () => {
+    const loader = scriptedLoader(
+      replay([
+        { question: '较早提问', answer: '旧事实' },
+        { question: '近期提问', answer: '近期答案' },
+      ]),
+      replay(
+        [
+          { question: '近期提问', answer: '近期答案' },
+          { question: '当前提问', answer: '新答案' },
+        ],
+        { summarized: true, summary: '仅供回看的旧背景' },
+      ),
+    )
+    const { wrapper, chat } = mountHarness(scriptedStream([agentDone('新答案')]), loader)
+    await chat.loadThread(THREAD_ID)
+    chat.draft.value = '当前提问'
+    await chat.send()
+    expect(chat.turns.value.map((turn) => turn.question)).toEqual(['近期提问', '当前提问'])
+    expect(chat.isHistoryTruncated.value).toBe(true)
+    expect(chat.historySummary.value).toBe('仅供回看的旧背景')
+    expect(chat.turns.value.every((turn) => turn.citations?.length === 0)).toBe(true)
+    expect(loader.calls).toEqual([THREAD_ID, THREAD_ID])
+    wrapper.unmount()
+  })
+
+  it('运行期间改选保存到会话，当前运行仍保留提交时的范围', async () => {
+    const selected: KnowledgeBaseSelection = {
+      mode: 'selected',
+      knowledge_base_ids: [newsKnowledgeBase.id],
+    }
+    const next: KnowledgeBaseSelection = {
+      mode: 'selected',
+      knowledge_base_ids: [techKnowledgeBase.id],
+    }
+    let release: (() => void) | undefined
+    const calls: StreamAgentChatOptions[] = []
+    const stream: AgentChatStream = async function* (options) {
+      calls.push(options)
+      yield agentStarted()
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      yield agentDone()
+    }
+    const saveScope = vi.fn(async () => {})
+    const { wrapper, chat } = mountHarness(stream, undefined, { saveScope })
+    await chat.updateSelection(selected)
+    chat.draft.value = '问题'
+    const running = chat.send()
+    await flushPromises()
+    await chat.updateSelection(next)
+    expect(saveScope).toHaveBeenCalledWith(THREAD_ID, next)
+    expect(calls[0]?.scope).toEqual(selected)
+    expect(chat.turns.value[0]?.scope).toEqual(agentScope)
+    release?.()
+    await running
+    expect(chat.selection.value).toEqual(next)
+    wrapper.unmount()
+  })
+
+  it('新会话尚未收到 ID 时改选，收到 ID 后仍保存下一次范围', async () => {
+    let release: (() => void) | undefined
+    const saveScope = vi.fn(async () => {})
+    const stream: AgentChatStream = async function* () {
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      yield agentStarted()
+      yield agentDone()
+    }
+    const { wrapper, chat } = mountHarness(stream, undefined, { saveScope })
+    chat.draft.value = '问题'
+    const running = chat.send()
+    await flushPromises()
+    const next: KnowledgeBaseSelection = {
+      mode: 'selected',
+      knowledge_base_ids: [techKnowledgeBase.id],
+    }
+    await chat.updateSelection(next)
+    expect(saveScope).not.toHaveBeenCalled()
+    release?.()
+    await running
+    await flushPromises()
+    expect(saveScope).toHaveBeenCalledWith(THREAD_ID, next)
+    wrapper.unmount()
+  })
+
+  it('重新打开恢复选择，快速改选按顺序保存，另开会话重置所有库', async () => {
+    const initial: KnowledgeBaseSelection = {
+      mode: 'selected',
+      knowledge_base_ids: [newsKnowledgeBase.id],
+    }
+    const next: KnowledgeBaseSelection = {
+      mode: 'selected',
+      knowledge_base_ids: [techKnowledgeBase.id],
+    }
+    let release: (() => void) | undefined
+    const saveScope = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve
+          }),
+      )
+      .mockResolvedValue(undefined)
+    const { wrapper, chat } = mountHarness(
+      scriptedStream(),
+      scriptedLoader(replay([], { scope: initial })),
+      { saveScope },
+    )
+    await chat.loadThread(THREAD_ID)
+    expect(chat.selection.value).toEqual(initial)
+    const first = chat.updateSelection(next)
+    await flushPromises()
+    const second = chat.updateSelection({ mode: 'all' })
+    expect(saveScope).toHaveBeenCalledTimes(1)
+    expect(chat.savingScope.value).toBe(true)
+    release?.()
+    await Promise.all([first, second])
+    expect(saveScope.mock.calls.map((call) => call[1])).toEqual([next, { mode: 'all' }])
+    expect(chat.savingScope.value).toBe(false)
+    chat.startNewConversation()
+    expect(chat.selection.value).toEqual({ mode: 'all' })
+    wrapper.unmount()
+  })
+
+  it('目录不可用时保留提问且不进入运行', async () => {
+    const stream = scriptedStream()
+    const { wrapper, chat } = mountHarness(stream, undefined, {
+      getScopeError: () => '没有启用的知识库',
+    })
+    chat.draft.value = '问题'
+    await chat.send()
+    expect(stream.calls).toHaveLength(0)
+    expect(chat.draft.value).toBe('问题')
+    expect(chat.inputError.value).toContain('没有启用')
+    wrapper.unmount()
+  })
+
   it('拒绝空提问且不发请求', async () => {
     const stream = scriptedStream()
     const { wrapper, chat } = mountHarness(stream)
@@ -119,7 +302,7 @@ describe('useAgentChat', () => {
       scriptedStream([
         { event: 'token', text: '央行' },
         { event: 'token', text: '维持利率不变。' },
-        { event: 'done', thread_id: THREAD_ID },
+        agentDone('央行维持利率不变。'),
       ]),
     )
     chat.draft.value = '央行利率'
@@ -142,10 +325,7 @@ describe('useAgentChat', () => {
   })
 
   it('第二轮带上第一轮拿到的 thread_id', async () => {
-    const stream = scriptedStream(
-      [{ event: 'done', thread_id: THREAD_ID }],
-      [{ event: 'done', thread_id: THREAD_ID }],
-    )
+    const stream = scriptedStream([agentDone()], [agentDone()])
     const { wrapper, chat } = mountHarness(stream)
 
     chat.draft.value = '第一问'
@@ -173,12 +353,13 @@ describe('useAgentChat', () => {
         },
         {
           event: 'tool_result',
+          evidence: [],
           tool_call_id: 'call-1',
           tool: 'search_news',
           content: '找到 2 篇。',
           failed: false,
         },
-        { event: 'done', thread_id: THREAD_ID },
+        agentDone(),
       ]),
     )
     chat.draft.value = '利率'
@@ -215,6 +396,7 @@ describe('useAgentChat', () => {
         },
         {
           event: 'tool_result',
+          evidence: [],
           tool_call_id: 'call-2',
           tool: 'search_news',
           content: '乙的结果',
@@ -222,12 +404,13 @@ describe('useAgentChat', () => {
         },
         {
           event: 'tool_result',
+          evidence: [],
           tool_call_id: 'call-1',
           tool: 'search_news',
           content: '甲的结果',
           failed: false,
         },
-        { event: 'done', thread_id: THREAD_ID },
+        agentDone(),
       ]),
     )
     chat.draft.value = '两个都查'
@@ -250,13 +433,14 @@ describe('useAgentChat', () => {
         { event: 'tool_call', tool_call_id: 'call-1', tool: 'read_document', arguments: {} },
         {
           event: 'tool_result',
+          evidence: [],
           tool_call_id: 'call-1',
           tool: 'read_document',
           content: '读取失败。',
           failed: true,
         },
         { event: 'token', text: '我没读到全文，但根据摘要…' },
-        { event: 'done', thread_id: THREAD_ID },
+        agentDone('我没读到全文，但根据摘要…'),
       ]),
     )
     chat.draft.value = '读一下'
@@ -393,7 +577,7 @@ describe('useAgentChat', () => {
       yield { event: 'token', text: '开头' } as AgentChatEvent
       await new Promise<void>((resolve) => (release = resolve))
       yield { event: 'token', text: '陈旧' } as AgentChatEvent
-      yield { event: 'done', thread_id: OTHER_THREAD_ID } as AgentChatEvent
+      yield agentDone('答', OTHER_THREAD_ID) as AgentChatEvent
     } as AgentChatStream
 
     const { wrapper, chat } = mountHarness(stream)
@@ -451,10 +635,7 @@ describe('useAgentChat', () => {
           retryable: true,
         },
       ],
-      [
-        { event: 'token', text: '这次成了' },
-        { event: 'done', thread_id: THREAD_ID },
-      ],
+      [{ event: 'token', text: '这次成了' }, agentDone('这次成了')],
     )
     const { wrapper, chat } = mountHarness(stream)
     chat.draft.value = '会超时的问题'
@@ -490,7 +671,7 @@ describe('useAgentChat', () => {
           retryable: true,
         },
       ],
-      [{ event: 'done', thread_id: THREAD_ID }],
+      [agentDone()],
     )
     const { wrapper, chat } = mountHarness(stream)
     chat.draft.value = '会被限流的问题'
@@ -510,10 +691,7 @@ describe('useAgentChat', () => {
   })
 
   it('新会话清掉历史与 thread_id', async () => {
-    const stream = scriptedStream(
-      [{ event: 'done', thread_id: THREAD_ID }],
-      [{ event: 'done', thread_id: OTHER_THREAD_ID }],
-    )
+    const stream = scriptedStream([agentDone()], [agentDone('答', OTHER_THREAD_ID)])
     const { wrapper, chat } = mountHarness(stream)
 
     chat.draft.value = '第一问'
@@ -535,7 +713,7 @@ describe('useAgentChat', () => {
   })
 
   it('把注入的系统提示词交给流', async () => {
-    const stream = scriptedStream([{ event: 'done', thread_id: THREAD_ID }])
+    const stream = scriptedStream([agentDone()])
     // 提示词来自设置中心的偏好 store，由调用方注入 getter；这里验证 send 时刻的取值会进流。
     const { wrapper, chat } = mountHarness(stream, undefined, {
       getSystemPrompt: () => '你是财经记者。',
@@ -549,14 +727,14 @@ describe('useAgentChat', () => {
     wrapper.unmount()
   })
 
-  it('流正常结束但没有 done 事件时按完成处理，保留已收到的回答', async () => {
+  it('流结束却没有 done 时标成未完成，保留已收到的回答', async () => {
     const { wrapper, chat } = mountHarness(scriptedStream([{ event: 'token', text: '只有半句' }]))
     chat.draft.value = '问题'
 
     await chat.send()
     await flushPromises()
 
-    expect(chat.turns.value[0]).toMatchObject({ answer: '只有半句', status: 'done' })
+    expect(chat.turns.value[0]).toMatchObject({ answer: '只有半句', status: 'incomplete' })
     expect(chat.threadId.value).toBeNull()
     wrapper.unmount()
   })
@@ -584,7 +762,7 @@ describe('useAgentChat', () => {
 
   describe('loadThread', () => {
     it('把历史灌进界面，并把 threadId 指向它，之后就能接着聊', async () => {
-      const stream = scriptedStream([{ event: 'done', thread_id: THREAD_ID }])
+      const stream = scriptedStream([agentDone()])
       const loader = scriptedLoader(
         replay([
           { question: '央行降息了吗', answer: '降了 25 个基点。' },
@@ -605,14 +783,20 @@ describe('useAgentChat', () => {
       wrapper.unmount()
     })
 
-    it('回放出来的轮次一律是 done，不带 error', async () => {
+    it('回放保留完成与未完成状态，不编造当时的错误原因', async () => {
       // 历史里没存当时的失败原因，编一个会让人以为那一轮报过某个具体错误。
-      const loader = scriptedLoader(replay([{ question: '问', answer: '答' }]))
+      const loader = scriptedLoader(
+        replay([
+          { question: '问', answer: '答' },
+          { question: '中断', answer: '半句', status: 'incomplete' },
+        ]),
+      )
       const { wrapper, chat } = mountHarness(scriptedStream(), loader)
 
       await chat.loadThread(THREAD_ID)
 
       expect(chat.turns.value[0]?.status).toBe('done')
+      expect(chat.turns.value[1]?.status).toBe('incomplete')
       expect(chat.turns.value[0]?.error).toBeNull()
       wrapper.unmount()
     })
@@ -638,7 +822,7 @@ describe('useAgentChat', () => {
       const loader = scriptedLoader(
         new ApiError({ message: '没有', code: 'agent_thread_not_found', status: 404 }),
       )
-      const stream = scriptedStream([{ event: 'done', thread_id: OTHER_THREAD_ID }])
+      const stream = scriptedStream([agentDone('答', OTHER_THREAD_ID)])
       const { wrapper, chat } = mountHarness(stream, loader)
 
       await chat.loadThread(THREAD_ID)
@@ -697,7 +881,7 @@ describe('useAgentChat', () => {
         new Promise<ReplayResult>((resolve) => {
           release = resolve
         })) as AgentThreadLoader
-      const stream = scriptedStream([{ event: 'done', thread_id: OTHER_THREAD_ID }])
+      const stream = scriptedStream([agentDone('答', OTHER_THREAD_ID)])
       const { wrapper, chat } = mountHarness(stream, loader)
 
       const loading = chat.loadThread(THREAD_ID)

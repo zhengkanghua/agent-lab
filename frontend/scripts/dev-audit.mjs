@@ -13,8 +13,13 @@ const browser = await chromium.launch()
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 await context.route(
   (url) => url.pathname.startsWith('/api/'),
-  (route) => {
-    const hit = matchApi(route.request().url(), authed)
+  async (route) => {
+    const request = route.request()
+    const hit = await matchApi(request.url(), authed, {
+      method: request.method(),
+      body: request.postDataBuffer(),
+      contentType: request.headers()['content-type'],
+    })
     if (hit)
       void route.fulfill({ status: hit.status, contentType: hit.contentType, body: hit.body })
     else void route.fulfill({ status: 404, contentType: 'application/json', body: '{}' })

@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import SearchPage from '@/pages/SearchPage.vue'
 import { _resetRecordSequence } from '@/features/semantic-search'
+import { scopedSearchResponse } from '@/api/document-search.fixture'
+import { newsKnowledgeBase, techKnowledgeBase } from '@/api/knowledge-bases.fixture'
 
 const match = {
   chunk_id: '10000000-0000-4000-8000-000000000001',
@@ -56,9 +58,10 @@ describe('SearchPage search stream', () => {
 
   it('searches the grouped endpoint and shows the result as a record', async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      void input
+      if (String(input).includes('/knowledge-bases'))
+        return Promise.resolve(Response.json([newsKnowledgeBase]))
       return Promise.resolve(
-        new Response(JSON.stringify([documentResult('第一篇')]), {
+        new Response(JSON.stringify(scopedSearchResponse([documentResult('第一篇')])), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         }),
@@ -74,12 +77,13 @@ describe('SearchPage search stream', () => {
 
     expect(wrapper.find('.empty-state').exists()).toBe(true)
     expect(wrapper.find('.stream').exists()).toBe(false)
+    await flushPromises()
 
     await wrapper.get('textarea').setValue('央行利率')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/document-search')
+    expect(fetchMock.mock.calls.some(([input]) => input === '/api/document-search')).toBe(true)
     expect(wrapper.find('.empty-state').exists()).toBe(false)
     expect(wrapper.findAll('.record')).toHaveLength(1)
     expect(wrapper.findAll('.result-card')).toHaveLength(1)
@@ -88,9 +92,11 @@ describe('SearchPage search stream', () => {
 
   it('accumulates rounds and keeps the newest record closest to the input', async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).includes('/knowledge-bases'))
+        return Promise.resolve(Response.json([newsKnowledgeBase]))
       const title = String(input).includes('楼市') ? '楼市结果' : '利率结果'
       return Promise.resolve(
-        new Response(JSON.stringify([documentResult(title)]), {
+        new Response(JSON.stringify(scopedSearchResponse([documentResult(title)])), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         }),
@@ -104,6 +110,7 @@ describe('SearchPage search stream', () => {
       },
     })
 
+    await flushPromises()
     // 第一轮
     await wrapper.get('textarea').setValue('利率')
     await wrapper.get('form').trigger('submit')
@@ -123,14 +130,16 @@ describe('SearchPage search stream', () => {
   })
 
   it('clear-stream empties the records back to the empty state', async () => {
-    const fetchMock = vi.fn(() =>
-      Promise.resolve(
-        new Response(JSON.stringify([documentResult('第一篇')]), {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).includes('/knowledge-bases'))
+        return Promise.resolve(Response.json([newsKnowledgeBase]))
+      return Promise.resolve(
+        new Response(JSON.stringify(scopedSearchResponse([documentResult('第一篇')])), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         }),
-      ),
-    )
+      )
+    })
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mount(SearchPage, {
       attachTo: document.body,
@@ -139,6 +148,7 @@ describe('SearchPage search stream', () => {
       },
     })
 
+    await flushPromises()
     await wrapper.get('textarea').setValue('央行')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
@@ -148,6 +158,52 @@ describe('SearchPage search stream', () => {
     await flushPromises()
     expect(wrapper.find('.empty-state').exists()).toBe(true)
     expect(wrapper.findAll('.record')).toHaveLength(0)
+    wrapper.unmount()
+  })
+
+  it('选择多个知识库后发送明确范围，空选择不检索', async () => {
+    const fetchMock = vi.fn<typeof fetch>((input) =>
+      Promise.resolve(
+        Response.json(
+          String(input).includes('/knowledge-bases')
+            ? [newsKnowledgeBase, { ...techKnowledgeBase, is_active: true }]
+            : scopedSearchResponse([]),
+        ),
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(SearchPage, {
+      global: { plugins: [[VueQueryPlugin, { queryClient: makeQueryClient() }], makeRouter()] },
+    })
+    await flushPromises()
+    await wrapper.findAll('input[type="radio"]')[1]!.setValue(true)
+    await wrapper.get('textarea').setValue('资料')
+    await wrapper.get('form').trigger('submit')
+    expect(fetchMock.mock.calls.filter(([input]) => input === '/api/document-search')).toHaveLength(
+      0,
+    )
+    for (const checkbox of wrapper.findAll('input[type="checkbox"]')) await checkbox.setValue(true)
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    const call = fetchMock.mock.calls.find(([input]) => input === '/api/document-search')
+    expect(JSON.parse(call?.[1]?.body as string).scope).toEqual({
+      mode: 'selected',
+      knowledge_base_ids: [newsKnowledgeBase.id, techKnowledgeBase.id],
+    })
+    wrapper.unmount()
+  })
+
+  it('目录加载失败时显示重载入口，不将失败当作全库查询', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError('offline'))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(SearchPage, {
+      global: { plugins: [[VueQueryPlugin, { queryClient: makeQueryClient() }], makeRouter()] },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('知识库目录加载失败')
+    await wrapper.get('textarea').setValue('资料')
+    await wrapper.get('form').trigger('submit')
+    expect(fetchMock.mock.calls.some(([input]) => input === '/api/document-search')).toBe(false)
     wrapper.unmount()
   })
 })

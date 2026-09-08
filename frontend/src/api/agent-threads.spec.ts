@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from './client'
-import { deleteAgentThread, getAgentThreadMessages, listAgentThreads } from './agent-threads'
+import {
+  deleteAgentThread,
+  getAgentThreadMessages,
+  listAgentThreads,
+  updateAgentThreadScope,
+} from './agent-threads'
 
 const THREAD_ID = '30000000-0000-4000-8000-000000000001'
 
@@ -51,7 +56,8 @@ describe('agent threads API', () => {
       vi.fn().mockResolvedValue(
         jsonResponse({
           thread_id: THREAD_ID,
-          turns: [{ question: '没答成的问题', answer: '' }],
+          turns: [{ question: '没答成的问题', answer: '', status: 'incomplete' }],
+          scope: { mode: 'all' },
           summarized: false,
           summary: null,
         }),
@@ -73,10 +79,12 @@ describe('agent threads API', () => {
           turns: [
             {
               question: '查一下',
+              status: 'incomplete',
               answer: '查不到。',
               traces: [{ tool: 'search_news', arguments: {}, content: null, failed: false }],
             },
           ],
+          scope: { mode: 'all' },
           summarized: false,
         }),
       ),
@@ -121,5 +129,40 @@ describe('agent threads API', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({})))
 
     await expect(deleteAgentThread(THREAD_ID)).rejects.toBeInstanceOf(ApiError)
+  })
+
+  it('用独立 PATCH 保存会话范围，方便下次提问和重新打开沿用', async () => {
+    const scope = {
+      mode: 'selected' as const,
+      knowledge_base_ids: ['10000000-0000-4000-8000-000000000010'],
+    }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(scope))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await updateAgentThreadScope(THREAD_ID, scope)
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(`/api/agent/threads/${THREAD_ID}/scope`)
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'PATCH',
+      body: JSON.stringify(scope),
+    })
+  })
+
+  it('回放的范围无效时拒绝载入，避免续聊使用错误范围', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          thread_id: THREAD_ID,
+          scope: { mode: 'selected', knowledge_base_ids: [] },
+          turns: [],
+          summarized: false,
+        }),
+      ),
+    )
+
+    await expect(getAgentThreadMessages(THREAD_ID)).rejects.toMatchObject({
+      code: 'response_invalid',
+    })
   })
 })

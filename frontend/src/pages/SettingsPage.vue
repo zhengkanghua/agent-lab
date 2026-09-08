@@ -70,7 +70,7 @@ watch(
   <!-- 账号页原本不渲染页脚，那是单屏表单页的取舍；设置中心是内容页，页脚回来。 -->
   <AppShell
     brand-title="Signal Desk"
-    brand-subtitle="新闻语义研究台"
+    brand-subtitle="知识库语义研究台"
     brand-label="Signal Desk 首页"
     brand-href="/"
     main-id="settings-page"

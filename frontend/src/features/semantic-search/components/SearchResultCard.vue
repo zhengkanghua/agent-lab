@@ -41,7 +41,7 @@ function requestFullText(event: MouseEvent): void {
       <strong>{{ rankLabel }}</strong>
       <span class="locator-line"></span>
       <span>
-        <small>新闻</small>
+        <small>文档</small>
         <b>{{ result.additionalMatches.length + 1 }} 段</b>
       </span>
     </div>
@@ -49,7 +49,12 @@ function requestFullText(event: MouseEvent): void {
     <div class="result-main">
       <header class="result-header">
         <div class="result-meta">
-          <span class="source-name">{{ result.sourceName ?? '未指定来源' }}</span>
+          <span v-if="result.knowledgeBaseName" class="source-name">{{
+            result.knowledgeBaseName
+          }}</span>
+          <span class="source-name">{{
+            result.sourceName ?? result.uploadFilename ?? '未指定来源'
+          }}</span>
           <span class="meta-item">
             <Clock3 :size="13" aria-hidden="true" />
             {{ formatPublishedAt(result.publishedAt) }}
@@ -124,7 +129,7 @@ function requestFullText(event: MouseEvent): void {
         </li>
       </ol>
 
-      <ul v-if="result.labels.length" class="label-list" aria-label="新闻标签">
+      <ul v-if="result.labels.length" class="label-list" aria-label="文档标签">
         <li v-for="(label, index) in result.labels" :key="`${label}-${index}`">
           <Tag :size="12" aria-hidden="true" />
           {{ label }}

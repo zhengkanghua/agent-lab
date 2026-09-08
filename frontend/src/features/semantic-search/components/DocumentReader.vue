@@ -4,7 +4,9 @@ import { AlertTriangle, Clock3, ExternalLink, FileText, RotateCcw, X } from '@lu
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
+import SafeMarkdown from '@/shared/ui/SafeMarkdown.vue'
 import type { ApiError } from '@/api/client'
+import type { DocumentEvidence } from '@/api/agent-evidence'
 import { resolveErrorCopy, type ErrorCopy } from '@/api/error-copy'
 import type { NewsDocumentDetail } from '../model/document-detail'
 import { formatPublishedAt, type NewsReadableResult } from '../model/search-result'
@@ -16,6 +18,7 @@ const props = defineProps<{
   loading: boolean
   error: ApiError | null
   hashMismatch: boolean
+  evidence?: DocumentEvidence | null
 }>()
 
 const emit = defineEmits<{
@@ -27,23 +30,28 @@ const emit = defineEmits<{
 const panel = ref<HTMLElement | null>(null)
 const closeButton = ref<InstanceType<typeof BaseIconButton> | null>(null)
 let previousBodyOverflow = ''
+let effectsActive = false
 
 // 全文接口的失败按 HTTP 状态分类就够：它不像检索链路那样有一串上游 code，
 // 「没这篇」和「服务不可用」正好对应 404 与 503。
 const COPY_BY_STATUS: Readonly<Partial<Record<number, ErrorCopy>>> = {
   404: {
-    title: '未找到这篇新闻全文',
-    description: '新闻可能已经移除，搜索结果仍可继续查看。',
+    title: '原文档已删除',
+    description: '当前原文已不可用，已有检索记录和回答仍保留。',
+  },
+  409: {
+    title: '知识库已停用',
+    description: '当前知识库暂停提供资料，请在启用后重新读取。',
   },
   503: {
     title: '全文服务暂时不可用',
-    description: '搜索结果没有受到影响，可以稍后重试当前新闻。',
+    description: '可以稍后重试当前文档。',
   },
 }
 
 const FALLBACK_COPY: ErrorCopy = {
   title: '全文加载未完成',
-  description: '当前新闻的完整正文没有载入，搜索结果仍保留在页面中。',
+  description: '当前文档的完整正文没有载入，已有记录仍保留在页面中。',
 }
 
 const errorCopy = computed(() =>
@@ -51,9 +59,11 @@ const errorCopy = computed(() =>
 )
 
 // 详情接口的来源与链接都是可选字段：详情缺省时回退搜索结果行，两边都没有就不渲染链接。
-const readerUrl = computed(() => props.detail?.url ?? props.result?.url ?? null)
-const readerSourceName = computed(
-  () => props.detail?.sourceName ?? props.result?.sourceName ?? '未指定来源',
+const readerUrl = computed(() => (props.detail ? props.detail.url : (props.result?.url ?? null)))
+const readerSourceName = computed(() =>
+  props.detail
+    ? (props.detail.sourceName ?? props.detail.uploadFilename ?? '未指定来源')
+    : (props.result?.sourceName ?? props.result?.uploadFilename ?? '未指定来源'),
 )
 
 watch(
@@ -61,6 +71,7 @@ watch(
   async (open) => {
     if (open) {
       previousBodyOverflow = document.body.style.overflow
+      effectsActive = true
       document.body.style.overflow = 'hidden'
       document.addEventListener('keydown', handleKeydown)
       await nextTick()
@@ -75,6 +86,8 @@ watch(
 onBeforeUnmount(releaseDialogEffects)
 
 function releaseDialogEffects(): void {
+  if (!effectsActive) return
+  effectsActive = false
   document.removeEventListener('keydown', handleKeydown)
   document.body.style.overflow = previousBodyOverflow
 }
@@ -134,7 +147,7 @@ function handleKeydown(event: KeyboardEvent): void {
           <header class="reader-header">
             <div class="reader-kicker">
               <FileText :size="15" aria-hidden="true" />
-              <span>新闻全文</span>
+              <span>文档全文</span>
             </div>
             <BaseIconButton ref="closeButton" size="lg" label="关闭全文" @click="emit('close')">
               <X :size="20" aria-hidden="true" />
@@ -144,10 +157,11 @@ function handleKeydown(event: KeyboardEvent): void {
           <div class="reader-scroll">
             <div class="reader-title-block">
               <div class="reader-meta">
+                <span>{{ detail?.knowledgeBaseName ?? result.knowledgeBaseName }}</span>
                 <span class="reader-source">{{ readerSourceName }}</span>
                 <span>
                   <Clock3 :size="13" aria-hidden="true" />
-                  {{ formatPublishedAt(detail?.publishedAt ?? result.publishedAt) }}
+                  {{ formatPublishedAt(detail ? detail.publishedAt : result.publishedAt) }}
                 </span>
               </div>
               <h2 id="reader-title">{{ detail?.title ?? result.title }}</h2>
@@ -164,16 +178,26 @@ function handleKeydown(event: KeyboardEvent): void {
               <span v-else class="reader-origin is-missing">未提供原文链接</span>
             </div>
 
+            <section v-if="evidence" class="reader-evidence" aria-label="当时引用的片段">
+              <h3>当时引用的片段</h3>
+              <p class="evidence-source">
+                {{ evidence.knowledge_base_name }} · {{ evidence.title }}
+              </p>
+              <blockquote>{{ evidence.excerpt }}</blockquote>
+              <p v-if="evidence.truncated" class="evidence-note">当时仅读取了部分正文。</p>
+              <p class="evidence-note">下方读取当前原文，旧回答和这段引用保持原样。</p>
+            </section>
+
             <div v-if="hashMismatch" class="version-warning" role="status">
               <AlertTriangle :size="17" aria-hidden="true" />
-              <p>该新闻已更新，当前全文与搜索时的索引版本不同。</p>
+              <p>原文已更新，当前内容与取得检索片段或引用时不同。</p>
             </div>
 
             <div v-if="loading" class="reader-loading" aria-live="polite">
               <BaseSpinner :size="22" />
               <div>
                 <strong>正在读取全文</strong>
-                <span>从新闻资料库载入当前版本</span>
+                <span>从知识库载入当前版本</span>
               </div>
               <span v-for="index in 7" :key="index" class="reader-skeleton skeleton-line"></span>
             </div>
@@ -199,7 +223,11 @@ function handleKeydown(event: KeyboardEvent): void {
             </div>
 
             <article v-else-if="detail" class="reader-article">
-              <p>{{ detail.contentText }}</p>
+              <SafeMarkdown
+                v-if="detail.mimeType === 'text/markdown'"
+                :markdown="detail.contentText"
+              />
+              <p v-else>{{ detail.contentText }}</p>
             </article>
           </div>
         </aside>
@@ -208,7 +236,7 @@ function handleKeydown(event: KeyboardEvent): void {
   </Teleport>
 </template>
 
-<style scoped>
+<style>
 .reader-backdrop {
   position: fixed;
   z-index: var(--z-reader);
@@ -322,7 +350,7 @@ function handleKeydown(event: KeyboardEvent): void {
   text-underline-offset: 3px;
 }
 
-.version-warning {
+.reader-panel .version-warning {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 10px;
@@ -335,7 +363,7 @@ function handleKeydown(event: KeyboardEvent): void {
   line-height: 1.55;
 }
 
-.version-warning svg {
+.reader-panel .version-warning svg {
   margin-top: 2px;
   color: var(--warning);
 }
@@ -420,7 +448,36 @@ function handleKeydown(event: KeyboardEvent): void {
   padding-top: 32px;
 }
 
-.reader-article p {
+.reader-evidence {
+  margin-top: 24px;
+  padding: 14px 16px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface-base);
+  font-size: 0.82rem;
+  line-height: 1.65;
+}
+.reader-evidence h3 {
+  font-size: 0.86rem;
+}
+.reader-evidence .evidence-source {
+  margin-top: 5px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.reader-evidence blockquote {
+  max-height: 250px;
+  overflow: auto;
+  margin-top: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.reader-evidence .evidence-note {
+  margin-top: 10px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.reader-article > p {
   max-width: 76ch;
   overflow-wrap: anywhere;
   color: var(--text-secondary);
@@ -471,7 +528,7 @@ function handleKeydown(event: KeyboardEvent): void {
     font-size: 1.55rem;
   }
 
-  .reader-article p {
+  .reader-article > p {
     font-size: 0.94rem;
     line-height: 1.85;
   }

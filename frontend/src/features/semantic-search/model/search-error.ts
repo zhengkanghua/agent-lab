@@ -24,7 +24,7 @@ const TIMEOUT_COPY: SearchErrorCopy = {
 
 const UNAVAILABLE_COPY: SearchErrorCopy = {
   title: '检索服务暂时不可用',
-  description: '新闻索引或语义服务当前无法连接，请稍后重试。',
+  description: '文档索引或语义服务当前无法连接，请稍后重试。',
 }
 
 const CONFIGURATION_COPY: SearchErrorCopy = {
@@ -44,6 +44,26 @@ const FALLBACK_COPY: SearchErrorCopy = {
 }
 
 const COPY_BY_CODE: Readonly<Partial<Record<string, SearchErrorCopy>>> = {
+  no_active_knowledge_bases: {
+    title: '没有启用的知识库',
+    description: '请启用知识库后重新检索。',
+    retryable: false,
+  },
+  knowledge_base_not_found: {
+    title: '知识库不存在',
+    description: '请重新加载目录并选择知识库。',
+    retryable: false,
+  },
+  knowledge_base_inactive: {
+    title: '知识库已停用',
+    description: '请重新加载目录并选择知识库。',
+    retryable: false,
+  },
+  knowledge_base_storage_unavailable: {
+    title: '知识库目录暂时不可用',
+    description: '请稍后重新加载知识库。',
+    retryable: true,
+  },
   validation_error: VALIDATION_COPY,
 
   request_timeout: TIMEOUT_COPY,

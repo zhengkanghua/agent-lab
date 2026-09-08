@@ -1,6 +1,6 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
-import MarkdownAnswer from '../components/MarkdownAnswer.vue'
+import MarkdownAnswer from '@/shared/ui/SafeMarkdown.vue'
 
 /* 这份 spec 的重点是「配置没被改掉」而不是「Markdown 能渲染」。
    sanitize 和不装 rehype-raw 这两条各自堵住一个注入面，两条都不会在界面上显形，
@@ -11,6 +11,36 @@ function render(markdown: string, streaming = false) {
 }
 
 describe('MarkdownAnswer 安全配置', () => {
+  it('代码中的引用不变成入口，文件没有服务端引用白名单时也不生成入口', () => {
+    const id = 'E0123456789ab'
+    const wrapper = mount(MarkdownAnswer, {
+      props: { markdown: `代码 \`[[${id}]]\`\n\n实际引用 [[${id}]]`, citationIds: [id] },
+    })
+    expect(wrapper.get('code').text()).toBe(`[[${id}]]`)
+    expect(wrapper.findAll('a')).toHaveLength(1)
+    expect(render(`[[${id}]]`).find('a').exists()).toBe(false)
+    expect(render('[伪造](#evidence-Effffffffffff)').get('a').attributes('href')).toBeUndefined()
+  })
+
+  it('已有链接即使用了真实引用 ID，也不能伪装成应用的引用入口', async () => {
+    const id = 'E0123456789ab'
+    const wrapper = mount(MarkdownAnswer, {
+      props: {
+        markdown: `实际引用 [[${id}]]\n\n[伪造](#evidence-${id}) [伪造定义][fake]\n\n[fake]: #evidence-${id}`,
+        citationIds: [id],
+      },
+    })
+    const links = wrapper.findAll('a')
+    expect(links).toHaveLength(3)
+    await links[0]!.trigger('click')
+    expect(wrapper.emitted('citation')).toHaveLength(1)
+    for (const link of links.slice(1)) {
+      expect(link.attributes('href')).toBeUndefined()
+      await link.trigger('click')
+    }
+    expect(wrapper.emitted('citation')).toHaveLength(1)
+  })
+
   it('裸 HTML 被转义成文本，不进 DOM', () => {
     const wrapper = render('<img src=x onerror="window.__pwned=1">')
 
@@ -39,6 +69,12 @@ describe('MarkdownAnswer 安全配置', () => {
     const wrapper = render('![图](data:text/html;base64,PHNjcmlwdD48L3NjcmlwdD4=)')
 
     expect(wrapper.find('img').attributes('src')).toBeUndefined()
+  })
+
+  it('阅读 Markdown 不自动下载外部图片', () => {
+    const image = render('![结构图](https://example.com/private-image.png)').get('img')
+    expect(image.attributes('src')).toBeUndefined()
+    expect(image.attributes('alt')).toContain('结构图')
   })
 
   it('正常的 http 链接与相对路径保留', () => {

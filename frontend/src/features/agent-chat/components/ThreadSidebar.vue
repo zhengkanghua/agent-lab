@@ -172,7 +172,7 @@ const emit = defineEmits<{
 }
 
 /* 窄屏把它变成正常流里的一块，不再 sticky：一列 20 条会话钉在顶上会把对话挤出视口。 */
-@container (max-width: 900px) {
+@media (max-width: 900px) {
   .thread-sidebar {
     position: static;
   }

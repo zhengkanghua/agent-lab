@@ -12,7 +12,7 @@ export type SearchStatus = 'idle' | 'loading' | 'success' | 'empty' | 'error'
 
 export function validateQuery(query: string): string | null {
   if (!query.trim()) {
-    return '请输入需要研究的新闻问题或主题。'
+    return '请输入需要研究的问题或主题。'
   }
   if (query.length > MAX_QUERY_CHARACTERS) {
     return `检索内容不能超过 ${MAX_QUERY_CHARACTERS} 个字符。`

@@ -78,6 +78,90 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/file-documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 查看上传文档及处理状态
+         * @description 分页列出上传资料，包含停用知识库中的已有文件。
+         */
+        get: operations["list_files_file_documents_get"];
+        put?: never;
+        /**
+         * 上传文本或 Markdown 文件
+         * @description 创建独立 Document 并进入待索引状态，同名文件不会覆盖。
+         */
+        post: operations["upload_file_file_documents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/file-documents/{document_id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 替换指定文档的文件
+         * @description 保留目标 ID 和知识库归属，版本冲突时拒绝覆盖。
+         */
+        put: operations["replace_file_file_documents__document_id__file_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/file-documents/{document_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 重新排队失败的文件索引
+         * @description 复用原 Document 和 revision，不新增文件或立即执行 Embedding。
+         */
+        post: operations["retry_file_file_documents__document_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/file-documents/{document_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 删除指定上传文档及索引
+         * @description 只有索引与文档删除均已确认才返回成功，失败可从同一目标继续。
+         */
+        delete: operations["delete_file_file_documents__document_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/knowledge-bases": {
         parameters: {
             query?: never;
@@ -224,8 +308,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 读取一篇新闻的完整正文
-         * @description 按 document_id 读取一篇新闻的完整纯文本正文及其元数据。
+         * 读取文档的当前完整正文
+         * @description 按 document_id 读取文档当前正文、格式与知识库归属。
          */
         get: operations["get_document_documents__document_id__get"];
         put?: never;
@@ -502,7 +586,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 与新闻 Agent 对话（SSE 流式返回）
+         * 与知识库 Agent 对话（SSE 流式返回）
          * @description 发起一次 Agent 运行。模型自行决定是否调用只读检索工具，过程以 text/event-stream 逐事件返回：token 是回答增量，tool_call/tool_result 是调用轨迹，done 或 error 是最后一个事件。带上 thread_id 即接着上一轮聊。
          *
          *     响应体不是一个 JSON 文档，而是一串 SSE 帧，每帧形如 `data: {...}`；下面这个 schema 描述的是**单帧里那个 JSON 对象**，按 `event` 字段判别。
@@ -576,6 +660,26 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/agent/threads/{thread_id}/scope": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * 保存会话知识库选择，只影响后续提问
+         * @description 归属与知识库有效性检查通过后，在短事务中保存用户选择。
+         */
+        patch: operations["update_agent_thread_scope_agent_threads__thread_id__scope_patch"];
         trace?: never;
     };
     "/agent/threads/{thread_id}": {
@@ -690,7 +794,7 @@ export interface components {
          *     一个模型类，而裸的 ``Annotated`` 联合不是类。响应体本身不是这个信封的 JSON——真正
          *     发出去的是 ``text/event-stream``，每行 ``data:`` 后面跟着联合成员之一。
          */
-        AgentChatEventEnvelope: components["schemas"]["AgentTokenEvent"] | components["schemas"]["AgentToolCallEvent"] | components["schemas"]["AgentToolResultEvent"] | components["schemas"]["AgentDoneEvent"] | components["schemas"]["AgentErrorEvent"];
+        AgentChatEventEnvelope: components["schemas"]["AgentTokenEvent"] | components["schemas"]["AgentRunStartedEvent"] | components["schemas"]["AgentToolCallEvent"] | components["schemas"]["AgentToolResultEvent"] | components["schemas"]["AgentDoneEvent"] | components["schemas"]["AgentErrorEvent"];
         /**
          * AgentChatRequest
          * @description 一次 Agent 对话提问。
@@ -718,6 +822,8 @@ export interface components {
              * @description 覆盖本次运行的系统提示词；省略则使用服务端内置的默认提示词。只影响本次请求，不会被持久化。
              */
             system_prompt?: string | null;
+            /** @description 本次提交的会话范围；省略沿用已保存选择，新会话默认所有启用知识库。 */
+            scope?: components["schemas"]["KnowledgeBaseSelection"] | null;
         };
         /**
          * AgentDefaultPromptResponse
@@ -735,7 +841,7 @@ export interface components {
         };
         /**
          * AgentDoneEvent
-         * @description 一次运行正常结束，流即将关闭。
+         * @description 一次运行收尾，流即将关闭；完成与否由 status 表达。
          *
          *     它同时承担「告知会话 id」的职责：新建会话时前端要拿这个值发起下一轮。
          */
@@ -751,6 +857,27 @@ export interface components {
              * @description 本次运行所属会话的 id，下一轮带上它即可续聊。
              */
             thread_id: string;
+            /**
+             * Answer
+             * @description 本次已持久化的最终文本，用于校正重试途中曾流出的临时内容。
+             */
+            answer: string;
+            /**
+             * Status
+             * @description 流已收尾；incomplete 表示回答被截断或预算耗尽，不能标为完整答案。
+             * @enum {string}
+             */
+            status: "completed" | "incomplete";
+            /**
+             * Citations
+             * @default []
+             */
+            citations: components["schemas"]["DocumentEvidence"][];
+            /**
+             * Invalid Citations
+             * @default []
+             */
+            invalid_citations: string[];
         };
         /**
          * AgentErrorEvent
@@ -810,6 +937,7 @@ export interface components {
              * @description 被调用的工具名。
              */
             tool: string;
+            scope?: components["schemas"]["ResolvedKnowledgeBaseScope"] | null;
             /**
              * Arguments
              * @description 模型给出的调用参数；属于展示给用户的调用轨迹，不含服务端凭据。
@@ -843,6 +971,25 @@ export interface components {
              * @description 用户这一轮的提问原文。
              */
             question: string;
+            /** Run Id */
+            run_id?: string | null;
+            scope?: components["schemas"]["ResolvedKnowledgeBaseScope"] | null;
+            /**
+             * Status
+             * @default incomplete
+             * @enum {string}
+             */
+            status: "completed" | "incomplete";
+            /**
+             * Citations
+             * @default []
+             */
+            citations: components["schemas"]["DocumentEvidence"][];
+            /**
+             * Invalid Citations
+             * @default []
+             */
+            invalid_citations: string[];
             /**
              * Answer
              * @description 模型这一轮的最终回答；空串表示当时没有产出回答。
@@ -854,6 +1001,28 @@ export interface components {
              * @default []
              */
             traces: components["schemas"]["AgentReplayTrace"][];
+        };
+        /**
+         * AgentRunStartedEvent
+         * @description 流开始即告知会话和固定范围，期间改选只影响下次。
+         */
+        AgentRunStartedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event: "run_started";
+            /**
+             * Thread Id
+             * Format: uuid
+             */
+            thread_id: string;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            scope: components["schemas"]["ResolvedKnowledgeBaseScope"];
         };
         /**
          * AgentThreadDeletionResponse
@@ -909,6 +1078,8 @@ export interface components {
              * @description 本次回放所属的会话 id。
              */
             thread_id: string;
+            /** @description 会话当前保存的选择，不改写历史轮次的实际范围。 */
+            scope: components["schemas"]["KnowledgeBaseSelection"];
             /**
              * Turns
              * @description 按时间顺序的历史轮次；不包含摘要那条伪提问。
@@ -962,8 +1133,8 @@ export interface components {
          * AgentTokenEvent
          * @description 模型输出的一小段文本增量。
          *
-         *     一次运行会有很多条，前端按到达顺序追加即可。它只承载「最终回答」的增量：工具调用
-         *     的参数不走这里，避免用户看到半截 JSON。
+         *     一次运行会有很多条，前端按到达顺序预览。重试可能留下临时文字，结束时以 Done
+         *     的持久化答案校正；工具调用参数不走这里。
          */
         AgentTokenEvent: {
             /**
@@ -997,7 +1168,7 @@ export interface components {
             tool_call_id: string;
             /**
              * Tool
-             * @description 被调用的工具名，如 search_news、read_document。
+             * @description 被调用的工具名，如 search_documents、read_document。
              */
             tool: string;
             /**
@@ -1017,8 +1188,7 @@ export interface components {
          *
          *     ``tool_call_id`` 让它和对应的 ``tool_call`` 事件精确配对。工具名不足以定位：模型可以在
          *     一轮里用不同检索词并发调用同一个工具多次，而多个工具的结果到达顺序没有保证，只按名字
-         *     先来先配会把两条轨迹的参数和结果对调。回放那条路一直是按这个 id 配的
-         *     （见 ``agent/replay.py`` 的 ``_tool_result_index``），流式这条路与它对齐。
+         *     先来先配会把两条轨迹的参数和结果对调。回放只在同一问答内按这个 id 配对。
          */
         AgentToolResultEvent: {
             /**
@@ -1047,6 +1217,12 @@ export interface components {
              * @default false
              */
             failed: boolean;
+            scope?: components["schemas"]["ResolvedKnowledgeBaseScope"] | null;
+            /**
+             * Evidence
+             * @default []
+             */
+            evidence: components["schemas"]["DocumentEvidence"][];
         };
         /**
          * AuthUserResponse
@@ -1116,6 +1292,23 @@ export interface components {
              */
             client_secret?: string | null;
         };
+        /** Body_replace_file_file_documents__document_id__file_put */
+        Body_replace_file_file_documents__document_id__file_put: {
+            /** Revision */
+            revision: number;
+            /** File */
+            file: string;
+        };
+        /** Body_upload_file_file_documents_post */
+        Body_upload_file_file_documents_post: {
+            /**
+             * Knowledge Base Id
+             * Format: uuid
+             */
+            knowledge_base_id: string;
+            /** File */
+            file: string;
+        };
         /**
          * CronValidateRequest
          * @description cron 预览请求：只带一个待校验的表达式。
@@ -1166,6 +1359,16 @@ export interface components {
              * @description Document 实际归属的 KnowledgeBase UUID。
              */
             knowledge_base_id: string;
+            /**
+             * Knowledge Base Name
+             * @description 当前 KnowledgeBase 展示名称。
+             */
+            knowledge_base_name?: string | null;
+            /**
+             * Upload Filename
+             * @description 上传资料的原文件名。
+             */
+            upload_filename?: string | null;
             /**
              * Content Hash
              * @description 当前 PostgreSQL 正文的 SHA-256，用于和搜索索引版本校验。
@@ -1218,6 +1421,50 @@ export interface components {
             content_text: string;
         };
         /**
+         * DocumentEvidence
+         * @description 本次实际读到的一段内容；hash 始终对应这段内容取得时的正文版本。
+         */
+        DocumentEvidence: {
+            /** Citation Id */
+            citation_id: string;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /**
+             * Knowledge Base Id
+             * Format: uuid
+             */
+            knowledge_base_id: string;
+            /** Knowledge Base Name */
+            knowledge_base_name: string;
+            /** Title */
+            title: string;
+            /** Content Hash */
+            content_hash: string;
+            /** Excerpt */
+            excerpt: string;
+            /** Source Name */
+            source_name: string | null;
+            /** Upload Filename */
+            upload_filename: string | null;
+            /** Url */
+            url: string | null;
+            /** Published At */
+            published_at: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "match" | "document";
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
+        };
+        /**
          * DocumentSearchMatch
          * @description 文档分组中一个与本次 query 相关的 Chunk 命中。
          *
@@ -1260,6 +1507,8 @@ export interface components {
          *     返回的高分相关片段数量。query 只进入一次 query Embedding，不写入数据库或 Qdrant。
          */
         DocumentSearchRequest: {
+            /** @description 显式选择全部启用库或非空列表；遗漏保留旧 news 契约。 */
+            scope?: components["schemas"]["KnowledgeBaseSelection"] | null;
             /**
              * Query
              * @description 用户提交的检索文本，不可为空、纯空白或超过 4096 个 Unicode 字符；原文可能敏感，仅用于 query Embedding，不保存为 Payload。
@@ -1332,6 +1581,11 @@ export interface components {
              */
             mime_type: string;
             /**
+             * Upload Filename
+             * @description 上传资料的原文件名。
+             */
+            upload_filename?: string | null;
+            /**
              * Url
              * @description 来自 Qdrant Payload 的可选 HTTP(S) 原文地址；没有外部地址时为空。
              */
@@ -1386,6 +1640,65 @@ export interface components {
             detail: string | {
                 [key: string]: string;
             };
+        };
+        /** FileDocumentListResponse */
+        FileDocumentListResponse: {
+            /** Items */
+            items: components["schemas"]["FileDocumentResponse"][];
+            /** Has More */
+            has_more: boolean;
+            /**
+             * Max File Bytes
+             * @default 2097152
+             */
+            max_file_bytes: number;
+        };
+        /** FileDocumentResponse */
+        FileDocumentResponse: {
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /**
+             * Knowledge Base Id
+             * Format: uuid
+             */
+            knowledge_base_id: string;
+            /** Knowledge Base Name */
+            knowledge_base_name: string;
+            /** Knowledge Base Active */
+            knowledge_base_active: boolean;
+            /** Upload Filename */
+            upload_filename: string;
+            /** Title */
+            title: string;
+            /** Mime Type */
+            mime_type: string;
+            /** Content Hash */
+            content_hash: string;
+            /** Revision */
+            revision: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            processing_status: components["schemas"]["ProcessingStatus"];
+            /** Processing Error */
+            processing_error: string | null;
+            /** Deletion Pending */
+            deletion_pending: boolean;
+            /** Deletion Error */
+            deletion_error: string | null;
+        };
+        /** FileRevisionRequest */
+        FileRevisionRequest: {
+            /**
+             * Revision
+             * @description 页面最近读取的文档业务版本。
+             */
+            revision: number;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1560,6 +1873,36 @@ export interface components {
              * @description 最后一次实际修改时间。
              */
             updated_at: string;
+        };
+        /**
+         * KnowledgeBaseSelection
+         * @description 所有启用库，或明确选择的非空知识库列表。
+         */
+        KnowledgeBaseSelection: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "all" | "selected";
+            /** Knowledge Base Ids */
+            knowledge_base_ids?: string[];
+        };
+        /**
+         * KnowledgeBaseSummary
+         * @description 查询时的知识库展示快照，改名后不改写历史记录。
+         */
+        KnowledgeBaseSummary: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Key */
+            key: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
         };
         /**
          * KnowledgeBaseUpdateRequest
@@ -1762,6 +2105,25 @@ export interface components {
             failures: components["schemas"]["PipelineFailureType"][];
         };
         /**
+         * ProcessingStatus
+         * @description 文档从发现到写入向量数据库的处理状态。
+         * @enum {string}
+         */
+        ProcessingStatus: "pending" | "processing" | "indexed" | "failed";
+        /**
+         * ResolvedKnowledgeBaseScope
+         * @description 应用已校验的本次范围，供过滤、展示与运行上下文复用。
+         */
+        ResolvedKnowledgeBaseScope: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "all" | "selected";
+            /** Knowledge Bases */
+            knowledge_bases: components["schemas"]["KnowledgeBaseSummary"][];
+        };
+        /**
          * ScheduledJobCreateRequest
          * @description 创建定时任务的请求体。
          */
@@ -1936,6 +2298,24 @@ export interface components {
             params_schema: {
                 [key: string]: unknown;
             };
+        };
+        /**
+         * ScopedDocumentSearchResponse
+         * @description 新调用方取得结果及本次范围，供检索记录冻结保存。
+         */
+        ScopedDocumentSearchResponse: {
+            scope: components["schemas"]["ResolvedKnowledgeBaseScope"];
+            /** Results */
+            results: components["schemas"]["DocumentSearchResult"][];
+        };
+        /**
+         * ScopedVectorSearchResponse
+         * @description 显式范围请求的结果与实际范围快照；旧请求仍返回数组。
+         */
+        ScopedVectorSearchResponse: {
+            scope: components["schemas"]["ResolvedKnowledgeBaseScope"];
+            /** Results */
+            results: components["schemas"]["VectorSearchResult"][];
         };
         /**
          * SourceErrorResponse
@@ -2149,7 +2529,7 @@ export interface components {
              * @description 由 API 异常映射产生的必需稳定错误码；不可空，用于客户端区分 Embedding、Qdrant、timeout、配置和响应契约失败。
              * @enum {string}
              */
-            code: "knowledge_base_not_found" | "knowledge_base_inactive" | "knowledge_base_storage_unavailable" | "search_runtime_unavailable" | "embedding_authentication_failed" | "embedding_unavailable" | "embedding_timeout" | "embedding_model_not_found" | "embedding_response_invalid" | "qdrant_authentication_failed" | "qdrant_unavailable" | "qdrant_timeout" | "qdrant_target_missing" | "qdrant_configuration_invalid" | "qdrant_response_invalid" | "qdrant_service_error";
+            code: "no_active_knowledge_bases" | "knowledge_base_not_found" | "knowledge_base_inactive" | "knowledge_base_storage_unavailable" | "search_runtime_unavailable" | "embedding_authentication_failed" | "embedding_unavailable" | "embedding_timeout" | "embedding_model_not_found" | "embedding_response_invalid" | "qdrant_authentication_failed" | "qdrant_unavailable" | "qdrant_timeout" | "qdrant_target_missing" | "qdrant_configuration_invalid" | "qdrant_response_invalid" | "qdrant_service_error";
             /**
              * Detail
              * @description 由 API 层生成的必需安全中文错误概述；不可空，不包含用户 query、密钥、Vector、新闻正文或第三方原始响应。
@@ -2178,6 +2558,11 @@ export interface components {
              * @description KnowledgeBase 范围；普通 HTTP 边界缺省时解析为 news。
              */
             knowledge_base_id?: string | null;
+            /**
+             * Knowledge Base Ids
+             * @description 明确的非空知识库过滤集合。
+             */
+            knowledge_base_ids?: string[] | null;
             /**
              * Source Id
              * @description 可选来源过滤值，来自调用方；格式为 PostgreSQL sources.id UUID，Qdrant 按 Payload source_id 精确匹配，用于限定单一来源。
@@ -2217,6 +2602,8 @@ export interface components {
          *     或 Qdrant。
          */
         VectorSearchRequest: {
+            /** @description 新调用方显式选择全部启用库或非空列表；遗漏保留旧 news 契约。 */
+            scope?: components["schemas"]["KnowledgeBaseSelection"] | null;
             /**
              * Query
              * @description 用户提交的检索文本，不可为空、纯空白或超过 4096 个 Unicode 字符；原文可能敏感，不写日志或异常，仅用于 Ollama query Embedding，不保存为 Payload。
@@ -2326,6 +2713,11 @@ export interface components {
              * @description 文档内容的 MIME 格式，与 document_type 业务类型独立。
              */
             mime_type: string;
+            /**
+             * Upload Filename
+             * @description 上传资料的原文件名；外部来源文档为空。
+             */
+            upload_filename?: string | null;
             /**
              * Source Id
              * @description 来自 Qdrant Point Payload.source_id 的可空 UUID；有 Source 时关联 PostgreSQL sources.id 并对应来源过滤条件，无 Source 时为 null。
@@ -2534,6 +2926,353 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuthUserResponse"];
+                };
+            };
+        };
+    };
+    list_files_file_documents_get: {
+        parameters: {
+            query?: {
+                knowledge_base_id?: string | null;
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileDocumentListResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    upload_file_file_documents_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_file_file_documents_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileDocumentResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    replace_file_file_documents__document_id__file_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_replace_file_file_documents__document_id__file_put"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileDocumentResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    retry_file_file_documents__document_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileRevisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileDocumentResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_file_file_documents__document_id__delete: {
+        parameters: {
+            query: {
+                revision: number;
+            };
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
                 };
             };
         };
@@ -2821,7 +3560,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["VectorSearchResult"][];
+                    "application/json": components["schemas"]["VectorSearchResult"][] | components["schemas"]["ScopedVectorSearchResponse"];
                 };
             };
             /** @description 知识库不存在。 */
@@ -2899,7 +3638,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DocumentSearchResult"][];
+                    "application/json": components["schemas"]["DocumentSearchResult"][] | components["schemas"]["ScopedDocumentSearchResponse"];
                 };
             };
             /** @description 知识库不存在。 */
@@ -3925,6 +4664,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentChatErrorResponse"];
+                };
+            };
+        };
+    };
+    update_agent_thread_scope_agent_threads__thread_id__scope_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeBaseSelection"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseSelection"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

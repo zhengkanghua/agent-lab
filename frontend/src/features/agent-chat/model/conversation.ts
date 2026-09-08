@@ -1,5 +1,7 @@
 import type { AgentToolCallEvent, AgentToolResultEvent } from '@/api/agent-chat'
 import type { AgentErrorPresentation } from './agent-error'
+import type { DocumentEvidence } from '@/api/agent-evidence'
+import type { ResolvedKnowledgeBaseScope } from '@/api/knowledge-scope'
 
 /**
  * 一次工具调用在界面上的完整轨迹：从「模型决定要查」到「查到了什么」。
@@ -21,9 +23,10 @@ export interface AgentToolTrace {
   arguments: Record<string, unknown>
   content: string | null
   failed: boolean
+  scope?: ResolvedKnowledgeBaseScope | null
 }
 
-export type AgentTurnStatus = 'streaming' | 'done' | 'error' | 'cancelled'
+export type AgentTurnStatus = 'streaming' | 'done' | 'error' | 'cancelled' | 'incomplete'
 
 /** 一问一答。提问是用户的原文，回答是逐 token 拼起来的增量。 */
 export interface AgentTurn {
@@ -33,6 +36,10 @@ export interface AgentTurn {
   traces: AgentToolTrace[]
   error: AgentErrorPresentation | null
   status: AgentTurnStatus
+  runId?: string | null
+  scope?: ResolvedKnowledgeBaseScope | null
+  citations?: DocumentEvidence[]
+  invalidCitations?: string[]
 }
 
 let sequence = 0
@@ -84,6 +91,7 @@ export function applyToolResult(turn: AgentTurn, event: AgentToolResultEvent): v
   if (pending) {
     pending.content = event.content
     pending.failed = event.failed ?? false
+    pending.scope = event.scope
     return
   }
 
@@ -93,6 +101,7 @@ export function applyToolResult(turn: AgentTurn, event: AgentToolResultEvent): v
     tool: event.tool,
     arguments: {},
     content: event.content,
+    scope: event.scope,
     failed: event.failed ?? false,
   })
 }
@@ -115,8 +124,8 @@ export function settlePendingTraces(turn: AgentTurn, note: string): void {
 /**
  * 把回放接口返回的历史轮次转成界面用的轮次。
  *
- * 全部标成 `done`：它们是既成事实，没有「正在进行」的可能。历史里没有存下当时的失败原因，
- * 所以也不给 error——编一个出来会让用户以为那一轮报过某个具体错误。answer 为空串的轮次
+ * 按持久化的完成状态展示，未完成的回答不能因刷新变成完成。历史里没有存下当时的失败原因，
+ * 所以不给 error。answer 为空串的轮次
  * 保持空串，由 `AgentTurnCard` 显示一句中性说明。
  *
  * 只有调用没有结果的工具轨迹（那一轮在工具返回前就断了）用 `pendingNote` 收尾，否则
@@ -139,9 +148,14 @@ export function turnsFromReplay(
         arguments: trace.arguments ?? {},
         content: trace.content ?? null,
         failed: trace.failed ?? false,
+        scope: trace.scope,
       })),
       error: null,
-      status: 'done',
+      status: replayTurn.status === 'completed' ? 'done' : 'incomplete',
+      runId: replayTurn.run_id,
+      scope: replayTurn.scope,
+      citations: replayTurn.citations ?? [],
+      invalidCitations: replayTurn.invalid_citations ?? [],
     }
     settlePendingTraces(turn, pendingNote)
     return turn
@@ -158,6 +172,11 @@ export interface ReplayTurnInput {
   question: string
   answer: string
   traces?: readonly ReplayTraceInput[] | null
+  status?: 'completed' | 'incomplete'
+  run_id?: string | null
+  scope?: ResolvedKnowledgeBaseScope | null
+  citations?: DocumentEvidence[]
+  invalid_citations?: string[]
 }
 
 export interface ReplayTraceInput {
@@ -165,4 +184,5 @@ export interface ReplayTraceInput {
   arguments?: Record<string, unknown> | null
   content?: string | null
   failed?: boolean | null
+  scope?: ResolvedKnowledgeBaseScope | null
 }

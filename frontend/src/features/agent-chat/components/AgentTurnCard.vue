@@ -4,12 +4,24 @@ import { CircleAlert, RotateCcw, Sparkles, UserRound } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import type { AgentTurn } from '../model/conversation'
+import type { DocumentEvidence } from '@/api/agent-evidence'
+import { scopeLabel } from '@/api/knowledge-scope'
 import AgentToolTraceList from './AgentToolTraceList.vue'
-import MarkdownAnswer from './MarkdownAnswer.vue'
+import SafeMarkdown from '@/shared/ui/SafeMarkdown.vue'
 
 const props = defineProps<{ turn: AgentTurn; canRetry: boolean }>()
 
-const emit = defineEmits<{ retry: [] }>()
+const emit = defineEmits<{
+  retry: []
+  'open-evidence': [evidence: DocumentEvidence, trigger: HTMLElement]
+}>()
+
+const citationIds = computed(() => (props.turn.citations ?? []).map((item) => item.citation_id))
+
+function openCitation(id: string, trigger: HTMLElement): void {
+  const evidence = props.turn.citations?.find((item) => item.citation_id === id)
+  if (evidence) emit('open-evidence', evidence, trigger)
+}
 
 const isStreaming = computed(() => props.turn.status === 'streaming')
 
@@ -48,22 +60,47 @@ const hasTracesOnly = computed(() => isUnanswered.value && props.turn.traces.len
         <p class="role-name">
           Agent
           <span v-if="turn.status === 'cancelled'" class="turn-state">已停止</span>
+          <span v-else-if="turn.status === 'incomplete'" class="turn-state">回答未完成</span>
         </p>
 
+        <p v-if="turn.scope" class="run-scope">本次范围：{{ scopeLabel(turn.scope) }}</p>
         <AgentToolTraceList :traces="turn.traces" :streaming="isStreaming" />
 
         <p v-if="isThinking" class="thinking" aria-live="polite">正在思考…</p>
-        <!-- 答案正文是本页唯一按 Markdown 渲染的地方。安全配置的理由写在 MarkdownAnswer 里，
-             一句话是：没装 rehype-raw + 开了 sanitize，裸 HTML 与 javascript: 链接都进不来。 -->
-        <MarkdownAnswer
+        <!-- 答案与文件阅读器共用 SafeMarkdown；提问和工具轨迹保持原文展示。 -->
+        <SafeMarkdown
           v-else-if="turn.answer"
           class="answer-body"
           :markdown="turn.answer"
           :streaming="isStreaming"
+          :citation-ids="citationIds"
+          @citation="openCitation"
         />
         <p v-else-if="isUnanswered" class="unanswered">
           {{ hasTracesOnly ? '模型未给出文字回答。' : '这一轮没有留下回答。' }}
           <span v-if="hasTracesOnly" class="trace-hint">已执行的检索结果见上方。</span>
+        </p>
+
+        <ol v-if="turn.citations?.length" class="citation-list" aria-label="回答引用">
+          <li v-for="(citation, index) in turn.citations" :key="citation.citation_id">
+            <button
+              type="button"
+              @click="openCitation(citation.citation_id, $event.currentTarget as HTMLElement)"
+            >
+              <span class="citation-number">[{{ index + 1 }}]</span>
+              <span>{{ citation.knowledge_base_name }} · {{ citation.title }}</span>
+            </button>
+          </li>
+        </ol>
+        <p v-if="turn.invalidCitations?.length" class="citation-warning" role="status">
+          部分引用未能对应本次取得的资料，无法核验，请勿据此确认结论。
+        </p>
+        <p
+          v-if="turn.status === 'incomplete' && turn.answer"
+          class="citation-warning"
+          role="status"
+        >
+          本次回答中断或达到处理上限，以上内容不完整。
         </p>
 
         <BaseCallout
@@ -147,6 +184,48 @@ const hasTracesOnly = computed(() => isUnanswered.value && props.turn.traces.len
 .turn-state {
   color: var(--warning);
   font-weight: 650;
+}
+
+.run-scope {
+  margin-bottom: 10px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.citation-list {
+  display: grid;
+  gap: 5px;
+  margin: 16px 0 0;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--border-subtle);
+  list-style: none;
+}
+
+.citation-list button {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 0;
+  border: 0;
+  color: var(--accent);
+  background: transparent;
+  text-align: left;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.citation-number {
+  flex-shrink: 0;
+  font-family: var(--mono-font);
+}
+.citation-warning {
+  margin-top: 12px;
+  color: var(--warning);
+  font-size: 0.78rem;
+  line-height: 1.6;
 }
 
 /* 提问保持 pre-wrap 的纯文本：它是用户原文，换行按他敲的来。

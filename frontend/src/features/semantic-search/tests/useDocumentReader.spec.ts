@@ -70,8 +70,12 @@ function mountHarness() {
 describe('useDocumentReader', () => {
   beforeEach(() => mockedFetchDocument.mockReset())
 
-  it('does not request full text until open, then caches by document and content hash', async () => {
-    mockedFetchDocument.mockResolvedValue(detail)
+  it('reads the current text on each open and detects changes since the indexed evidence', async () => {
+    mockedFetchDocument.mockResolvedValueOnce(detail).mockResolvedValueOnce({
+      ...detail,
+      content_text: '更新后的当前正文。',
+      content_hash: 'c'.repeat(64),
+    })
     const { wrapper, reader } = mountHarness()
 
     expect(mockedFetchDocument).not.toHaveBeenCalled()
@@ -84,7 +88,9 @@ describe('useDocumentReader', () => {
     await reader.close()
     await reader.open(result)
     await flushPromises()
-    expect(mockedFetchDocument).toHaveBeenCalledTimes(1)
+    expect(reader.detail.value?.contentText).toBe('更新后的当前正文。')
+    expect(reader.detail.value?.contentHash).toBe('c'.repeat(64))
+    expect(reader.contentHashMismatch.value).toBe(true)
     wrapper.unmount()
   })
 

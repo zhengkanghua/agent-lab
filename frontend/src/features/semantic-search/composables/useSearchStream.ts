@@ -1,6 +1,11 @@
 import { computed, onScopeDispose, ref, shallowRef, watch } from 'vue'
 import { isAbortError, ApiError } from '@/api/client'
 import {
+  copySelection,
+  type KnowledgeBaseSelection,
+  type ResolvedKnowledgeBaseScope,
+} from '@/api/knowledge-scope'
+import {
   DEFAULT_MATCHES_PER_DOCUMENT,
   DEFAULT_RESULT_LIMIT,
   normalizeMatchesPerDocument,
@@ -20,13 +25,15 @@ import {
 export interface UseSearchStreamOptions {
   getDocumentLimit?: () => number
   getMatchesPerDocument?: () => number
+  getScope?: () => KnowledgeBaseSelection
+  getScopeError?: () => string | null
 }
 
 /**
  * 检索流状态编排：把每次搜索追加成一条记录，形成可回看、可折叠、可清空的多轮检索流。
  *
  * 取代旧的 useSemanticSearch / useChunkSearch（单次请求状态机，第二次搜索会覆盖第一次，
- * 且带模式切换）。检索页现在只走文档级 /document-search（按新闻分组），不再有「按片段」。
+ * 且带模式切换）。检索页现在只走文档级 /document-search（按 Document 分组），不再有「按片段」。
  *
  * 状态分两层：
  *  - records：一条条已提交搜索的累积结果，最新在数组末尾，渲染时由调用方决定贴顶方向；
@@ -40,6 +47,8 @@ export interface UseSearchStreamOptions {
 export function useSearchStream({
   getDocumentLimit = () => DEFAULT_RESULT_LIMIT,
   getMatchesPerDocument = () => DEFAULT_MATCHES_PER_DOCUMENT,
+  getScope = () => ({ mode: 'all' }),
+  getScopeError = () => null,
 }: UseSearchStreamOptions = {}) {
   const draft = ref('')
   const records = shallowRef<SearchRecord[]>([])
@@ -61,7 +70,7 @@ export function useSearchStream({
 
   watch(draft, (value) => {
     if (inputError.value && !validateQuery(value)) {
-      inputError.value = null
+      inputError.value = getScopeError()
     }
   })
 
@@ -70,6 +79,7 @@ export function useSearchStream({
     status: Exclude<SearchRecordStatus, 'loading'>,
     results: NewsDocumentResult[],
     error: ApiError | null,
+    scope?: ResolvedKnowledgeBaseScope,
   ): void {
     records.value = records.value.map((record) => {
       if (record.id !== recordId) return record
@@ -78,6 +88,7 @@ export function useSearchStream({
         status,
         results: status === 'success' ? results : [],
         error: error ? presentSearchError(error) : null,
+        scope,
       }
     })
   }
@@ -85,7 +96,7 @@ export function useSearchStream({
   async function search(): Promise<void> {
     const normalizedQuery = draft.value.trim()
 
-    inputError.value = validateQuery(draft.value)
+    inputError.value = validateQuery(draft.value) ?? getScopeError()
     if (inputError.value) {
       // 输入校验没通过就结束：不要碰在途请求，也别清空任何状态。
       return
@@ -95,6 +106,7 @@ export function useSearchStream({
 
     const limit = normalizeResultLimit(getDocumentLimit())
     const perDocument = normalizeMatchesPerDocument(getMatchesPerDocument())
+    const selection = copySelection(getScope())
 
     // 若上一条还在「loading」（用户没等结果就再搜一次），这次取消会 abort 它但不会让它
     // settle，直接把它从流里移走——一个被用户中途放弃的占位轮不该留在界面上显示永远在转。
@@ -104,6 +116,7 @@ export function useSearchStream({
       query: normalizedQuery,
       documentLimit: limit,
       matchesPerDocument: perDocument,
+      selection,
     })
     records.value = [...records.value, pending]
 
@@ -117,13 +130,24 @@ export function useSearchStream({
         query: normalizedQuery,
         documentLimit: limit,
         matchesPerDocument: perDocument,
+        scope: selection,
         signal: controller.signal,
       })
 
       if (requestId !== requestSequence) return
 
-      const mapped = toNewsDocumentResults(response)
-      settleRecord(pending.id, mapped.length > 0 ? 'success' : 'empty', mapped, null)
+      const names = new Map(response.scope.knowledge_bases.map((item) => [item.id, item.name]))
+      const mapped = toNewsDocumentResults(response.results).map((item) => ({
+        ...item,
+        knowledgeBaseName: names.get(item.knowledgeBaseId),
+      }))
+      settleRecord(
+        pending.id,
+        mapped.length > 0 ? 'success' : 'empty',
+        mapped,
+        null,
+        response.scope,
+      )
     } catch (caught) {
       if (requestId !== requestSequence || isAbortError(caught)) return
 

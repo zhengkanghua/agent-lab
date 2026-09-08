@@ -1,5 +1,6 @@
 import type { NewsDocumentResult } from './search-result'
 import type { SearchErrorPresentation } from './search-error'
+import type { KnowledgeBaseSelection, ResolvedKnowledgeBaseScope } from '@/api/knowledge-scope'
 
 /**
  * 一条检索记录：一次已提交的语义搜索及其结果快照。
@@ -21,10 +22,12 @@ export interface SearchRecord {
   /** 这轮提交时的文章数量上限快照（Q7：参数全局一条，但每轮仍要记住自己用了多少，
       否则重发/回看时显示的数会和实际不符）。 */
   documentLimit: number
-  /** 每篇新闻最多保留的相关片段数快照。 */
+  /** 每篇 Document 最多保留的相关片段数快照。 */
   matchesPerDocument: number
+  selection?: KnowledgeBaseSelection
+  scope?: ResolvedKnowledgeBaseScope
   status: SearchRecordStatus
-  /** 成功时后端返回的按新闻分组结果，原始顺序。 */
+  /** 成功时后端返回的按 Document 分组结果，原始顺序。 */
   results: NewsDocumentResult[]
   /** status 为 error 时的错误展示。 */
   error: SearchErrorPresentation | null
@@ -43,12 +46,14 @@ export function createPendingRecord(input: {
   query: string
   documentLimit: number
   matchesPerDocument: number
+  selection?: KnowledgeBaseSelection
 }): SearchRecord {
   return {
     id: nextRecordId(),
     query: input.query,
     documentLimit: input.documentLimit,
     matchesPerDocument: input.matchesPerDocument,
+    selection: input.selection,
     status: 'loading',
     results: [],
     error: null,

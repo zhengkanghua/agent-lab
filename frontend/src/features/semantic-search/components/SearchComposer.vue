@@ -21,6 +21,7 @@ const props = withDefaults(
   defineProps<{
     modelValue: string
     loading: boolean
+    disabled?: boolean
     inputError: string | null
     remainingCharacters: number
     /** 是否已有一条以上检索记录：决定「清空检索流」要不要出现。 */
@@ -52,7 +53,7 @@ function onEnter(event: KeyboardEvent): void {
   // 输入法组合期间按 Enter 是「确认候选词」，不能当提交。Shift+Enter 换行。
   if (event.isComposing || event.shiftKey) return
   event.preventDefault()
-  if (!props.loading) emit('submit')
+  if (!props.loading && !props.disabled) emit('submit')
 }
 
 /** 让父级把焦点放回输入框（Q11：提交一轮后清空草稿、焦点留下，方便连续换词）。 */
@@ -82,7 +83,7 @@ defineExpose({ focusInput })
               name="query"
               rows="1"
               :maxlength="MAX_QUERY_CHARACTERS"
-              placeholder="输入一个新闻研究问题或主题..."
+              placeholder="搜索文档中的问题或主题..."
               @keydown.enter="onEnter"
             ></textarea>
           </template>
@@ -122,10 +123,10 @@ defineExpose({ focusInput })
             variant="primary"
             size="sm"
             type="submit"
-            aria-label="搜索新闻"
-            title="搜索新闻"
+            aria-label="搜索文档"
+            title="搜索文档"
             :loading="loading"
-            :disabled="!draft.trim() && !loading"
+            :disabled="disabled || (!draft.trim() && !loading)"
           >
             <template #icon><Search :size="16" stroke-width="2.4" aria-hidden="true" /></template>
           </BaseButton>

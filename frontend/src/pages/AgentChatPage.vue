@@ -6,6 +6,9 @@ import AppShell from '@/layouts/AppShell.vue'
 import { useLogout } from '@/features/auth'
 import { usePreferences } from '@/features/settings'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
+import BaseButton from '@/shared/ui/BaseButton.vue'
+import KnowledgeBaseScopePicker from '@/shared/ui/KnowledgeBaseScopePicker.vue'
+import { useKnowledgeBaseScope } from '@/shared/composables/useKnowledgeBaseScope'
 import {
   AgentComposer,
   AgentTranscript,
@@ -15,6 +18,8 @@ import {
   AGENT_EXAMPLES,
 } from '@/features/agent-chat'
 import type { AgentThreadSummaryDto } from '@/api/agent-threads'
+import type { DocumentEvidence } from '@/api/agent-evidence'
+import { DocumentReader, useDocumentReader } from '@/features/semantic-search'
 
 const route = useRoute()
 const router = useRouter()
@@ -24,7 +29,31 @@ const { preferences } = usePreferences()
 
 const chat = useAgentChat({
   getSystemPrompt: () => preferences.agentSystemPrompt,
+  getScopeError: () => scope.error.value,
 })
+const scope = useKnowledgeBaseScope(chat.selection)
+const reader = useDocumentReader()
+const selectedEvidence = ref<DocumentEvidence | null>(null)
+
+function openEvidence(evidence: DocumentEvidence, trigger: HTMLElement): void {
+  selectedEvidence.value = evidence
+  void reader.open(
+    {
+      documentId: evidence.document_id,
+      knowledgeBaseId: evidence.knowledge_base_id,
+      knowledgeBaseName: evidence.knowledge_base_name,
+      contentHash: evidence.content_hash,
+      title: evidence.title,
+      sourceName: evidence.source_name ?? null,
+      uploadFilename: evidence.upload_filename ?? null,
+      url: evidence.url ?? null,
+      publishedAt: evidence.published_at ?? null,
+      labels: [],
+      authors: [],
+    },
+    trigger,
+  )
+}
 
 const threadList = useThreadList({
   activeThreadId: () => chat.threadId.value,
@@ -71,6 +100,8 @@ onMounted(() => {
 watch(
   routeThreadId,
   (id) => {
+    void reader.close()
+    selectedEvidence.value = null
     if (id === null) {
       // 从某个会话回到 /agent（点「新对话」或后退）时清空，否则旧会话的历史留在界面上，
       // 而 threadId 已经没了，下一轮会开一个新会话。
@@ -151,7 +182,7 @@ async function chooseExample(value: string): Promise<void> {
        mode-note 承担，「模型生成」由输入区下方的细则行承担，信息没有丢。 -->
   <AppShell
     brand-title="Signal Desk Agent"
-    brand-subtitle="会自己查资料的新闻助手"
+    brand-subtitle="从知识库中查资料，带着依据回答"
     brand-label="返回检索工作台"
     :brand-to="{ name: 'search' }"
     main-id="agent-workspace"
@@ -209,9 +240,32 @@ async function chooseExample(value: string): Promise<void> {
             v-if="chat.isHistoryTruncated.value"
             class="history-note"
             tone="neutral"
-            description="较早的对话已被压缩成摘要，这里只显示保留下来的轮次。"
+            description="较早消息已压缩，原始问答不再提供回看。近期保留的问答仍可查看。"
           >
             <template #icon><History :size="14" aria-hidden="true" /></template>
+          </BaseCallout>
+
+          <details
+            v-if="chat.isHistoryTruncated.value && chat.historySummary.value"
+            class="summary-background"
+          >
+            <summary>查看背景摘要</summary>
+            <p>摘要仅作背景，不是可核验的原文引用。</p>
+            <p class="summary-text">{{ chat.historySummary.value }}</p>
+          </details>
+          <BaseCallout
+            v-if="chat.historySyncError.value"
+            tone="neutral"
+            :description="chat.historySyncError.value"
+          >
+            <template #actions
+              ><BaseButton
+                variant="outline"
+                :disabled="chat.isStreaming.value"
+                @click="chat.synchronizeHistory()"
+                >同步会话状态</BaseButton
+              ></template
+            >
           </BaseCallout>
 
           <AgentTranscript
@@ -220,12 +274,24 @@ async function chooseExample(value: string): Promise<void> {
             :examples="AGENT_EXAMPLES"
             @retry="chat.retry"
             @choose-example="chooseExample"
+            @open-evidence="openEvidence"
           />
           <!-- 滚动锚点。滚 transcript 本身会把它的顶部带进视口，方向正好相反。 -->
           <div ref="transcriptEndRef" class="scroll-anchor" aria-hidden="true"></div>
         </div>
 
         <div class="composer-dock">
+          <KnowledgeBaseScopePicker
+            v-if="!chat.isLoadingThread.value"
+            :model-value="chat.selection.value"
+            :knowledge-bases="scope.knowledgeBases.value"
+            :loading="scope.loading.value"
+            :error="scope.error.value || chat.scopeSaveError.value"
+            @update:model-value="chat.updateSelection"
+            @refresh="scope.refresh"
+          />
+          <p v-if="chat.savingScope.value" class="scope-note" role="status">正在保存会话范围…</p>
+          <p v-else-if="chat.isStreaming.value" class="scope-note">现在改选只影响下一次提问。</p>
           <AgentComposer
             v-model="chat.draft.value"
             :custom-prompt-active="preferences.agentSystemPrompt.trim().length > 0"
@@ -240,12 +306,24 @@ async function chooseExample(value: string): Promise<void> {
           />
           <p class="dock-note">
             <ShieldCheck :size="14" aria-hidden="true" />
-            回答由模型生成，可能有误；请按它给出的来源核对原文。它只读数据，不改新闻与索引。
+            回答由模型生成，可能有误；点击引用核对资料与当前原文。
           </p>
         </div>
       </div>
     </main>
   </AppShell>
+  <DocumentReader
+    :open="reader.isOpen.value"
+    :result="reader.selectedResult.value"
+    :detail="reader.detail.value"
+    :loading="reader.isLoading.value"
+    :error="reader.error.value"
+    :hash-mismatch="reader.contentHashMismatch.value"
+    :evidence="selectedEvidence"
+    @close="reader.close"
+    @closed="reader.restoreFocus"
+    @retry="reader.retry"
+  />
 </template>
 
 <style scoped>
@@ -297,6 +375,28 @@ async function chooseExample(value: string): Promise<void> {
 
 .history-note {
   margin-bottom: 14px;
+}
+
+.summary-background {
+  margin: 0 0 18px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.7;
+}
+.summary-background summary {
+  cursor: pointer;
+}
+.summary-background p {
+  margin-top: 10px;
+}
+.summary-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.scope-note {
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+  margin: 0 2px 8px;
 }
 
 /* flex: 1 是为了空态那条 justify-content: flex-end 能生效——不占满剩余高度，

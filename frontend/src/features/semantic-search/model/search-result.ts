@@ -4,6 +4,8 @@ import type { DocumentSearchMatchDto, DocumentSearchResultDto } from '@/api/docu
 export interface NewsReadableResult {
   documentId: string
   knowledgeBaseId: string
+  knowledgeBaseName?: string
+  uploadFilename?: string | null
   contentHash: string
   title: string
   url: string | null
@@ -32,6 +34,7 @@ export function toNewsDocumentResult(dto: DocumentSearchResultDto): NewsDocument
   return {
     documentId: dto.document_id,
     knowledgeBaseId: dto.knowledge_base_id,
+    uploadFilename: dto.upload_filename,
     contentHash: dto.content_hash,
     title: dto.title,
     url: dto.url,

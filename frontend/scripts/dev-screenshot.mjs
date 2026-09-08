@@ -47,9 +47,13 @@ const context = await browser.newContext({ viewport: { width: 1440, height: 900 
 // 只拦截浏览器对 API 前缀的调用（/api/**），不能误伤 dev server 自己 /src/api 的源码请求。
 await context.route(
   (url) => url.pathname.startsWith('/api/'),
-  (route) => {
+  async (route) => {
     const request = route.request()
-    const hit = matchApi(request.url(), authed)
+    const hit = await matchApi(request.url(), authed, {
+      method: request.method(),
+      body: request.postDataBuffer(),
+      contentType: request.headers()['content-type'],
+    })
     if (hit) {
       void route.fulfill({ status: hit.status, contentType: hit.contentType, body: hit.body })
     } else {

@@ -4,6 +4,7 @@ import { CircleAlert, Search, Wrench } from '@lucide/vue'
 import BaseDisclosure from '@/shared/ui/BaseDisclosure.vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
 import type { AgentToolTrace } from '../model/conversation'
+import { scopeLabel } from '@/api/knowledge-scope'
 
 const props = defineProps<{
   traces: AgentToolTrace[]
@@ -13,6 +14,7 @@ const props = defineProps<{
 
 /** 工具名到中文说明的映射。未知工具名原样显示，不猜。 */
 const TOOL_LABELS: Readonly<Partial<Record<string, string>>> = {
+  search_documents: '检索文档',
   search_news: '检索新闻',
   read_document: '读取全文',
 }
@@ -108,7 +110,10 @@ function formatArguments(args: Record<string, unknown>): string {
         <span class="trace-icon" aria-hidden="true">
           <BaseSpinner v-if="trace.content === null" :size="15" />
           <CircleAlert v-else-if="trace.failed" :size="15" />
-          <Search v-else-if="trace.tool === 'search_news'" :size="15" />
+          <Search
+            v-else-if="trace.tool === 'search_documents' || trace.tool === 'search_news'"
+            :size="15"
+          />
           <Wrench v-else :size="15" />
         </span>
 
@@ -118,6 +123,7 @@ function formatArguments(args: Record<string, unknown>): string {
             <span v-if="trace.content === null" class="trace-state">执行中</span>
             <span v-else-if="trace.failed" class="trace-state">未成功</span>
           </p>
+          <p v-if="trace.scope" class="trace-scope">实际范围：{{ scopeLabel(trace.scope) }}</p>
           <p v-if="Object.keys(trace.arguments).length > 0" class="trace-arguments">
             {{ formatArguments(trace.arguments) }}
           </p>
@@ -204,6 +210,13 @@ function formatArguments(args: Record<string, unknown>): string {
 
 .trace-output {
   margin-top: 5px;
+}
+
+.trace-scope {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  overflow-wrap: anywhere;
 }
 
 /* 摘要行的字号、颜色、箭头都归 BaseDisclosure。留在这里的只有 pre：

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { searchDocuments } from './document-search'
+import { scopedSearchResponse } from './document-search.fixture'
 
 const match = {
   chunk_id: '10000000-0000-4000-8000-000000000001',
@@ -35,7 +36,7 @@ describe('searchDocuments', () => {
     { source_name: undefined },
     { url: null, source_name: null },
   ])('accepts mixed results with optional metadata %j', async (metadata) => {
-    const body = [result, { ...result, ...metadata }]
+    const body = scopedSearchResponse([result, { ...result, ...metadata }])
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(body))))
     await expect(
       searchDocuments({ query: '资料', documentLimit: 10, matchesPerDocument: 3 }),
@@ -55,7 +56,11 @@ describe('searchDocuments', () => {
   ])('rejects invalid or missing metadata %j', async (metadata) => {
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue(new Response(JSON.stringify([{ ...result, ...metadata }]))),
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify(scopedSearchResponse([{ ...result, ...metadata }]))),
+        ),
     )
     await expect(
       searchDocuments({ query: '资料', documentLimit: 10, matchesPerDocument: 3 }),
@@ -64,7 +69,7 @@ describe('searchDocuments', () => {
 
   it('sends document and per-document limits to the grouped endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify([result]), {
+      new Response(JSON.stringify(scopedSearchResponse([result])), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       }),
@@ -73,7 +78,7 @@ describe('searchDocuments', () => {
 
     await expect(
       searchDocuments({ query: '央行利率', documentLimit: 7, matchesPerDocument: 4 }),
-    ).resolves.toEqual([result])
+    ).resolves.toEqual(scopedSearchResponse([result]))
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/document-search',
       expect.objectContaining({
@@ -82,6 +87,7 @@ describe('searchDocuments', () => {
           query: '央行利率',
           document_limit: 7,
           matches_per_document: 4,
+          scope: { mode: 'all' },
         }),
       }),
     )
@@ -91,10 +97,15 @@ describe('searchDocuments', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
-        new Response(JSON.stringify([{ ...result, best_match: { ...match, score: 'bad' } }]), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
+        new Response(
+          JSON.stringify(
+            scopedSearchResponse([{ ...result, best_match: { ...match, score: 'bad' } }]),
+          ),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        ),
       ),
     )
 
@@ -140,7 +151,7 @@ describe('searchDocuments', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
-        new Response(JSON.stringify([body]), {
+        new Response(JSON.stringify(scopedSearchResponse([body])), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         }),

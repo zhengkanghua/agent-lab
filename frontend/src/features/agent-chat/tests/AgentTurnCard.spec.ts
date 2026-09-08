@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import AgentTurnCard from '../components/AgentTurnCard.vue'
 import { createTurn, type AgentTurn } from '../model/conversation'
+import { agentEvidence, agentScope } from '@/api/agent-chat.fixture'
 
 function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
   return { ...createTurn('央行利率怎么走？'), ...overrides }
@@ -12,6 +13,29 @@ function mountCard(overrides: Partial<AgentTurn> = {}, canRetry = true) {
 }
 
 describe('AgentTurnCard', () => {
+  it('只有本次实际引用能打开证据，伪造编号没有已验证入口', async () => {
+    const wrapper = mountCard({
+      answer: '保留 7 天。[[E0123456789ab]] 另一项 [[Effffffffffff]]',
+      status: 'done',
+      scope: agentScope,
+      citations: [agentEvidence],
+      invalidCitations: ['Effffffffffff'],
+    })
+    const links = wrapper.findAll('.answer-body a')
+    expect(links).toHaveLength(1)
+    expect(links[0]!.text()).toBe('[1]')
+    await links[0]!.trigger('click')
+    expect(wrapper.emitted('open-evidence')?.[0]?.[0]).toEqual(agentEvidence)
+    expect(wrapper.text()).toContain(agentEvidence.knowledge_base_name)
+    expect(wrapper.text()).toContain('部分引用未能对应')
+  })
+
+  it('截断回答保留文字并明确未完成', () => {
+    const wrapper = mountCard({ answer: '回答到一半', status: 'incomplete' })
+    expect(wrapper.text()).toContain('回答未完成')
+    expect(wrapper.text()).toContain('回答到一半')
+  })
+
   it('还没收到 token 时显示占位，不留一张空白答案卡', () => {
     const wrapper = mountCard()
 

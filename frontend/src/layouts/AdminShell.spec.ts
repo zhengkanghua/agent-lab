@@ -1,4 +1,5 @@
 import { mount, flushPromises } from '@vue/test-utils'
+import { ref } from 'vue'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -9,8 +10,8 @@ vi.mock('@/features/auth/auth-session', () => ({ authSession: { user: session.us
 // useLogout 会 import queryClient 与 authSession；这里只关心外壳渲染，logout 行为不走真调用。
 vi.mock('@/features/auth/useLogout', () => ({
   useLogout: () => ({
-    loggingOut: { value: false },
-    logoutError: { value: false },
+    loggingOut: ref(false),
+    logoutError: ref(false),
     logout: vi.fn(),
   }),
 }))
@@ -75,6 +76,7 @@ describe('AdminShell', () => {
     expect(labels).toEqual([
       '/admin/users',
       '/admin/knowledge-bases',
+      '/admin/files',
       '/admin/sources',
       '/admin/scheduled-jobs',
     ])

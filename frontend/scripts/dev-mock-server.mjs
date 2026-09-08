@@ -28,7 +28,7 @@ const PORT = arg('--port') || Number(process.env.MOCK_API_PORT) || 8788
 
 let authed = false
 
-createServer((req, res) => {
+createServer(async (req, res) => {
   // 浏览器/代理中途断开（比如取消 Agent 流、刷新页面）会触发 error 事件；
   // 不接住的话未处理的 'error' 会把整个 mock 进程打崩，表现为「突然全都 502」。
   req.on('error', () => {})
@@ -48,12 +48,33 @@ createServer((req, res) => {
     return
   }
 
-  // matchApi 期望完整 URL 且路径带 /api 前缀（vite 代理已把 /api 剥掉，这里补回去）。
-  const hit = matchApi(`http://localhost/api${req.url}`, authed)
   const respond = (status, contentType, body) => {
     if (res.destroyed || res.writableEnded) return
     res.writeHead(status, { 'content-type': contentType })
     res.end(body)
+  }
+
+  // multipart 由平台 FormData 解析器处理；文件和会话变更只保存在 mock 进程内存。
+  let hit
+  try {
+    const chunks = []
+    for await (const chunk of req) chunks.push(chunk)
+    hit = await matchApi(`http://localhost/api${req.url}`, authed, {
+      method,
+      contentType: req.headers['content-type'] ?? '',
+      body: chunks.length ? Buffer.concat(chunks) : null,
+    })
+  } catch {
+    respond(
+      400,
+      'application/json',
+      JSON.stringify({
+        code: 'mock_request_invalid',
+        detail: '模拟请求无法读取。',
+        retryable: false,
+      }),
+    )
+    return
   }
 
   if (hit) {

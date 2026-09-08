@@ -9,7 +9,7 @@ import type { JobRunDto, ScheduledJobDto, ScheduledJobTaskType } from '@/api/sch
 export const TASK_TYPE_LABEL: Readonly<Record<ScheduledJobTaskType, string>> = {
   freshrss_sync: 'FreshRSS 同步',
   index_pending: '向量索引',
-  prune_old_documents: '旧新闻清理',
+  prune_old_documents: '旧文档清理',
 }
 
 export const RUN_STATUS_LABEL: Readonly<Record<JobRunDto['status'], string>> = {
@@ -157,13 +157,13 @@ export function formatRunStats(run: JobRunDto): string {
   if (typeof stats.failed_count === 'number' && stats.failed_count > 0)
     fragments.push(`失败文档 ${stats.failed_count}`)
   if (typeof stats.documents_deleted === 'number')
-    fragments.push(`${stats.dry_run ? '预计删除' : '已删除'}新闻 ${stats.documents_deleted}`)
+    fragments.push(`${stats.dry_run ? '预计删除' : '已删除'}文档 ${stats.documents_deleted}`)
   if (typeof stats.qdrant_points_deleted === 'number')
     fragments.push(
       `${stats.dry_run ? '预计涉及' : '删除前匹配'}片段 ${stats.qdrant_points_deleted}`,
     )
   if (typeof stats.failed_documents === 'number' && stats.failed_documents > 0)
-    fragments.push(`未完成新闻 ${stats.failed_documents}`)
+    fragments.push(`未完成文档 ${stats.failed_documents}`)
   if (stats.resource_close_error)
     fragments.push(`资源关闭失败：${String(stats.resource_close_error)}`)
   if (typeof stats.candidate_count === 'number') {

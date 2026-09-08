@@ -2,7 +2,9 @@ import { defineComponent, h, nextTick } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/client'
-import { searchDocuments } from '@/api/document-search'
+import { searchDocuments, type ScopedDocumentSearchResponse } from '@/api/document-search'
+import { scopedSearchResponse } from '@/api/document-search.fixture'
+import type { KnowledgeBaseSelection } from '@/api/knowledge-scope'
 import { useSearchStream } from '../composables/useSearchStream'
 import { _resetRecordSequence } from '../model/search-record'
 
@@ -83,7 +85,7 @@ describe('useSearchStream', () => {
   })
 
   it('maps a grouped response and accumulates a success record', async () => {
-    mockedSearchDocuments.mockResolvedValue([dto])
+    mockedSearchDocuments.mockResolvedValue(scopedSearchResponse([dto]))
     const { wrapper, stream } = mountHarness()
     stream.draft.value = '央行利率'
 
@@ -92,6 +94,7 @@ describe('useSearchStream', () => {
 
     expect(mockedSearchDocuments).toHaveBeenCalledWith({
       query: '央行利率',
+      scope: { mode: 'all' },
       documentLimit: 10,
       matchesPerDocument: 3,
       signal: expect.any(AbortSignal),
@@ -106,8 +109,8 @@ describe('useSearchStream', () => {
 
   it('accumulates multiple searches as separate records newest last', async () => {
     mockedSearchDocuments
-      .mockResolvedValueOnce([dto])
-      .mockResolvedValueOnce([{ ...dto, title: '第二篇' }])
+      .mockResolvedValueOnce(scopedSearchResponse([dto]))
+      .mockResolvedValueOnce(scopedSearchResponse([{ ...dto, title: '第二篇' }]))
     const { wrapper, stream } = mountHarness()
 
     stream.draft.value = '利率'
@@ -125,10 +128,10 @@ describe('useSearchStream', () => {
   })
 
   it('cancels a superseding in-flight search and drops the loading placeholder', async () => {
-    let resolveFirst: ((value: (typeof dto)[]) => void) | undefined
+    let resolveFirst: ((value: ScopedDocumentSearchResponse) => void) | undefined
     mockedSearchDocuments
       .mockImplementationOnce(() => new Promise((resolve) => (resolveFirst = resolve)))
-      .mockResolvedValueOnce([{ ...dto, title: '新响应' }])
+      .mockResolvedValueOnce(scopedSearchResponse([{ ...dto, title: '新响应' }]))
     const { wrapper, stream } = mountHarness()
 
     stream.draft.value = '第一条'
@@ -146,7 +149,7 @@ describe('useSearchStream', () => {
     expect(stream.records.value[0]!.query).toBe('第二条')
     expect(stream.records.value[0]!.status).toBe('success')
 
-    resolveFirst?.([{ ...dto, title: '过期响应' }])
+    resolveFirst?.(scopedSearchResponse([{ ...dto, title: '过期响应' }]))
     await first
     await flushPromises()
     expect(stream.records.value).toHaveLength(1)
@@ -180,7 +183,7 @@ describe('useSearchStream', () => {
       .mockRejectedValueOnce(
         new ApiError({ message: 'down', code: 'network_error', status: 503, retryable: true }),
       )
-      .mockResolvedValueOnce([dto])
+      .mockResolvedValueOnce(scopedSearchResponse([dto]))
     const { wrapper, stream } = mountHarness()
     stream.draft.value = '居民消费'
 
@@ -198,7 +201,7 @@ describe('useSearchStream', () => {
   })
 
   it('数量参数在提交那一刻从注入的 getter 读取（设置中心的偏好）', async () => {
-    mockedSearchDocuments.mockResolvedValue([dto])
+    mockedSearchDocuments.mockResolvedValue(scopedSearchResponse([dto]))
     let limit = 20
     let perDocument = 5
     const { wrapper, stream } = mountHarness({
@@ -212,6 +215,7 @@ describe('useSearchStream', () => {
 
     expect(mockedSearchDocuments).toHaveBeenCalledWith({
       query: '货币政策',
+      scope: { mode: 'all' },
       documentLimit: 20,
       matchesPerDocument: 5,
       signal: expect.any(AbortSignal),
@@ -226,6 +230,7 @@ describe('useSearchStream', () => {
 
     expect(mockedSearchDocuments).toHaveBeenLastCalledWith({
       query: '财政政策',
+      scope: { mode: 'all' },
       documentLimit: 1,
       matchesPerDocument: 1,
       signal: expect.any(AbortSignal),
@@ -234,7 +239,7 @@ describe('useSearchStream', () => {
   })
 
   it('clear empties records and draft', async () => {
-    mockedSearchDocuments.mockResolvedValue([dto])
+    mockedSearchDocuments.mockResolvedValue(scopedSearchResponse([dto]))
     const { wrapper, stream } = mountHarness()
     stream.draft.value = '宏观'
 
@@ -245,6 +250,38 @@ describe('useSearchStream', () => {
     stream.clear()
     expect(stream.records.value).toHaveLength(0)
     expect(stream.draft.value).toBe('')
+    wrapper.unmount()
+  })
+
+  it('保存提交时的选择和响应范围，后续选择不改写旧记录', async () => {
+    const selection: KnowledgeBaseSelection = {
+      mode: 'selected',
+      knowledge_base_ids: [dto.knowledge_base_id],
+    }
+    const response = scopedSearchResponse([dto])
+    response.scope.mode = 'selected'
+    let resolve: ((value: ScopedDocumentSearchResponse) => void) | undefined
+    mockedSearchDocuments.mockImplementationOnce(() => new Promise((done) => (resolve = done)))
+    const { wrapper, stream } = mountHarness({ getScope: () => selection })
+    stream.draft.value = '资料'
+    const pending = stream.search()
+    selection.knowledge_base_ids = []
+    resolve?.(response)
+    await pending
+    expect(stream.latestRecord.value?.selection?.knowledge_base_ids).toEqual([
+      dto.knowledge_base_id,
+    ])
+    expect(stream.latestRecord.value?.scope).toEqual(response.scope)
+    expect(stream.latestRecord.value?.results[0]?.knowledgeBaseName).toBe('新闻')
+    wrapper.unmount()
+  })
+
+  it('目录不可用或选择无效时不发请求', async () => {
+    const { wrapper, stream } = mountHarness({ getScopeError: () => '知识库目录加载失败。' })
+    stream.draft.value = '资料'
+    await stream.search()
+    expect(mockedSearchDocuments).not.toHaveBeenCalled()
+    expect(stream.inputError.value).toContain('目录加载失败')
     wrapper.unmount()
   })
 })

@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import {
   ArrowLeft,
   CalendarClock,
+  FileText,
   Library,
   LogOut,
   Menu,
@@ -43,6 +44,7 @@ const props = withDefaults(
 const adminMenuItems = [
   { to: { name: 'admin', params: { section: 'users' } }, label: '账号管理', icon: UsersRound },
   { to: { name: 'admin', params: { section: 'knowledge-bases' } }, label: '知识库', icon: Library },
+  { to: { name: 'admin', params: { section: 'files' } }, label: '文件资料', icon: FileText },
   { to: { name: 'admin', params: { section: 'sources' } }, label: '来源管理', icon: Rss },
   {
     to: { name: 'admin', params: { section: 'scheduled-jobs' } },

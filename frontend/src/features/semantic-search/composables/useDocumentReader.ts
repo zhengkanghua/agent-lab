@@ -7,7 +7,7 @@ import type { NewsReadableResult } from '../model/search-result'
 
 export function documentDetailQueryKey(documentId: string, contentHash: string) {
   // UUID 与 SHA-256 十六进制字符串大小写不影响业务身份；统一 key 可避免同一
-  // 新闻因后端序列化大小写差异产生两份全文缓存。
+  // Document 因后端序列化大小写差异产生两份全文缓存。
   return ['document-detail', documentId.toLowerCase(), contentHash.toLowerCase()] as const
 }
 
@@ -15,7 +15,7 @@ export function useDocumentReader() {
   const queryClient = useQueryClient()
   const isOpen = ref(false)
   const selectedResult = shallowRef<NewsReadableResult | null>(null)
-  const triggerElement = shallowRef<HTMLButtonElement | null>(null)
+  const triggerElement = shallowRef<HTMLElement | null>(null)
 
   const queryKey = computed(() => {
     const selected = selectedResult.value
@@ -32,7 +32,7 @@ export function useDocumentReader() {
       return fetchDocument({ documentId, signal })
     },
     retry: false,
-    staleTime: 5 * 60_000,
+    staleTime: 0,
     gcTime: 30 * 60_000,
   })
 
@@ -43,6 +43,7 @@ export function useDocumentReader() {
     // 那份旧正文或旧 hash，否则用户会误以为当前请求已经读取成功。
     if (
       !dto ||
+      detailQuery.isFetching.value ||
       detailQuery.error.value ||
       !selected ||
       dto.document_id.toLowerCase() !== selected.documentId.toLowerCase()
@@ -81,7 +82,7 @@ export function useDocumentReader() {
 
   async function open(
     result: NewsReadableResult,
-    trigger: HTMLButtonElement | null = null,
+    trigger: HTMLElement | null = null,
   ): Promise<void> {
     const previous = selectedResult.value
     selectedResult.value = result

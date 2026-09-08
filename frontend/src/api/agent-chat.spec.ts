@@ -6,6 +6,7 @@ import {
   type AgentChatEvent,
 } from './agent-chat'
 import { setUnauthorizedHandler } from './client'
+import { agentDone, agentStarted, agentEvidence } from './agent-chat.fixture'
 
 const encoder = new TextEncoder()
 
@@ -38,6 +39,16 @@ async function collect(chunks: string[]): Promise<AgentChatEvent[]> {
 const THREAD_ID = '30000000-0000-4000-8000-000000000001'
 
 describe('streamAgentChat', () => {
+  it('接收运行范围与服务端已核验引用，终态保留最终文本', async () => {
+    const done = {
+      ...agentDone('最终答案'),
+      citations: [agentEvidence],
+      invalid_citations: ['Effffffffffff'],
+    }
+    const events = await collect([frame(agentStarted()), frame(done)])
+    expect(events).toEqual([agentStarted(), done])
+  })
+
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
@@ -48,7 +59,7 @@ describe('streamAgentChat', () => {
     const events = await collect([
       frame({ event: 'token', text: '央行' }),
       frame({ event: 'token', text: '维持' }),
-      frame({ event: 'done', thread_id: THREAD_ID }),
+      frame(agentDone()),
     ])
 
     expect(events.map((event) => event.event)).toEqual(['token', 'token', 'done'])
@@ -77,7 +88,7 @@ describe('streamAgentChat', () => {
             start(controller) {
               controller.enqueue(bytes.slice(0, bytes.length - 4))
               controller.enqueue(bytes.slice(bytes.length - 4))
-              controller.enqueue(encoder.encode(frame({ event: 'done', thread_id: THREAD_ID })))
+              controller.enqueue(encoder.encode(frame(agentDone())))
               controller.close()
             },
           }),
@@ -91,10 +102,7 @@ describe('streamAgentChat', () => {
 
     const events: AgentChatEvent[] = []
     for await (const event of streamAgentChat({ message: '问' })) events.push(event)
-    expect(events).toEqual([
-      { event: 'token', text: '答' },
-      { event: 'done', thread_id: THREAD_ID },
-    ])
+    expect(events).toEqual([{ event: 'token', text: '答' }, agentDone()])
   })
 
   it('跳过心跳注释帧', async () => {
@@ -102,19 +110,16 @@ describe('streamAgentChat', () => {
       ': keep-alive\n\n',
       frame({ event: 'token', text: '好' }),
       ': keep-alive\n\n',
-      frame({ event: 'done', thread_id: THREAD_ID }),
+      frame(agentDone()),
     ])
 
-    expect(events).toEqual([
-      { event: 'token', text: '好' },
-      { event: 'done', thread_id: THREAD_ID },
-    ])
+    expect(events).toEqual([{ event: 'token', text: '好' }, agentDone()])
   })
 
   it('接受 CRLF 分帧', async () => {
     const events = await collect([
       `data: ${JSON.stringify({ event: 'token', text: 'x' })}\r\n\r\n`,
-      `data: ${JSON.stringify({ event: 'done', thread_id: THREAD_ID })}\r\n\r\n`,
+      `data: ${JSON.stringify(agentDone())}\r\n\r\n`,
     ])
 
     expect(events.map((event) => event.event)).toEqual(['token', 'done'])
@@ -163,7 +168,7 @@ describe('streamAgentChat', () => {
         content: '找到 2 篇。',
         failed: false,
       }),
-      frame({ event: 'done', thread_id: THREAD_ID }),
+      frame(agentDone()),
     ])
 
     expect(events[0]).toEqual({
@@ -183,7 +188,17 @@ describe('streamAgentChat', () => {
   it.each([
     { name: '未知事件类型', payload: { event: 'thinking', text: 'x' } },
     { name: 'token 缺 text', payload: { event: 'token' } },
-    { name: 'done 的 thread_id 不是 UUID', payload: { event: 'done', thread_id: 'not-a-uuid' } },
+    { name: 'done 缺最终文本', payload: { ...agentDone(), answer: undefined } },
+    { name: 'done 缺完成状态', payload: { ...agentDone(), status: undefined } },
+    {
+      name: 'done 引用缺实际片段',
+      payload: { ...agentDone(), citations: [{ ...agentEvidence, excerpt: '' }] },
+    },
+    {
+      name: '运行没有实际范围',
+      payload: { ...agentStarted(), scope: { mode: 'all', knowledge_bases: [] } },
+    },
+    { name: 'done 的 thread_id 不是 UUID', payload: { ...agentDone(), thread_id: 'not-a-uuid' } },
     // 这条带上 thread_id 是有意的：不带的话它会因为缺 thread_id 被拒，名字说的
     // 「缺 retryable」就没被验到。
     {

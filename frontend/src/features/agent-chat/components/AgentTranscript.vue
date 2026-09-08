@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { AgentTurn } from '../model/conversation'
+import type { DocumentEvidence } from '@/api/agent-evidence'
 import AgentTurnCard from './AgentTurnCard.vue'
 import BaseSuggestionList from '@/shared/ui/BaseSuggestionList.vue'
 
@@ -12,6 +13,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   retry: []
   'choose-example': [value: string]
+  'open-evidence': [evidence: DocumentEvidence, trigger: HTMLElement]
 }>()
 
 /** 只有最后一轮能重发：重发的是「接着当前历史再问一次」，中间轮次没有这个语义。 */
@@ -36,7 +38,7 @@ function isLast(index: number): boolean {
          只挂在空态等于答案出现后就不再提醒。 -->
     <div v-if="turns.length === 0" class="empty-state">
       <h3>今天想查什么？</h3>
-      <p class="empty-lead">Agent 会自己决定检索哪些新闻、要不要读全文，然后基于查到的内容作答。</p>
+      <p class="empty-lead">Agent 在选定的知识库中检索文档、读取全文，并根据查到的资料作答。</p>
 
       <BaseSuggestionList
         class="example-list"
@@ -53,6 +55,7 @@ function isLast(index: number): boolean {
         :turn="turn"
         :can-retry="isLast(index) && !streaming"
         @retry="emit('retry')"
+        @open-evidence="(evidence, trigger) => emit('open-evidence', evidence, trigger)"
       />
     </TransitionGroup>
   </section>

@@ -59,7 +59,7 @@ describe('DocumentReader', () => {
       },
     })
 
-    expect(document.body.textContent).toContain('该新闻已更新，当前全文与搜索时的索引版本不同。')
+    expect(document.body.textContent).toContain('原文已更新')
     expect(document.body.textContent).toContain('<script>not markup</script>')
     expect(document.body.querySelector('script')).toBeNull()
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
@@ -148,7 +148,7 @@ describe('DocumentReader', () => {
       },
     })
 
-    expect(document.body.textContent).toContain('未找到这篇新闻全文')
+    expect(document.body.textContent).toContain('原文档已删除')
     expect(document.body.querySelector('.reader-retry')).toBeNull()
     wrapper.unmount()
   })
