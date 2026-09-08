@@ -19,6 +19,7 @@ from psycopg.rows import dict_row
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import MetaData, func, select, text, update
+from sqlalchemy.exc import DBAPIError
 
 from agent_lab.api.documents import get_document_repository
 from agent_lab.agent.checkpointer import to_psycopg_conninfo
@@ -34,7 +35,7 @@ from agent_lab.models.document import DocumentRecord
 from agent_lab.models.knowledge_base import KnowledgeBaseRecord
 from agent_lab.models.source import SourceRecord
 from agent_lab.models.scheduled_job import JobRunRecord, ScheduledJobRecord
-from agent_lab.models.write_operation import WriteOperationRecord
+from agent_lab.models.write_operation import DocumentDeletionRecord, WriteOperationRecord
 from agent_lab.repositories.document_repository import DocumentRepository
 from agent_lab.repositories.scheduled_job_repository import ScheduledJobStore
 from agent_lab.services.scheduled_job_service import ScheduledJobService
@@ -190,6 +191,10 @@ def test_upgrade_from_previous_head_preserves_nonknowledge_records():
             config.attributes["connection"] = connection
             command.upgrade(config, revision)
 
+        def downgrade(connection, revision):
+            config.attributes["connection"] = connection
+            command.downgrade(config, revision)
+
         try:
             async with engine.begin() as connection:
                 await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
@@ -247,7 +252,32 @@ def test_upgrade_from_previous_head_preserves_nonknowledge_records():
                 document = (await connection.execute(select(DocumentRecord.__table__))).mappings().one()
                 assert document["knowledge_base_id"] == DEFAULT_NEWS_KNOWLEDGE_BASE_ID
                 assert document["mime_type"] == "text/plain" and document["content_text"] == "existing"
+                assert document["upload_filename"] is None
                 assert await connection.scalar(select(SourceRecord.knowledge_base_id)) == DEFAULT_NEWS_KNOWLEDGE_BASE_ID
+                assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "d63e0891f752"
+                scope_query = text("SELECT scope FROM agent_threads WHERE thread_id = :thread_id")
+                assert await connection.scalar(scope_query, {"thread_id": thread_id}) == {
+                    "mode": "selected", "knowledge_base_ids": [str(DEFAULT_NEWS_KNOWLEDGE_BASE_ID)],
+                }
+                new_thread_id = uuid4()
+                await connection.execute(tables["agent_threads"].insert().values(
+                    thread_id=new_thread_id, user_id=user_id, title="New", created_at=datetime.now(UTC), last_active_at=datetime.now(UTC),
+                ))
+                assert await connection.scalar(scope_query, {"thread_id": new_thread_id}) == {"mode": "all"}
+                deletion_id = uuid4()
+                await connection.execute(DocumentDeletionRecord.__table__.insert().values(
+                    document_id=deletion_id, revision=1, cutoff_date=None, retention_date=datetime.now(UTC),
+                ))
+
+            # 人工待办不能在降级时失去删除语义；失败的整段 DDL 也须回滚。
+            with pytest.raises(DBAPIError, match="请先完成上传文档的删除待办"):
+                async with engine.begin() as connection:
+                    await connection.run_sync(downgrade, "b38f9a7c6d21")
+            async with engine.begin() as connection:
+                assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "d63e0891f752"
+                assert await connection.scalar(scope_query, {"thread_id": new_thread_id}) == {"mode": "all"}
+                await connection.execute(DocumentDeletionRecord.__table__.delete().where(DocumentDeletionRecord.document_id == deletion_id))
+                await connection.run_sync(downgrade, "b38f9a7c6d21")
                 assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "b38f9a7c6d21"
         finally:
             async with engine.begin() as connection:

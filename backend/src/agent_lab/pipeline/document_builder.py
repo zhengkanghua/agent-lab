@@ -3,6 +3,7 @@
 from langchain_core.documents import Document
 
 from agent_lab.knowledge.document_contracts import DocumentSnapshot
+from agent_lab.knowledge.adapters.text_files import markdown_index_text
 
 
 class DocumentBuilder:
@@ -13,6 +14,8 @@ class DocumentBuilder:
         content_text = record.content_text.strip()
         if not content_text:
             raise ValueError("content_text 为空，无法构建 LangChain 文档。")
+        if record.mime_type == "text/markdown":
+            content_text = markdown_index_text(record.content_text)
         source = record.source
         metadata = {
             "document_id": str(record.id),
@@ -26,6 +29,7 @@ class DocumentBuilder:
             "source_name": source.name if source else None,
             "document_type": record.document_type.value,
             "mime_type": record.mime_type,
+            "upload_filename": record.upload_filename,
             "url": record.url,
             "authors": list(record.authors),
             "labels": list(record.labels),

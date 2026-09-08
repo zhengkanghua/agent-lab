@@ -31,7 +31,10 @@ class DocumentDeletionRecord(Base):
 
     document_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     revision: Mapped[int] = mapped_column(nullable=False)
-    cutoff_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    cutoff_date: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+        comment="保留期清理的截止时刻；为空表示用户按明确 ID 删除上传文档。",
+    )
     retention_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     qdrant_deleted: Mapped[bool] = mapped_column(default=False, nullable=False)
     error_type: Mapped[str | None] = mapped_column(String(128), nullable=True)

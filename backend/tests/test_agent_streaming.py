@@ -495,7 +495,7 @@ def test_tool_messages_from_unknown_nodes_are_ignored() -> None:
         }
     }
 
-    assert _tool_events(update) == []
+    assert _tool_events(update, AgentContext()) == []
 
 
 # ---- token 用量：进结束日志，不进事件流 ----

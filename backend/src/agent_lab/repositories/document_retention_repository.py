@@ -54,6 +54,7 @@ class DocumentRetentionRepository:
             select(DocumentDeletionRecord)
             .join(DocumentRecord, DocumentRecord.id == DocumentDeletionRecord.document_id)
             .where(DocumentRecord.knowledge_base_id.in_(knowledge_base_ids))
+            .where(DocumentDeletionRecord.cutoff_date.is_not(None))
             .order_by(DocumentDeletionRecord.document_id)
             .limit(limit)
         )
@@ -89,12 +90,18 @@ class DocumentRetentionRepository:
         """Qdrant 已确认删除后，条件删除 Document 并移除待办；不盲删新版。"""
         count = 0
         for record in records:
-            result = await self._session.execute(delete(DocumentRecord).where(
+            conditions = [
                 DocumentRecord.id == record.document_id,
                 DocumentRecord.index_revision == record.revision,
-                DocumentRecord.processing_status == ProcessingStatus.INDEXED,
-                func.coalesce(DocumentRecord.published_at, DocumentRecord.created_at) < record.cutoff_date,
-            ))
+            ]
+            if record.cutoff_date is None:
+                conditions.extend([DocumentRecord.upload_filename.is_not(None), DocumentRecord.source_id.is_(None)])
+            else:
+                conditions.extend([
+                    DocumentRecord.processing_status == ProcessingStatus.INDEXED,
+                    func.coalesce(DocumentRecord.published_at, DocumentRecord.created_at) < record.cutoff_date,
+                ])
+            result = await self._session.execute(delete(DocumentRecord).where(*conditions))
             if not result.rowcount and await self._session.get(DocumentRecord, record.document_id) is not None:
                 raise RuntimeError("删除目标版本或状态已改变，保留待办等待核实。")
             count += result.rowcount or 0
@@ -119,7 +126,12 @@ class DocumentRetentionRepository:
             ).with_for_update())
             if document is not None:
                 retention_date = document.published_at or document.created_at
-                if document.index_revision != record.revision or document.processing_status != ProcessingStatus.INDEXED or retention_date >= record.cutoff_date:
+                valid_target = (
+                    document.upload_filename is not None and document.source_id is None
+                    if record.cutoff_date is None else
+                    document.processing_status == ProcessingStatus.INDEXED and retention_date < record.cutoff_date
+                )
+                if document.index_revision != record.revision or not valid_target:
                     await self._session.rollback()
                     raise RuntimeError("删除目标资格已改变，保留待办等待核实。")
         await self._session.rollback()

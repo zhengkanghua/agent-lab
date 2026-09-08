@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent_lab.db.session import get_db_session
 from agent_lab.repositories.document_repository import DocumentRepository
 from agent_lab.schemas.document_search import DocumentDetailResponse
+from agent_lab.knowledge.domain import require_active_knowledge_base
 
 
 logger = logging.getLogger(__name__)
@@ -35,9 +36,9 @@ def get_document_repository(
     "/documents/{document_id}",
     response_model=DocumentDetailResponse,
     status_code=status.HTTP_200_OK,
-    summary="读取一篇新闻的完整正文",
+    summary="读取文档的当前完整正文",
     # 显式写 description，下面那份 docstring 就留给维护者，不进 OpenAPI。
-    description="按 document_id 读取一篇新闻的完整纯文本正文及其元数据。",
+    description="按 document_id 读取文档当前正文、格式与知识库归属。",
     responses={
         status.HTTP_404_NOT_FOUND: {
             "description": "文档不存在或关联来源缺失。",
@@ -90,10 +91,13 @@ async def get_document(
 
     # 3、逐字段手搭 DTO，不用 model_validate(record)：只有列在这里的字段才会出去，
     #    以后往表里加列不会自动泄漏。校验失败按 502——请求没问题，是库里的数据不合契约。
+    knowledge_base = require_active_knowledge_base(record.knowledge_base)
     try:
         return DocumentDetailResponse(
             document_id=record.id,
             knowledge_base_id=record.knowledge_base_id,
+            knowledge_base_name=knowledge_base.name,
+            upload_filename=record.upload_filename,
             content_hash=record.content_hash,
             revision=record.index_revision,
             title=record.title,

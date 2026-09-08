@@ -32,6 +32,10 @@ from pydantic import (
 )
 
 from agent_lab.domain.enums import DocumentType
+from agent_lab.knowledge.scope import (
+    KnowledgeBaseSelection, ResolvedKnowledgeBaseScope,
+    require_explicit_scope, validate_scope_compatibility,
+)
 from agent_lab.schemas._query_validators import (
     require_non_whitespace_query,
     require_numeric_threshold,
@@ -57,6 +61,9 @@ class VectorSearchFilters(BaseModel):
     knowledge_base_id: UUID | None = Field(
         default=None,
         description="KnowledgeBase 范围；普通 HTTP 边界缺省时解析为 news。",
+    )
+    knowledge_base_ids: tuple[UUID, ...] | None = Field(
+        default=None, min_length=1, description="明确的非空知识库过滤集合。",
     )
     source_id: UUID | None = Field(
         default=None,
@@ -206,6 +213,7 @@ class VectorSearchFilters(BaseModel):
             ValueError: ``published_from`` 晚于 ``published_to``。
         """
 
+        validate_scope_compatibility(None, self.knowledge_base_id, filter_ids=self.knowledge_base_ids)
         if (
             self.published_from is not None
             and self.published_to is not None
@@ -223,6 +231,11 @@ class VectorSearchRequest(BaseModel):
     日志意外记录完整敏感文本；它只会交给 query Embedding，不会写入 PostgreSQL
     或 Qdrant。
     """
+
+    scope: KnowledgeBaseSelection | None = Field(
+        default=None, description="新调用方显式选择全部启用库或非空列表；遗漏保留旧 news 契约。",
+    )
+    _validate_scope = field_validator("scope")(require_explicit_scope)
 
     query: str = Field(
         max_length=MAX_QUERY_CHARACTERS,
@@ -283,6 +296,10 @@ class VectorSearchRequest(BaseModel):
         """拒绝顶层范围和过滤器范围互相矛盾，避免调用方误以为只查一个库。"""
 
         nested = self.filters.knowledge_base_id
+        validate_scope_compatibility(
+            self.scope, self.knowledge_base_id, nested,
+            filter_ids=self.filters.knowledge_base_ids,
+        )
         if (
             self.knowledge_base_id is not None
             and nested is not None
@@ -407,6 +424,7 @@ class VectorSearchResult(BaseModel):
         ),
     )
     mime_type: str = Field(min_length=1, description="文档内容的 MIME 格式，与 document_type 业务类型独立。")
+    upload_filename: str | None = Field(default=None, min_length=1, description="上传资料的原文件名；外部来源文档为空。")
     source_id: UUID | None = Field(
         description=(
             "来自 Qdrant Point Payload.source_id 的可空 UUID；有 Source 时关联 PostgreSQL "
@@ -557,6 +575,13 @@ class VectorSearchResult(BaseModel):
         if self.chunk_index >= self.chunk_count:
             raise ValueError("chunk_index 必须小于 chunk_count")
         return self
+
+
+class ScopedVectorSearchResponse(BaseModel):
+    """显式范围请求的结果与实际范围快照；旧请求仍返回数组。"""
+
+    scope: ResolvedKnowledgeBaseScope
+    results: list[VectorSearchResult]
 
 
 __all__ = [

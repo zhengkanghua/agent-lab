@@ -16,7 +16,8 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Uuid, desc
+from sqlalchemy import DateTime, ForeignKey, Index, String, Uuid, desc, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from agent_lab.db.base import Base
@@ -60,6 +61,13 @@ class AgentThreadRecord(Base):
         String(60),
         nullable=False,
         comment="会话标题，取首条提问截断而来；创建后不再改写。",
+    )
+    scope: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=lambda: {"mode": "all"},
+        server_default=text("'{\"mode\": \"all\"}'::jsonb"),
+        comment="用户选择的知识库范围，独立于可能压缩的消息历史。",
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

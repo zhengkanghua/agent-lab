@@ -32,7 +32,7 @@ from agent_lab.agent.limits import (
 )
 from agent_lab.agent.tools import build_agent_tools
 from agent_lab.agent.tools.read_document import build_read_document_tool
-from agent_lab.agent.tools.search_news import build_search_news_tool
+from agent_lab.agent.tools.search_documents import build_search_documents_tool
 from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.models.document import DocumentRecord
 from agent_lab.models.source import SourceRecord
@@ -41,6 +41,8 @@ from agent_lab.schemas.document_search import (
     DocumentSearchResult,
 )
 from tests.agent_helpers import run
+from tests.agent_scope_helpers import invoke_tool
+from agent_lab.models.knowledge_base import KnowledgeBaseRecord
 
 
 DOCUMENT_ID = UUID("11111111-1111-4111-8111-111111111111")
@@ -87,6 +89,7 @@ def build_record(*, content_text: str) -> DocumentRecord:
 
     record = DocumentRecord(
         id=DOCUMENT_ID,
+        knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID,
         title="央行宣布降息",
         url="https://example.com/news/1",
         published_at=PUBLISHED_AT,
@@ -95,6 +98,7 @@ def build_record(*, content_text: str) -> DocumentRecord:
         content_hash=CONTENT_HASH,
     )
     record.source = SourceRecord(name="示例财经")
+    record.knowledge_base = KnowledgeBaseRecord(id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID, key="news", name="新闻", is_active=True)
     return record
 
 
@@ -105,10 +109,10 @@ class FakeSearchService:
         self.outcome = outcome
         self.requests: list[Any] = []
 
-    async def search_documents(self, request: Any) -> list[DocumentSearchResult]:
+    async def search_documents(self, request: Any, *, resolved_scope) -> list[DocumentSearchResult]:
         """返回预置结果，或抛出预置异常。"""
 
-        self.requests.append(request)
+        self.requests.append(request.model_copy(update={"filters": request.filters.model_copy(update={"knowledge_base_ids": resolved_scope.knowledge_base_ids})}))
         if isinstance(self.outcome, BaseException):
             raise self.outcome
         return self.outcome
@@ -151,9 +155,9 @@ def test_search_tool_output_carries_document_id() -> None:
     """检索结果必须带 document_id，否则模型无法引用也无法读全文。"""
 
     service = FakeSearchService([build_result()])
-    news_tool = build_search_news_tool(service)  # type: ignore[arg-type]
+    news_tool = build_search_documents_tool(service)  # type: ignore[arg-type]
 
-    output = run(news_tool.ainvoke({"query": "央行降息"}))
+    output = run(invoke_tool(news_tool, {"query": "央行降息"}))
 
     assert str(DOCUMENT_ID) in output
     assert "央行宣布降息" in output
@@ -168,9 +172,9 @@ def test_search_tool_output_hides_the_raw_score() -> None:
     """
 
     service = FakeSearchService([build_result(additional=2)])
-    news_tool = build_search_news_tool(service)  # type: ignore[arg-type]
+    news_tool = build_search_documents_tool(service)  # type: ignore[arg-type]
 
-    output = run(news_tool.ainvoke({"query": "央行降息"}))
+    output = run(invoke_tool(news_tool, {"query": "央行降息"}))
 
     assert "0.87" not in output
     assert "score" not in output.lower()
@@ -184,9 +188,9 @@ def test_search_tool_explains_an_empty_result() -> None:
     """
 
     service = FakeSearchService([])
-    news_tool = build_search_news_tool(service)  # type: ignore[arg-type]
+    news_tool = build_search_documents_tool(service)  # type: ignore[arg-type]
 
-    output = run(news_tool.ainvoke({"query": "不存在的主题"}))
+    output = run(invoke_tool(news_tool, {"query": "不存在的主题"}))
 
     assert output.strip()
     assert "没有检索到" in output
@@ -200,9 +204,9 @@ def test_search_tool_caps_matches_per_document() -> None:
     """
 
     service = FakeSearchService([build_result()])
-    news_tool = build_search_news_tool(service)  # type: ignore[arg-type]
+    news_tool = build_search_documents_tool(service)  # type: ignore[arg-type]
 
-    run(news_tool.ainvoke({"query": "央行降息"}))
+    run(invoke_tool(news_tool, {"query": "央行降息"}))
 
     assert service.requests[0].matches_per_document == SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT
     assert service.requests[0].document_limit == SEARCH_TOOL_MAX_DOCUMENTS
@@ -216,7 +220,7 @@ def test_search_tool_rejects_a_document_limit_over_the_cap() -> None:
     """
 
     service = FakeSearchService([build_result()])
-    news_tool = build_search_news_tool(service)  # type: ignore[arg-type]
+    news_tool = build_search_documents_tool(service)  # type: ignore[arg-type]
 
     with pytest.raises(ValidationError):
         # 用工具的 args_schema 做校验，它由 LangChain 从函数签名+Annotated 自动生成。
@@ -234,14 +238,13 @@ def test_within_days_is_absent_by_default() -> None:
     """
 
     service = FakeSearchService([build_result()])
-    news_tool = build_search_news_tool(service)  # type: ignore[arg-type]
+    news_tool = build_search_documents_tool(service)  # type: ignore[arg-type]
 
-    run(news_tool.ainvoke({"query": "央行降息"}))
+    run(invoke_tool(news_tool, {"query": "央行降息"}))
 
     assert service.requests[0].filters.published_from is None
     assert service.requests[0].filters.published_to is None
-    assert service.requests[0].knowledge_base_id == DEFAULT_NEWS_KNOWLEDGE_BASE_ID
-    assert service.requests[0].filters.knowledge_base_id == DEFAULT_NEWS_KNOWLEDGE_BASE_ID
+    assert service.requests[0].filters.knowledge_base_ids == (DEFAULT_NEWS_KNOWLEDGE_BASE_ID,)
 
 
 def test_within_days_becomes_a_published_from_lower_bound() -> None:
@@ -252,10 +255,10 @@ def test_within_days_becomes_a_published_from_lower_bound() -> None:
     """
 
     service = FakeSearchService([build_result()])
-    news_tool = build_search_news_tool(service)  # type: ignore[arg-type]
+    news_tool = build_search_documents_tool(service)  # type: ignore[arg-type]
 
     before = datetime.now(UTC)
-    run(news_tool.ainvoke({"query": "央行降息", "within_days": 3}))
+    run(invoke_tool(news_tool, {"query": "央行降息", "within_days": 3}))
     after = datetime.now(UTC)
 
     published_from = service.requests[0].filters.published_from
@@ -275,7 +278,7 @@ def test_within_days_outside_the_range_is_rejected(bad_value: int) -> None:
     """
 
     with pytest.raises(ValidationError):
-        news_tool = build_search_news_tool(FakeSearchService([build_result()]))  # type: ignore[arg-type]
+        news_tool = build_search_documents_tool(FakeSearchService([build_result()]))  # type: ignore[arg-type]
         news_tool.args_schema(query="央行降息", within_days=bad_value)
 
 
@@ -288,12 +291,13 @@ def test_search_tool_exposes_only_the_three_intended_arguments() -> None:
     """
 
     service = FakeSearchService([build_result()])
-    news_tool = build_search_news_tool(service)  # type: ignore[arg-type]
+    news_tool = build_search_documents_tool(service)  # type: ignore[arg-type]
 
-    assert set(news_tool.args_schema.model_fields) == {
+    assert set(news_tool.tool_call_schema.model_fields) == {
         "query",
         "document_limit",
         "within_days",
+        "knowledge_base_ids",
     }
 
 
@@ -306,10 +310,10 @@ def test_search_tool_lets_upstream_errors_propagate() -> None:
     """
 
     service = FakeSearchService(RuntimeError("Qdrant 连接失败"))
-    news_tool = build_search_news_tool(service)  # type: ignore[arg-type]
+    news_tool = build_search_documents_tool(service)  # type: ignore[arg-type]
 
     with pytest.raises(RuntimeError):
-        run(news_tool.ainvoke({"query": "央行降息"}))
+        run(invoke_tool(news_tool, {"query": "央行降息"}))
 
 
 def test_read_tool_opens_and_closes_one_session_per_call() -> None:
@@ -322,8 +326,8 @@ def test_read_tool_opens_and_closes_one_session_per_call() -> None:
     factory = FakeSessionFactory(build_record(content_text="正文。"))
     read_tool = build_read_document_tool(factory)  # type: ignore[arg-type]
 
-    run(read_tool.ainvoke({"document_id": str(DOCUMENT_ID)}))
-    run(read_tool.ainvoke({"document_id": str(DOCUMENT_ID)}))
+    run(invoke_tool(read_tool, {"document_id": str(DOCUMENT_ID)}))
+    run(invoke_tool(read_tool, {"document_id": str(DOCUMENT_ID)}))
 
     assert factory.opened == 2
     assert factory.closed == 2
@@ -339,7 +343,7 @@ def test_read_tool_explains_a_missing_document_instead_of_raising() -> None:
     factory = FakeSessionFactory(None)
     read_tool = build_read_document_tool(factory)  # type: ignore[arg-type]
 
-    output = run(read_tool.ainvoke({"document_id": str(DOCUMENT_ID)}))
+    output = run(invoke_tool(read_tool, {"document_id": str(DOCUMENT_ID)}))
 
     assert str(DOCUMENT_ID) in output
     assert "没有找到" in output
@@ -354,7 +358,7 @@ def test_read_tool_returns_metadata_with_the_body() -> None:
     factory = FakeSessionFactory(build_record(content_text="降息幅度为 25 个基点。"))
     read_tool = build_read_document_tool(factory)  # type: ignore[arg-type]
 
-    output = run(read_tool.ainvoke({"document_id": str(DOCUMENT_ID)}))
+    output = run(invoke_tool(read_tool, {"document_id": str(DOCUMENT_ID)}))
 
     assert "央行宣布降息" in output
     assert "示例财经" in output
@@ -372,7 +376,7 @@ def test_read_tool_truncates_an_overlong_body_with_a_visible_marker() -> None:
     factory = FakeSessionFactory(build_record(content_text=long_body))
     read_tool = build_read_document_tool(factory)  # type: ignore[arg-type]
 
-    output = run(read_tool.ainvoke({"document_id": str(DOCUMENT_ID)}))
+    output = run(invoke_tool(read_tool, {"document_id": str(DOCUMENT_ID)}))
 
     assert "未读取" in output
     assert output.count("正") <= READ_DOCUMENT_MAX_CHARS + 10
@@ -391,7 +395,7 @@ def test_read_tool_lets_database_errors_propagate() -> None:
     read_tool = build_read_document_tool(factory)  # type: ignore[arg-type]
 
     with pytest.raises(OperationalError):
-        run(read_tool.ainvoke({"document_id": str(DOCUMENT_ID)}))
+        run(invoke_tool(read_tool, {"document_id": str(DOCUMENT_ID)}))
 
 
 def test_agent_tool_set_is_read_only_and_complete() -> None:
@@ -407,7 +411,7 @@ def test_agent_tool_set_is_read_only_and_complete() -> None:
         session_factory=FakeSessionFactory(),  # type: ignore[arg-type]
     )
 
-    assert [each.name for each in tools] == ["search_news", "read_document"]
+    assert [each.name for each in tools] == ["search_documents", "read_document"]
 
 
 def test_tool_output_with_injected_instructions_is_treated_as_data() -> None:
@@ -438,9 +442,9 @@ def test_tool_output_with_injected_instructions_is_treated_as_data() -> None:
     )
 
     service = FakeSearchService([malicious_result])
-    search_tool = build_search_news_tool(service)  # type: ignore[arg-type]
+    search_tool = build_search_documents_tool(service)  # type: ignore[arg-type]
 
-    output = run(search_tool.ainvoke({"query": "央行降息"}))
+    output = run(invoke_tool(search_tool, {"query": "央行降息"}))
 
     # 断言：工具必须原样返回这段内容,包括注入尝试。过滤掉注入文字会让提示词防御失效,
     # 因为模型永远看不到需要防御的东西。真正的防御在 DEFAULT_SYSTEM_PROMPT 的

@@ -10,9 +10,13 @@ from agent_lab.knowledge.contracts import (
 from agent_lab.knowledge.domain import (
     KnowledgeBase,
     KnowledgeBaseNotFoundError,
+    NoActiveKnowledgeBasesError,
     require_active_knowledge_base,
 )
 from agent_lab.knowledge.ports import KnowledgeBaseUnitOfWorkFactory
+from agent_lab.knowledge.scope import (
+    KnowledgeBaseSelection, KnowledgeBaseSummary, ResolvedKnowledgeBaseScope,
+)
 
 
 class KnowledgeBaseService:
@@ -40,6 +44,23 @@ class KnowledgeBaseService:
             knowledge_base = await work.repository.create(request)
             await work.commit()
             return knowledge_base
+
+    async def resolve_scope(self, selection: KnowledgeBaseSelection) -> ResolvedKnowledgeBaseScope:
+        """一次目录读取形成快照，避免多库逐项读取期间配置变化混入同一查询。"""
+
+        records = await self.list(include_inactive=selection.mode == "selected")
+        if selection.mode == "selected":
+            by_id = {item.id: item for item in records}
+            records = [
+                require_active_knowledge_base(by_id.get(identifier))
+                for identifier in dict.fromkeys(selection.knowledge_base_ids)
+            ]
+        if not records:
+            raise NoActiveKnowledgeBasesError()
+        return ResolvedKnowledgeBaseScope(
+            mode=selection.mode,
+            knowledge_bases=tuple(KnowledgeBaseSummary.model_validate(item) for item in records),
+        )
 
     async def update(
         self, knowledge_base_id: UUID, request: KnowledgeBaseUpdateRequest

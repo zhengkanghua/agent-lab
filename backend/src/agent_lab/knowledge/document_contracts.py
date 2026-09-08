@@ -33,6 +33,7 @@ class DocumentSnapshot:
     labels: tuple[str, ...]
     published_at: datetime | None
     source_updated_at: datetime | None
+    upload_filename: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +84,7 @@ class DocumentDeletion:
 
     document_id: UUID
     revision: int
-    cutoff_date: datetime
+    cutoff_date: datetime | None
     retention_date: datetime
     qdrant_deleted: bool
 

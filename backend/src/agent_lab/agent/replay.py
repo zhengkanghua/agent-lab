@@ -19,10 +19,13 @@ import logging
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import UUID
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from agent_lab.schemas.agent_thread import AgentReplayTrace, AgentReplayTurn
+from agent_lab.agent.evidence import is_complete_answer, resolve_citations, tool_evidence
+from agent_lab.knowledge.scope import ResolvedKnowledgeBaseScope
 
 
 logger = logging.getLogger(__name__)
@@ -110,16 +113,36 @@ class _OpenTurn:
     """
 
     question: str
-    answer_parts: list[str] = field(default_factory=list)
-    traces: list[AgentReplayTrace] = field(default_factory=list)
+    run_id: UUID | None = None
+    scope: ResolvedKnowledgeBaseScope | None = None
+    messages: list[BaseMessage] = field(default_factory=list)
 
     def finish(self) -> AgentReplayTurn:
         """定型成对外的一轮。"""
 
+        # Tool call ID 只在所属轮次配对，不能被另一轮相同 ID 的结果覆盖。
+        results = _tool_result_index(self.messages)
+        answer = "".join(_text_of(message) for message in self.messages if isinstance(message, AIMessage))
+        artifacts = [tool_evidence(message, run_id=self.run_id, scope=self.scope)
+                     for message in self.messages] if self.run_id is not None and self.scope is not None else []
+        evidence = [item for artifact in artifacts if artifact is not None for item in artifact.evidence]
+        citations, invalid = resolve_citations(answer, evidence)
+        traces = tuple(_build_trace(call, results, self.run_id, self.scope)
+                       for message in self.messages if isinstance(message, AIMessage)
+                       for call in message.tool_calls)
+        last = self.messages[-1] if self.messages else None
+        complete = is_complete_answer(last)
+        if self.run_id is not None:
+            meta = last.additional_kwargs.get("agent_run", {}) if isinstance(last, AIMessage) else {}
+            complete = complete and meta.get("run_id") == str(self.run_id) and meta.get("completed") is True
+        complete = complete and all(trace.content is not None for trace in traces)
         return AgentReplayTurn(
             question=self.question,
-            answer="".join(self.answer_parts),
-            traces=tuple(self.traces),
+            answer=answer,
+            traces=traces,
+            run_id=self.run_id, scope=self.scope,
+            status="completed" if complete else "incomplete",
+            citations=citations, invalid_citations=invalid,
         )
 
 
@@ -152,8 +175,6 @@ def build_replay_turns(
     summarized = False
     summary: str | None = None
 
-    results = _tool_result_index(messages)
-
     # 当前正在攒的一轮。``None`` 表示还没遇到第一条用户提问。
     open_turn: _OpenTurn | None = None
 
@@ -168,7 +189,12 @@ def build_replay_turns(
         if isinstance(message, HumanMessage):
             if open_turn is not None:
                 turns.append(open_turn.finish())
-            open_turn = _OpenTurn(question=_text_of(message))
+            meta = message.additional_kwargs.get("agent_run") or {}
+            open_turn = _OpenTurn(
+                question=_text_of(message),
+                run_id=UUID(meta["run_id"]) if meta.get("run_id") else None,
+                scope=ResolvedKnowledgeBaseScope.model_validate(meta["scope"]) if meta.get("scope") else None,
+            )
             continue
 
         # 3、模型消息：文本进 answer，工具调用进 traces。两者可能同时存在（模型一边说话一边
@@ -180,9 +206,8 @@ def build_replay_turns(
                     type(message).__name__,
                 )
                 continue
-            open_turn.answer_parts.append(_text_of(message))
-            for tool_call in message.tool_calls or ():
-                open_turn.traces.append(_build_trace(tool_call, results))
+        if open_turn is not None:
+            open_turn.messages.append(message)
 
     if open_turn is not None:
         turns.append(open_turn.finish())
@@ -192,6 +217,8 @@ def build_replay_turns(
 def _build_trace(
     tool_call: dict[str, Any],
     results: dict[str, ToolMessage],
+    run_id: UUID | None,
+    scope: ResolvedKnowledgeBaseScope | None,
 ) -> AgentReplayTrace:
     """把一次工具调用连同它的结果合成一条轨迹。
 
@@ -210,11 +237,13 @@ def _build_trace(
 
     call_id = tool_call.get("id") or ""
     result = results.get(call_id) if call_id else None
+    artifact = tool_evidence(result, run_id=run_id, scope=scope) if result is not None and run_id is not None and scope is not None else None
     return AgentReplayTrace(
         tool=tool_call.get("name") or "unknown",
         arguments=dict(tool_call.get("args") or {}),
         content=None if result is None else str(result.content),
         failed=result is not None and result.status == "error",
+        scope=artifact.scope if artifact else None,
     )
 
 

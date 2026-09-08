@@ -9,7 +9,10 @@
 靠每请求重新编译一个 agent，那会把编译开销和内存占用乘上并发数。
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from uuid import UUID, uuid4
+
+from agent_lab.knowledge.scope import ResolvedKnowledgeBaseScope
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +29,8 @@ class AgentContext:
     """
 
     system_prompt: str | None = None
+    run_id: UUID = field(default_factory=uuid4)
+    scope: ResolvedKnowledgeBaseScope | None = None
 
 
 __all__ = ["AgentContext"]

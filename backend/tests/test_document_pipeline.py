@@ -11,6 +11,7 @@ from langchain_core.documents import Document
 from agent_lab.domain.enums import DocumentType
 from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.models.document import DocumentRecord
+from agent_lab.models.knowledge_base import KnowledgeBaseRecord
 from agent_lab.models.source import SourceRecord
 from agent_lab.pipeline.document_builder import DocumentBuilder
 from agent_lab.pipeline.document_chunk_pipeline import DocumentChunkPipeline
@@ -31,6 +32,7 @@ def build_record(*, content_text: str = "正文内容") -> DocumentRecord:
     return DocumentRecord(
         id=uuid4(),
         knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID,
+        knowledge_base=KnowledgeBaseRecord(id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID, key="news", name="新闻", is_active=True),
         source_id=source_id,
         source=source,
         external_id="article/42",
@@ -67,6 +69,7 @@ def test_builder_maps_record_to_langchain_document() -> None:
         "source_name": "示例来源",
         "document_type": "article",
         "mime_type": "text/plain",
+        "upload_filename": None,
         "url": "https://example.com/article/42",
         "authors": ["作者甲"],
         "labels": ["宏观"],

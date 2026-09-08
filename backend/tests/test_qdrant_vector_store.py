@@ -257,6 +257,7 @@ def test_payload_mapper_keeps_news_time_and_explicit_fields() -> None:
         "source_updated_at",
         "document_type",
         "mime_type",
+        "upload_filename",
         "source_id",
         "source_provider",
         "source_name",

@@ -74,6 +74,7 @@ from agent_lab.knowledge.domain import (
     KnowledgeBaseKeyConflictError,
     KnowledgeBaseNotFoundError,
     KnowledgeBaseStorageError,
+    NoActiveKnowledgeBasesError,
 )
 from agent_lab.pipeline.ollama_embedding_provider import (
     EmbeddingResponseError,
@@ -105,6 +106,7 @@ from agent_lab.services.vector_search_service import QueryVectorValidationError
 
 
 VectorSearchErrorCode = Literal[
+    "no_active_knowledge_bases",
     "knowledge_base_not_found",
     "knowledge_base_inactive",
     "knowledge_base_storage_unavailable",
@@ -439,6 +441,13 @@ USER_ADMIN_ERROR_RULES: tuple[ErrorContractRule, ...] = (
 )
 
 KNOWLEDGE_BASE_ERROR_RULES: tuple[ErrorContractRule, ...] = (
+    ErrorContractRule(
+        exceptions=(NoActiveKnowledgeBasesError,),
+        status_code=status.HTTP_409_CONFLICT,
+        code="no_active_knowledge_bases",
+        detail="没有启用的知识库。",
+        retryable=False,
+    ),
     ErrorContractRule(
         exceptions=(KnowledgeBaseInactiveError,),
         status_code=status.HTTP_409_CONFLICT,
@@ -890,6 +899,31 @@ def build_user_admin_error_response(error: BaseException) -> JSONResponse:
         rule.detail,
         retryable=rule.retryable,
     )
+
+
+FILE_DOCUMENT_ERROR_DETAILS = {
+    "file_name_invalid": (422, "文件名无效或过长。", False),
+    "file_format_unsupported": (422, "仅支持上传 txt 和 md 文件。", False),
+    "file_too_large": (413, "文件超过允许的体积上限。", False),
+    "file_encoding_invalid": (422, "文件必须使用 UTF-8 编码。", False),
+    "file_content_invalid": (422, "文件包含不支持的空字符。", False),
+    "file_empty": (422, "文件正文不能为空。", False),
+    "file_document_not_found": (404, "上传文档不存在。", False),
+    "file_not_uploaded": (409, "此操作仅适用于上传文档。", False),
+    "file_revision_conflict": (409, "文档已被更新，请刷新后再操作。", False),
+    "file_deletion_pending": (409, "文档正在删除，请先完成删除。", False),
+    "file_processing_busy": (409, "文档正在建立索引，请稍后查看。", False),
+    "file_write_busy": (409, "其他写操作正在执行，请稍后重试。", True),
+    "file_write_recovery_required": (409, "写操作结果需要人工核实，暂时不能修改文件。", False),
+    "file_delete_failed": (503, "删除尚未完成，请核对列表中的状态后继续删除。", True),
+    "file_storage_unavailable": (503, "文件文档服务暂时不可用。", True),
+}
+
+
+def build_file_document_error_response(error) -> JSONResponse:
+    """只读用例提供的稳定错误码，不读取或回显异常正文。"""
+    status_code, detail, retryable = FILE_DOCUMENT_ERROR_DETAILS[error.code]
+    return build_error_response(status_code, error.code, detail, retryable=retryable)
 
 
 def build_knowledge_base_error_response(error: BaseException) -> JSONResponse:

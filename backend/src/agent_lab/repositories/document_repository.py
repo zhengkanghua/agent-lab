@@ -61,7 +61,7 @@ class DocumentRepository:
 
         statement = (
             select(DocumentRecord)
-            .options(selectinload(DocumentRecord.source))
+            .options(selectinload(DocumentRecord.source), selectinload(DocumentRecord.knowledge_base))
             .where(DocumentRecord.id == document_id)
         )
         # scalar：获取查询结果中第一行第一列的那个数据。

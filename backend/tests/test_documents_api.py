@@ -47,6 +47,8 @@ def record(*, source: Any = "available") -> Any:
     return SimpleNamespace(
         id=uuid4(),
         knowledge_base_id=uuid4(),
+        knowledge_base=SimpleNamespace(name="测试知识库", is_active=True),
+        upload_filename=None,
         content_hash="a" * 64,
         index_revision=4,
         mime_type="text/plain",
@@ -103,6 +105,8 @@ def test_document_detail_returns_full_plain_text_and_metadata() -> None:
     assert body == {
         "document_id": str(item.id),
         "knowledge_base_id": str(item.knowledge_base_id),
+        "knowledge_base_name": "测试知识库",
+        "upload_filename": None,
         "content_hash": "a" * 64,
         "revision": 4,
         "mime_type": "text/plain",

@@ -20,7 +20,7 @@
 from langchain_core.tools import BaseTool
 
 from agent_lab.agent.tools.read_document import SessionFactory, build_read_document_tool
-from agent_lab.agent.tools.search_news import build_search_news_tool
+from agent_lab.agent.tools.search_documents import build_search_documents_tool
 from agent_lab.services.vector_search_service import VectorSearchService
 
 
@@ -46,7 +46,7 @@ def build_agent_tools(
     """
 
     return [
-        build_search_news_tool(search_service),
+        build_search_documents_tool(search_service),
         build_read_document_tool(session_factory),
     ]
 

@@ -1,0 +1,67 @@
+[
+  {
+    "id": "single_fact",
+    "scope_keys": ["operations"],
+    "question": "赤松服务的日常备份保留多久？请引用原文。",
+    "expected_sources": ["operations/backup-policy.txt"],
+    "support": "赤松服务的日常备份保留 7 天。",
+    "allow_insufficient": false
+  },
+  {
+    "id": "cross_base_comparison",
+    "scope_keys": ["operations", "delivery"],
+    "question": "比较赤松和松岩的日常备份保留期限，请分别引用两份规定。",
+    "expected_sources": ["operations/backup-policy.txt", "delivery/project-plan.md"],
+    "support": "赤松 7 天，松岩 30 天；不同服务的规定需要各自引用。",
+    "allow_insufficient": false
+  },
+  {
+    "id": "no_answer",
+    "scope_keys": ["operations", "delivery"],
+    "question": "赤松项目 2027 年获批的预算具体是多少元？",
+    "expected_sources": [],
+    "support": "没有获批预算资料，不得编造金额或从保留期限推算。",
+    "allow_insufficient": true
+  },
+  {
+    "id": "conflicting_documents",
+    "scope_keys": ["operations"],
+    "question": "赤松的维护窗口是星期几？请核对维护安排 A 和 B，说明是否一致。",
+    "expected_sources": ["operations/maintenance-a.txt", "operations/maintenance-b.md"],
+    "support": "A 为周三，B 为周四，资料未指定优先级；必须列明冲突，不能自行选定。",
+    "allow_insufficient": false
+  },
+  {
+    "id": "source_less_markdown",
+    "scope_keys": ["operations"],
+    "question": "赤松恢复数据前后要做哪些检查？请引用恢复手册。",
+    "expected_sources": ["operations/recovery-handbook.md"],
+    "support": "先暂停任务写入，再校验备份，恢复后核对条目数量，人工确认后恢复任务。",
+    "allow_insufficient": false
+  },
+  {
+    "id": "long_document",
+    "scope_keys": ["operations"],
+    "question": "长文记录末尾的最终演练代号是什么？请引用包含代号的片段。",
+    "expected_sources": ["operations/long-runbook.txt"],
+    "support": "最终演练代号为青穗-42。该事实位于超过全文 Tool 首段读取上限的位置。",
+    "allow_insufficient": true
+  },
+  {
+    "id": "narrow_by_text",
+    "scope_keys": ["operations", "delivery"],
+    "question": "只查询交付资料知识库：松岩的检索验收标准是什么？",
+    "expected_sources": ["delivery/project-plan.md"],
+    "support": "95% 的检索请求在 2 秒内返回；实际 Tool 范围应缩小到交付资料。",
+    "allow_insufficient": false
+  },
+  {
+    "id": "switch_scope",
+    "scope_keys": ["delivery"],
+    "continue_from": "single_fact",
+    "question": "仅根据现在允许的知识库，能确认刚才询问的赤松备份期限吗？",
+    "expected_sources": [],
+    "support": "当前交付资料没有赤松的保留期限，不能拿上一轮答案或摘要当证据。",
+    "allow_insufficient": true
+  }
+]

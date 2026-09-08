@@ -115,6 +115,7 @@ class QdrantPayloadMapper:
             "url": self._optional_string(metadata, "url"),
             "document_type": self._required_string(metadata, "document_type"),
             "mime_type": self._required_string(metadata, "mime_type"),
+            "upload_filename": self._optional_string(metadata, "upload_filename"),
             "knowledge_base_id": knowledge_base_id,
             "source_id": source_id,
             "source_provider": self._optional_string(metadata, "source_provider"),

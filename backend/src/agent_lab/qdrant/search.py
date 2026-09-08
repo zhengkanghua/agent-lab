@@ -100,6 +100,7 @@ class QdrantVectorSearch:
     _GROUP_CONSISTENT_PAYLOAD_FIELDS = (
         "knowledge_base_id",
         "mime_type",
+        "upload_filename",
         "content_hash",
         "title",
         "url",
@@ -342,6 +343,11 @@ class QdrantVectorSearch:
 
         # 逐个可选条件翻译成 Qdrant 的 FieldCondition，最终拼成一个 must（AND）Filter
         conditions: list[models.FieldCondition] = []
+        if filters.knowledge_base_ids is not None:
+            conditions.append(models.FieldCondition(
+                key="knowledge_base_id",
+                match=models.MatchAny(any=[str(item) for item in filters.knowledge_base_ids]),
+            ))
         if filters.knowledge_base_id is not None:
             conditions.append(
                 models.FieldCondition(

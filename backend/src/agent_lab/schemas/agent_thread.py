@@ -9,9 +9,12 @@
 """
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+from agent_lab.agent.evidence import DocumentEvidence
+from agent_lab.knowledge.scope import KnowledgeBaseSelection, ResolvedKnowledgeBaseScope
 
 
 # 会话列表一页的条数上下限。上限 100 与 document_search 的 MAX_DOCUMENT_LIMIT 取同一个数量级，
@@ -84,6 +87,7 @@ class AgentReplayTrace(BaseModel):
     """
 
     tool: str = Field(description="被调用的工具名。")
+    scope: ResolvedKnowledgeBaseScope | None = None
     arguments: dict[str, object] = Field(
         default_factory=dict,
         repr=False,
@@ -114,6 +118,11 @@ class AgentReplayTurn(BaseModel):
     """
 
     question: str = Field(repr=False, description="用户这一轮的提问原文。")
+    run_id: UUID | None = None
+    scope: ResolvedKnowledgeBaseScope | None = None
+    status: Literal["completed", "incomplete"] = "incomplete"
+    citations: tuple[DocumentEvidence, ...] = ()
+    invalid_citations: tuple[str, ...] = ()
     answer: str = Field(
         repr=False,
         description="模型这一轮的最终回答；空串表示当时没有产出回答。",
@@ -135,6 +144,7 @@ class AgentThreadMessagesResponse(BaseModel):
     """
 
     thread_id: UUID = Field(description="本次回放所属的会话 id。")
+    scope: KnowledgeBaseSelection = Field(description="会话当前保存的选择，不改写历史轮次的实际范围。")
     turns: tuple[AgentReplayTurn, ...] = Field(
         description="按时间顺序的历史轮次；不包含摘要那条伪提问。",
     )

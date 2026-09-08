@@ -10,6 +10,7 @@ from uuid import UUID
 
 from agent_lab.knowledge.contracts import KnowledgeBaseCreateRequest, SourceView
 from agent_lab.knowledge.domain import KnowledgeBase
+from agent_lab.knowledge.scope import KnowledgeBaseSelection, ResolvedKnowledgeBaseScope
 from agent_lab.knowledge.document_contracts import (
     DocumentDeletion, DocumentSearchGroup, DocumentSnapshot, ImportSourceState,
     ReplaceChunksResult, RetentionCandidate, SourceImportPage, RebuiltDocument,
@@ -37,6 +38,8 @@ class KnowledgeBaseScope(Protocol):
     """只读范围准入；调用方不依赖实际存储或事务实现。"""
 
     async def require_active(self, knowledge_base_id: UUID) -> KnowledgeBase: ...
+
+    async def resolve_scope(self, selection: KnowledgeBaseSelection) -> ResolvedKnowledgeBaseScope: ...
 
 
 class KnowledgeBaseUnitOfWork(Protocol):

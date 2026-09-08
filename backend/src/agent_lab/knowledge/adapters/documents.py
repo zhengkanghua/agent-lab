@@ -26,6 +26,7 @@ def document_snapshot(record: DocumentRecord) -> DocumentSnapshot:
         content_hash=record.content_hash, index_revision=record.index_revision,
         authors=tuple(record.authors), labels=tuple(record.labels),
         published_at=record.published_at, source_updated_at=record.source_updated_at,
+        upload_filename=record.upload_filename,
     )
 
 

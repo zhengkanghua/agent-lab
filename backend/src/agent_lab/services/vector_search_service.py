@@ -20,6 +20,7 @@ from uuid import UUID
 from agent_lab.knowledge.ports import EmbeddingProvider, IndexSpecification, KnowledgeBaseScope, VectorSearch
 from agent_lab.knowledge.domain import VectorIndexConfigurationError
 from agent_lab.knowledge.document_contracts import DocumentSearchGroup
+from agent_lab.knowledge.scope import KnowledgeBaseSelection, ResolvedKnowledgeBaseScope
 from agent_lab.schemas.document_search import (
     DocumentSearchMatch,
     DocumentSearchRequest,
@@ -91,6 +92,8 @@ class VectorSearchService:
     async def search(
         self,
         request: VectorSearchRequest,
+        *,
+        resolved_scope: ResolvedKnowledgeBaseScope | None = None,
     ) -> list[VectorSearchResult]:
         """把 query 变成向量，再返回 Qdrant 按相似度排好序的 Chunk 命中。
 
@@ -124,6 +127,8 @@ class VectorSearchService:
         filters = await self._filters_with_request_scope(
             request.filters,
             request.knowledge_base_id,
+            request.scope,
+            resolved_scope,
         )
         # 范围确认后才访问上游，停用库不产生 Embedding 或 Qdrant 请求。
         validated_vector = await self._embed_and_validate_query(request.query)
@@ -139,6 +144,8 @@ class VectorSearchService:
     async def search_documents(
         self,
         request: DocumentSearchRequest,
+        *,
+        resolved_scope: ResolvedKnowledgeBaseScope | None = None,
     ) -> list[DocumentSearchResult]:
         """把 query 向量化后按新闻文档分组返回相关片段。
 
@@ -165,6 +172,8 @@ class VectorSearchService:
         filters = await self._filters_with_request_scope(
             request.filters,
             request.knowledge_base_id,
+            request.scope,
+            resolved_scope,
         )
         validated_vector = await self._embed_and_validate_query(request.query)
         # 2、换成 grouped query：Qdrant 按 document_id 分组，每篇只出一组，
@@ -179,12 +188,31 @@ class VectorSearchService:
         # 3、把基础设施对象搬成对外 DTO，只搬字段，不再校验。
         return [self._map_document_group(group) for group in groups]
 
+    async def resolve_scope(self, selection: KnowledgeBaseSelection) -> ResolvedKnowledgeBaseScope:
+        """解析一次范围，HTTP 响应和底层查询复用同一快照。"""
+
+        return await self._knowledge_base_scope.resolve_scope(selection)
+
     async def _filters_with_request_scope(
         self,
         filters: VectorSearchFilters,
         knowledge_base_id: UUID | None,
+        selection: KnowledgeBaseSelection | None,
+        resolved_scope: ResolvedKnowledgeBaseScope | None,
     ) -> VectorSearchFilters:
-        """普通用例要求明确启用范围；HTTP 和阶段一 Agent 在各自边界补 news。"""
+        """只使用明确的范围；旧单库调用保留原有准入路径。"""
+
+        if resolved_scope is None and selection is not None:
+            resolved_scope = await self.resolve_scope(selection)
+        if resolved_scope is None and filters.knowledge_base_ids is not None:
+            resolved_scope = await self.resolve_scope(KnowledgeBaseSelection(
+                mode="selected", knowledge_base_ids=filters.knowledge_base_ids,
+            ))
+        if resolved_scope is not None:
+            return filters.model_copy(update={
+                "knowledge_base_id": None,
+                "knowledge_base_ids": resolved_scope.knowledge_base_ids,
+            })
 
         knowledge_base_id = knowledge_base_id or filters.knowledge_base_id
         if knowledge_base_id is None:
@@ -251,6 +279,7 @@ class VectorSearchService:
             content_hash=first.content_hash,
             title=first.title,
             mime_type=first.mime_type,
+            upload_filename=first.upload_filename,
             url=first.url,
             source_name=first.source_name,
             published_at=first.published_at,

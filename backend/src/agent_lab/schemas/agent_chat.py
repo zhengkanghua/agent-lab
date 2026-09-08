@@ -21,6 +21,8 @@ from pydantic import BaseModel, ConfigDict, Discriminator, Field, RootModel, fie
 
 from agent_lab.agent.limits import MAX_SYSTEM_PROMPT_CHARS, MAX_USER_MESSAGE_CHARS
 from agent_lab.schemas._query_validators import require_non_whitespace_query
+from agent_lab.agent.evidence import DocumentEvidence
+from agent_lab.knowledge.scope import KnowledgeBaseSelection, ResolvedKnowledgeBaseScope, require_explicit_scope
 
 
 class AgentChatRequest(BaseModel):
@@ -60,6 +62,13 @@ class AgentChatRequest(BaseModel):
     )
 
     model_config = ConfigDict(frozen=True)
+
+    scope: KnowledgeBaseSelection | None = Field(default=None, description="本次提交的会话范围；省略沿用已保存选择，新会话默认所有启用知识库。")
+
+    @field_validator("scope")
+    @classmethod
+    def _validate_scope(cls, value: KnowledgeBaseSelection | None) -> KnowledgeBaseSelection:
+        return require_explicit_scope(value)
 
     @field_validator("message")
     @classmethod
@@ -101,8 +110,8 @@ class AgentChatRequest(BaseModel):
 class AgentTokenEvent(BaseModel):
     """模型输出的一小段文本增量。
 
-    一次运行会有很多条，前端按到达顺序追加即可。它只承载「最终回答」的增量：工具调用
-    的参数不走这里，避免用户看到半截 JSON。
+    一次运行会有很多条，前端按到达顺序预览。重试可能留下临时文字，结束时以 Done
+    的持久化答案校正；工具调用参数不走这里。
     """
 
     event: Literal["token"] = "token"
@@ -128,7 +137,7 @@ class AgentToolCallEvent(BaseModel):
             "这一条调用上，不依赖到达顺序。"
         ),
     )
-    tool: str = Field(description="被调用的工具名，如 search_news、read_document。")
+    tool: str = Field(description="被调用的工具名，如 search_documents、read_document。")
     arguments: dict[str, object] = Field(
         default_factory=dict,
         repr=False,
@@ -149,8 +158,7 @@ class AgentToolResultEvent(BaseModel):
 
     ``tool_call_id`` 让它和对应的 ``tool_call`` 事件精确配对。工具名不足以定位：模型可以在
     一轮里用不同检索词并发调用同一个工具多次，而多个工具的结果到达顺序没有保证，只按名字
-    先来先配会把两条轨迹的参数和结果对调。回放那条路一直是按这个 id 配的
-    （见 ``agent/replay.py`` 的 ``_tool_result_index``），流式这条路与它对齐。
+    先来先配会把两条轨迹的参数和结果对调。回放只在同一问答内按这个 id 配对。
     """
 
     event: Literal["tool_result"] = "tool_result"
@@ -166,18 +174,35 @@ class AgentToolResultEvent(BaseModel):
         default=False,
         description="工具是否失败；失败后模型仍会继续，可能换个检索词重试。",
     )
+    scope: ResolvedKnowledgeBaseScope | None = None
+    evidence: tuple[DocumentEvidence, ...] = ()
 
     model_config = ConfigDict(frozen=True)
 
 
 class AgentDoneEvent(BaseModel):
-    """一次运行正常结束，流即将关闭。
+    """一次运行收尾，流即将关闭；完成与否由 status 表达。
 
     它同时承担「告知会话 id」的职责：新建会话时前端要拿这个值发起下一轮。
     """
 
     event: Literal["done"] = "done"
     thread_id: UUID = Field(description="本次运行所属会话的 id，下一轮带上它即可续聊。")
+    answer: str = Field(repr=False, description="本次已持久化的最终文本，用于校正重试途中曾流出的临时内容。")
+    status: Literal["completed", "incomplete"] = Field(description="流已收尾；incomplete 表示回答被截断或预算耗尽，不能标为完整答案。")
+    citations: tuple[DocumentEvidence, ...] = ()
+    invalid_citations: tuple[str, ...] = ()
+
+    model_config = ConfigDict(frozen=True)
+
+
+class AgentRunStartedEvent(BaseModel):
+    """流开始即告知会话和固定范围，期间改选只影响下次。"""
+
+    event: Literal["run_started"] = "run_started"
+    thread_id: UUID
+    run_id: UUID
+    scope: ResolvedKnowledgeBaseScope
 
     model_config = ConfigDict(frozen=True)
 
@@ -243,6 +268,7 @@ class AgentChatErrorResponse(BaseModel):
 # 带 discriminator 的 schema，前端生成的 TS 类型即可按 ``event`` 字段自动收窄。
 AgentChatEvent = Annotated[
     AgentTokenEvent
+    | AgentRunStartedEvent
     | AgentToolCallEvent
     | AgentToolResultEvent
     | AgentDoneEvent

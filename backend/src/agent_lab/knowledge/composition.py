@@ -29,6 +29,29 @@ def build_source_binding_service() -> SourceBindingService:
     )
 
 
+def build_file_document_service():
+    """文件保存只连接 PostgreSQL；删除时才按需构造 Qdrant 删除适配器。"""
+    from agent_lab.knowledge.adapters.files import postgres_file_work
+    from agent_lab.knowledge.file_application import FileDocumentService
+    from agent_lab.config.qdrant import get_qdrant_settings
+    from agent_lab.qdrant.lifecycle import build_qdrant_client
+    from agent_lab.qdrant.store import QdrantDeletionStore
+
+    @asynccontextmanager
+    async def deletion_store():
+        settings = get_qdrant_settings()
+        client = build_qdrant_client(settings)
+        try:
+            yield QdrantDeletionStore(client, settings)
+        finally:
+            await client.close()
+
+    return FileDocumentService(
+        partial(postgres_file_work, async_session_factory),
+        WriteCoordinator(async_session_factory), deletion_store,
+    )
+
+
 def build_source_import_service(settings, session_factory=async_session_factory, *, client_factory=FreshRSSClient) -> SourceImportService:
     """生产与离线验证使用同一导入应用，替换外部来源和持久化适配器即可。"""
     @asynccontextmanager

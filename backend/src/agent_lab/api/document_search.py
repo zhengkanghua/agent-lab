@@ -24,6 +24,7 @@ from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.schemas.document_search import (
     DocumentSearchRequest,
     DocumentSearchResult,
+    ScopedDocumentSearchResponse,
 )
 from agent_lab.services.vector_search_service import VectorSearchService
 
@@ -34,7 +35,7 @@ router = APIRouter(tags=["document-search"])
 
 @router.post(
     "/document-search",
-    response_model=list[DocumentSearchResult],
+    response_model=list[DocumentSearchResult] | ScopedDocumentSearchResponse,
     status_code=status.HTTP_200_OK,
     summary="按新闻文档分组搜索相关片段",
     description=(
@@ -62,7 +63,7 @@ router = APIRouter(tags=["document-search"])
 async def document_search(
     search_request: DocumentSearchRequest,
     service: Annotated[VectorSearchService, Depends(get_vector_search_service)],
-) -> list[DocumentSearchResult] | JSONResponse:
+) -> list[DocumentSearchResult] | ScopedDocumentSearchResponse | JSONResponse:
     """执行 query Embedding → Qdrant grouped query，并返回文档级结果。
 
     这份 docstring 是给维护者看的，不会进 OpenAPI：装饰器上显式写了 ``description=``，
@@ -88,6 +89,10 @@ async def document_search(
     """
 
     try:
+        if search_request.scope is not None:
+            scope = await service.resolve_scope(search_request.scope)
+            results = await service.search_documents(search_request, resolved_scope=scope)
+            return ScopedDocumentSearchResponse(scope=scope, results=results)
         # 兼容旧 HTTP 调用方：缺省范围固定解析到 news，并同时写入过滤器。
         # 归一化只发生在边界层，内部 Service 不会对无范围调用暗加新闻条件。
         scoped_request = search_request.with_knowledge_base_scope(

@@ -28,11 +28,13 @@ from agent_lab.agent.limits import SSE_HEARTBEAT_INTERVAL_SECONDS
 from agent_lab.agent.prompts import DEFAULT_SYSTEM_PROMPT
 from agent_lab.agent.runtime import AgentRuntime
 from agent_lab.agent.streaming import stream_agent_events
-from agent_lab.api.dependencies import get_agent_runtime, get_agent_thread_service
+from agent_lab.api.dependencies import get_agent_runtime, get_agent_thread_service, get_vector_search_service
 from agent_lab.auth.dependencies import current_superuser
 from agent_lab.config.llm import LangSmithSettings, get_langsmith_settings
 from agent_lab.models.user import UserRecord
 from agent_lab.services.agent_thread_service import AgentThreadService
+from agent_lab.services.vector_search_service import VectorSearchService
+from agent_lab.knowledge.scope import KnowledgeBaseSelection
 from agent_lab.schemas.agent_chat import (
     AgentChatEvent,
     AgentChatEventEnvelope,
@@ -168,7 +170,7 @@ async def _stream_with_heartbeat(
     "/chat",
     status_code=status.HTTP_200_OK,
     response_class=ServerSentEventResponse,
-    summary="与新闻 Agent 对话（SSE 流式返回）",
+    summary="与知识库 Agent 对话（SSE 流式返回）",
     description=(
         "发起一次 Agent 运行。模型自行决定是否调用只读检索工具，过程以 "
         "text/event-stream 逐事件返回：token 是回答增量，tool_call/tool_result 是"
@@ -191,6 +193,7 @@ async def agent_chat(
     langsmith_settings: Annotated[LangSmithSettings, Depends(get_langsmith_settings)],
     user: Annotated[UserRecord, Depends(current_superuser)],
     threads: Annotated[AgentThreadService, Depends(get_agent_thread_service)],
+    search: Annotated[VectorSearchService, Depends(get_vector_search_service)],
 ) -> ServerSentEventResponse:
     """启动一次 Agent 运行并以 SSE 返回全过程。
 
@@ -224,13 +227,21 @@ async def agent_chat(
 
     # 1、定会话 id 并确认归属。这一步刻意在返回流式响应**之前**完成：它内部开一个短事务、
     #    提交后立刻归还连接，所以长对话不会占着业务连接池不放（见 ADR 0010）。
+    selection = chat_request.scope
+    if chat_request.thread_id is not None:
+        owned = await threads.get_owned_thread(user_id=user.id, thread_id=chat_request.thread_id)
+        if selection is None:
+            selection = KnowledgeBaseSelection.model_validate(owned.scope)
+    selection = selection or KnowledgeBaseSelection(mode="all")
+    resolved_scope = await search.resolve_scope(selection)
     thread_id = await threads.ensure_thread(
         user_id=user.id,
         thread_id=chat_request.thread_id,
         first_message=chat_request.message,
+        scope=selection,
     )
     # 2、把自定义提示词装进本次运行的上下文；为 None 时中间件会用默认那份。
-    context = AgentContext(system_prompt=chat_request.system_prompt)
+    context = AgentContext(system_prompt=chat_request.system_prompt, scope=resolved_scope)
     # 3、只记 id 和「有没有自定义提示词」，不记提问原文——日志里不该有用户输入。
     logger.info(
         "Agent 对话开始 thread_id=%s custom_prompt=%s",

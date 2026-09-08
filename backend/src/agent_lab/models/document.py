@@ -132,6 +132,10 @@ class DocumentRecord(TimestampMixin, Base):
         comment="文档类型，以受代码约束的字符串保存。",
     )
     title: Mapped[str] = mapped_column(Text, nullable=False, comment="文档标题。")
+    upload_filename: Mapped[str | None] = mapped_column(
+        String(255), nullable=True,
+        comment="上传文件的原始文件名；非空表示上传资料，不作为唯一键。",
+    )
     url: Mapped[str | None] = mapped_column(Text, nullable=True, comment="可选原始文档地址。")
     mime_type: Mapped[str] = mapped_column(
         String(127), nullable=False, default="text/plain", server_default="text/plain",

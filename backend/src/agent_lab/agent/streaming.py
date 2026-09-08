@@ -16,12 +16,14 @@ from collections.abc import AsyncIterator
 from typing import Any
 from uuid import UUID
 
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.graph.state import CompiledStateGraph
 from langsmith import Client as LangSmithClient
 from langsmith.run_helpers import tracing_context
 
 from agent_lab.agent.context import AgentContext
+from agent_lab.agent.evidence import tool_evidence
+from agent_lab.agent.replay import build_replay_turns
 from agent_lab.api.error_contract import (
     AGENT_CHAT_ERROR_RULES,
     resolve_error_contract,
@@ -34,6 +36,7 @@ from agent_lab.schemas.agent_chat import (
     AgentTokenEvent,
     AgentToolCallEvent,
     AgentToolResultEvent,
+    AgentRunStartedEvent,
 )
 
 
@@ -137,7 +140,7 @@ def _add_usage(totals: dict[str, int], chunk: AIMessage) -> None:
     totals["total"] += usage.get("total_tokens") or 0
 
 
-def _tool_events(update: dict[str, Any]) -> list[AgentChatEvent]:
+def _tool_events(update: dict[str, Any], context: AgentContext) -> list[AgentChatEvent]:
     """从一次节点状态更新里取出工具调用和工具结果事件。
 
     Args:
@@ -173,12 +176,15 @@ def _tool_events(update: dict[str, Any]) -> list[AgentChatEvent]:
             # 3、工具节点：ToolMessage 是执行结果。status == "error" 是
             #    ToolErrorMiddleware 兜底后打的标记，此时 content 已是安全文案。
             if isinstance(message, ToolMessage):
+                artifact = tool_evidence(message, run_id=context.run_id, scope=context.scope) if context.scope is not None else None
                 events.append(
                     AgentToolResultEvent(
                         tool_call_id=message.tool_call_id or "",
                         tool=message.name or "unknown",
                         content=str(message.content),
                         failed=message.status == "error",
+                        scope=artifact.scope if artifact else None,
+                        evidence=artifact.evidence if artifact else (),
                     )
                 )
     return events
@@ -224,6 +230,8 @@ async def stream_agent_events(
     # 烧掉的量——失控循环恰恰都是以失败收尾的，那时候的用量最值得看。
     usage_totals = {"input": 0, "output": 0, "total": 0}
     try:
+        if context.scope is not None:
+            yield AgentRunStartedEvent(thread_id=thread_id, run_id=context.run_id, scope=context.scope)
         # 2、开一个「只管本次运行」的追踪范围。tracing_context 不写 os.environ，
         #    所以并发请求之间不会互相污染，也不需要在进程启动时就决定好。
         with tracing_context(
@@ -234,7 +242,9 @@ async def stream_agent_events(
             # 3、跑图，同时订阅两种流。这里只传用户这一条新消息——历史由 checkpointer
             #    按 config 里的 thread_id 自己接在前面，不用我们拼。
             async for stream_mode, chunk in graph.astream(
-                {"messages": [{"role": "user", "content": message}]},
+                {"messages": [HumanMessage(content=message, additional_kwargs={
+                    "agent_run": {"run_id": str(context.run_id), "scope": context.scope.model_dump(mode="json")},
+                } if context.scope is not None else {})]},
                 config=config,
                 context=context,
                 stream_mode=["updates", "messages"],
@@ -258,8 +268,17 @@ async def stream_agent_events(
                 # 5、updates 流 → 工具轨迹。工具调用和工具结果只在这个流里出现，
                 #    messages 流里没有。
                 elif stream_mode == "updates":
-                    for event in _tool_events(chunk):
+                    for event in _tool_events(chunk, context):
                         yield event
+            # 以本次持久化结果校正流式重试的临时输出；回放与终态从同一份消息计算。
+            snapshot = await graph.aget_state(config)
+            turns, _, _ = build_replay_turns((snapshot.values or {}).get("messages") or [])
+            turn = next((item for item in turns if item.run_id == context.run_id), None) if context.scope is not None else (turns[-1] if turns else None)
+            terminal = AgentDoneEvent(
+                thread_id=thread_id, answer=turn.answer if turn else "",
+                status=turn.status if turn else "incomplete",
+                citations=turn.citations if turn else (), invalid_citations=turn.invalid_citations if turn else (),
+            )
     except Exception as exc:
         # 6、失败翻成一个 error 事件送出去，不往上抛。第一个 token 发走时响应头就定了，
         #    这之后改不了 HTTP 状态码，只能把失败当成流里的一条事件。
@@ -300,7 +319,7 @@ async def stream_agent_events(
             usage_totals["total"],
         )
     # 7、正常收尾。done 带上 thread_id，前端拿它接着发下一轮。
-    yield AgentDoneEvent(thread_id=thread_id)
+    yield terminal
 
 
 __all__ = ["stream_agent_events"]

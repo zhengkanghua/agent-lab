@@ -10,7 +10,7 @@ import httpx
 import pytest
 from qdrant_client import AsyncQdrantClient, models
 
-from agent_lab.agent.tools.search_news import build_search_news_tool
+from agent_lab.agent.tools.search_documents import build_search_documents_tool
 from agent_lab.agent.middleware import sanitize_tool_error
 from agent_lab.api.dependencies import get_vector_search_service
 from agent_lab.knowledge.application import KnowledgeBaseService
@@ -27,6 +27,9 @@ from tests.app_helpers import create_offline_app
 from tests.auth_helpers import allow_reader
 from tests.test_knowledge_bases import MemoryStore
 from tests.test_vector_search import FakeEmbeddings, build_payload, build_point, build_runtime_components
+from agent_lab.agent.context import AgentContext
+from agent_lab.knowledge.scope import KnowledgeBaseSelection
+from tests.agent_scope_helpers import invoke_tool
 
 
 @pytest.mark.parametrize("method,request_type", [("search", VectorSearchRequest), ("search_documents", DocumentSearchRequest)])
@@ -108,24 +111,72 @@ def test_http_disabled_scope_keeps_points_but_rejects_queries(path, scope_input)
 
 
 @pytest.mark.parametrize("within_days", [None, True])
-def test_agent_stays_in_news_and_honors_disabled_state(within_days):
+def test_agent_uses_run_snapshot_and_rejects_disabled_scope_on_next_run(within_days):
     async def verify():
         scope, news, _, client, embeddings, service = await prepare_shared_collection()
         try:
-            tool = build_search_news_tool(service)
+            tool = build_search_documents_tool(service)
             args = {"query": "review"}
             if within_days is not None:
                 # 使用 Tool 允许的最大时间窗口，样本发布时间位于该范围内。
                 from agent_lab.agent.limits import SEARCH_TOOL_MAX_WITHIN_DAYS
                 args["within_days"] = SEARCH_TOOL_MAX_WITHIN_DAYS
-            result = await tool.ainvoke(args)
+            selection = KnowledgeBaseSelection(mode="selected", knowledge_base_ids=(news.id,))
+            context = AgentContext(scope=await service.resolve_scope(selection))
+            result = await invoke_tool(tool, args, context=context)
             assert "NEWS_DOCUMENT" in result
             assert "OTHER_DOCUMENT" not in result
             await scope.update(news.id, KnowledgeBaseUpdateRequest(is_active=False))
             with pytest.raises(KnowledgeBaseInactiveError) as caught:
-                await tool.ainvoke(args)
+                await service.resolve_scope(selection)
             assert sanitize_tool_error(caught.value, SimpleNamespace(tool_call={"name": "search_news"})) == "工具调用失败：知识库已停用。"
             assert len(embeddings.query_calls) == 1
+        finally:
+            await client.close()
+
+    asyncio.run(verify())
+
+
+@pytest.mark.parametrize("path", ["/vector-search", "/document-search"])
+def test_explicit_multi_scope_snapshots_and_rejects_invalid_targets(path):
+    async def verify():
+        scope, news, other, client, embeddings, service = await prepare_shared_collection()
+        disabled = await scope.create(KnowledgeBaseCreateRequest(key="disabled", name="停用资料", is_active=False))
+        app = create_offline_app()
+        allow_reader(app)
+        app.dependency_overrides[get_vector_search_service] = lambda: service
+        try:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://testserver") as http:
+                all_result = await http.post(path, json={"query": "资料", "scope": {"mode": "all"}})
+                assert all_result.status_code == 200
+                snapshot = all_result.json()
+                assert {item["id"] for item in snapshot["scope"]["knowledge_bases"]} == {str(news.id), str(other.id)}
+                assert {item["knowledge_base_id"] for item in snapshot["results"]} == {str(news.id), str(other.id)}
+                for identifiers in ([other.id], [news.id, other.id]):
+                    chosen = {"mode": "selected", "knowledge_base_ids": [str(item) for item in identifiers]}
+                    response = await http.post(path, json={"query": "资料", "scope": chosen})
+                    assert response.status_code == 200
+                    assert {item["knowledge_base_id"] for item in response.json()["results"]} == {str(item) for item in identifiers}
+                calls = len(embeddings.query_calls)
+                for selection, status_code in [
+                    ({"mode": "selected", "knowledge_base_ids": []}, 422),
+                    ({"mode": "selected", "knowledge_base_ids": [str(uuid4())]}, 404),
+                    ({"mode": "selected", "knowledge_base_ids": [str(news.id), str(disabled.id)]}, 409),
+                    (None, 422),
+                    ({}, 422),
+                ]:
+                    response = await http.post(path, json={"query": "资料", "scope": selection})
+                    assert response.status_code == status_code
+                conflict = await http.post(path, json={"query": "资料", "knowledge_base_id": str(news.id), "scope": {"mode": "selected", "knowledge_base_ids": [str(other.id)]}})
+                assert conflict.status_code == 422
+                assert len(embeddings.query_calls) == calls
+                await scope.update(news.id, KnowledgeBaseUpdateRequest(name="新闻新名", is_active=False))
+                await scope.update(other.id, KnowledgeBaseUpdateRequest(is_active=False))
+                response = await http.post(path, json={"query": "资料", "scope": {"mode": "all"}})
+                assert response.status_code == 409
+                assert response.json()["code"] == "no_active_knowledge_bases"
+                assert len(embeddings.query_calls) == calls
+                assert next(item for item in snapshot["scope"]["knowledge_bases"] if item["id"] == str(news.id))["name"] == "新闻"
         finally:
             await client.close()
 

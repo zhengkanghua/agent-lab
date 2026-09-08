@@ -72,7 +72,7 @@ class AgentRuntime:
 
         Args:
             llm_settings: 模型 provider、base_url、凭据、主/备模型名和连接池大小。
-            search_service: 只读向量检索 Service，供 ``search_news`` 工具使用；与 HTTP
+            search_service: 只读向量检索 Service，供 ``search_documents`` 工具使用；与 HTTP
                 搜索路由共用同一个进程级实例。
             session_factory: PostgreSQL Session 工厂，供 ``read_document`` 工具按次开
                 Session。传工厂而不是 Session：图是进程级的，而 Session 是一次工作单元。

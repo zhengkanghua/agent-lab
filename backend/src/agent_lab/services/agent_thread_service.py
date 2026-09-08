@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from agent_lab.agent.errors import AgentThreadNotFoundError
 from agent_lab.models.agent_thread import AgentThreadRecord
+from agent_lab.knowledge.scope import KnowledgeBaseSelection
 
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,7 @@ class AgentThreadService:
         user_id: UUID,
         thread_id: UUID | None,
         first_message: str,
+        scope: KnowledgeBaseSelection | None = None,
     ) -> UUID:
         """确定本轮提问所属的会话 id，并保证它归当前账号所有。
 
@@ -121,6 +123,7 @@ class AgentThreadService:
                         thread_id=created_id,
                         user_id=user_id,
                         title=derive_thread_title(first_message),
+                        scope=(scope or KnowledgeBaseSelection(mode="all")).model_dump(mode="json"),
                         created_at=now,
                         last_active_at=now,
                     )
@@ -137,7 +140,7 @@ class AgentThreadService:
                     AgentThreadRecord.thread_id == thread_id,
                     AgentThreadRecord.user_id == user_id,
                 )
-                .values(last_active_at=now)
+                .values(last_active_at=now, **({"scope": scope.model_dump(mode="json")} if scope is not None else {}))
             )
             if result.rowcount == 0:
                 await session.rollback()
@@ -150,6 +153,18 @@ class AgentThreadService:
                 raise AgentThreadNotFoundError
             await session.commit()
             return thread_id
+
+    async def update_scope(self, *, user_id: UUID, thread_id: UUID, scope: KnowledgeBaseSelection) -> None:
+        """保存经应用校验的选择；不改正在执行的运行快照，不刷新最近提问时间。"""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                update(AgentThreadRecord)
+                .where(AgentThreadRecord.thread_id == thread_id, AgentThreadRecord.user_id == user_id)
+                .values(scope=scope.model_dump(mode="json"))
+            )
+            if result.rowcount == 0:
+                raise AgentThreadNotFoundError
+            await session.commit()
 
     async def list_threads(
         self,

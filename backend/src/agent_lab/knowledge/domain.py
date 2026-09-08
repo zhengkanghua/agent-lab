@@ -42,6 +42,10 @@ class KnowledgeBaseStorageError(KnowledgeBaseError):
     """持久化适配器当前无法完成操作。"""
 
 
+class NoActiveKnowledgeBasesError(KnowledgeBaseError):
+    """所有知识库模式解析后没有可检索目标。"""
+
+
 class SourceBindingError(RuntimeError):
     """Source 配置用例的稳定失败，不携带基础设施异常文本。"""
 

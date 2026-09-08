@@ -23,7 +23,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agent_lab.agent.replay import build_replay_turns
 from agent_lab.agent.runtime import AgentRuntime
-from agent_lab.api.dependencies import get_agent_runtime, get_agent_thread_service
+from agent_lab.api.dependencies import get_agent_runtime, get_agent_thread_service, get_vector_search_service
 from agent_lab.api.error_contract import build_agent_chat_error_response
 from agent_lab.auth.dependencies import current_superuser
 from agent_lab.models.user import UserRecord
@@ -37,6 +37,8 @@ from agent_lab.schemas.agent_thread import (
     AgentThreadSummary,
 )
 from agent_lab.services.agent_thread_service import AgentThreadService
+from agent_lab.services.vector_search_service import VectorSearchService
+from agent_lab.knowledge.scope import KnowledgeBaseSelection
 
 
 logger = logging.getLogger(__name__)
@@ -149,7 +151,7 @@ async def get_agent_thread_messages(
     """
 
     try:
-        await threads.get_owned_thread(user_id=user.id, thread_id=thread_id)
+        owned = await threads.get_owned_thread(user_id=user.id, thread_id=thread_id)
     except SQLAlchemyError as error:
         return _database_error(error)
 
@@ -161,9 +163,28 @@ async def get_agent_thread_messages(
     return AgentThreadMessagesResponse(
         thread_id=thread_id,
         turns=turns,
+        scope=KnowledgeBaseSelection.model_validate(owned.scope),
         summarized=summarized,
         summary=summary,
     )
+
+
+@router.patch("/{thread_id}/scope", response_model=KnowledgeBaseSelection, summary="保存会话知识库选择，只影响后续提问")
+async def update_agent_thread_scope(
+    thread_id: UUID,
+    selection: KnowledgeBaseSelection,
+    user: Annotated[UserRecord, Depends(current_superuser)],
+    threads: Annotated[AgentThreadService, Depends(get_agent_thread_service)],
+    search: Annotated[VectorSearchService, Depends(get_vector_search_service)],
+) -> KnowledgeBaseSelection | JSONResponse:
+    """归属与知识库有效性检查通过后，在短事务中保存用户选择。"""
+    try:
+        await threads.get_owned_thread(user_id=user.id, thread_id=thread_id)
+        await search.resolve_scope(selection)
+        await threads.update_scope(user_id=user.id, thread_id=thread_id, scope=selection)
+    except SQLAlchemyError as error:
+        return _database_error(error)
+    return selection
 
 
 @router.delete(

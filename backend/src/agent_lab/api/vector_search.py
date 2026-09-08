@@ -26,6 +26,7 @@ from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.schemas.vector_search import (
     VectorSearchRequest,
     VectorSearchResult,
+    ScopedVectorSearchResponse,
 )
 from agent_lab.services.vector_search_service import VectorSearchService
 
@@ -36,7 +37,7 @@ router = APIRouter(tags=["vector-search"])
 
 @router.post(
     "/vector-search",
-    response_model=list[VectorSearchResult],
+    response_model=list[VectorSearchResult] | ScopedVectorSearchResponse,
     status_code=status.HTTP_200_OK,
     summary="按语义相似度搜索新闻 Chunk",
     # 显式写 description，下面那份 docstring 就留给维护者，不进 OpenAPI。
@@ -64,7 +65,7 @@ router = APIRouter(tags=["vector-search"])
 async def vector_search(
     search_request: VectorSearchRequest,
     service: Annotated[VectorSearchService, Depends(get_vector_search_service)],
-) -> list[VectorSearchResult] | JSONResponse:
+) -> list[VectorSearchResult] | ScopedVectorSearchResponse | JSONResponse:
     """执行一次只读搜索：query 向量化 → Qdrant current Alias 查最相似的新闻 Chunk。
 
     搜索链路：
@@ -91,6 +92,10 @@ async def vector_search(
     """
 
     try:
+        if search_request.scope is not None:
+            scope = await service.resolve_scope(search_request.scope)
+            results = await service.search(search_request, resolved_scope=scope)
+            return ScopedVectorSearchResponse(scope=scope, results=results)
         # 核心就一步：把请求交给共享 Service（内部做 query 向量化 + Qdrant 查询）
         # 旧 HTTP 调用方可能没有范围；兼容规则只存在于边界层，明确落到新闻库，
         # 防止 Qdrant 在缺少过滤器时把共享 Collection 中的其他库一并返回。

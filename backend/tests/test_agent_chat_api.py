@@ -438,6 +438,7 @@ def test_openapi_declares_the_discriminated_event_union() -> None:
     envelope = spec["components"]["schemas"]["AgentChatEventEnvelope"]
     assert envelope["discriminator"]["propertyName"] == "event"
     assert set(envelope["discriminator"]["mapping"]) == {
+        "run_started",
         "token",
         "tool_call",
         "tool_result",

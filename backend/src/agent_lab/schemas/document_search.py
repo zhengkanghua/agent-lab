@@ -10,6 +10,10 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator, model_validator
+from agent_lab.knowledge.scope import (
+    KnowledgeBaseSelection, ResolvedKnowledgeBaseScope,
+    require_explicit_scope, validate_scope_compatibility,
+)
 
 from agent_lab.schemas._query_validators import (
     require_non_whitespace_query,
@@ -33,6 +37,11 @@ class DocumentSearchRequest(BaseModel):
     ``document_limit`` 限制不同新闻的数量，``matches_per_document`` 限制每篇新闻
     返回的高分相关片段数量。query 只进入一次 query Embedding，不写入数据库或 Qdrant。
     """
+
+    scope: KnowledgeBaseSelection | None = Field(
+        default=None, description="显式选择全部启用库或非空列表；遗漏保留旧 news 契约。",
+    )
+    _validate_scope = field_validator("scope")(require_explicit_scope)
 
     query: str = Field(
         max_length=MAX_QUERY_CHARACTERS,
@@ -101,6 +110,10 @@ class DocumentSearchRequest(BaseModel):
         """拒绝顶层范围和过滤器范围互相矛盾，避免出现意外的跨库查询。"""
 
         nested = self.filters.knowledge_base_id
+        validate_scope_compatibility(
+            self.scope, self.knowledge_base_id, nested,
+            filter_ids=self.filters.knowledge_base_ids,
+        )
         if (
             self.knowledge_base_id is not None
             and nested is not None
@@ -199,6 +212,7 @@ class DocumentSearchResult(BaseModel):
         description="来自 Qdrant Payload 的新闻标题。",
     )
     mime_type: str = Field(min_length=1, description="来自 Qdrant Payload 的文档 MIME 格式。")
+    upload_filename: str | None = Field(default=None, min_length=1, description="上传资料的原文件名。")
     url: AnyHttpUrl | None = Field(
         description="来自 Qdrant Payload 的可选 HTTP(S) 原文地址；没有外部地址时为空。",
     )
@@ -276,11 +290,20 @@ class DocumentSearchResult(BaseModel):
         return value
 
 
+class ScopedDocumentSearchResponse(BaseModel):
+    """新调用方取得结果及本次范围，供检索记录冻结保存。"""
+
+    scope: ResolvedKnowledgeBaseScope
+    results: list[DocumentSearchResult]
+
+
 class DocumentDetailResponse(BaseModel):
     """从 PostgreSQL 按需读取的一篇新闻完整纯正文响应。"""
 
     document_id: UUID = Field(description="PostgreSQL documents.id。")
     knowledge_base_id: UUID = Field(description="Document 实际归属的 KnowledgeBase UUID。")
+    knowledge_base_name: str | None = Field(default=None, description="当前 KnowledgeBase 展示名称。")
+    upload_filename: str | None = Field(default=None, min_length=1, description="上传资料的原文件名。")
     content_hash: str = Field(
         pattern=r"^[0-9a-fA-F]{64}$",
         description="当前 PostgreSQL 正文的 SHA-256，用于和搜索索引版本校验。",

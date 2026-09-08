@@ -26,6 +26,9 @@ from agent_lab.agent.errors import AgentThreadNotFoundError
 from agent_lab.agent.runtime import AgentRuntime
 from agent_lab.config.llm import LlmProvider, LlmSettings
 from agent_lab.services.agent_thread_service import derive_thread_title
+from agent_lab.knowledge.scope import KnowledgeBaseSelection, ResolvedKnowledgeBaseScope
+from agent_lab.knowledge.domain import KnowledgeBaseNotFoundError
+from tests.agent_scope_helpers import NEWS_SCOPE
 from tests.auth_helpers import (
     SUPERUSER_ID,
     allow_reader,
@@ -168,6 +171,7 @@ class InMemoryAgentThreadService:
         user_id: UUID,
         thread_id: UUID | None,
         first_message: str,
+        scope: KnowledgeBaseSelection | None = None,
     ) -> UUID:
         """新建或续活一个会话，归属不符时抛 ``AgentThreadNotFoundError``。"""
 
@@ -178,6 +182,7 @@ class InMemoryAgentThreadService:
                 thread_id=created,
                 user_id=user_id,
                 title=derive_thread_title(first_message),
+                scope=(scope or KnowledgeBaseSelection(mode="all")).model_dump(mode="json"),
                 created_at=now,
                 last_active_at=now,
             )
@@ -187,7 +192,13 @@ class InMemoryAgentThreadService:
         if record is None or record.user_id != user_id:
             raise AgentThreadNotFoundError
         record.last_active_at = now
+        if scope is not None:
+            record.scope = scope.model_dump(mode="json")
         return thread_id
+
+    async def update_scope(self, *, user_id, thread_id, scope):
+        record = await self.get_owned_thread(user_id=user_id, thread_id=thread_id)
+        record.scope = scope.model_dump(mode="json")
 
     async def list_threads(
         self,
@@ -280,6 +291,15 @@ class FakeSearchService:
 
     def __init__(self) -> None:
         self.calls: list[Any] = []
+
+    async def resolve_scope(self, selection):
+        if selection.mode == "selected" and set(selection.knowledge_base_ids) != set(NEWS_SCOPE.knowledge_base_ids):
+            raise KnowledgeBaseNotFoundError
+        return ResolvedKnowledgeBaseScope(mode=selection.mode, knowledge_bases=NEWS_SCOPE.knowledge_bases)
+
+    async def search_documents(self, request, *, resolved_scope):
+        self.calls.append(request)
+        return []
 
     async def search(self, request: Any) -> list[Any]:
         """记录请求并返回空结果。"""
@@ -418,6 +438,7 @@ def seed_owned_thread(
         thread_id=thread_id,
         user_id=user_id,
         title=title,
+        scope={"mode": "all"},
         created_at=now,
         last_active_at=last_active_at or now,
     )
