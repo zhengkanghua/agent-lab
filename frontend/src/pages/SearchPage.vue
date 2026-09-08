@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { Bot, Search } from '@lucide/vue'
 import AppShell from '@/layouts/AppShell.vue'
 import { authSession, useLogout } from '@/features/auth'
@@ -76,48 +76,20 @@ function toggleRecord(record: SearchRecord): void {
   expandedIds.value = next
 }
 
-async function submitSearch(): Promise<void> {
-  await stream.search()
-}
-
-/**
- * Q11：每轮搜索进入终态后清空输入、把焦点留回输入框，方便连续换词。
- *
- * 用两条 watch 协作而不是简单地在 submit 后置位：输入校验不过时（空草稿）search 不会
- * 产生新记录，任何残留置位都会在下一次真正出结果时误触发。改为「latest 记录出现新 id」
- * 置位、该轮从 loading 走向终态时消费，校验失败没有新 id，标志不会残留。
- */
-let focusNextRound = false
-watch(
-  () => latest.value?.id,
-  (id) => {
-    if (id !== undefined) focusNextRound = true
-  },
-)
-watch(
-  () => latest.value?.status,
-  async (status, previous) => {
-    if (!focusNextRound) return
-    if (previous !== 'loading' || status === 'loading' || status === undefined) return
-    focusNextRound = false
-    stream.draft.value = ''
-    await nextTick()
+async function submitSearch(query?: string): Promise<void> {
+  const trigger = document.activeElement
+  const completedId = await (query === undefined ? stream.search() : stream.retry(query))
+  await nextTick()
+  // 已取消的请求、打开的阅读器以及用户后来选中的控件都不接收自动聚焦。
+  if (completedId === null || completedId !== latest.value?.id || reader.isOpen.value) return
+  if (document.activeElement === trigger || document.activeElement === document.body) {
     composerRef.value?.focusInput()
-  },
-)
-
-async function chooseExample(value: string): Promise<void> {
-  stream.draft.value = value
-  await stream.search()
+  }
 }
 
 async function clearStream(): Promise<void> {
   stream.clear()
   expandedIds.value = new Set()
-}
-
-async function retryRecord(record: SearchRecord): Promise<void> {
-  await stream.retry(record.query)
 }
 
 function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | null): void {
@@ -156,7 +128,7 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
           :has-records="hasRecords"
           :preference-summary="preferenceSummary"
           :disabled="scope.error.value !== null"
-          @submit="submitSearch"
+          @submit="submitSearch()"
           @clear="clearStream"
         />
         <KnowledgeBaseScopePicker
@@ -173,7 +145,7 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
         <BaseSuggestionList
           :examples="SEARCH_EXAMPLES"
           aria-label="示例检索"
-          @select="chooseExample"
+          @select="submitSearch"
         />
       </div>
 
@@ -186,7 +158,7 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
           :is-latest="record.id === latest?.id"
           :expanded="recordExpanded(record.id)"
           @toggle="toggleRecord(record)"
-          @retry="retryRecord(record)"
+          @retry="submitSearch(record.query)"
           @read="openDocument"
         />
       </div>

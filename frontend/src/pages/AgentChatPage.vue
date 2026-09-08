@@ -30,6 +30,10 @@ const { preferences } = usePreferences()
 const chat = useAgentChat({
   getSystemPrompt: () => preferences.agentSystemPrompt,
   getScopeError: () => scope.error.value,
+  onThreadCreated: (id) => {
+    void router.replace({ name: 'agent-thread', params: { threadId: id } })
+    threadList.acceptCreatedThread(createdSummary(id))
+  },
 })
 const scope = useKnowledgeBaseScope(chat.selection)
 const reader = useDocumentReader()
@@ -105,29 +109,13 @@ watch(
     if (id === null) {
       // 从某个会话回到 /agent（点「新对话」或后退）时清空，否则旧会话的历史留在界面上，
       // 而 threadId 已经没了，下一轮会开一个新会话。
-      if (chat.threadId.value !== null) chat.startNewConversation()
+      chat.startNewConversation()
       return
     }
     if (id === chat.threadId.value) return
     void chat.loadThread(id)
   },
   { immediate: true },
-)
-
-/*
- * 服务端新建会话后把 URL 补上，并把新会话并进列表。
- *
- * 用 replace 而不是 push：这一步是「补全当前所在位置的地址」，不是一次导航。push 会让
- * 后退键先回到 /agent（同一段对话、但地址上没有 id），点两次才真正离开。
- */
-watch(
-  () => chat.threadId.value,
-  (id, previous) => {
-    if (id === null || id === previous) return
-    if (routeThreadId.value === id) return
-    void router.replace({ name: 'agent-thread', params: { threadId: id } })
-    threadList.acceptCreatedThread(createdSummary(id))
-  },
 )
 
 /**
@@ -150,7 +138,7 @@ function createdSummary(threadId: string): AgentThreadSummaryDto {
 
 /** 点列表里的一项：只改 URL，载入由上面那个 watch 统一负责。 */
 function openThread(threadId: string): void {
-  if (threadId === chat.threadId.value) return
+  if (threadId === routeThreadId.value) return
   void router.push({ name: 'agent-thread', params: { threadId } })
 }
 
@@ -280,7 +268,7 @@ async function chooseExample(value: string): Promise<void> {
           <div ref="transcriptEndRef" class="scroll-anchor" aria-hidden="true"></div>
         </div>
 
-        <div class="composer-dock">
+        <div class="composer-dock" :class="{ 'has-history': hasHistory }">
           <KnowledgeBaseScopePicker
             v-if="!chat.isLoadingThread.value"
             :model-value="chat.selection.value"
@@ -415,10 +403,7 @@ async function chooseExample(value: string): Promise<void> {
   padding-bottom: 8px;
 }
 
-/* 视口不够高时（手机竖屏、横屏、矮窗口）空态内容会超出剩余高度，flex-end 把
-   建议卡压到底部、滑进 sticky 输入坞（z-index:5）的下面，第 2、3 条建议被盖住
-   （2026-09 移动端审查实测）。矮视口改回自然流向：内容从顶部开始，页面多出的
-   几十像素交给文档滚动，「贴住输入区」的视线设计只在放得下时才有意义。 */
+/* 矮视口的空态从顶部排列，超出内容交给文档滚动。 */
 @media (max-width: 560px), (max-height: 700px) {
   .transcript-region.is-empty {
     justify-content: flex-start;
@@ -432,15 +417,18 @@ async function chooseExample(value: string): Promise<void> {
   height: 0;
 }
 
-/* 输入区贴底。用 sticky 而不是 fixed：sticky 留在文档流里，所以上面的记录区
-   不需要用 padding 给它腾位置，也不会在 iOS 上跟着软键盘乱跳。
+/* 开始会话后输入区贴底，空态保持正常流向，避免遮住尚未点击的建议。
+   sticky 留在文档流里，记录区不需要额外预留输入区高度。
    顶部那道渐变是让滚上来的内容在贴近输入区时淡出，而不是被一条硬边裁断。 */
 .composer-dock {
+  padding: 12px 0 10px;
+  background: linear-gradient(to bottom, transparent, var(--surface-base) 22%);
+}
+
+.composer-dock.has-history {
   position: sticky;
   z-index: var(--z-dock);
   bottom: 0;
-  padding: 12px 0 10px;
-  background: linear-gradient(to bottom, transparent, var(--surface-base) 22%);
 }
 
 .dock-note {
@@ -464,7 +452,12 @@ async function chooseExample(value: string): Promise<void> {
 @media (max-width: 900px) {
   .workspace {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
     gap: 14px;
+  }
+
+  .chat-column {
+    min-height: 0;
   }
 
   .thread-rail {

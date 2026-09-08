@@ -42,15 +42,19 @@ const resetOpen = computed(() => props.resetPassword !== null)
 /* 两个开关各写一个转发函数，不合成「传事件名进来」的那一个：
    defineEmits 的重载签名把事件名与载荷绑在一起，传进来的联合类型两个重载都不匹配。 */
 function onActiveToggle(event: Event): void {
-  emit('set-active', checkedOf(event))
+  emit('set-active', checkedOf(event, props.user.is_active))
 }
 
 function onSuperuserToggle(event: Event): void {
-  emit('set-superuser', checkedOf(event))
+  emit('set-superuser', checkedOf(event, props.user.is_superuser))
 }
 
-function checkedOf(event: Event): boolean {
-  return (event.target as HTMLInputElement).checked
+function checkedOf(event: Event, confirmed: boolean): boolean {
+  const input = event.target as HTMLInputElement
+  const requested = input.checked
+  // 点击先改变了原生控件；显示值仍以接口确认的账号状态为准。
+  input.checked = confirmed
+  return requested
 }
 </script>
 

@@ -2,10 +2,8 @@
 import { CalendarClock, RefreshCw } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
-import type { KnowledgeBaseDto } from '@/api/knowledge-bases'
-import type { JobRunDto, ScheduledJobDto, ScheduledJobTaskType } from '@/api/scheduled-jobs'
+import type { JobRunDto, ScheduledJobDto } from '@/api/scheduled-jobs'
 import type { ExpandedPanel, ScheduledJobLoadState } from '../composables/useScheduledJobDirectory'
-import type { UseJobFormReturn } from '../composables/useJobForm'
 import JobDirectoryRow from './JobDirectoryRow.vue'
 
 /*
@@ -14,17 +12,13 @@ import JobDirectoryRow from './JobDirectoryRow.vue'
  * useScheduledJobDirectory，中间这一层不自己发请求。
  */
 
-const props = defineProps<{
+defineProps<{
   jobs: ScheduledJobDto[]
   loadState: ScheduledJobLoadState
   loadError: string
   busyJobIds: ReadonlySet<string>
   rowErrors: Readonly<Record<string, string>>
   expanded: ExpandedPanel | null
-  /** 编辑表单状态（页面持有）；展开编辑的行会拿到它。 */
-  editForm: UseJobFormReturn | null
-  /** 清理范围多选的候选项（启用中的知识库）。 */
-  knowledgeBaseOptions: KnowledgeBaseDto[]
   awaitedRunIds: ReadonlyMap<string, string>
 }>()
 
@@ -35,24 +29,8 @@ const emit = defineEmits<{
   remove: [job: ScheduledJobDto]
   'toggle-edit': [job: ScheduledJobDto]
   'toggle-history': [job: ScheduledJobDto]
-  'submit-edit': [job: ScheduledJobDto]
   'run-finished': [jobId: string, run: JobRunDto]
-  /* 编辑表单字段回写的逐层转发，理由见 JobDirectoryRow 的 emits 注释。 */
-  'update:keyValue': [value: string]
-  'update:taskType': [value: ScheduledJobTaskType]
-  'update:cronExpr': [value: string]
-  'update:limitPerSource': [value: number]
-  'update:batchSize': [value: number]
-  'update:staleAfterMinutes': [value: number]
-  'update:retentionDays': [value: number]
-  'update:dryRun': [value: boolean]
-  'update:knowledgeBaseIds': [value: string[]]
-  'update:enabled': [value: boolean]
 }>()
-
-function editFormFor(job: ScheduledJobDto): UseJobFormReturn | null {
-  return props.expanded?.jobId === job.id && props.expanded.kind === 'edit' ? props.editForm : null
-}
 </script>
 
 <template>
@@ -110,27 +88,16 @@ function editFormFor(job: ScheduledJobDto): UseJobFormReturn | null {
         :busy="busyJobIds.has(job.id)"
         :error="rowErrors[job.id] ?? ''"
         :expanded="expanded"
-        :edit-form="editFormFor(job)"
-        :knowledge-base-options="knowledgeBaseOptions"
         :awaited-run-ids="awaitedRunIds"
         @toggle-enabled="(job, value) => emit('toggle-enabled', job, value)"
         @run-now="emit('run-now', $event)"
         @remove="emit('remove', $event)"
         @toggle-edit="emit('toggle-edit', $event)"
         @toggle-history="emit('toggle-history', $event)"
-        @submit-edit="emit('submit-edit', $event)"
         @run-finished="(jobId, run) => emit('run-finished', jobId, run)"
-        @update:key-value="emit('update:keyValue', $event)"
-        @update:task-type="emit('update:taskType', $event)"
-        @update:cron-expr="emit('update:cronExpr', $event)"
-        @update:limit-per-source="emit('update:limitPerSource', $event)"
-        @update:batch-size="emit('update:batchSize', $event)"
-        @update:stale-after-minutes="emit('update:staleAfterMinutes', $event)"
-        @update:retention-days="emit('update:retentionDays', $event)"
-        @update:dry-run="emit('update:dryRun', $event)"
-        @update:knowledge-base-ids="emit('update:knowledgeBaseIds', $event)"
-        @update:enabled="emit('update:enabled', $event)"
-      />
+      >
+        <template #edit><slot name="edit" :job="job" /></template>
+      </JobDirectoryRow>
     </div>
   </section>
 </template>

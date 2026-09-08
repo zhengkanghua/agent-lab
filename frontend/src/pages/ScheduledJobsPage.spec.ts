@@ -173,6 +173,21 @@ afterEach(() => {
 })
 
 describe('ScheduledJobsPage', () => {
+  it('启停失败后开关仍显示已确认状态，再点继续尝试停用', async () => {
+    api.updateScheduledJob.mockRejectedValue(new Error('offline'))
+    const wrapper = await mountPage()
+    const input = wrapper.get<HTMLInputElement>('input[aria-label="启用 freshrss-sync"]')
+    input.element.click()
+    await flushPromises()
+    expect(input.element.checked).toBe(true)
+    expect(wrapper.text()).toContain('已启用')
+    input.element.click()
+    await flushPromises()
+    expect(api.updateScheduledJob).toHaveBeenCalledTimes(2)
+    expect(api.updateScheduledJob).toHaveBeenNthCalledWith(1, { jobId: syncJob.id, enabled: false })
+    expect(api.updateScheduledJob).toHaveBeenNthCalledWith(2, { jobId: syncJob.id, enabled: false })
+  })
+
   it('shows every saved scope and can retain only an inactive knowledge base', async () => {
     api.listKnowledgeBases.mockResolvedValue([newsKnowledgeBase, techKnowledgeBase])
     api.listScheduledJobs.mockResolvedValue([

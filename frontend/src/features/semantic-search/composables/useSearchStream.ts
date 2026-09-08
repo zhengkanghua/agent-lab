@@ -93,13 +93,14 @@ export function useSearchStream({
     })
   }
 
-  async function search(): Promise<void> {
-    const normalizedQuery = draft.value.trim()
+  async function search(): Promise<number | null> {
+    const submittedDraft = draft.value
+    const normalizedQuery = submittedDraft.trim()
 
     inputError.value = validateQuery(draft.value) ?? getScopeError()
     if (inputError.value) {
       // 输入校验没通过就结束：不要碰在途请求，也别清空任何状态。
-      return
+      return null
     }
 
     abortActive()
@@ -134,7 +135,7 @@ export function useSearchStream({
         signal: controller.signal,
       })
 
-      if (requestId !== requestSequence) return
+      if (requestId !== requestSequence) return null
 
       const names = new Map(response.scope.knowledge_bases.map((item) => [item.id, item.name]))
       const mapped = toNewsDocumentResults(response.results).map((item) => ({
@@ -149,7 +150,7 @@ export function useSearchStream({
         response.scope,
       )
     } catch (caught) {
-      if (requestId !== requestSequence || isAbortError(caught)) return
+      if (requestId !== requestSequence || isAbortError(caught)) return null
 
       const error =
         caught instanceof ApiError
@@ -165,6 +166,10 @@ export function useSearchStream({
         activeController = null
       }
     }
+
+    // 请求结束只消费提交时的草稿，等待期间新写的内容留给下一次检索。
+    if (draft.value === submittedDraft) draft.value = ''
+    return pending.id
   }
 
   /**
@@ -173,9 +178,9 @@ export function useSearchStream({
    * 用于错误轮的「再试一次」：直接把那条的 query 放进草稿并搜一遍，追加成新的最新记录。
    * 旧的那条失败记录保留在流里可回看，而不是原地被改写——它记录的是那次没搜成功的事实。
    */
-  async function retry(recordQuery: string): Promise<void> {
+  function retry(recordQuery: string): Promise<number | null> {
     draft.value = recordQuery
-    await search()
+    return search()
   }
 
   /** 清空整个检索流与输入草稿（Q6：等价于刷新后从零开始）。 */

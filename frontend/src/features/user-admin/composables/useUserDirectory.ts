@@ -138,7 +138,7 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
       resetUserPassword({ userId, password }),
     onSuccess: (updated) => {
       replaceUser(updated)
-      cancelPasswordReset()
+      if (resetUserId.value === updated.id) cancelPasswordReset()
       feedback.value = `已重置 ${updated.email} 的密码，并撤销该账号的全部会话。`
     },
   })
@@ -157,7 +157,8 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
       userId: user.id,
       fallback: '密码重置失败，请稍后重试。',
       onFailure: (message) => {
-        resetError.value = message
+        if (resetUserId.value === user.id) resetError.value = message
+        else setRowError(user.id, message)
       },
       run: async () => {
         await resetPasswordMutation.mutateAsync({ userId: user.id, password: resetPassword.value })

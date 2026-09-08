@@ -1,5 +1,5 @@
 import { defineComponent, h, nextTick } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 
@@ -249,6 +249,35 @@ describe('useUserDirectory', () => {
     expect(directory.resetUserId.value).toBe(reader.id)
     directory.openPasswordReset(reader)
     expect(directory.resetUserId.value).toBeNull()
+    wrapper.unmount()
+  })
+
+  it.each(['success', 'failure'])('另一账号的改密请求 %s 不清空或污染当前表单', async (outcome) => {
+    let finish!: (value: UserAdminDto) => void
+    let fail!: (error: Error) => void
+    api.resetUserPassword.mockImplementation(
+      () =>
+        new Promise<UserAdminDto>((resolve, reject) => {
+          finish = resolve
+          fail = reject
+        }),
+    )
+    const { wrapper, directory } = mountHarness()
+    await directory.load()
+    directory.openPasswordReset(reader)
+    directory.resetPassword.value = 'a'.repeat(12)
+    const pending = directory.submitPasswordReset(reader)
+    await flushPromises()
+    const other = { ...reader, id: 'other-account', email: 'other@example.com' }
+    directory.openPasswordReset(other)
+    directory.resetPassword.value = 'b'.repeat(12)
+    if (outcome === 'success') finish(reader)
+    else fail(new Error('offline'))
+    await pending
+    expect(directory.resetUserId.value).toBe(other.id)
+    expect(directory.resetPassword.value).toBe('b'.repeat(12))
+    expect(directory.resetError.value).toBe('')
+    if (outcome === 'failure') expect(directory.rowErrors.value[reader.id]).not.toBe('')
     wrapper.unmount()
   })
 

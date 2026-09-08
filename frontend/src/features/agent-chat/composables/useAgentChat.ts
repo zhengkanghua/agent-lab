@@ -35,6 +35,7 @@ export interface UseAgentChatOptions {
   getSystemPrompt?: () => string
   getScopeError?: () => string | null
   saveScope?: typeof updateAgentThreadScope
+  onThreadCreated?: (threadId: string) => void
 }
 
 const CANCELLED_TRACE_NOTE = '本轮对话已取消，这次工具调用的结果未送达。'
@@ -59,6 +60,7 @@ export function useAgentChat({
   getSystemPrompt = () => '',
   getScopeError = () => null,
   saveScope = updateAgentThreadScope,
+  onThreadCreated,
 }: UseAgentChatOptions = {}) {
   const draft = ref('')
   // 用深层 ref 而不是检索页那样的 shallowRef：流式过程要原地改写最后一轮的 answer 和
@@ -128,6 +130,7 @@ export function useAgentChat({
     const live = turns.value[turns.value.length - 1]!
 
     draft.value = ''
+    threadError.value = null
     status.value = 'streaming'
 
     try {
@@ -186,10 +189,16 @@ export function useAgentChat({
     }
   }
 
+  function acceptThreadId(id: string | null): void {
+    const created = threadId.value === null && id !== null
+    threadId.value = id
+    if (created) onThreadCreated?.(id)
+  }
+
   function applyEvent(turn: AgentTurn, event: AgentChatEvent): void {
     switch (event.event) {
       case 'run_started':
-        threadId.value = event.thread_id
+        acceptThreadId(event.thread_id)
         turn.runId = event.run_id
         turn.scope = event.scope
         scopeSaveError.value = null
@@ -205,7 +214,7 @@ export function useAgentChat({
         break
       case 'done':
         // 服务端在新建会话时才生成新 id，续聊时回的是同一个，直接覆盖即可。
-        threadId.value = event.thread_id
+        acceptThreadId(event.thread_id)
         turn.answer = event.answer
         turn.status = event.status === 'completed' ? 'done' : 'incomplete'
         turn.citations = event.citations ?? []
@@ -216,7 +225,7 @@ export function useAgentChat({
         // 和 done 一样认下这个 id：归属行在流开始之前就写好了，失败的这一轮同样属于一个
         // 已存在的会话。不认的话「重发这一轮」会不带 thread_id 发出去，服务端当成新会话，
         // 列表里于是多一条只有提问的记录。
-        threadId.value = event.thread_id
+        acceptThreadId(event.thread_id)
         turn.status = 'error'
         turn.error = presentAgentError(
           new ApiError({
@@ -318,6 +327,7 @@ export function useAgentChat({
     const controller = new AbortController()
     activeLoadController = controller
 
+    threadId.value = null
     turns.value = []
     draft.value = ''
     inputError.value = null

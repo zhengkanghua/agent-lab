@@ -161,6 +161,77 @@ describe('SearchPage search stream', () => {
     wrapper.unmount()
   })
 
+  it.each(['success', 'failure'])('检索 %s 后保留等待期间新写的草稿', async (outcome) => {
+    let finish!: (response: Response) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) =>
+        String(input).includes('/knowledge-bases')
+          ? Promise.resolve(Response.json([newsKnowledgeBase]))
+          : new Promise<Response>((resolve) => {
+              finish = resolve
+            }),
+      ),
+    )
+    const wrapper = mount(SearchPage, {
+      attachTo: document.body,
+      global: { plugins: [[VueQueryPlugin, { queryClient: makeQueryClient() }], makeRouter()] },
+    })
+    await flushPromises()
+    await wrapper.get('textarea').setValue('利率')
+    await wrapper.get('form').trigger('submit')
+    await wrapper.get('textarea').setValue('楼市的新问题')
+    finish(
+      outcome === 'success'
+        ? Response.json(scopedSearchResponse([]))
+        : Response.json({ code: 'service_unavailable' }, { status: 503 }),
+    )
+    await flushPromises()
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('楼市的新问题')
+    wrapper.unmount()
+  })
+
+  it('新检索结束时不从旧结果的全文阅读层抢走焦点', async () => {
+    let finish!: (response: Response) => void
+    let searches = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        if (String(input).includes('/knowledge-bases'))
+          return Promise.resolve(Response.json([newsKnowledgeBase]))
+        if (String(input).includes('/documents/'))
+          return Promise.resolve(new Response(null, { status: 503 }))
+        if (searches++ === 0)
+          return Promise.resolve(Response.json(scopedSearchResponse([documentResult('第一篇')])))
+        return new Promise<Response>((resolve) => {
+          finish = resolve
+        })
+      }),
+    )
+    const wrapper = mount(SearchPage, {
+      attachTo: document.body,
+      global: { plugins: [[VueQueryPlugin, { queryClient: makeQueryClient() }], makeRouter()] },
+    })
+    await flushPromises()
+    await wrapper.get('textarea').setValue('第一条检索')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await wrapper.get('textarea').setValue('第二条检索')
+    await wrapper.get('form').trigger('submit')
+    await wrapper.get('button.record-toggle').trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '阅读全文')!
+      .trigger('click')
+    await flushPromises()
+    const readerControl = document.activeElement
+    expect(readerControl?.closest('[role="dialog"]')).not.toBeNull()
+    finish(Response.json(scopedSearchResponse([])))
+    await flushPromises()
+    expect(document.activeElement).toBe(readerControl)
+    wrapper.unmount()
+  })
+
   it('选择多个知识库后发送明确范围，空选择不检索', async () => {
     const fetchMock = vi.fn<typeof fetch>((input) =>
       Promise.resolve(

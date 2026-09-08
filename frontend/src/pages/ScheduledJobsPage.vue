@@ -147,8 +147,6 @@ function openCreate(): void {
       :busy-job-ids="directory.busyJobIds.value"
       :row-errors="directory.rowErrors.value"
       :expanded="directory.expanded.value"
-      :edit-form="editForm"
-      :knowledge-base-options="knowledgeBaseOptions"
       :awaited-run-ids="directory.awaitedRunIds"
       @refresh="directory.load"
       @toggle-enabled="directory.toggleEnabled"
@@ -156,19 +154,42 @@ function openCreate(): void {
       @remove="directory.removeJob"
       @toggle-edit="directory.togglePanel($event.id, 'edit')"
       @toggle-history="directory.togglePanel($event.id, 'history')"
-      @submit-edit="editForm.submit()"
       @run-finished="directory.handleRunFinished"
-      @update:key-value="editForm.key.value = $event"
-      @update:task-type="editForm.setTaskType($event)"
-      @update:cron-expr="editForm.cronExpr.value = $event"
-      @update:limit-per-source="editForm.limitPerSource.value = $event"
-      @update:batch-size="editForm.batchSize.value = $event"
-      @update:stale-after-minutes="editForm.staleAfterMinutes.value = $event"
-      @update:retention-days="editForm.retentionDays.value = $event"
-      @update:dry-run="editForm.dryRun.value = $event"
-      @update:knowledge-base-ids="editForm.knowledgeBaseIds.value = $event"
-      @update:enabled="editForm.enabled.value = $event"
-    />
+    >
+      <template #edit="{ job }">
+        <JobForm
+          mode="edit"
+          :job="job"
+          :key-value="editForm.key.value"
+          :task-type="editForm.taskType.value"
+          :cron-expr="editForm.cronExpr.value"
+          :limit-per-source="editForm.limitPerSource.value"
+          :batch-size="editForm.batchSize.value"
+          :stale-after-minutes="editForm.staleAfterMinutes.value"
+          :retention-days="editForm.retentionDays.value"
+          :dry-run="editForm.dryRun.value"
+          :knowledge-base-ids="editForm.knowledgeBaseIds.value"
+          :knowledge-base-options="knowledgeBaseOptions"
+          :task-types="directory.taskTypes.value"
+          :enabled="editForm.enabled.value"
+          :errors="editForm.errors.value"
+          :form-error="editForm.formError.value"
+          :submitting="editForm.submitting.value"
+          @update:key-value="editForm.key.value = $event"
+          @update:task-type="editForm.setTaskType($event)"
+          @update:cron-expr="editForm.cronExpr.value = $event"
+          @update:limit-per-source="editForm.limitPerSource.value = $event"
+          @update:batch-size="editForm.batchSize.value = $event"
+          @update:stale-after-minutes="editForm.staleAfterMinutes.value = $event"
+          @update:retention-days="editForm.retentionDays.value = $event"
+          @update:dry-run="editForm.dryRun.value = $event"
+          @update:knowledge-base-ids="editForm.knowledgeBaseIds.value = $event"
+          @update:enabled="editForm.enabled.value = $event"
+          @submit="editForm.submit()"
+          @close="editForm.close()"
+        />
+      </template>
+    </JobDirectoryTable>
   </section>
 </template>
 

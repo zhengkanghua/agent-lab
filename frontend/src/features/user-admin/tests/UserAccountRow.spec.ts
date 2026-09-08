@@ -1,4 +1,5 @@
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { describe, expect, it } from 'vitest'
 import type { UserAdminDto } from '@/api/user-admin'
 import UserAccountRow from '../components/UserAccountRow.vue'
@@ -20,7 +21,10 @@ function user(overrides: Partial<UserAdminDto> = {}): UserAdminDto {
   }
 }
 
-function mountRow(props: Partial<InstanceType<typeof UserAccountRow>['$props']> = {}) {
+function mountRow(
+  props: Partial<InstanceType<typeof UserAccountRow>['$props']> = {},
+  attachTo?: Element,
+) {
   return mount(UserAccountRow, {
     props: {
       user: user(),
@@ -31,6 +35,7 @@ function mountRow(props: Partial<InstanceType<typeof UserAccountRow>['$props']> 
       resetError: '',
       ...props,
     },
+    attachTo,
   })
 }
 
@@ -72,17 +77,29 @@ describe('UserAccountRow', () => {
     }
   })
 
-  it('开关发出的是勾选框的新状态，不是取反后的旧值', async () => {
-    // 这两个转发函数从 event.target.checked 取值。写成 !user.is_active 也能在单击时
-    // 碰巧正确，但父组件失败回滚后 DOM 与 prop 会短暂不一致，那时取反给出的是错的。
-    const wrapper = mountRow({ user: user({ is_active: true, is_superuser: false }) })
-
-    await wrapper.get(`[data-testid="active-${OTHER_USER_ID}"]`).setValue(false)
-    await wrapper.get(`[data-testid="superuser-${OTHER_USER_ID}"]`).setValue(true)
-
-    expect(wrapper.emitted('set-active')).toEqual([[false]])
-    expect(wrapper.emitted('set-superuser')).toEqual([[true]])
-  })
+  it.each([
+    { field: 'active', event: 'set-active', confirmed: true },
+    { field: 'superuser', event: 'set-superuser', confirmed: false },
+  ])(
+    '$field 开关等待确认，失败后再次点击仍请求同一个目标状态',
+    async ({ field, event, confirmed }) => {
+      const wrapper = mountRow(
+        { user: user({ is_active: true, is_superuser: false }) },
+        document.body,
+      )
+      const input = wrapper.get<HTMLInputElement>(`[data-testid="${field}-${OTHER_USER_ID}"]`)
+      input.element.click()
+      await nextTick()
+      expect(input.element.checked).toBe(confirmed)
+      await wrapper.setProps({ busy: true })
+      await wrapper.setProps({ busy: false, error: '请求失败，请重试。' })
+      input.element.click()
+      await nextTick()
+      expect(input.element.checked).toBe(confirmed)
+      expect(wrapper.emitted(event)).toEqual([[!confirmed], [!confirmed]])
+      wrapper.unmount()
+    },
+  )
 
   it('三种身份各给一句说明，当前账号能被认出来', () => {
     expect(mountRow({ user: user({ is_environment_admin: true }) }).text()).toContain(

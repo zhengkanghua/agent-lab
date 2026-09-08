@@ -3,11 +3,8 @@ import { computed, ref } from 'vue'
 import { History, Pencil, Play, Trash2 } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
-import type { KnowledgeBaseDto } from '@/api/knowledge-bases'
-import type { JobRunDto, ScheduledJobDto, ScheduledJobTaskType } from '@/api/scheduled-jobs'
-import type { UseJobFormReturn } from '../composables/useJobForm'
+import type { JobRunDto, ScheduledJobDto } from '@/api/scheduled-jobs'
 import { formatBeijingTime, formatLastRunSummary, taskTypeLabel } from '../model/job-copy'
-import JobForm from './JobForm.vue'
 import JobRunHistory from './JobRunHistory.vue'
 import { supportsJobForm } from '../model/job-validation'
 
@@ -24,10 +21,6 @@ const props = defineProps<{
   busy: boolean
   error: string
   expanded: { jobId: string; kind: 'edit' | 'history' } | null
-  /** 编辑表单状态（页面持有）；只有当前行是编辑目标时才有值。 */
-  editForm: UseJobFormReturn | null
-  /** 清理范围多选的候选项（启用中的知识库）。 */
-  knowledgeBaseOptions: KnowledgeBaseDto[]
   awaitedRunIds: ReadonlyMap<string, string>
 }>()
 
@@ -37,21 +30,7 @@ const emit = defineEmits<{
   remove: [job: ScheduledJobDto]
   'toggle-edit': [job: ScheduledJobDto]
   'toggle-history': [job: ScheduledJobDto]
-  'submit-edit': [job: ScheduledJobDto]
   'run-finished': [jobId: string, run: JobRunDto]
-  /* 编辑表单的字段回写：行内表单是受控组件，字段值归页面的 editForm 持有，
-     这里只上报变化——直接改 editForm prop 会触发 vue/no-mutating-props，
-     而且会让「谁持有状态」这件事在两层组件里变得含糊。 */
-  'update:keyValue': [value: string]
-  'update:taskType': [value: ScheduledJobTaskType]
-  'update:cronExpr': [value: string]
-  'update:limitPerSource': [value: number]
-  'update:batchSize': [value: number]
-  'update:staleAfterMinutes': [value: number]
-  'update:retentionDays': [value: number]
-  'update:dryRun': [value: boolean]
-  'update:knowledgeBaseIds': [value: string[]]
-  'update:enabled': [value: boolean]
 }>()
 
 const confirmingDelete = ref(false)
@@ -65,6 +44,13 @@ const isEditOpen = computed(
 const isHistoryOpen = computed(
   () => props.expanded?.jobId === props.job.id && props.expanded.kind === 'history',
 )
+
+function toggleEnabled(event: Event): void {
+  const input = event.target as HTMLInputElement
+  const requested = input.checked
+  input.checked = props.job.enabled
+  emit('toggle-enabled', props.job, requested)
+}
 
 function onDeleteClick(): void {
   if (props.busy || executionPending.value) return
@@ -93,7 +79,7 @@ function onDeleteClick(): void {
           :checked="job.enabled"
           :disabled="busy"
           :aria-label="`启用 ${job.key}`"
-          @change="emit('toggle-enabled', job, ($event.target as HTMLInputElement).checked)"
+          @change="toggleEnabled"
         />
         <span>{{ job.enabled ? '已启用' : '已停用' }}</span>
       </label>
@@ -183,38 +169,7 @@ function onDeleteClick(): void {
 
     <BaseCallout v-if="error" class="job-error" tone="danger" :description="error" />
 
-    <JobForm
-      v-if="isEditOpen && editForm !== null && !job.enabled && !job.active_run"
-      mode="edit"
-      :job="job"
-      :key-value="editForm.key.value"
-      :task-type="editForm.taskType.value"
-      :cron-expr="editForm.cronExpr.value"
-      :limit-per-source="editForm.limitPerSource.value"
-      :batch-size="editForm.batchSize.value"
-      :stale-after-minutes="editForm.staleAfterMinutes.value"
-      :retention-days="editForm.retentionDays.value"
-      :dry-run="editForm.dryRun.value"
-      :knowledge-base-ids="editForm.knowledgeBaseIds.value"
-      :knowledge-base-options="knowledgeBaseOptions"
-      :task-types="editForm.taskTypes.value"
-      :enabled="editForm.enabled.value"
-      :errors="editForm.errors.value"
-      :form-error="editForm.formError.value"
-      :submitting="editForm.submitting.value"
-      @update:key-value="emit('update:keyValue', $event)"
-      @update:task-type="emit('update:taskType', $event)"
-      @update:cron-expr="emit('update:cronExpr', $event)"
-      @update:limit-per-source="emit('update:limitPerSource', $event)"
-      @update:batch-size="emit('update:batchSize', $event)"
-      @update:stale-after-minutes="emit('update:staleAfterMinutes', $event)"
-      @update:retention-days="emit('update:retentionDays', $event)"
-      @update:dry-run="emit('update:dryRun', $event)"
-      @update:knowledge-base-ids="emit('update:knowledgeBaseIds', $event)"
-      @update:enabled="emit('update:enabled', $event)"
-      @submit="emit('submit-edit', job)"
-      @close="emit('toggle-edit', job)"
-    />
+    <slot v-if="isEditOpen && !job.enabled && !executionPending" name="edit" />
 
     <JobRunHistory
       v-if="isHistoryOpen"

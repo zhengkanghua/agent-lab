@@ -617,6 +617,54 @@ describe('AgentChatPage', () => {
       wrapper.unmount()
     })
 
+    it('历史失败后成功开始新会话，不保留旧会话的错误提示', async () => {
+      threadsApi.getAgentThreadMessages.mockRejectedValueOnce(new Error('历史暂不可读'))
+      const { wrapper } = await mountThreadPage()
+      expect(wrapper.find('.thread-error').exists()).toBe(true)
+      threadsApi.getAgentThreadMessages.mockResolvedValue(REPLAY)
+      await wrapper.get('.message-input').setValue('重新开始提问')
+      await wrapper.get('.agent-form').trigger('submit')
+      await flushPromises()
+      expect(wrapper.find('.thread-error').exists()).toBe(false)
+      expect(wrapper.text()).toContain('之前答过的')
+      wrapper.unmount()
+    })
+
+    it.each(['empty', 'loaded'])(
+      '加载另一会话时后退到 %s，迟到响应不能改写当前页面',
+      async (origin) => {
+        const { wrapper, router } = await mountPage()
+        if (origin === 'loaded') {
+          threadsApi.getAgentThreadMessages.mockResolvedValue(REPLAY)
+          await router.push(`/agent/${THREAD_ID}`)
+          await flushPromises()
+        }
+        const previousPath = router.currentRoute.value.fullPath
+        let finish!: (replay: typeof REPLAY) => void
+        threadsApi.getAgentThreadMessages.mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finish = resolve
+            }),
+        )
+        const nextId = '30000000-0000-4000-8000-000000000002'
+        await router.push(`/agent/${nextId}`)
+        await flushPromises()
+        router.back()
+        await flushPromises()
+        finish({
+          ...REPLAY,
+          thread_id: nextId,
+          turns: [{ question: '已放弃的问题', answer: '迟到的回答', status: 'completed' }],
+        })
+        await flushPromises()
+        expect(router.currentRoute.value.fullPath).toBe(previousPath)
+        expect(wrapper.text()).not.toContain('迟到的回答')
+        if (origin === 'loaded') expect(wrapper.text()).toContain('之前答过的')
+        wrapper.unmount()
+      },
+    )
+
     it('历史被压缩过时页面上有说明', async () => {
       threadsApi.getAgentThreadMessages.mockResolvedValue({
         ...REPLAY,
