@@ -11,6 +11,8 @@ dependencies = [
     "alembic>=1.19.1",
     "apscheduler>=3.11,<4",
     "beautifulsoup4>=4.15.0",
+    "docling-core[chunking]==2.95.0",
+    "docling-slim[format-html,format-markdown]==2.126.0",
     "fastapi>=0.141.1",
     "fastapi-users[sqlalchemy]>=15,<16",
     "httpx>=0.28.1",
