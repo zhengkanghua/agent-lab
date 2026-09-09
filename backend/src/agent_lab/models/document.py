@@ -230,6 +230,13 @@ class DocumentRecord(TimestampMixin, Base):
         nullable=True,
         comment="最近一次索引失败的脱敏、限长错误说明，不保存密钥或完整正文。",
     )
+    current_version_id: Mapped[UUID | None] = mapped_column(
+        Uuid, nullable=True, comment="当前正式可见的 DocumentVersion 身份。"
+    )
+    usage_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="active", server_default="active",
+        comment="active、rejected 或 deleting；候选处理不会改变正式可见性。",
+    )
 
     # relationship 只描述 ORM 对象导航，不会新增数据库列；真正的数据库关联由
     # source_id 外键承担。Pipeline 使用该属性前必须 eager-load，避免异步懒加载。

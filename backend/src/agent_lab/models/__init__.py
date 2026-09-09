@@ -2,6 +2,11 @@
 
 from agent_lab.models.agent_thread import AgentThreadRecord
 from agent_lab.models.document import DocumentRecord
+from agent_lab.models.document_processing import (
+    DocumentProcessingRecord,
+    DocumentReviewRecord,
+    DocumentVersion,
+)
 from agent_lab.models.knowledge_base import KnowledgeBaseRecord
 from agent_lab.models.scheduled_job import JobRunRecord, ScheduledJobRecord
 from agent_lab.models.source import SourceRecord
@@ -12,6 +17,9 @@ __all__ = [
     "AccessTokenRecord",
     "AgentThreadRecord",
     "DocumentRecord",
+    "DocumentProcessingRecord",
+    "DocumentReviewRecord",
+    "DocumentVersion",
     "DocumentDeletionRecord",
     "WriteOperationRecord",
     "JobRunRecord",
