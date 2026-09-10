@@ -11,10 +11,11 @@ from docling_core.types.doc import DocItemLabel, DoclingDocument
 
 from agent_lab.knowledge.adapters.docling_structure import export_structure
 from agent_lab.knowledge.processing.contracts import DocumentProcessingError, ParsedDocument, ProcessingIssue
+from agent_lab.knowledge.processing.specification import PARSER_ID
 
 
 class DoclingDocumentParser:
-    parser_id = "docling-text-2.126.0-v1"
+    parser_id = PARSER_ID
 
     def parse(self, data: bytes, *, mime_type: str, title: str) -> ParsedDocument:
         if mime_type not in {"text/plain", "text/markdown", "text/html"}:

@@ -28,14 +28,14 @@ async def no_resources(*_args):
 def test_only_requested_dependencies_are_created_and_all_are_closed(monkeypatch, step):
     import agent_lab.pipeline.write_runtime as module
     importer = Mock()
-    index = SimpleNamespace(ensure_ready=AsyncMock(), close=AsyncMock(), service=object())
+    index = SimpleNamespace(run=AsyncMock(return_value="index-result"))
     indexing = Mock(return_value=index)
     deletion = SimpleNamespace(close=AsyncMock())
     settings = Mock(return_value=SimpleNamespace(collection_alias="synthetic_current"))
     monkeypatch.setattr(module, "build_qdrant_client", Mock(return_value=deletion))
     service = SimpleNamespace(prune_old_documents=AsyncMock(return_value="retention-result"))
     monkeypatch.setattr(module, "DocumentRetentionService", Mock(return_value=service))
-    runtime = PipelineWriteRuntime.lazy(session_factory=no_resources, freshrss_factory=importer, indexing_factory=indexing, qdrant_settings_factory=settings)
+    runtime = PipelineWriteRuntime.lazy(session_factory=no_resources, freshrss_factory=importer, processing_factory=indexing, qdrant_settings_factory=settings)
     runtime.executor = SimpleNamespace(writing=no_resources, sync_news=AsyncMock(return_value="sync-result"), index_pending=AsyncMock(return_value="index-result"))
 
     async def verify():
@@ -50,7 +50,7 @@ def test_only_requested_dependencies_are_created_and_all_are_closed(monkeypatch,
         await runtime.close()
     asyncio.run(verify())
     assert importer.call_count == (step == "sync")
-    assert indexing.call_count == index.close.await_count == (step == "index")
+    assert indexing.call_count == index.run.await_count == (step == "index")
     assert settings.call_count == deletion.close.await_count == (step == "retention")
 
 
@@ -59,7 +59,7 @@ def test_retention_service_creation_failure_still_closes_created_client(monkeypa
     client = SimpleNamespace(close=AsyncMock())
     monkeypatch.setattr(module, "build_qdrant_client", lambda _: client)
     monkeypatch.setattr(module, "DocumentRetentionService", Mock(side_effect=ValueError("本地构造失败")))
-    runtime = PipelineWriteRuntime.lazy(session_factory=no_resources, freshrss_factory=Mock(), indexing_factory=Mock(), qdrant_settings_factory=lambda: SimpleNamespace(collection_alias="synthetic"))
+    runtime = PipelineWriteRuntime.lazy(session_factory=no_resources, freshrss_factory=Mock(), processing_factory=Mock(), qdrant_settings_factory=lambda: SimpleNamespace(collection_alias="synthetic"))
     runtime.executor = SimpleNamespace(writing=no_resources)
 
     async def verify():

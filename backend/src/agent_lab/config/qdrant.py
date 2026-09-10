@@ -51,7 +51,7 @@ class QdrantSettings(BaseSettings):
         ),
     )
     collection_schema_version: str = Field(
-        default="v2",
+        default="v3",
         min_length=2,
         description=(
             "向量索引契约版本，来源于 QDRANT_COLLECTION_SCHEMA_VERSION；模型、维度、"

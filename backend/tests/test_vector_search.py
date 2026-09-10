@@ -92,7 +92,7 @@ def qdrant_settings(*, environment: str = "search_test") -> QdrantSettings:
         api_key=SecretStr("search-secret-must-not-leak"),
         request_timeout_seconds=7,
         environment=environment,
-        collection_schema_version="v2",
+        collection_schema_version="v3",
         collection_generation=1,
         vector_dimension=3,
         distance="Cosine",
@@ -126,9 +126,11 @@ def build_payload(
 ) -> dict[str, Any]:
     """构造完整的阶段 2 扁平新闻 Payload。"""
 
+    identity = str(document_id or uuid4())
     payload: dict[str, Any] = {
         "page_content": f"新闻正文 chunk {chunk_index}",
-        "document_id": str(document_id or uuid4()),
+        "document_id": identity,
+        "index_instance_id": identity,
         "knowledge_base_id": str(DEFAULT_NEWS_KNOWLEDGE_BASE_ID),
         "content_hash": "a" * 64,
         "chunk_index": chunk_index,
@@ -144,7 +146,7 @@ def build_payload(
         "document_external_id": "article/42",
         "authors": ["作者甲"],
         "labels": labels if labels is not None else ["宏观", "利率"],
-        "index_schema_version": "v2",
+        "index_schema_version": "v3",
         "embedding_model": "bge-m3:567m",
     }
     if published_at is not None:
@@ -737,7 +739,7 @@ def test_search_response_requires_uuid_and_complete_typed_payload() -> None:
         (SimpleNamespace(id=valid_point_id, score=1.0, payload={**valid_payload, "chunk_index": 2}), "响应契约"),
         # index_schema_version 不进 VectorSearchResult，所以它的把关全靠 _map_point 里
         # 对 Payload 的等值比较：写坏、缺失都必须拒绝，否则会把别的索引空间的数据搜出来。
-        (SimpleNamespace(id=valid_point_id, score=1.0, payload={**valid_payload, "index_schema_version": "v3"}), "非预期的索引"),
+        (SimpleNamespace(id=valid_point_id, score=1.0, payload={**valid_payload, "index_schema_version": "v2"}), "非预期的索引"),
         (SimpleNamespace(id=valid_point_id, score=1.0, payload={key: value for key, value in valid_payload.items() if key != "index_schema_version"}), "非预期的索引"),
     ]
     for point, message in cases:

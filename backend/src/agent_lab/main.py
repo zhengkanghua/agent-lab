@@ -149,11 +149,13 @@ def build_vector_search_runtime() -> VectorSearchRuntime:
     """
 
     from agent_lab.knowledge.composition import build_knowledge_base_service
+    from agent_lab.knowledge.adapters.visibility import PostgresDocumentVisibility
 
     return VectorSearchRuntime.build(
         get_qdrant_settings(),
         get_ollama_embedding_settings(),
         knowledge_base_scope=build_knowledge_base_service(),
+        document_visibility=PostgresDocumentVisibility(async_session_factory),
     )
 
 

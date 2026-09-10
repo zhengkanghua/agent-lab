@@ -240,6 +240,15 @@ class DocumentRecord(TimestampMixin, Base):
                          name="fk_documents_latest_processing_id"), nullable=True,
         comment="最近接收的候选记录；不会改变当前已采用正文。",
     )
+    current_index_instance_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True,
+        comment="当前正式读取的物理索引实例；重建不改写已采用历史。")
+    draft_processing_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("document_processing_records.id", ondelete="SET NULL", use_alter=True,
+                         name="fk_documents_draft_processing_id"), nullable=True,
+        comment="最新人工草稿；来源更新不会覆盖。",
+    )
+    manual_review_required: Mapped[bool] = mapped_column(default=False, server_default="false", nullable=False,
+        comment="主动复核、人工修正或拒绝后，新来源必须人工确认。")
     management_revision: Mapped[int] = mapped_column(
         nullable=False, default=1, server_default="1",
         comment="管理修改的并发修订；接收候选不推进正式业务版本。",

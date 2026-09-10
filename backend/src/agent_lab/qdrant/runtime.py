@@ -19,8 +19,8 @@ from qdrant_client import AsyncQdrantClient
 from agent_lab.config.ollama_embedding import OllamaEmbeddingSettings
 from agent_lab.config.qdrant import QdrantSettings
 from agent_lab.knowledge.ports import KnowledgeBaseScope
-from agent_lab.pipeline.document_chunk_pipeline import DocumentChunkPipeline
-from agent_lab.pipeline.document_chunker import DocumentChunker
+from agent_lab.knowledge.processing.indexing import CandidateIndexer
+from agent_lab.knowledge.visibility import AdoptedVectorSearch, DocumentVisibility
 from agent_lab.pipeline.ollama_embedding_provider import (
     OllamaEmbeddingProvider,
 )
@@ -31,9 +31,6 @@ from agent_lab.qdrant.lifecycle import (
 )
 from agent_lab.qdrant.search import QdrantVectorSearch
 from agent_lab.qdrant.store import QdrantChunkStore
-from agent_lab.services.document_indexing_service import (
-    DocumentIndexingService,
-)
 from agent_lab.services.vector_search_service import VectorSearchService
 
 
@@ -130,6 +127,7 @@ class VectorSearchRuntime:
         ollama_settings: OllamaEmbeddingSettings,
         *,
         knowledge_base_scope: KnowledgeBaseScope,
+        document_visibility: DocumentVisibility,
         client: AsyncQdrantClient | None = None,
     ) -> "VectorSearchRuntime":
         """由同一配置组装 query Provider 与 current Alias 搜索组件。
@@ -166,7 +164,7 @@ class VectorSearchRuntime:
         # 3、用同一个 spec 拼装 Service（构造时就会校验模型一致性）
         service = VectorSearchService(
             embedding_provider=embedding_provider,
-            vector_search=vector_search,
+            vector_search=AdoptedVectorSearch(vector_search, document_visibility),
             spec=spec,
             knowledge_base_scope=knowledge_base_scope,
         )
@@ -198,7 +196,7 @@ class DocumentIndexingRuntime:
 
     实例由 ``build`` 创建，构造时不访问网络。使用约定（三步）：
     1. 开始索引前先调 ``ensure_ready()``：创建/校验物理 Collection 与 current Alias；
-    2. 用 ``service`` 逐篇索引（切分 → 向量化 → 写入 Qdrant）；
+    2. 用 ``service`` 准备冻结候选（已有 Chunk → 向量化 → 隔离写入 Qdrant）；
     3. 进程结束时调 ``close()`` 释放连接。
 
     它不持有 Search Service——写进程不提供读入口，读由独立的 VectorSearchRuntime
@@ -208,7 +206,7 @@ class DocumentIndexingRuntime:
 
     client: AsyncQdrantClient
     lifecycle: QdrantCollectionLifecycle
-    service: DocumentIndexingService
+    service: CandidateIndexer
     spec: VectorIndexSpec
     embedding_provider: OllamaEmbeddingProvider
 
@@ -245,15 +243,7 @@ class DocumentIndexingRuntime:
             ollama_settings,
             client,
         )
-        # 2、往上装写路径零件：切分流水线（参数取自 spec）、Collection/Alias 生命周期、
-        #    只用 current Alias 的 Point Store
-        chunk_pipeline = DocumentChunkPipeline(
-            document_chunker=DocumentChunker(
-                chunk_size=spec.chunk_size,
-                chunk_overlap=spec.chunk_overlap,
-                encoding_name=spec.tokenizer,
-            )
-        )
+        # 2、只接受已经预览并冻结的 Chunk，不在索引时重新解析或切分。
         lifecycle = QdrantCollectionLifecycle(
             qdrant_client,
             qdrant_settings,
@@ -264,13 +254,7 @@ class DocumentIndexingRuntime:
             qdrant_settings,
             spec,
         )
-        # 3、用同一 spec 拼装索引 Service（构造时会校验 Chunk 参数/模型一致性）
-        service = DocumentIndexingService(
-            chunk_pipeline=chunk_pipeline,
-            embedding_provider=embedding_provider,
-            point_store=point_store,
-            spec=spec,
-        )
+        service = CandidateIndexer(embedding_provider, point_store, spec.collection_metadata)
         return cls(
             client=qdrant_client,
             lifecycle=lifecycle,

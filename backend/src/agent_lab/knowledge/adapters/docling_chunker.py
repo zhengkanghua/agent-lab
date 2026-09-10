@@ -14,6 +14,7 @@ from agent_lab.knowledge.processing.contracts import (
     ChunkResult, ChunkSpecification, DocumentProcessingError, ParsedDocument,
     PreviewChunk, ProcessingIssue,
 )
+from agent_lab.knowledge.processing.specification import chunk_specification
 
 
 class DoclingStructuredChunker:
@@ -35,10 +36,7 @@ class DoclingStructuredChunker:
             tokenizer=tokenizer, merge_peers=False, repeat_table_header=True,
             serializer_provider=DocumentSerializerProvider(),
         )
-        self.specification = ChunkSpecification(
-            algorithm="docling-hybrid-2.95.0-v1", tokenizer=BGE_M3_TOKENIZER,
-            tokenizer_revision=BGE_M3_TOKENIZER_REVISION, max_tokens=max_tokens,
-        )
+        self.specification = chunk_specification(max_tokens)
 
     def count_tokens(self, text: str) -> int:
         return len(self._tokenizer.encode(text, add_special_tokens=True))

@@ -28,6 +28,7 @@ from agent_lab.qdrant.index_spec import VectorIndexSpec
 from agent_lab.qdrant.payload import QdrantPayloadMapper
 from agent_lab.domain.write_scope import remote_write
 from agent_lab.knowledge.document_contracts import ReplaceChunksResult
+from agent_lab.knowledge.processing.indexing import IndexTarget
 
 
 class QdrantPointStoreError(RuntimeError):
@@ -126,6 +127,76 @@ class QdrantChunkStore:
         """返回 Store 写入和校验 Point 时使用的不可变索引规格。"""
 
         return self._spec
+
+    @staticmethod
+    def _instance_filter(document_id: UUID, index_instance_id: UUID) -> models.Filter:
+        return models.Filter(must=[
+            models.FieldCondition(key="document_id", match=models.MatchValue(value=str(document_id))),
+            models.FieldCondition(key="index_instance_id", match=models.MatchValue(value=str(index_instance_id))),
+        ])
+
+    async def prepare_candidate(self, target: IndexTarget, vectors: Sequence[Sequence[Real]]) -> None:
+        """只准备一个隔离索引实例；完整回读核验之前绝不删除旧 Point。"""
+        chunks = target.preview.chunk_result.chunks
+        if not chunks or len(chunks) != len(vectors):
+            raise QdrantPointStoreError("候选 Chunk 与向量数量不一致。")
+        if [chunk.sequence for chunk in chunks] != list(range(len(chunks))):
+            raise QdrantPointStoreError("候选 Chunk 序号不连续。")
+        points = [models.PointStruct(
+            id=target.chunk_id(chunk.sequence), vector=self._validate_vector(vector, chunk.sequence),
+            payload=self._payload_mapper.build_candidate(target, chunk),
+        ) for chunk, vector in zip(chunks, vectors, strict=True)]
+        await self._upsert_points(points)
+        try:
+            count = await self._client.count(
+                collection_name=self._collection_alias, exact=True,
+                count_filter=self._instance_filter(target.document_id, target.index_instance_id),
+            )
+            if count.count != len(points):
+                raise QdrantPointStoreError("候选 Point 数量不完整。")
+            for start in range(0, len(points), self._settings.write_batch_size):
+                batch = points[start:start + self._settings.write_batch_size]
+                records = await self._client.retrieve(
+                    collection_name=self._collection_alias, ids=[point.id for point in batch],
+                    with_payload=True, with_vectors=True,
+                )
+                actual = {str(record.id): record for record in records}
+                if len(actual) != len(records) or set(actual) != {str(point.id) for point in batch}:
+                    raise QdrantPointStoreError("候选 Point 身份不完整。")
+                for point in batch:
+                    record = actual[str(point.id)]
+                    if record.payload != point.payload:
+                        raise QdrantPointStoreError("候选 Point 内容与冻结预览不一致。")
+                    if not isinstance(record.vector, list):
+                        raise QdrantPointStoreError("候选 Point 缺少稠密向量。")
+                    vector = self._validate_vector(record.vector, 0)
+                    expected_norm, actual_norm = math.hypot(*point.vector), math.hypot(*vector)
+                    # Qdrant Cosine 存储 float32 单位向量；只比较方向，不要求原始幅值相等。
+                    if any(not math.isclose(a / actual_norm, b / expected_norm, rel_tol=1e-4, abs_tol=1e-5)
+                           for a, b in zip(vector, point.vector, strict=True)):
+                        raise QdrantPointStoreError("候选 Point 向量与本次写入不一致。")
+        except QdrantPointStoreError:
+            raise
+        except Exception as exc:
+            raise QdrantPointStoreError(type(exc).__name__) from None
+
+    @remote_write
+    async def delete_instance(self, document_id: UUID, index_instance_id: UUID) -> None:
+        """只回收被明确指名的实例，确认数量为零后才允许删除排除记录。"""
+        condition = self._instance_filter(document_id, index_instance_id)
+        try:
+            result = await self._client.delete(
+                collection_name=self._collection_alias,
+                points_selector=models.FilterSelector(filter=condition), wait=True,
+            )
+            self._ensure_completed(result, "instance delete")
+            count = await self._client.count(collection_name=self._collection_alias, count_filter=condition, exact=True)
+            if count.count:
+                raise QdrantPointStoreError("旧索引实例清理尚未完成。")
+        except QdrantPointStoreError:
+            raise
+        except Exception as exc:
+            raise QdrantPointStoreError(type(exc).__name__) from None
 
     async def replace_document_chunks(
         self,

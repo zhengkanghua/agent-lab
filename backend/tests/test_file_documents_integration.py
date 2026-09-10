@@ -80,6 +80,7 @@ async def isolated_vectors(schema, *, spec=None):
         aliased = True
         if remote:
             await client.create_payload_index(settings.collection_alias, "document_id", models.PayloadSchemaType.KEYWORD, wait=True)
+            await client.create_payload_index(settings.collection_alias, "index_instance_id", models.PayloadSchemaType.KEYWORD, wait=True)
             await client.create_payload_index(settings.collection_alias, "knowledge_base_id", models.PayloadSchemaType.UUID, wait=True)
         yield SimpleNamespace(client=client, settings=settings, spec=spec, store=QdrantDeletionStore(client, settings))
     finally:

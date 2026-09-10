@@ -60,22 +60,27 @@ def check_status():
 async def main():
     from agent_lab.config.scheduler import get_scheduler_settings
     from agent_lab.db.session import engine
-    from agent_lab.pipeline.assembly import build_scheduler_runner
+    from agent_lab.pipeline.assembly import build_document_processing_consumer, build_scheduler_runner
 
     if not get_scheduler_settings().enabled:
         raise RuntimeError("独立 scheduler 的调度开关未启用。")
     write_status(ready=False, jobs=0)
     scheduler = build_scheduler_runner(status_writer=write_status)
+    documents = build_document_processing_consumer()
     stopping = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stopping.set())
     try:
         await scheduler.start()
+        await documents.start()
         logger.info("scheduler 已加载配置并启动")
         await stopping.wait()
     finally:
         try:
-            await scheduler.close()
+            try:
+                await documents.close()
+            finally:
+                await scheduler.close()
         finally:
             await engine.dispose()
 

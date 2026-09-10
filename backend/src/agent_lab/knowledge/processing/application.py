@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from collections.abc import Callable
+from datetime import datetime
 from uuid import UUID
 
 from agent_lab.knowledge.processing.contracts import DocumentPreview, DocumentProcessingError
@@ -89,14 +90,19 @@ class DocumentProcessingApplication:
 
         async with self._work() as repository:
             saved = await repository.save_failure(claim, failure, state=state)
-        return self._receipt(claim, state) if saved else None
+        return self._receipt(claim, state, failure) if saved else None
 
     def _build_preview(self, data: bytes, *, mime_type: str, title: str) -> DocumentPreview:
         return self._processor().preview(data, mime_type=mime_type, title=title)
 
     @staticmethod
-    def _receipt(claim, state):
-        return ProcessingReceipt(claim.id, claim.document_id, state, claim.source_sha256, claim.candidate_revision)
+    def _receipt(claim, state, error_code=None):
+        return ProcessingReceipt(claim.id, claim.document_id, state, claim.source_sha256, claim.candidate_revision, error_code)
+
+    async def requeue_computations(self, *, started_before: datetime) -> int:
+        """只重排超时纯计算，领取代次保证旧线程不能覆盖重排后的结果。"""
+        async with self._work() as repository:
+            return await repository.requeue_computations(started_before=started_before)
 
     async def preview(self, processing_id: UUID) -> DocumentPreview | None:
         async with self._work() as repository:

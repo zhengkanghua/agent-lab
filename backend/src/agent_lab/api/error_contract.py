@@ -103,6 +103,7 @@ from agent_lab.qdrant.search import (
 from agent_lab.qdrant.store import QdrantPointStoreError
 from agent_lab.schemas.pipeline import PipelineErrorResponse
 from agent_lab.services.vector_search_service import QueryVectorValidationError
+from agent_lab.knowledge.visibility import SearchVisibilityError
 
 
 VectorSearchErrorCode = Literal[
@@ -123,6 +124,7 @@ VectorSearchErrorCode = Literal[
     "qdrant_configuration_invalid",
     "qdrant_response_invalid",
     "qdrant_service_error",
+    "document_visibility_unavailable",
 ]
 
 
@@ -248,6 +250,10 @@ _OLLAMA_UPSTREAM_RULES: tuple[ErrorContractRule, ...] = (
 # 因此 UNCLASSIFIED_ERROR_RULE 不会出现在搜索响应里（它的 500 code 也不在
 # VectorSearchErrorCode 里）。
 VECTOR_SEARCH_ERROR_RULES: tuple[ErrorContractRule, ...] = (
+    ErrorContractRule(
+        exceptions=(SearchVisibilityError,), status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="document_visibility_unavailable", detail="文档版本正在变化或暂时无法核验，请稍后重试。", retryable=True,
+    ),
     ErrorContractRule(
         exceptions=(VectorSearchRuntimeUnavailableError,),
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -733,6 +739,7 @@ AGENT_TOOL_ERROR_RULES: tuple[ErrorContractRule, ...] = (
 # 不含 VectorSearchRuntimeUnavailableError：它由依赖注入在进入 endpoint 前抛出，
 # endpoint 内的 try 永远接不到，统一由应用级 handler 映射成同一个 503。
 SEARCH_UPSTREAM_EXCEPTIONS: tuple[type[BaseException], ...] = (
+    SearchVisibilityError,
     OllamaEmbeddingError,
     QueryVectorValidationError,
     QdrantVectorSearchError,

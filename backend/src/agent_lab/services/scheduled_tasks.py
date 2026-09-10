@@ -27,6 +27,9 @@ async def index_pending(runtime, params):
     return {
         "requeued_stale_count": result.requeued_stale_count,
         "candidate_count": result.candidate_count,
+        "parsed_count": result.parsed_count,
+        "review_count": result.review_count,
+        "cleaned_count": result.cleaned_count,
         "indexed_count": result.indexed_count,
         "skipped_count": result.skipped_count,
         "failed_count": result.failed_count,

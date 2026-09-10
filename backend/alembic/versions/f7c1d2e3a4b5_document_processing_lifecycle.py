@@ -11,12 +11,16 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.add_column("knowledge_bases", sa.Column("visibility_revision", sa.Integer(), nullable=False, server_default="1"))
     op.alter_column("documents", "content_text", nullable=True,
                     comment="当前已采用正文；首次采用前为空。")
     op.alter_column("documents", "content_hash", nullable=True,
                     comment="当前已采用正文的 SHA-256；首次采用前为空。")
     op.add_column("documents", sa.Column("management_revision", sa.Integer(), nullable=False, server_default="1"))
     op.add_column("documents", sa.Column("latest_processing_id", sa.Uuid(), nullable=True))
+    op.add_column("documents", sa.Column("draft_processing_id", sa.Uuid(), nullable=True))
+    op.add_column("documents", sa.Column("current_index_instance_id", sa.Uuid(), nullable=True))
+    op.add_column("documents", sa.Column("manual_review_required", sa.Boolean(), nullable=False, server_default="false"))
     op.add_column("documents", sa.Column("current_version_id", sa.Uuid(), nullable=True,
         comment="当前正式可见的 DocumentVersion 身份。"))
     op.add_column("documents", sa.Column("usage_status", sa.String(32), nullable=False,
@@ -48,6 +52,11 @@ def upgrade() -> None:
         sa.Column("error_code", sa.String(128), nullable=True),
         sa.Column("claim_token", sa.String(64), nullable=True),
         sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("index_instance_id", sa.Uuid(), nullable=True, unique=True),
+        sa.Column("index_target", postgresql.JSONB(), nullable=True),
+        sa.Column("index_prepared_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("index_cleanup_pending", sa.Boolean(), nullable=False, server_default="false"),
+        sa.Column("index_deleted_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("latest_source_object_key", sa.String(1024), nullable=True),
         sa.Column("latest_source_sha256", sa.String(64), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
@@ -58,6 +67,10 @@ def upgrade() -> None:
     op.create_foreign_key(
         "fk_documents_latest_processing_id", "documents", "document_processing_records",
         ["latest_processing_id"], ["id"], ondelete="SET NULL",
+    )
+    op.create_foreign_key(
+        "fk_documents_draft_processing_id", "documents", "document_processing_records",
+        ["draft_processing_id"], ["id"], ondelete="SET NULL",
     )
 
     op.create_table(
@@ -74,6 +87,10 @@ def upgrade() -> None:
         sa.Column("chunk_result", postgresql.JSONB(), nullable=False),
         sa.Column("processing_spec", postgresql.JSONB(), nullable=False),
         sa.Column("source_object_key", sa.String(1024), nullable=True),
+        sa.Column("source_object_version", sa.String(512), nullable=True),
+        sa.Column("source_sha256", sa.String(64), nullable=True),
+        sa.Column("source_size", sa.Integer(), nullable=True),
+        sa.Column("metadata_snapshot", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")),
         sa.Column("index_instance_id", sa.String(128), nullable=True),
         sa.Column("indexed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
@@ -111,11 +128,16 @@ def downgrade() -> None:
     op.drop_index("ix_document_processing_records_document", table_name="document_processing_records")
     op.drop_index("ix_document_processing_records_state", table_name="document_processing_records")
     op.drop_constraint("fk_documents_latest_processing_id", "documents", type_="foreignkey")
+    op.drop_constraint("fk_documents_draft_processing_id", "documents", type_="foreignkey")
     op.drop_table("document_processing_records")
     op.drop_column("documents", "usage_status")
     op.drop_column("documents", "current_version_id")
     op.drop_column("documents", "latest_processing_id")
+    op.drop_column("documents", "draft_processing_id")
+    op.drop_column("documents", "current_index_instance_id")
+    op.drop_column("documents", "manual_review_required")
     op.drop_column("documents", "management_revision")
     # 降级前先处理尚未采用的资料；不以空字符串伪造旧 schema 所要求的正文。
     op.alter_column("documents", "content_text", nullable=False)
     op.alter_column("documents", "content_hash", nullable=False)
+    op.drop_column("knowledge_bases", "visibility_revision")

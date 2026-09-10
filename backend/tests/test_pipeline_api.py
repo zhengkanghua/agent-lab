@@ -208,6 +208,9 @@ def test_manual_endpoint_uses_defaults_waits_for_result_and_closes_runtime() -> 
             "skipped_document_count": 0,
             "failed_document_count": 0,
             "failures": [],
+            "parsed_document_count": 0,
+            "review_document_count": 0,
+            "cleaned_index_instance_count": 0,
         },
     }
 
@@ -339,10 +342,9 @@ def test_known_freshrss_postgresql_ollama_qdrant_config_and_timeout_errors(
         assert sensitive not in body
 
 
-def test_pipeline_write_runtime_reuses_execution_service_in_strict_order() -> None:
+def test_pipeline_write_runtime_syncs_then_uses_shared_processing_batch() -> None:
     events: list[str] = []
     import_service = object()
-    index_service = object()
     expected = execution_result()
 
     class FakeExecutor:
@@ -355,12 +357,8 @@ def test_pipeline_write_runtime_reuses_execution_service_in_strict_order() -> No
             events.append("sync")
             return expected.sync
 
-        async def index_pending(
-            self,
-            service: Any,
-            **kwargs: Any,
-        ) -> PendingIndexExecutionResult:
-            assert service is index_service
+    class FakeBatch:
+        async def run(self, **kwargs: Any) -> PendingIndexExecutionResult:
             assert kwargs == {
                 "batch_size": 7,
                 "stale_after": timedelta(minutes=30),
@@ -368,19 +366,10 @@ def test_pipeline_write_runtime_reuses_execution_service_in_strict_order() -> No
             events.append("index")
             return expected.index
 
-    class FakeIndexingRuntime:
-        service = index_service
-
-        async def ensure_ready(self) -> None:
-            events.append("ensure_ready")
-
-        async def close(self) -> None:
-            events.append("close")
-
     runtime = PipelineWriteRuntime(
         executor=FakeExecutor(),  # type: ignore[arg-type]
         import_service=import_service,  # type: ignore[arg-type]
-        indexing_runtime=FakeIndexingRuntime(),  # type: ignore[arg-type]
+        processing_batch=FakeBatch(),  # type: ignore[arg-type]
     )
 
     result = run(
@@ -393,7 +382,8 @@ def test_pipeline_write_runtime_reuses_execution_service_in_strict_order() -> No
     run(runtime.close())
 
     assert result is not None
-    assert events == ["sync", "ensure_ready", "index", "close"]
+    assert events == ["sync", "index"]
+    assert result.index is expected.index
 
 
 def test_openapi_exposes_manual_route_without_background_fields() -> None:

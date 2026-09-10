@@ -125,11 +125,11 @@ class PipelineIndexStatistics(BaseModel):
 
     requeued_stale_document_count: int = Field(
         ge=0,
-        description="从超时 processing 状态重新排队的文档数量。",
+        description="重新排队的超时解析计算数量，不包含远端索引写入。",
     )
     candidate_document_count: int = Field(
         ge=0,
-        description="本次批量上限内读取到的 pending/failed 候选数量。",
+        description="本次解析和采用阶段实际处理的不同候选数量。",
     )
     indexed_document_count: int = Field(
         ge=0,
@@ -147,13 +147,16 @@ class PipelineIndexStatistics(BaseModel):
         default=(),
         description="按 error_type 聚合的索引失败，不包含正文、Vector 或异常文本。",
     )
+    parsed_document_count: int = Field(default=0, ge=0, description="本次完成解析尝试的候选数量。")
+    review_document_count: int = Field(default=0, ge=0, description="本次进入待人工处理的候选数量。")
+    cleaned_index_instance_count: int = Field(default=0, ge=0, description="本次确认回收的旧索引实例数量。")
 
 
 class PipelineRunOnceResponse(BaseModel):
     """一次手动执行完成后的类型化响应。
 
     ok = 同步和索引都没有「部分失败」；execution_mode 固定为 manual，明确告诉
-    调用方请求结束后没有后台任务或自动调度在继续跑。
+    调用方本轮有界执行已经结束；未采用待办仍可由独立 scheduler 继续消费。
     """
 
     ok: bool = Field(
@@ -161,7 +164,7 @@ class PipelineRunOnceResponse(BaseModel):
     )
     execution_mode: Literal["manual"] = Field(
         default="manual",
-        description="固定为 manual，表明请求结束后没有后台任务或自动调度。",
+        description="固定为 manual，表示本次请求主动触发了一个有界处理批次。",
     )
     sync: PipelineSyncStatistics = Field(
         description="FreshRSS 与 PostgreSQL 增量同步阶段统计。",

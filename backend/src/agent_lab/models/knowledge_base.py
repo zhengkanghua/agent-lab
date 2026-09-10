@@ -35,4 +35,6 @@ class KnowledgeBaseRecord(TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=true(), comment="是否启用。"
     )
+    visibility_revision: Mapped[int] = mapped_column(default=1, server_default="1", nullable=False,
+        comment="索引可见性修订；候选写入意图、采用、停止使用与回收时推进。")
     sources: Mapped[list[SourceRecord]] = relationship(back_populates="knowledge_base")

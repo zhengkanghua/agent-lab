@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from qdrant_client import AsyncQdrantClient
-from tests.knowledge_helpers import ActiveKnowledgeBaseScope
+from tests.knowledge_helpers import ActiveKnowledgeBaseScope, EmptyDocumentVisibility
 
 from agent_lab.config.ollama_embedding import OllamaEmbeddingSettings
 from agent_lab.config.qdrant import QdrantSettings
@@ -36,12 +36,8 @@ def test_runtime_build_uses_one_shared_index_spec_and_alias() -> None:
             assert runtime.spec.dimension == 1024
             assert runtime.spec.distance.value == "Cosine"
             assert runtime.spec.embedding_model == "bge-m3:567m"
-            assert runtime.service._point_store.collection_name == (  # noqa: SLF001
-                "knowledge_chunks_runtime_test_current"
-            )
-            assert runtime.service._chunk_pipeline.encoding_name == (  # noqa: SLF001
-                runtime.spec.tokenizer
-            )
+            assert runtime.service.index_spec == runtime.spec.collection_metadata
+            assert runtime.spec.tokenizer == "BAAI/bge-m3"
             assert not hasattr(runtime, "search_service")
         finally:
             await runtime.close()
@@ -59,13 +55,12 @@ def test_read_only_runtime_contains_no_lifecycle_or_point_store() -> None:
             qdrant_settings,
             ollama_settings,
             knowledge_base_scope=ActiveKnowledgeBaseScope(),
+            document_visibility=EmptyDocumentVisibility(),
             client=client,
         )
         try:
             assert runtime.spec.dimension == 1024
-            assert runtime.service._vector_search.collection_name == (  # noqa: SLF001
-                "knowledge_chunks_search_runtime_test_current"
-            )
+            assert runtime.service._vector_search.index_spec == runtime.spec  # noqa: SLF001
             assert runtime.service._embedding_provider is runtime.embedding_provider  # noqa: SLF001
             assert not hasattr(runtime, "lifecycle")
             assert not hasattr(runtime, "point_store")

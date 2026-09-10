@@ -16,7 +16,8 @@ from qdrant_client.http import models
 
 from agent_lab.config.qdrant import QdrantSettings
 from agent_lab.config.ollama_embedding import OllamaEmbeddingSettings
-from agent_lab.pipeline.document_chunker import DocumentChunker
+from agent_lab.config.document_processing import get_document_processing_settings
+from agent_lab.knowledge.processing.specification import CHUNK_ALGORITHM, DEFAULT_MAX_TOKENS, PARSER_ID, TOKENIZER_ID, TOKENIZER_REVISION
 from agent_lab.knowledge.domain import VectorIndexConfigurationError
 
 
@@ -30,14 +31,17 @@ class VectorIndexSpec:
     实例不可变（frozen），可在多个异步任务之间安全共享。
     """
 
-    schema_version: str = "v2"
+    schema_version: str = "v3"
     embedding_model: str = "bge-m3:567m"
     dimension: int = 1024
     distance: models.Distance = models.Distance.COSINE
-    tokenizer: str = DocumentChunker.DEFAULT_ENCODING_NAME
-    chunk_size: int = DocumentChunker.DEFAULT_CHUNK_SIZE
-    chunk_overlap: int = DocumentChunker.DEFAULT_CHUNK_OVERLAP
-    payload_schema_version: str = "v2"
+    tokenizer: str = TOKENIZER_ID
+    tokenizer_revision: str = TOKENIZER_REVISION
+    chunk_algorithm: str = CHUNK_ALGORITHM
+    parser_id: str = PARSER_ID
+    chunk_size: int = DEFAULT_MAX_TOKENS
+    chunk_overlap: int = 0
+    payload_schema_version: str = "v3"
 
     @classmethod
     def from_settings(
@@ -72,6 +76,7 @@ class VectorIndexSpec:
             embedding_model=ollama_settings.embedding_model,
             dimension=qdrant_settings.vector_dimension,
             distance=distance,
+            chunk_size=get_document_processing_settings().chunk_max_tokens,
         )
 
     def __post_init__(self) -> None:
@@ -106,6 +111,9 @@ class VectorIndexSpec:
             "dimension": self.dimension,
             "distance": self.distance.value,
             "tokenizer": self.tokenizer,
+            "tokenizer_revision": self.tokenizer_revision,
+            "chunk_algorithm": self.chunk_algorithm,
+            "parser_id": self.parser_id,
             "chunk_size": self.chunk_size,
             "chunk_overlap": self.chunk_overlap,
             "payload_schema_version": self.payload_schema_version,

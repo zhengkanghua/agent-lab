@@ -4,6 +4,17 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from agent_lab.knowledge.domain import KnowledgeBase
+from agent_lab.knowledge.visibility import VisibilitySnapshot
+
+
+class EmptyDocumentVisibility:
+    """未采用任何资料的只读装配替身，不能使任意命中默认通过核验。"""
+
+    async def snapshot(self, knowledge_base_ids):
+        return VisibilitySnapshot(tuple((identity, 1, True) for identity in knowledge_base_ids), ())
+
+    async def validate(self, snapshot, hits):
+        return not hits
 
 
 class ActiveKnowledgeBaseScope:

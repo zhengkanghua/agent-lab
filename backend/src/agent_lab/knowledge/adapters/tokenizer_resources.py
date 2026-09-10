@@ -4,9 +4,10 @@ from hashlib import file_digest
 from pathlib import Path
 
 from agent_lab.knowledge.processing.contracts import DocumentProcessingError
+from agent_lab.knowledge.processing.specification import TOKENIZER_ID, TOKENIZER_REVISION
 
-BGE_M3_TOKENIZER = "BAAI/bge-m3"
-BGE_M3_TOKENIZER_REVISION = "5617a9f61b028005a4858fdac845db406aefb181"
+BGE_M3_TOKENIZER = TOKENIZER_ID
+BGE_M3_TOKENIZER_REVISION = TOKENIZER_REVISION
 TOKENIZER_FILES = {
     "tokenizer.json": "21106b6d7dab2952c1d496fb21d5dc9db75c28ed361a05f5020bbba27810dd08",
     "tokenizer_config.json": "a62b2b6784f990259fddef5f16388693a8043be4f69179e6a5257eeb3f9abac4",

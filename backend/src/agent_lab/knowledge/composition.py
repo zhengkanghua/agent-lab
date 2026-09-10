@@ -59,6 +59,42 @@ def build_document_processing_application(session_factory=async_session_factory)
     return DocumentProcessingApplication(partial(postgres_processing_work, session_factory), storage, build_document_processor)
 
 
+def build_document_adoption_application(session_factory=async_session_factory, *, qdrant_settings=None, ollama_settings=None):
+    """人工受理与后台采用共用冻结契约；只有消费待办才创建写客户端。"""
+    from agent_lab.config.ollama_embedding import get_ollama_embedding_settings
+    from agent_lab.config.qdrant import get_qdrant_settings
+    from agent_lab.knowledge.adapters.adoption import postgres_adoption_work
+    from agent_lab.knowledge.processing.adoption import DocumentAdoptionApplication
+    from agent_lab.qdrant.index_spec import VectorIndexSpec
+    from agent_lab.qdrant.runtime import DocumentIndexingRuntime
+
+    qdrant = qdrant_settings or get_qdrant_settings()
+    ollama = ollama_settings or get_ollama_embedding_settings()
+    spec = VectorIndexSpec.from_settings(qdrant, ollama)
+
+    @asynccontextmanager
+    async def indexer():
+        runtime = DocumentIndexingRuntime.build(qdrant, ollama)
+        try:
+            await runtime.ensure_ready()
+            yield runtime.service
+        finally:
+            await runtime.close()
+
+    return DocumentAdoptionApplication(
+        partial(postgres_adoption_work, session_factory), WriteCoordinator(session_factory),
+        indexer, spec.collection_metadata,
+    )
+
+
+def build_document_processing_batch(session_factory=async_session_factory, **index_settings):
+    from agent_lab.knowledge.processing.batch import DocumentProcessingBatch
+    return DocumentProcessingBatch(
+        build_document_processing_application(session_factory),
+        build_document_adoption_application(session_factory, **index_settings),
+    )
+
+
 def build_file_document_service():
     """列表只读 PostgreSQL；上传按需创建原件接收组件，删除按需连接 Qdrant。"""
     from agent_lab.knowledge.adapters.files import postgres_file_work

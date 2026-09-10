@@ -76,8 +76,9 @@ def isolated_database():
     async def create():
         async with engine.begin() as connection:
             await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
-            tables = [model.__table__ for model in (KnowledgeBaseRecord, SourceRecord, DocumentRecord, ScheduledJobRecord, JobRunRecord, WriteOperationRecord, DocumentDeletionRecord)]
-            await connection.run_sync(lambda sync: Base.metadata.create_all(sync, tables=tables))
+            # 循环引用的当前版本、处理记录及审核账号均建在随机 schema 内。
+            import agent_lab.models  # noqa: F401
+            await connection.run_sync(Base.metadata.create_all)
             await connection.execute(KnowledgeBaseRecord.__table__.insert().values(
                 id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID, key="news", name="新闻", is_active=True,
             ))

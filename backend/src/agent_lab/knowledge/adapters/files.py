@@ -104,9 +104,18 @@ class PostgresFileDocumentRepository:
         return view
 
     async def _locked_upload(self, document_id, revision, *, management_revision=None, allow_deletion=False):
+        knowledge_base_id = await self._session.scalar(select(DocumentRecord.knowledge_base_id).where(
+            DocumentRecord.id == document_id,
+        ))
+        if knowledge_base_id is None:
+            raise FileDocumentError("file_document_not_found")
+        # 与采用、审核共用 KnowledgeBase → Document 的锁顺序。
+        await self._session.scalar(select(KnowledgeBaseRecord).where(
+            KnowledgeBaseRecord.id == knowledge_base_id,
+        ).with_for_update())
         document = await self._session.scalar(select(DocumentRecord).where(
             DocumentRecord.id == document_id,
-        ).with_for_update())
+        ).with_for_update().execution_options(populate_existing=True))
         if document is None:
             raise FileDocumentError("file_document_not_found")
         if document.upload_filename is None or document.source_id is not None:

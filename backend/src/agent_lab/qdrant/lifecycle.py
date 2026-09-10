@@ -36,6 +36,7 @@ PAYLOAD_INDEX_SCHEMAS: Mapping[str, models.PayloadSchemaType] = {
     # Qdrant 的 grouped query 要求 group_by 字段具备 keyword/integer 索引；
     # Payload 仍保存规范化 UUID 字符串，keyword 同时支持按文档精确过滤。
     "document_id": models.PayloadSchemaType.KEYWORD,
+    "index_instance_id": models.PayloadSchemaType.KEYWORD,
     # 归属过滤字段：普通检索与清理都按 knowledge_base_id 精确匹配，共享 Collection
     # 依赖这个索引避免全表扫描；语义与 source_id 相同，使用 UUID 索引。
     "knowledge_base_id": models.PayloadSchemaType.UUID,

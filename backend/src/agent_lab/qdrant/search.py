@@ -33,6 +33,7 @@ from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedR
 from agent_lab.config.qdrant import QdrantSettings
 from agent_lab.qdrant.index_spec import VectorIndexSpec
 from agent_lab.knowledge.document_contracts import DocumentSearchGroup
+from agent_lab.knowledge.visibility import IndexSearchHit
 from agent_lab.schemas.vector_search import (
     VectorSearchFilters,
     VectorSearchResult,
@@ -88,6 +89,7 @@ class QdrantVectorSearch:
     # JSON 字符串」这条约定。详见 _validate_payload_json_types。
     _STRING_ENCODED_PAYLOAD_FIELDS = (
         "document_id",
+        "index_instance_id",
         "knowledge_base_id",
         "source_id",
         "previous_chunk_id",
@@ -98,6 +100,8 @@ class QdrantVectorSearch:
     # 同一个 document 分组内，这些字段描述的是「文档级」事实而不是「Chunk 级」事实，
     # 因此组内每个 Chunk 必须完全一致；Service 只取第一个 Chunk 的值代表整篇文档。
     _GROUP_CONSISTENT_PAYLOAD_FIELDS = (
+        "index_instance_id",
+        "document_id",
         "knowledge_base_id",
         "mime_type",
         "upload_filename",
@@ -149,6 +153,7 @@ class QdrantVectorSearch:
         top_k: int,
         score_threshold: float | None,
         filters: VectorSearchFilters,
+        excluded_index_instances: tuple[UUID, ...] = (),
     ) -> list[VectorSearchResult]:
         """通过 current Alias 执行一次 dense Vector 最近邻查询。
 
@@ -178,7 +183,7 @@ class QdrantVectorSearch:
         """
 
         # 1、把应用过滤条件翻译成 Qdrant Filter（无过滤时返回 None）
-        query_filter = self._build_filter(filters)
+        query_filter = self._build_filter(filters, excluded_index_instances)
         # 2、发起一次只读查询：current Alias + query 向量 + 过滤 + Top-K
         try:
             # 一次只读查询
@@ -214,6 +219,7 @@ class QdrantVectorSearch:
         matches_per_document: int,
         score_threshold: float | None,
         filters: VectorSearchFilters,
+        excluded_index_instances: tuple[UUID, ...] = (),
     ) -> list[DocumentSearchGroup]:
         """通过 Qdrant 正式 grouped query 返回按文档分组的相关 Chunk。
 
@@ -245,11 +251,11 @@ class QdrantVectorSearch:
             约束，都不再重复校验这些跨 Chunk 的关系。
         """
 
-        query_filter = self._build_filter(filters)
+        query_filter = self._build_filter(filters, excluded_index_instances)
         try:
             response = await self._client.query_points_groups(
                 collection_name=self._collection_alias,
-                group_by="document_id",
+                group_by="index_instance_id",
                 query=[float(value) for value in query_vector],
                 # 过滤条件
                 query_filter=query_filter,
@@ -270,20 +276,20 @@ class QdrantVectorSearch:
             )
 
         mapped_groups: list[DocumentSearchGroup] = []
-        seen_document_ids: set[UUID] = set()
+        seen_instance_ids: set[UUID] = set()
         for group_index, group in enumerate(groups):
             group_id = getattr(group, "id", None)
             try:
-                document_id = UUID(str(group_id))
+                instance_id = UUID(str(group_id))
             except (AttributeError, TypeError, ValueError):
                 raise QdrantSearchResponseError(
                     f"Qdrant 第 {group_index} 处文档分组的 id 不是 UUID。"
                 ) from None
-            if document_id in seen_document_ids:
+            if instance_id in seen_instance_ids:
                 raise QdrantSearchResponseError(
                     f"Qdrant 分组响应在第 {group_index} 处重复出现了同一文档。"
                 )
-            seen_document_ids.add(document_id)
+            seen_instance_ids.add(instance_id)
 
             hits = getattr(group, "hits", None)
             if not isinstance(hits, list) or not hits:
@@ -294,10 +300,10 @@ class QdrantVectorSearch:
             seen_chunk_ids: set[UUID] = set()
             for hit_index, point in enumerate(hits):
                 result = self._map_point(point, hit_index)
-                if result.document_id != document_id:
+                if result.index_instance_id != instance_id:
                     raise QdrantSearchResponseError(
                         f"Qdrant 第 {group_index} 处文档分组中的 Point "
-                        "具有不同的 document_id。"
+                        "具有不同的 index_instance_id。"
                     )
                 # 同一个 Chunk 在一组里出现两次会让 best_match 和 additional_matches
                 # 重复展示同一段正文，且下游按 chunk_id 去重会得到比声明更少的片段。
@@ -323,7 +329,7 @@ class QdrantVectorSearch:
             mapped_matches.sort(key=lambda result: result.score, reverse=True)
             mapped_groups.append(
                 DocumentSearchGroup(
-                    document_id=document_id,
+                    document_id=first_match.document_id,
                     matches=tuple(mapped_matches),
                 )
             )
@@ -338,7 +344,7 @@ class QdrantVectorSearch:
         return mapped_groups
 
     @staticmethod
-    def _build_filter(filters: VectorSearchFilters) -> models.Filter | None:
+    def _build_filter(filters: VectorSearchFilters, excluded_index_instances: tuple[UUID, ...] = ()) -> models.Filter | None:
         """把应用过滤契约转换成 Qdrant must 条件。"""
 
         # 逐个可选条件翻译成 Qdrant 的 FieldCondition，最终拼成一个 must（AND）Filter
@@ -395,7 +401,10 @@ class QdrantVectorSearch:
                     ),
                 )
             )
-        return models.Filter(must=conditions) if conditions else None
+        excluded = [models.FieldCondition(key="index_instance_id", match=models.MatchAny(
+            any=[str(identity) for identity in excluded_index_instances],
+        ))] if excluded_index_instances else None
+        return models.Filter(must=conditions or None, must_not=excluded) if conditions or excluded else None
 
     def _map_point(self, point: Any, result_index: int) -> VectorSearchResult:
         """校验一个 ScoredPoint，并在不泄露正文的情况下报告字段错误。"""
@@ -440,7 +449,7 @@ class QdrantVectorSearch:
         )
         try:
             # model_validate 就是将原始数据转为对象，并且走完整的校验
-            result = VectorSearchResult.model_validate(values)
+            result = IndexSearchHit.model_validate(values)
         except ValidationError as exc:
             fields = sorted(
                 {

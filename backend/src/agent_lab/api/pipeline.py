@@ -191,6 +191,9 @@ def _build_success_response(
             skipped_document_count=result.index.skipped_count,
             failed_document_count=result.index.failed_count,
             failures=index_failure_types,
+            parsed_document_count=result.index.parsed_count,
+            review_document_count=result.index.review_count,
+            cleaned_index_instance_count=result.index.cleaned_count,
         ),
     )
 

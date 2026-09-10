@@ -53,7 +53,7 @@ def qdrant_settings(
         api_key=SecretStr(""),
         request_timeout_seconds=5,
         environment=environment,
-        collection_schema_version="v2",
+        collection_schema_version="v3",
         collection_generation=generation,
         write_batch_size=batch_size,
         vector_dimension=1024,
@@ -79,6 +79,7 @@ def build_chunk(
     document_id = document_id or str(uuid4())
     metadata: dict[str, Any] = {
         "document_id": document_id,
+        "index_instance_id": document_id,
         "knowledge_base_id": str(DEFAULT_NEWS_KNOWLEDGE_BASE_ID),
         "source_id": str(uuid4()),
         "source_provider": "freshrss_main",
@@ -124,7 +125,7 @@ def test_qdrant_settings_defaults_and_names(
 
     assert str(settings.base_url) == "http://localhost:6333/"
     assert settings.api_key.get_secret_value() == ""
-    assert settings.collection_name == "knowledge_chunks_dev_v2_001"
+    assert settings.collection_name == "knowledge_chunks_dev_v3_001"
     assert settings.collection_alias == "knowledge_chunks_dev_current"
     assert settings.vector_dimension == 1024
     assert settings.distance == "Cosine"
@@ -242,11 +243,12 @@ def test_payload_mapper_keeps_news_time_and_explicit_fields() -> None:
     assert payload["source_updated_at"] == "2026-08-13T02:03:04+00:00"
     assert payload["document_id"] == chunk.metadata["document_id"]
     assert payload["labels"] == ["宏观", "利率"]
-    assert payload["index_schema_version"] == "v2"
+    assert payload["index_schema_version"] == "v3"
     assert payload["embedding_model"] == "bge-m3:567m"
     assert set(payload) == {
         "page_content",
         "document_id",
+        "index_instance_id",
         "knowledge_base_id",
         "content_hash",
         "chunk_index",
@@ -318,6 +320,7 @@ def test_payload_mapper_rejects_missing_or_invalid_fields(
 def test_payload_index_plan_contains_news_time() -> None:
     assert PAYLOAD_INDEX_SCHEMAS == {
         "document_id": models.PayloadSchemaType.KEYWORD,
+        "index_instance_id": models.PayloadSchemaType.KEYWORD,
         "knowledge_base_id": models.PayloadSchemaType.UUID,
         "source_id": models.PayloadSchemaType.UUID,
         "source_provider": models.PayloadSchemaType.KEYWORD,
@@ -396,7 +399,7 @@ def test_real_local_qdrant_lifecycle_creates_collection_alias_and_indexes() -> N
             aliases = await client.get_aliases()
             info = await client.get_collection(physical_name)
 
-            assert physical_name == "knowledge_chunks_test_v2_001"
+            assert physical_name == "knowledge_chunks_test_v3_001"
             assert [
                 (alias.alias_name, alias.collection_name) for alias in aliases.aliases
             ] == [("knowledge_chunks_test_current", physical_name)]

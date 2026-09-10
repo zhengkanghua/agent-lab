@@ -135,7 +135,7 @@ def test_parser_rejects_unbounded_or_zero_work(argv: list[str]) -> None:
     assert exc_info.value.code == 2
 
 
-def test_index_runtime_is_prepared_before_batch_and_always_closed(
+def test_index_command_uses_shared_processing_batch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[str] = []
@@ -147,65 +147,42 @@ def test_index_runtime_is_prepared_before_batch_and_always_closed(
         failures=(),
     )
 
-    class FakeRuntime:
-        service = object()
-
-        async def ensure_ready(self) -> None:
-            events.append("ensure_ready")
-
-        async def close(self) -> None:
-            events.append("close")
-
-    class FakeExecutor:
-        def writing(self, _resources):
-            return nullcontext()
-
-        async def index_pending(self, service: Any, **kwargs: Any) -> Any:
-            assert service is FakeRuntime.service
+    class FakeBatch:
+        async def run(self, **kwargs: Any) -> Any:
             assert kwargs["batch_size"] == 3
             events.append("index_pending")
             return expected
 
     monkeypatch.setattr(cli_module, "build_pipeline_write_runtime", lambda: PipelineWriteRuntime(
-        executor=FakeExecutor(), indexing_factory=FakeRuntime,
+        executor=object(), processing_factory=FakeBatch,
     ))
     args = build_parser().parse_args(["index-pending", "--batch-size", "3"])
     result = run(cli_module.dispatch_command(args))
     assert result.exit_code == 0
-    assert events == ["ensure_ready", "index_pending", "close"]
+    assert events == ["index_pending"]
+    assert result.payload["review_documents"] == 0
 
 
-def test_index_runtime_closes_when_lifecycle_preparation_fails(
+def test_index_command_closes_its_runtime_when_processing_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[str] = []
 
     class FakeRuntime:
-        service = object()
-
-        async def ensure_ready(self) -> None:
-            events.append("ensure_ready")
+        async def index_only(self, **_kwargs) -> None:
+            events.append("process")
             raise RuntimeError("不得打印远端响应内容")
 
         async def close(self) -> None:
             events.append("close")
 
-    class FailIfIndexedExecutor:
-        def writing(self, _resources):
-            return nullcontext()
-
-        async def index_pending(self, *_args: Any, **_kwargs: Any) -> Any:
-            raise AssertionError("候选处理必须等待 ensure_ready")
-
-    monkeypatch.setattr(cli_module, "build_pipeline_write_runtime", lambda: PipelineWriteRuntime(
-        executor=FailIfIndexedExecutor(), indexing_factory=FakeRuntime,
-    ))
+    monkeypatch.setattr(cli_module, "build_pipeline_write_runtime", FakeRuntime)
     args = build_parser().parse_args(["index-pending"])
 
     with pytest.raises(RuntimeError, match="远端响应"):
         run(cli_module.dispatch_command(args))
 
-    assert events == ["ensure_ready", "close"]
+    assert events == ["process", "close"]
 
 
 def test_dispatch_sync_news_never_builds_qdrant_runtime(
@@ -223,7 +200,7 @@ def test_dispatch_sync_news_never_builds_qdrant_runtime(
 
     monkeypatch.setattr(cli_module, "build_pipeline_write_runtime", lambda: PipelineWriteRuntime(
         executor=FakeExecutor(None), import_service=object(),
-        indexing_factory=lambda: pytest.fail("同步不能创建索引依赖"),
+        processing_factory=lambda: pytest.fail("同步不能创建索引依赖"),
     ))
 
     outcome = run(

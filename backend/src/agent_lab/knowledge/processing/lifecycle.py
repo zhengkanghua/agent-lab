@@ -46,6 +46,7 @@ class ProcessingReceipt:
     state: str
     source_sha256: str
     candidate_revision: int = 1
+    error_code: str | None = None
 
 
 class ProcessingClaim(ProcessingValue):

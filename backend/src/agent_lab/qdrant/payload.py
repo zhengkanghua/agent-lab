@@ -15,6 +15,8 @@ from uuid import UUID
 from langchain_core.documents import Document
 
 from agent_lab.qdrant.index_spec import VectorIndexSpec
+from agent_lab.knowledge.processing.indexing import IndexTarget
+from agent_lab.knowledge.processing.contracts import PreviewChunk
 
 
 class QdrantPayloadError(ValueError):
@@ -39,6 +41,7 @@ class QdrantPayloadMapper:
     # 也不写入半残 Payload；chunk_index/chunk_count 另行校验，它们是 Chunk 级而非文档级。
     REQUIRED_FIELDS = (
         "document_id",
+        "index_instance_id",
         "knowledge_base_id",
         "document_type",
         "mime_type",
@@ -108,6 +111,7 @@ class QdrantPayloadMapper:
         payload: dict[str, Any] = {
             "page_content": chunk.page_content,
             "document_id": document_id,
+            "index_instance_id": self._required_uuid(metadata, "index_instance_id"),
             "content_hash": content_hash,
             "chunk_index": chunk_index,
             "chunk_count": chunk_count,
@@ -153,6 +157,28 @@ class QdrantPayloadMapper:
                     value,
                     optional_time_field,
                 )
+        return payload
+
+    def build_candidate(self, target: IndexTarget, chunk: PreviewChunk) -> dict[str, Any]:
+        """预览正文用于展示，实际向量化文本只记录摘要及定位信息。"""
+        from hashlib import sha256
+
+        count = len(target.preview.chunk_result.chunks)
+        metadata = target.metadata.model_dump(mode="json")
+        metadata.update(
+            document_id=str(target.document_id), knowledge_base_id=str(target.knowledge_base_id),
+            index_instance_id=str(target.index_instance_id), title=target.preview.document.title,
+            content_hash=target.content_hash, mime_type=target.mime_type,
+            chunk_index=chunk.sequence, chunk_count=count,
+            previous_chunk_id=target.chunk_id(chunk.sequence - 1) if chunk.sequence else None,
+            next_chunk_id=target.chunk_id(chunk.sequence + 1) if chunk.sequence + 1 < count else None,
+        )
+        payload = self.build(Document(id=target.chunk_id(chunk.sequence), page_content=chunk.text, metadata=metadata))
+        payload.update(
+            version_id=str(target.version_id), preview_fingerprint=target.preview.fingerprint,
+            embedding_text_hash=sha256(chunk.embedding_text.encode("utf-8")).hexdigest(),
+            headings=list(chunk.headings), block_ids=list(chunk.block_ids), token_count=chunk.token_count,
+        )
         return payload
 
     @staticmethod

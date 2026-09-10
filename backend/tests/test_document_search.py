@@ -51,7 +51,7 @@ def settings() -> QdrantSettings:
         api_key=SecretStr(""),
         request_timeout_seconds=5,
         environment="document_search_test",
-        collection_schema_version="v2",
+        collection_schema_version="v3",
         collection_generation=1,
         vector_dimension=3,
         distance="Cosine",
@@ -85,6 +85,7 @@ def payload(
     return {
         "page_content": f"{score_label}片段 {chunk_index}",
         "document_id": str(document_id),
+        "index_instance_id": str(document_id),
         "knowledge_base_id": str(DEFAULT_NEWS_KNOWLEDGE_BASE_ID),
         "content_hash": content_hash,
         "chunk_index": chunk_index,
@@ -101,7 +102,7 @@ def payload(
         "document_external_id": f"article/{document_id}",
         "authors": [],
         "labels": ["宏观"],
-        "index_schema_version": "v2",
+        "index_schema_version": "v3",
         "embedding_model": "bge-m3:567m",
     }
 
@@ -218,7 +219,7 @@ def test_document_search_groups_and_sorts_documents_and_matches() -> None:
     assert len(client.calls) == 1
     call = client.calls[0]
     assert call["collection_name"].endswith("_current")
-    assert call["group_by"] == "document_id"
+    assert call["group_by"] == "index_instance_id"
     assert call["limit"] == 2
     assert call["group_size"] == 2
     assert call["score_threshold"] == pytest.approx(0.6)
@@ -335,7 +336,7 @@ def _inconsistent_document_metadata(document_id: UUID, _other_id: UUID) -> list[
         (_group_id_not_uuid, "不是 UUID"),
         (_group_without_hits, "没有命中结果"),
         (_same_document_in_two_groups, "重复出现了同一文档"),
-        (_point_document_id_differs_from_group, "不同的 document_id"),
+        (_point_document_id_differs_from_group, "不同的 index_instance_id"),
         (_same_chunk_id_twice, "同一个 chunk_id"),
         (_inconsistent_document_metadata, "元数据不一致"),
     ],
