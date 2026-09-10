@@ -14,6 +14,7 @@ Embedding、不修改 PostgreSQL 状态；完整状态编排由上层 DocumentIn
 """
 
 import math
+import re
 from collections.abc import Sequence
 from numbers import Real
 from typing import Any
@@ -36,11 +37,16 @@ class QdrantPointStoreError(RuntimeError):
 
 
 class QdrantDeletionStore:
-    """清理所需的最小 Qdrant 能力，不依赖向量模型和 Chunk 规格。"""
+    """清除本项目当前环境的所有 generation 中指定文档，不删除 Collection。"""
 
     def __init__(self, client, settings: QdrantSettings) -> None:
         self._client = client
-        self._alias = settings.collection_alias
+        self._settings = settings
+
+    async def _collections(self):
+        pattern = re.compile(rf"knowledge_chunks_{re.escape(self._settings.environment)}_v\d+_\d+")
+        result = await self._client.get_collections()
+        return sorted(item.name for item in result.collections if pattern.fullmatch(item.name))
 
     def _filter(self, document_ids):
         ids = [str(UUID(value)) for value in document_ids]
@@ -52,10 +58,11 @@ class QdrantDeletionStore:
         if not document_ids:
             return 0
         try:
-            result = await self._client.count(
-                collection_name=self._alias, count_filter=self._filter(document_ids), exact=True,
-            )
-            return result.count
+            count = 0
+            for collection in await self._collections():
+                result = await self._client.count(collection_name=collection, count_filter=self._filter(document_ids), exact=True)
+                count += result.count
+            return count
         except Exception as exc:
             raise QdrantPointStoreError(type(exc).__name__) from None
 
@@ -65,11 +72,13 @@ class QdrantDeletionStore:
         if not document_ids:
             return
         try:
-            result = await self._client.delete(
-                collection_name=self._alias,
-                points_selector=models.FilterSelector(filter=self._filter(document_ids)), wait=True,
-            )
-            QdrantChunkStore._ensure_completed(result, "retention delete")
+            for collection in await self._collections():
+                result = await self._client.delete(collection_name=collection,
+                    points_selector=models.FilterSelector(filter=self._filter(document_ids)), wait=True)
+                QdrantChunkStore._ensure_completed(result, "document delete")
+                remaining = await self._client.count(collection_name=collection, count_filter=self._filter(document_ids), exact=True)
+                if remaining.count:
+                    raise QdrantPointStoreError("文档 Point 删除尚未完成。")
         except Exception as exc:
             raise QdrantPointStoreError(type(exc).__name__) from None
 

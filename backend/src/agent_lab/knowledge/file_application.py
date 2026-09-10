@@ -1,6 +1,5 @@
 """文件入口持久接收候选；解析与正式采用交给统一处理能力。"""
 
-import logging
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from uuid import UUID, uuid4
@@ -10,14 +9,11 @@ from agent_lab.knowledge.files import FileDocumentError, FileDocumentWork, TextF
 from agent_lab.knowledge.ports import KnowledgeWriteCoordinator
 from agent_lab.knowledge.processing.lifecycle import SourceIntake
 
-logger = logging.getLogger(__name__)
-
-
 class FileDocumentService:
-    def __init__(self, work: FileDocumentWork, coordinator: KnowledgeWriteCoordinator, deletion_store, processing) -> None:
+    def __init__(self, work: FileDocumentWork, coordinator: KnowledgeWriteCoordinator, deletion, processing) -> None:
         self._work = work
         self._coordinator = coordinator
-        self._deletion_store = deletion_store
+        self._deletion = deletion
         self._processing = processing
 
     @asynccontextmanager
@@ -58,24 +54,6 @@ class FileDocumentService:
             mime_type=file.mime_type, metadata={"title": file.title, "filename": file.filename},
         )
 
-    async def retry(self, document_id: UUID, revision: int, management_revision: int):
-        async with self._write() as repository:
-            return await repository.retry(document_id, revision, management_revision)
-
-    async def delete(self, document_id: UUID, revision: int) -> None:
-        """删除确认跨过 Qdrant 和 PostgreSQL 后才报告成功；失败保留同一待办。"""
-        async with self._write(("sync", "index")) as repository:
-            record = await repository.prepare_deletion(document_id, revision)
-            try:
-                if not record.qdrant_deleted:
-                    async with self._deletion_store() as store:
-                        await store.delete_by_document_ids([str(document_id)])
-                    await repository.mark_qdrant_deleted([record])
-                await repository.finish([record])
-            except Exception as exc:
-                logger.error("文件删除未完成 error_type=%s", type(exc).__name__)
-                try:
-                    await repository.record_error([record], type(exc).__name__)
-                except Exception as record_error:
-                    logger.error("文件删除错误保存失败 error_type=%s", type(record_error).__name__)
-                raise FileDocumentError("file_delete_failed") from None
+    async def delete(self, document_id: UUID, revision: int, management_revision: int) -> None:
+        """文件入口复用整篇删除，原件、审核历史与向量都确认后才返回成功。"""
+        await self._deletion().delete(document_id, revision=revision, management_revision=management_revision, require_file=True)

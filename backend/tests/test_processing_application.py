@@ -37,6 +37,11 @@ class MemoryStorage:
         data = self.data.get(key)
         return ObjectReference(key, len(data), sha256(data).hexdigest(), version_id) if data is not None else None
 
+    async def delete(self, key, *, version_id=None):
+        if self.fail:
+            raise ObjectStorageError("object_storage_delete_failed")
+        self.data.pop(key, None)
+
 
 @dataclass
 class Record:

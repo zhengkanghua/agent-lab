@@ -16,6 +16,7 @@ from agent_lab.domain.enums import ProcessingStatus
 from agent_lab.knowledge.adapters.files import PostgresFileDocumentRepository
 from agent_lab.knowledge.adapters.text_files import markdown_index_text, parse_text_file
 from agent_lab.knowledge.file_application import FileDocumentService
+from agent_lab.knowledge.deletion import DocumentDeletionApplication
 from agent_lab.knowledge.files import FileDocument, FileDocumentError, MAX_FILE_BYTES
 from agent_lab.knowledge.document_contracts import DocumentDeletion
 from agent_lab.knowledge.processing.lifecycle import ProcessingApplicationError, ProcessingReceipt, SourceIntake
@@ -87,7 +88,7 @@ def repository_case(status=ProcessingStatus.INDEXED):
         created_at=document.updated_at, updated_at=document.updated_at,
     )
     session = SimpleNamespace(
-        scalar=AsyncMock(side_effect=[document, knowledge_base]), get=AsyncMock(return_value=None),
+        scalar=AsyncMock(side_effect=[document.knowledge_base_id, knowledge_base, document, knowledge_base]), get=AsyncMock(return_value=None),
         commit=AsyncMock(), flush=AsyncMock(), add=Mock(),
     )
     return file, document, knowledge_base, session, PostgresFileDocumentRepository(session)
@@ -143,18 +144,6 @@ def test_same_name_uploads_create_distinct_documents_with_no_adopted_body():
     assert all(item.content_text is None for item in documents)
 
 
-def test_retry_queues_candidate_without_changing_adopted_version():
-    file, document, knowledge_base, session, repository = repository_case()
-    candidate = DocumentProcessingRecord(id=uuid4(), state="failed", candidate_revision=1,
-        source_stored_at=datetime.now(UTC), source_metadata={}, error_code="document_chunking_failed")
-    document.latest_processing_id = candidate.id
-    session.scalar.side_effect = [document, knowledge_base, candidate]
-    retried = run(repository.retry(document.id, 3, 7))
-    assert retried.document_id == document.id and retried.revision == 3
-    assert retried.processing_status == ProcessingStatus.INDEXED and retried.candidate_state == "pending"
-    assert retried.candidate_revision == 2 and retried.management_revision == 8
-
-
 def file_view():
     return FileDocument(uuid4(), uuid4(), "资料", True, "note.txt", "note", "text/plain", "a" * 64,
                         1, datetime.now(UTC), ProcessingStatus.PENDING, None, False, None)
@@ -181,7 +170,7 @@ def test_http_upload_replace_and_invalid_file_boundaries():
     run(verify())
 
 
-@pytest.mark.parametrize("method,path", [("GET", "/file-documents"), ("POST", "/file-documents"), ("PUT", "/file-documents/{id}/file"), ("POST", "/file-documents/{id}/retry"), ("DELETE", "/file-documents/{id}")])
+@pytest.mark.parametrize("method,path", [("GET", "/file-documents"), ("POST", "/file-documents"), ("PUT", "/file-documents/{id}/file"), ("DELETE", "/file-documents/{id}")])
 def test_file_management_requires_superuser(method, path):
     async def verify():
         app, _ = auth_app(user())
@@ -196,7 +185,7 @@ def test_file_management_requires_superuser(method, path):
 def test_deletion_failure_keeps_intent_and_confirmed_remote_step_is_not_replayed():
     async def verify():
         record = DocumentDeletion(uuid4(), 1, None, datetime.now(UTC), False)
-        repository = SimpleNamespace(prepare_deletion=AsyncMock(return_value=record), mark_qdrant_deleted=AsyncMock(), finish=AsyncMock(), record_error=AsyncMock())
+        repository = SimpleNamespace(prepare_explicit=AsyncMock(return_value=record), verify=AsyncMock(), mark_qdrant_deleted=AsyncMock(), finish=AsyncMock(), record_error=AsyncMock())
         store = SimpleNamespace(delete_by_document_ids=AsyncMock(side_effect=RuntimeError("secret")))
         @asynccontextmanager
         async def work(): yield repository
@@ -204,15 +193,15 @@ def test_deletion_failure_keeps_intent_and_confirmed_remote_step_is_not_replayed
         async def deletion_store(): yield store
         @asynccontextmanager
         async def hold(*_args, **_kwargs): yield
-        service = FileDocumentService(work, SimpleNamespace(hold=hold), deletion_store, None)
-        with pytest.raises(FileDocumentError) as caught:
-            await service.delete(record.document_id, 1)
-        assert caught.value.code == "file_delete_failed"
+        service = DocumentDeletionApplication(work, SimpleNamespace(hold=hold), deletion_store, lambda: None)
+        with pytest.raises(ProcessingApplicationError) as caught:
+            await service.delete(record.document_id, revision=1, management_revision=1)
+        assert caught.value.code == "document_delete_failed"
         repository.finish.assert_not_awaited()
         assert repository.record_error.call_args.args[1] == "RuntimeError"
         from dataclasses import replace
-        repository.prepare_deletion.return_value = replace(record, qdrant_deleted=True)
-        await service.delete(record.document_id, 1)
+        repository.prepare_explicit.return_value = replace(record, qdrant_deleted=True)
+        await service.delete(record.document_id, revision=1, management_revision=1)
         assert store.delete_by_document_ids.await_count == 1
         repository.finish.assert_awaited_once()
     run(verify())

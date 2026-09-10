@@ -112,6 +112,15 @@ def build_file_document_service():
     """列表只读 PostgreSQL；上传按需创建原件接收组件，删除按需连接 Qdrant。"""
     from agent_lab.knowledge.adapters.files import postgres_file_work
     from agent_lab.knowledge.file_application import FileDocumentService
+    return FileDocumentService(
+        partial(postgres_file_work, async_session_factory), WriteCoordinator(async_session_factory),
+        build_document_deletion_application, build_document_processing_application,
+    )
+
+
+def build_document_deletion_application(session_factory=async_session_factory):
+    from agent_lab.knowledge.deletion import DocumentDeletionApplication
+    from agent_lab.repositories.document_retention_repository import postgres_deletion_work
     from agent_lab.config.qdrant import get_qdrant_settings
     from agent_lab.qdrant.lifecycle import build_qdrant_client
     from agent_lab.qdrant.store import QdrantDeletionStore
@@ -125,10 +134,8 @@ def build_file_document_service():
         finally:
             await client.close()
 
-    return FileDocumentService(
-        partial(postgres_file_work, async_session_factory),
-        WriteCoordinator(async_session_factory), deletion_store, build_document_processing_application,
-    )
+    return DocumentDeletionApplication(partial(postgres_deletion_work, session_factory),
+                                       WriteCoordinator(session_factory), deletion_store, build_document_storage)
 
 
 def build_source_import_service(settings, session_factory=async_session_factory, *, client_factory=FreshRSSClient,

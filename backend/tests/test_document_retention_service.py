@@ -59,6 +59,7 @@ class FakeRepository:
             document_id=item.document_id, revision=item.revision,
             retention_date=item.retention_date, cutoff_date=cutoff,
             qdrant_deleted=False, error_type=None,
+            objects=(),
         ) for item in candidates]
         for item in records:
             self.intents[item.document_id] = item
@@ -115,7 +116,7 @@ class FakeQdrant:
 
 def prune(repo, store, *, dry_run=False, knowledge_base_ids=(DEFAULT_NEWS_KNOWLEDGE_BASE_ID,)):
     return asyncio.run(
-        DocumentRetentionService(repo, store, clock=lambda: NOW).prune_old_documents(
+        DocumentRetentionService(repo, store, lambda: None, clock=lambda: NOW).prune_old_documents(
             180, dry_run, knowledge_base_ids=knowledge_base_ids
         )
     )
@@ -207,7 +208,7 @@ def test_changed_version_is_not_deleted_when_resuming_intent():
 def test_retention_days_validation(days):
     repo, store = FakeRepository(), FakeQdrant()
     with pytest.raises(ValueError, match="retention_days"):
-        asyncio.run(DocumentRetentionService(repo, store).prune_old_documents(days))
+        asyncio.run(DocumentRetentionService(repo, store, lambda: None).prune_old_documents(days))
     assert repo.queries == []
 
 

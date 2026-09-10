@@ -11,6 +11,8 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.add_column("document_deletions", sa.Column("management_revision", sa.Integer(), nullable=False, server_default="1"))
+    op.add_column("document_deletions", sa.Column("objects", postgresql.JSONB(), nullable=False, server_default=sa.text("'[]'::jsonb")))
     op.add_column("knowledge_bases", sa.Column("visibility_revision", sa.Integer(), nullable=False, server_default="1"))
     op.alter_column("documents", "content_text", nullable=True,
                     comment="当前已采用正文；首次采用前为空。")
@@ -122,6 +124,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_column("document_deletions", "objects")
+    op.drop_column("document_deletions", "management_revision")
     op.drop_index("ix_document_review_records_document", table_name="document_review_records")
     op.drop_table("document_review_records")
     op.drop_constraint("fk_documents_current_version_id", "documents", type_="foreignkey")

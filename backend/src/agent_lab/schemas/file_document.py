@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from agent_lab.domain.enums import ProcessingStatus
 from agent_lab.knowledge.files import MAX_FILE_BYTES
@@ -39,9 +39,3 @@ class FileDocumentListResponse(BaseModel):
     items: list[FileDocumentResponse]
     has_more: bool
     max_file_bytes: int = MAX_FILE_BYTES
-
-
-class FileRevisionRequest(BaseModel):
-    revision: int = Field(ge=1, strict=True, description="页面最近读取的文档业务版本。")
-    management_revision: int = Field(ge=1, strict=True, description="页面最近读取的管理修订。")
-    model_config = ConfigDict(extra="forbid")

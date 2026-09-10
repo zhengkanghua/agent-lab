@@ -7,6 +7,7 @@ from hashlib import sha256
 from typing import Protocol
 
 from agent_lab.config.object_storage import ObjectStorageSettings
+from agent_lab.domain.write_scope import remote_write
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,19 +134,23 @@ class S3ObjectStorage:
         return await asyncio.to_thread(inspect_object)
 
     async def delete(self, key: str, *, version_id: str | None = None) -> None:
+        reference = await self.inspect(key, version_id=version_id)
+        if reference is None:
+            return
+        await self._delete_version(key, reference.version_id)
+        if await self.inspect(key, version_id=reference.version_id) is not None:
+            raise ObjectStorageError("object_storage_delete_failed")
+
+    @remote_write
+    async def _delete_version(self, key, version_id):
+        """仅写请求失败或取消保留写入占用；读前核对失败无需假定发生过删除。"""
         def remove():
             try:
                 with closing(self._client()) as client:
-                    observed = self._read(client, key, version_id)
-                    if observed is None:
-                        return
-                    actual_version = observed[1].version_id
                     kwargs = {"Bucket": self._settings.bucket, "Key": key}
-                    if actual_version is not None:
-                        kwargs["VersionId"] = actual_version
+                    if version_id is not None:
+                        kwargs["VersionId"] = version_id
                     client.delete_object(**kwargs)
-                    if self._read(client, key, actual_version) is not None:
-                        raise ObjectStorageError("object_storage_delete_failed")
             except Exception:
                 raise ObjectStorageError("object_storage_delete_failed") from None
         await asyncio.to_thread(remove)

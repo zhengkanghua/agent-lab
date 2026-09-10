@@ -11,7 +11,7 @@ from agent_lab.knowledge.adapters.text_files import parse_text_file
 from agent_lab.knowledge.composition import build_file_document_service
 from agent_lab.knowledge.file_application import FileDocumentService
 from agent_lab.knowledge.files import MAX_FILE_BYTES
-from agent_lab.schemas.file_document import FileDocumentListResponse, FileDocumentResponse, FileRevisionRequest
+from agent_lab.schemas.file_document import FileDocumentListResponse, FileDocumentResponse
 from agent_lab.schemas.knowledge_base import KnowledgeBaseErrorResponse
 
 router = APIRouter(
@@ -73,16 +73,11 @@ async def replace_file(
     return FileDocumentResponse.model_validate(await service.replace(document_id, parsed, revision, management_revision))
 
 
-@router.post("/{document_id}/retry", response_model=FileDocumentResponse, summary="重新排队失败的文件索引")
-async def retry_file(document_id: UUID, body: FileRevisionRequest, service: Service) -> FileDocumentResponse:
-    """复用原 Document 和 revision，不新增文件或立即执行 Embedding。"""
-    return FileDocumentResponse.model_validate(await service.retry(document_id, body.revision, body.management_revision))
-
-
 @router.delete("/{document_id}", status_code=204, summary="删除指定上传文档及索引")
 async def delete_file(
     document_id: UUID, service: Service, revision: Annotated[int, Query(ge=1)],
+    management_revision: Annotated[int, Query(ge=1)],
 ) -> Response:
     """只有索引与文档删除均已确认才返回成功，失败可从同一目标继续。"""
-    await service.delete(document_id, revision)
+    await service.delete(document_id, revision, management_revision)
     return Response(status_code=204)

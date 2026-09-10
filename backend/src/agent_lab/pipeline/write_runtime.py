@@ -77,6 +77,7 @@ class PipelineWriteRuntime:
         return await self.processing_batch.run(batch_size=batch_size, stale_after=stale_after)
 
     async def prune_old_documents(self, *, retention_days: int, dry_run: bool, knowledge_base_ids: list[UUID]):
+        from agent_lab.knowledge.composition import build_document_storage
         async with self.executor.writing(("sync", "index")):
             settings = self.retention_settings_factory()
             if self.retention_client is None:
@@ -84,6 +85,7 @@ class PipelineWriteRuntime:
             async with self.session_factory() as session:
                 service = DocumentRetentionService(
                     DocumentRetentionRepository(session), QdrantDeletionStore(self.retention_client, settings),
+                    build_document_storage,
                 )
                 return await service.prune_old_documents(retention_days, dry_run, knowledge_base_ids=tuple(knowledge_base_ids))
 

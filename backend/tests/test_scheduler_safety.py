@@ -263,7 +263,7 @@ def test_remote_interruption_keeps_completed_retention_counts_in_execution_recor
         async def prune(**params):
             token = write_scope.set(WriteScope(("sync", "index")))
             try:
-                return await DocumentRetentionService(repo, qdrant, clock=lambda: NOW).prune_old_documents(**params)
+                return await DocumentRetentionService(repo, qdrant, lambda: None, clock=lambda: NOW).prune_old_documents(**params)
             finally:
                 write_scope.reset(token)
 

@@ -8,7 +8,8 @@ from fastapi import APIRouter, Depends, Query, Response
 
 from agent_lab.api.error_contract import SanitizedValidationRoute
 from agent_lab.auth.dependencies import current_superuser
-from agent_lab.knowledge.composition import build_document_review_application
+from agent_lab.knowledge.composition import build_document_deletion_application, build_document_review_application
+from agent_lab.knowledge.deletion import DocumentDeletionApplication
 from agent_lab.knowledge.processing.lifecycle import ProcessingReceipt
 from agent_lab.knowledge.processing.review import DocumentReviewApplication
 from agent_lab.knowledge.processing.review_contracts import ReviewDetail, VersionDetail
@@ -29,6 +30,10 @@ def get_document_review_application() -> DocumentReviewApplication:
     return build_document_review_application()
 
 
+def get_document_deletion_application() -> DocumentDeletionApplication:
+    return build_document_deletion_application()
+
+
 Service = Annotated[DocumentReviewApplication, Depends(get_document_review_application)]
 Actor = Annotated[UserRecord, Depends(current_superuser)]
 Offset = Annotated[int, Query(ge=0)]
@@ -47,6 +52,14 @@ async def list_documents(service: Service, knowledge_base_id: UUID | None = None
 @router.get("/{document_id}", response_model=ReviewDetail, summary="查看正文、结构及 Chunk 预览")
 async def document_detail(document_id: UUID, service: Service, processing_id: UUID | None = None):
     return await service.detail(document_id, processing_id)
+
+
+@router.delete("/{document_id}", status_code=204, summary="删除文档原件、全部历史与索引")
+async def delete_document(document_id: UUID, revision: Annotated[int, Query(ge=1)],
+                          management_revision: Annotated[int, Query(ge=1)],
+                          service: Annotated[DocumentDeletionApplication, Depends(get_document_deletion_application)]):
+    await service.delete(document_id, revision=revision, management_revision=management_revision)
+    return Response(status_code=204)
 
 
 @router.get("/{document_id}/candidates", response_model=ProcessingList, summary="查看来源与候选处理记录")

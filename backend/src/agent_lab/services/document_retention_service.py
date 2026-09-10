@@ -10,6 +10,7 @@ from agent_lab.domain.write_scope import WriteRecoveryRequiredError
 from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.knowledge.ports import DeletionStore, RetentionRepository
 from agent_lab.domain.write_scope import ensure_write_confirmed
+from agent_lab.knowledge.deletion import delete_originals
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +42,10 @@ class PruneResult:
 class DocumentRetentionService:
     """持有一次清理的 Repository 与公开 Qdrant 删除能力，不装配依赖。"""
 
-    def __init__(self, repository: RetentionRepository, qdrant_store: DeletionStore, *, clock=None) -> None:
+    def __init__(self, repository: RetentionRepository, qdrant_store: DeletionStore, storage_factory, *, clock=None) -> None:
         self._repository = repository
         self._qdrant_store = qdrant_store
+        self._storage_factory = storage_factory
         self._clock = clock or (lambda: datetime.now(UTC))
         self._batch_size = 50
 
@@ -79,7 +81,8 @@ class DocumentRetentionService:
             try:
                 if not dry_run:
                     await self._repository.verify(records)
-                ids = [str(record.document_id) for record in records]
+                pending_vectors = records if dry_run else [record for record in records if not record.qdrant_deleted]
+                ids = [str(record.document_id) for record in pending_vectors]
                 matched = await self._qdrant_store.count_by_document_ids(ids)
                 if dry_run:
                     deleted = len(records)
@@ -88,6 +91,7 @@ class DocumentRetentionService:
                     # 远端已确认的数量与数据库成功数分别累计，不能混成同一个结果。
                     points += matched
                     await self._repository.mark_qdrant_deleted(records)
+                    await delete_originals(self._repository, self._storage_factory, records)
                     deleted = await self._repository.finish(records)
                 count += deleted
                 if dry_run:

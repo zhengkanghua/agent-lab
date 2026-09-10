@@ -17,7 +17,6 @@ from agent_lab.models.document import DocumentRecord
 from agent_lab.models.document_processing import DocumentProcessingRecord
 from agent_lab.models.knowledge_base import KnowledgeBaseRecord
 from agent_lab.models.write_operation import DocumentDeletionRecord
-from agent_lab.repositories.document_retention_repository import DocumentRetentionRepository, _deletion_snapshot
 
 
 def _processing_error(value: str | None) -> str | None:
@@ -59,7 +58,6 @@ def _view(document, knowledge_base, deletion=None, processing=None) -> FileDocum
 class PostgresFileDocumentRepository:
     def __init__(self, session) -> None:
         self._session = session
-        self._deletions = DocumentRetentionRepository(session)
 
     async def list(self, *, knowledge_base_id: UUID | None, offset: int, limit: int):
         statement = (
@@ -142,57 +140,6 @@ class PostgresFileDocumentRepository:
         view = _view(document, knowledge_base, processing=processing)
         await self._session.commit()
         return view
-
-    async def retry(self, document_id: UUID, revision: int, management_revision: int):
-        document, _ = await self._locked_upload(document_id, revision, management_revision=management_revision)
-        knowledge_base = await self._active(document.knowledge_base_id)
-        processing = await self._session.scalar(select(DocumentProcessingRecord).where(
-            DocumentProcessingRecord.id == document.latest_processing_id,
-        ).with_for_update())
-        if processing is None:
-            raise FileDocumentError("file_document_not_found")
-        if processing.state in {"processing", "indexing", "adopting"}:
-            raise FileDocumentError("file_processing_busy")
-        if processing.source_stored_at is None:
-            raise FileDocumentError("file_source_recovery_required")
-        if processing.state in {"failed", "review"}:
-            processing.state = "pending"
-            processing.error_code = None
-            processing.parsed_document = None
-            processing.chunk_result = None
-            processing.preview_fingerprint = None
-            processing.candidate_revision += 1
-            document.management_revision += 1
-            document.updated_at = datetime.now(UTC)
-        view = _view(document, knowledge_base, processing=processing)
-        await self._session.commit()
-        return view
-
-    async def prepare_deletion(self, document_id: UUID, revision: int):
-        """人工删除可覆盖任何处理状态；仍须版本一致、明确上传身份和写资源互斥。"""
-        document, deletion = await self._locked_upload(document_id, revision, allow_deletion=True)
-        if deletion is not None:
-            snapshot = _deletion_snapshot(deletion)
-            await self._deletions.verify([snapshot])
-            return snapshot
-        deletion = DocumentDeletionRecord(
-            document_id=document_id, revision=revision, cutoff_date=None,
-            retention_date=document.published_at or document.created_at,
-            qdrant_deleted=False,
-        )
-        self._session.add(deletion)
-        await self._session.commit()
-        return _deletion_snapshot(deletion)
-
-    async def mark_qdrant_deleted(self, records):
-        await self._deletions.mark_qdrant_deleted(records)
-
-    async def finish(self, records):
-        return await self._deletions.finish(records)
-
-    async def record_error(self, records, error_type):
-        await self._deletions.record_error(records, error_type)
-
 
 @asynccontextmanager
 async def postgres_file_work(session_factory):

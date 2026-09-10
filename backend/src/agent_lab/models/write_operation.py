@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, String, Uuid
+from sqlalchemy import DateTime, String, Uuid, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -33,8 +33,11 @@ class DocumentDeletionRecord(Base):
     revision: Mapped[int] = mapped_column(nullable=False)
     cutoff_date: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True,
-        comment="保留期清理的截止时刻；为空表示用户按明确 ID 删除上传文档。",
+        comment="保留期清理的截止时刻；为空表示用户按明确 ID 删除文档。",
     )
     retention_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     qdrant_deleted: Mapped[bool] = mapped_column(default=False, nullable=False)
+    management_revision: Mapped[int] = mapped_column(nullable=False, default=1, server_default="1")
+    objects: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"),
+        comment="冻结的原件引用及逐项删除确认，失败时保留恢复依据。")
     error_type: Mapped[str | None] = mapped_column(String(128), nullable=True)

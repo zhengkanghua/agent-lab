@@ -9,6 +9,7 @@ from uuid import UUID
 
 from agent_lab.domain.enums import DocumentType
 from agent_lab.domain.source_document import SourceDocument, SourceInfo
+from agent_lab.knowledge.storage import ObjectReference
 if TYPE_CHECKING:
     from agent_lab.schemas.vector_search import VectorSearchResult
 
@@ -87,6 +88,8 @@ class DocumentDeletion:
     cutoff_date: datetime | None
     retention_date: datetime
     qdrant_deleted: bool
+    management_revision: int = 1
+    objects: tuple[ObjectReference, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
