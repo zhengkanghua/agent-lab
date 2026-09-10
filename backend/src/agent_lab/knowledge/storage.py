@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import Protocol
 
 from agent_lab.config.object_storage import ObjectStorageSettings
@@ -17,6 +18,16 @@ class ObjectReference:
 
 class ObjectStorageError(Exception):
     """对象写入、读取或删除失败。"""
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
+def verify_object_bytes(reference: ObjectReference, data: bytes) -> None:
+    """摘要独立于 S3 ETag；读取原件与写入回执均须符合接收意图。"""
+    if len(data) != reference.size or sha256(data).hexdigest() != reference.sha256:
+        raise ObjectStorageError("object_storage_content_mismatch")
 
 
 class ObjectStorage(Protocol):

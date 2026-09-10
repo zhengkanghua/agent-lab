@@ -34,8 +34,9 @@ from agent_lab.api.health import router as health_router
 from agent_lab.api.knowledge_bases import router as knowledge_bases_router
 from agent_lab.api.sources import router as sources_router
 from agent_lab.api.file_documents import router as file_documents_router
-from agent_lab.api.error_contract import build_file_document_error_response
+from agent_lab.api.error_contract import build_file_document_error_response, build_processing_error_response
 from agent_lab.knowledge.files import FileDocumentError
+from agent_lab.knowledge.processing.lifecycle import ProcessingApplicationError
 from agent_lab.api.document_search import router as document_search_router
 from agent_lab.api.documents import router as documents_router
 from agent_lab.api.dependencies import VectorSearchRuntimeUnavailableError
@@ -533,6 +534,10 @@ def create_app(
     @application.exception_handler(FileDocumentError)
     async def file_document_error(_request: Request, error: FileDocumentError) -> JSONResponse:
         return build_file_document_error_response(error)
+
+    @application.exception_handler(ProcessingApplicationError)
+    async def processing_error(_request: Request, error: ProcessingApplicationError) -> JSONResponse:
+        return build_processing_error_response(error)
 
     application.include_router(file_documents_router)
     application.include_router(knowledge_bases_router)

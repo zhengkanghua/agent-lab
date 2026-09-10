@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, Text, Uuid, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, Uuid, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from agent_lab.db.base import Base, TimestampMixin
@@ -33,14 +34,18 @@ class DocumentProcessingRecord(TimestampMixin, Base):
     source_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True, comment="原始字节 SHA-256。")
     source_size: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="原始字节数。")
     source_mime_type: Mapped[str | None] = mapped_column(String(127), nullable=True)
-    source_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, server_default=text("'{}'::jsonb"))
+    source_metadata: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    source_stored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     candidate_revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     draft_revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    draft_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    draft_mime_type: Mapped[str | None] = mapped_column(String(127), nullable=True)
+    requires_review: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     parser_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    parsed_document: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    chunk_result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    parsed_document: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    chunk_result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     preview_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    issue_codes: Mapped[list] = mapped_column(JSON, nullable=False, server_default=text("'[]'::jsonb"))
+    issue_codes: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
     claim_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -53,7 +58,7 @@ class DocumentVersion(TimestampMixin, Base):
 
     __tablename__ = "document_versions"
     __table_args__ = (
-        Index("ix_document_versions_document_revision", "document_id", "revision", unique=True),
+        UniqueConstraint("document_id", "revision", name="uq_document_versions_document_revision"),
         {"comment": "文档已采用版本的不可变正文、结构与 Chunk 快照。"},
     )
 
@@ -65,9 +70,9 @@ class DocumentVersion(TimestampMixin, Base):
     mime_type: Mapped[str] = mapped_column(String(127), nullable=False)
     content_text: Mapped[str] = mapped_column(Text, nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    parsed_document: Mapped[dict] = mapped_column(JSON, nullable=False)
-    chunk_result: Mapped[dict] = mapped_column(JSON, nullable=False)
-    processing_spec: Mapped[dict] = mapped_column(JSON, nullable=False)
+    parsed_document: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    chunk_result: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    processing_spec: Mapped[dict] = mapped_column(JSONB, nullable=False)
     source_object_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     index_instance_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -79,6 +84,7 @@ class DocumentReviewRecord(TimestampMixin, Base):
     __tablename__ = "document_review_records"
     __table_args__ = (
         Index("ix_document_review_records_document", "document_id", "created_at"),
+        CheckConstraint("decision IN ('adopt', 'reject', 'retry')", name="ck_document_review_decision"),
         {"comment": "文档候选采用、拒绝及自动采用审核结论。"},
     )
 

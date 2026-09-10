@@ -1,8 +1,14 @@
 """解析器与切分器的替换入口，业务调用方只使用项目数据契约。"""
 
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
+from datetime import datetime
 from typing import Protocol
+from uuid import UUID
 
-from agent_lab.knowledge.processing.contracts import ChunkResult, ParsedDocument
+from agent_lab.knowledge.processing.contracts import ChunkResult, DocumentPreview, ParsedDocument
+from agent_lab.knowledge.processing.lifecycle import ProcessingClaim, SourceIntake
+from agent_lab.knowledge.storage import ObjectReference
 
 
 class DocumentParser(Protocol):
@@ -11,3 +17,19 @@ class DocumentParser(Protocol):
 
 class StructuredChunker(Protocol):
     def build_chunks(self, document: ParsedDocument) -> ChunkResult: ...
+
+
+class ProcessingRepository(Protocol):
+    """持久接收和纯计算待办；远端 I/O 在工作单元之外执行。"""
+
+    async def create_intent(self, intake: SourceIntake) -> None: ...
+    async def mark_stored(self, processing_id: UUID, reference: ObjectReference) -> bool: ...
+    async def mark_receiving_failure(self, processing_id: UUID, code: str) -> None: ...
+    async def claim(self, processing_id: UUID | None = None) -> ProcessingClaim | None: ...
+    async def save_preview(self, claim: ProcessingClaim, preview: DocumentPreview, *, state: str) -> bool: ...
+    async def save_failure(self, claim: ProcessingClaim, code: str, *, state: str) -> bool: ...
+    async def get_preview(self, processing_id: UUID) -> DocumentPreview | None: ...
+    async def requeue_computations(self, *, started_before: datetime) -> int: ...
+
+
+ProcessingWork = Callable[[], AbstractAsyncContextManager[ProcessingRepository]]

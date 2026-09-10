@@ -1,6 +1,6 @@
 """知识库生产装配；构造时无 I/O，连接在应用用例进入工作单元后建立。"""
 
-from functools import partial
+from functools import lru_cache, partial
 from contextlib import AsyncExitStack, asynccontextmanager
 
 from agent_lab.db.session import async_session_factory
@@ -29,8 +29,38 @@ def build_source_binding_service() -> SourceBindingService:
     )
 
 
+@lru_cache
+def build_document_processor():
+    """在后台计算线程首次构造，随后复用只读 tokenizer 与处理规格。"""
+    from agent_lab.config.document_processing import get_document_processing_settings
+    from agent_lab.knowledge.processing.processor import DocumentProcessor
+    from agent_lab.knowledge.adapters.docling_parser import DoclingDocumentParser
+    from agent_lab.knowledge.adapters.docling_chunker import DoclingStructuredChunker
+
+    settings = get_document_processing_settings()
+    return DocumentProcessor(
+        parser=DoclingDocumentParser(),
+        chunker=DoclingStructuredChunker(tokenizer_path=settings.tokenizer_path, max_tokens=settings.chunk_max_tokens),
+    )
+
+
+def build_document_processing_application(session_factory=async_session_factory):
+    """接收和后台消费共用装配；缺少 S3 配置时明确失败，不回落到无原件路径。"""
+    from agent_lab.config.object_storage import get_object_storage_settings
+    from agent_lab.knowledge.adapters.processing import postgres_processing_work
+    from agent_lab.knowledge.processing.application import DocumentProcessingApplication
+    from agent_lab.knowledge.processing.lifecycle import ProcessingApplicationError
+    from agent_lab.knowledge.storage import ObjectStorageError, S3ObjectStorage
+
+    try:
+        storage = S3ObjectStorage(get_object_storage_settings())
+    except ObjectStorageError as exc:
+        raise ProcessingApplicationError(exc.code) from None
+    return DocumentProcessingApplication(partial(postgres_processing_work, session_factory), storage, build_document_processor)
+
+
 def build_file_document_service():
-    """文件保存只连接 PostgreSQL；删除时才按需构造 Qdrant 删除适配器。"""
+    """列表只读 PostgreSQL；上传按需创建原件接收组件，删除按需连接 Qdrant。"""
     from agent_lab.knowledge.adapters.files import postgres_file_work
     from agent_lab.knowledge.file_application import FileDocumentService
     from agent_lab.config.qdrant import get_qdrant_settings
@@ -48,7 +78,7 @@ def build_file_document_service():
 
     return FileDocumentService(
         partial(postgres_file_work, async_session_factory),
-        WriteCoordinator(async_session_factory), deletion_store,
+        WriteCoordinator(async_session_factory), deletion_store, build_document_processing_application,
     )
 
 

@@ -1,21 +1,24 @@
-"""文件资料用例复用既有索引排队与删除待办，不在上传请求内执行 Embedding。"""
+"""文件入口持久接收候选；解析与正式采用交给统一处理能力。"""
 
 import logging
 from contextlib import asynccontextmanager
-from uuid import UUID
+from dataclasses import replace
+from uuid import UUID, uuid4
 
 from agent_lab.domain.write_scope import WriteRecoveryRequiredError, WriteResourceBusyError
 from agent_lab.knowledge.files import FileDocumentError, FileDocumentWork, TextFile
 from agent_lab.knowledge.ports import KnowledgeWriteCoordinator
+from agent_lab.knowledge.processing.lifecycle import SourceIntake
 
 logger = logging.getLogger(__name__)
 
 
 class FileDocumentService:
-    def __init__(self, work: FileDocumentWork, coordinator: KnowledgeWriteCoordinator, deletion_store) -> None:
+    def __init__(self, work: FileDocumentWork, coordinator: KnowledgeWriteCoordinator, deletion_store, processing) -> None:
         self._work = work
         self._coordinator = coordinator
         self._deletion_store = deletion_store
+        self._processing = processing
 
     @asynccontextmanager
     async def _write(self, resources=("sync",)):
@@ -33,16 +36,31 @@ class FileDocumentService:
             return await repository.list(knowledge_base_id=knowledge_base_id, offset=offset, limit=limit)
 
     async def upload(self, file: TextFile, knowledge_base_id: UUID):
+        processing = self._processing()
+        intake = self._intake(uuid4(), file)
         async with self._write() as repository:
-            return await repository.create(file, knowledge_base_id)
+            view = await repository.create(file, knowledge_base_id, intake)
+            receipt = await processing.store_source(intake, file.raw_bytes)
+        return replace(view, candidate_state=receipt.state)
 
-    async def replace(self, document_id: UUID, file: TextFile, revision: int):
+    async def replace(self, document_id: UUID, file: TextFile, revision: int, management_revision: int):
+        processing = self._processing()
+        intake = self._intake(document_id, file)
         async with self._write() as repository:
-            return await repository.replace(document_id, file, revision)
+            view = await repository.replace(document_id, file, revision, management_revision, intake)
+            receipt = await processing.store_source(intake, file.raw_bytes)
+        return replace(view, candidate_state=receipt.state)
 
-    async def retry(self, document_id: UUID, revision: int):
+    @staticmethod
+    def _intake(document_id: UUID, file: TextFile) -> SourceIntake:
+        return SourceIntake.prepare(
+            document_id=document_id, source_kind="file", data=file.raw_bytes,
+            mime_type=file.mime_type, metadata={"title": file.title, "filename": file.filename},
+        )
+
+    async def retry(self, document_id: UUID, revision: int, management_revision: int):
         async with self._write() as repository:
-            return await repository.retry(document_id, revision)
+            return await repository.retry(document_id, revision, management_revision)
 
     async def delete(self, document_id: UUID, revision: int) -> None:
         """删除确认跨过 Qdrant 和 PostgreSQL 后才报告成功；失败保留同一待办。"""

@@ -5,12 +5,18 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision = "f7c1d2e3a4b5"
-down_revision = "f1a8c3d9e602"
+down_revision = "e74b9a310c65"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
+    op.alter_column("documents", "content_text", nullable=True,
+                    comment="当前已采用正文；首次采用前为空。")
+    op.alter_column("documents", "content_hash", nullable=True,
+                    comment="当前已采用正文的 SHA-256；首次采用前为空。")
+    op.add_column("documents", sa.Column("management_revision", sa.Integer(), nullable=False, server_default="1"))
+    op.add_column("documents", sa.Column("latest_processing_id", sa.Uuid(), nullable=True))
     op.add_column("documents", sa.Column("current_version_id", sa.Uuid(), nullable=True,
         comment="当前正式可见的 DocumentVersion 身份。"))
     op.add_column("documents", sa.Column("usage_status", sa.String(32), nullable=False,
@@ -28,8 +34,12 @@ def upgrade() -> None:
         sa.Column("source_size", sa.Integer(), nullable=True),
         sa.Column("source_mime_type", sa.String(127), nullable=True),
         sa.Column("source_metadata", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column("source_stored_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("candidate_revision", sa.Integer(), nullable=False, server_default="1"),
         sa.Column("draft_revision", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("draft_text", sa.Text(), nullable=True),
+        sa.Column("draft_mime_type", sa.String(127), nullable=True),
+        sa.Column("requires_review", sa.Boolean(), nullable=False, server_default="false"),
         sa.Column("parser_id", sa.String(128), nullable=True),
         sa.Column("parsed_document", postgresql.JSONB(), nullable=True),
         sa.Column("chunk_result", postgresql.JSONB(), nullable=True),
@@ -45,6 +55,10 @@ def upgrade() -> None:
     )
     op.create_index("ix_document_processing_records_state", "document_processing_records", ["state", "updated_at"])
     op.create_index("ix_document_processing_records_document", "document_processing_records", ["document_id", "updated_at"])
+    op.create_foreign_key(
+        "fk_documents_latest_processing_id", "documents", "document_processing_records",
+        ["latest_processing_id"], ["id"], ondelete="SET NULL",
+    )
 
     op.create_table(
         "document_versions",
@@ -66,7 +80,10 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.UniqueConstraint("document_id", "revision", name="uq_document_versions_document_revision"),
     )
-    op.create_index("ix_document_versions_document_revision", "document_versions", ["document_id", "revision"], unique=True)
+    op.create_foreign_key(
+        "fk_documents_current_version_id", "documents", "document_versions",
+        ["current_version_id"], ["id"], ondelete="SET NULL",
+    )
 
     op.create_table(
         "document_review_records",
@@ -89,10 +106,16 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_document_review_records_document", table_name="document_review_records")
     op.drop_table("document_review_records")
-    op.drop_index("ix_document_versions_document_revision", table_name="document_versions")
+    op.drop_constraint("fk_documents_current_version_id", "documents", type_="foreignkey")
     op.drop_table("document_versions")
     op.drop_index("ix_document_processing_records_document", table_name="document_processing_records")
     op.drop_index("ix_document_processing_records_state", table_name="document_processing_records")
+    op.drop_constraint("fk_documents_latest_processing_id", "documents", type_="foreignkey")
     op.drop_table("document_processing_records")
     op.drop_column("documents", "usage_status")
     op.drop_column("documents", "current_version_id")
+    op.drop_column("documents", "latest_processing_id")
+    op.drop_column("documents", "management_revision")
+    # 降级前先处理尚未采用的资料；不以空字符串伪造旧 schema 所要求的正文。
+    op.alter_column("documents", "content_text", nullable=False)
+    op.alter_column("documents", "content_hash", nullable=False)

@@ -1,4 +1,4 @@
-"""文件管理的公开契约；状态来自现有索引流程，不把保存成功当成索引成功。"""
+"""文件管理区分正式版本与候选状态，保存成功仅表示原件与待办已持久化。"""
 
 from datetime import datetime
 from uuid import UUID
@@ -17,13 +17,20 @@ class FileDocumentResponse(BaseModel):
     upload_filename: str
     title: str
     mime_type: str
-    content_hash: str
+    content_hash: str | None
     revision: int
     updated_at: datetime
     processing_status: ProcessingStatus
     processing_error: str | None
     deletion_pending: bool
     deletion_error: str | None
+    management_revision: int
+    processing_id: UUID | None
+    candidate_revision: int | None
+    candidate_state: str | None
+    candidate_error: str | None
+    current_version_id: UUID | None
+    usage_status: str
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -36,4 +43,5 @@ class FileDocumentListResponse(BaseModel):
 
 class FileRevisionRequest(BaseModel):
     revision: int = Field(ge=1, strict=True, description="页面最近读取的文档业务版本。")
+    management_revision: int = Field(ge=1, strict=True, description="页面最近读取的管理修订。")
     model_config = ConfigDict(extra="forbid")

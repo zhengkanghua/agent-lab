@@ -56,7 +56,7 @@ async def upload_file(
     knowledge_base_id: Annotated[UUID, Form()],
     file: Annotated[UploadFile, File()],
 ) -> FileDocumentResponse:
-    """创建独立 Document 并进入待索引状态，同名文件不会覆盖。"""
+    """保存原件与待办后返回，后台解析并采用；同名文件创建独立资料。"""
     parsed = await _parse_upload(file)
     return FileDocumentResponse.model_validate(await service.upload(parsed, knowledge_base_id))
 
@@ -65,17 +65,18 @@ async def upload_file(
 async def replace_file(
     document_id: UUID, service: Service,
     revision: Annotated[int, Form(ge=1)],
+    management_revision: Annotated[int, Form(ge=1)],
     file: Annotated[UploadFile, File()],
 ) -> FileDocumentResponse:
     """保留目标 ID 和知识库归属，版本冲突时拒绝覆盖。"""
     parsed = await _parse_upload(file)
-    return FileDocumentResponse.model_validate(await service.replace(document_id, parsed, revision))
+    return FileDocumentResponse.model_validate(await service.replace(document_id, parsed, revision, management_revision))
 
 
 @router.post("/{document_id}/retry", response_model=FileDocumentResponse, summary="重新排队失败的文件索引")
 async def retry_file(document_id: UUID, body: FileRevisionRequest, service: Service) -> FileDocumentResponse:
     """复用原 Document 和 revision，不新增文件或立即执行 Embedding。"""
-    return FileDocumentResponse.model_validate(await service.retry(document_id, body.revision))
+    return FileDocumentResponse.model_validate(await service.retry(document_id, body.revision, body.management_revision))
 
 
 @router.delete("/{document_id}", status_code=204, summary="删除指定上传文档及索引")

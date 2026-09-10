@@ -9,9 +9,12 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agent_lab.domain.enums import DocumentType, ProcessingStatus
 from agent_lab.knowledge.adapters.postgres import PostgresKnowledgeBaseRepository
+from agent_lab.knowledge.adapters.processing import new_processing_record
 from agent_lab.knowledge.domain import require_active_knowledge_base
 from agent_lab.knowledge.files import FileDocument, FileDocumentError, TextFile
+from agent_lab.knowledge.processing.lifecycle import SourceIntake
 from agent_lab.models.document import DocumentRecord
+from agent_lab.models.document_processing import DocumentProcessingRecord
 from agent_lab.models.knowledge_base import KnowledgeBaseRecord
 from agent_lab.models.write_operation import DocumentDeletionRecord
 from agent_lab.repositories.document_retention_repository import DocumentRetentionRepository, _deletion_snapshot
@@ -31,7 +34,7 @@ def _processing_error(value: str | None) -> str | None:
     return "索引处理失败，请重试。"
 
 
-def _view(document, knowledge_base, deletion=None) -> FileDocument:
+def _view(document, knowledge_base, deletion=None, processing=None) -> FileDocument:
     return FileDocument(
         document_id=document.id, knowledge_base_id=document.knowledge_base_id,
         knowledge_base_name=knowledge_base.name, knowledge_base_active=knowledge_base.is_active,
@@ -44,6 +47,12 @@ def _view(document, knowledge_base, deletion=None) -> FileDocument:
             "索引已删除，文档删除尚未确认，请继续删除。" if deletion.qdrant_deleted
             else "索引删除尚未确认，请核实写入状态后继续删除。"
         ) if deletion is not None and deletion.error_type else None,
+        management_revision=document.management_revision,
+        processing_id=processing.id if processing else None,
+        candidate_revision=processing.candidate_revision if processing else None,
+        candidate_state=processing.state if processing else None,
+        candidate_error=processing.error_code if processing else None,
+        current_version_id=document.current_version_id, usage_status=document.usage_status,
     )
 
 
@@ -54,9 +63,10 @@ class PostgresFileDocumentRepository:
 
     async def list(self, *, knowledge_base_id: UUID | None, offset: int, limit: int):
         statement = (
-            select(DocumentRecord, KnowledgeBaseRecord, DocumentDeletionRecord)
+            select(DocumentRecord, KnowledgeBaseRecord, DocumentDeletionRecord, DocumentProcessingRecord)
             .join(KnowledgeBaseRecord, DocumentRecord.knowledge_base_id == KnowledgeBaseRecord.id)
             .outerjoin(DocumentDeletionRecord, DocumentDeletionRecord.document_id == DocumentRecord.id)
+            .outerjoin(DocumentProcessingRecord, DocumentProcessingRecord.id == DocumentRecord.latest_processing_id)
             .where(DocumentRecord.upload_filename.is_not(None))
             .order_by(DocumentRecord.updated_at.desc(), DocumentRecord.id)
             .offset(offset).limit(limit)
@@ -70,26 +80,30 @@ class PostgresFileDocumentRepository:
             await PostgresKnowledgeBaseRepository(self._session).get_for_update(knowledge_base_id)
         )
 
-    async def create(self, file: TextFile, knowledge_base_id: UUID):
+    async def create(self, file: TextFile, knowledge_base_id: UUID, intake: SourceIntake):
         knowledge_base = await self._active(knowledge_base_id)
         now = datetime.now(UTC)
         document = DocumentRecord(
-            id=uuid4(), knowledge_base_id=knowledge_base_id,
+            id=intake.document_id, knowledge_base_id=knowledge_base_id,
             source_id=None, external_id=None, source=None, url=None,
             document_type=DocumentType.OTHER, mime_type=file.mime_type,
             title=file.title, upload_filename=file.filename,
-            content_text=file.content_text, content_hash=file.content_hash,
+            content_text=None, content_hash=None, usage_status="active", management_revision=1,
             published_at=None, source_updated_at=None, authors=[], labels=[], image_urls=[],
             processing_status=ProcessingStatus.PENDING, index_revision=1,
             created_at=now, updated_at=now,
         )
         self._session.add(document)
         await self._session.flush()
-        view = _view(document, knowledge_base)
+        processing = new_processing_record(intake)
+        self._session.add(processing)
+        await self._session.flush()
+        document.latest_processing_id = intake.id
+        view = _view(document, knowledge_base, processing=processing)
         await self._session.commit()
         return view
 
-    async def _locked_upload(self, document_id, revision, *, allow_deletion=False):
+    async def _locked_upload(self, document_id, revision, *, management_revision=None, allow_deletion=False):
         document = await self._session.scalar(select(DocumentRecord).where(
             DocumentRecord.id == document_id,
         ).with_for_update())
@@ -99,43 +113,49 @@ class PostgresFileDocumentRepository:
             raise FileDocumentError("file_not_uploaded")
         if document.index_revision != revision:
             raise FileDocumentError("file_revision_conflict")
+        if management_revision is not None and document.management_revision != management_revision:
+            raise FileDocumentError("file_revision_conflict")
         deletion = await self._session.get(DocumentDeletionRecord, document_id)
-        if deletion is not None and not allow_deletion:
+        if (deletion is not None or document.usage_status == "deleting") and not allow_deletion:
             raise FileDocumentError("file_deletion_pending")
         return document, deletion
 
-    async def replace(self, document_id: UUID, file: TextFile, revision: int):
-        document, _ = await self._locked_upload(document_id, revision)
+    async def replace(self, document_id: UUID, file: TextFile, revision: int,
+                      management_revision: int, intake: SourceIntake):
+        document, _ = await self._locked_upload(document_id, revision, management_revision=management_revision)
         knowledge_base = await self._active(document.knowledge_base_id)
-        changed = (document.content_hash, document.title, document.mime_type, document.upload_filename) != (
-            file.content_hash, file.title, file.mime_type, file.filename,
-        )
-        if changed:
-            document.content_text = file.content_text
-            document.content_hash = file.content_hash
-            document.title = file.title
-            document.mime_type = file.mime_type
-            document.upload_filename = file.filename
-            document.index_revision += 1
-            document.updated_at = datetime.now(UTC)
-            if document.processing_status != ProcessingStatus.PROCESSING:
-                document.processing_status = ProcessingStatus.PENDING
-                document.processing_started_at = None
-                document.last_processing_error = None
-        view = _view(document, knowledge_base)
+        processing = new_processing_record(intake, requires_review=document.usage_status == "rejected")
+        self._session.add(processing)
+        await self._session.flush()
+        document.latest_processing_id = intake.id
+        document.management_revision += 1
+        document.updated_at = datetime.now(UTC)
+        view = _view(document, knowledge_base, processing=processing)
         await self._session.commit()
         return view
 
-    async def retry(self, document_id: UUID, revision: int):
-        document, _ = await self._locked_upload(document_id, revision)
+    async def retry(self, document_id: UUID, revision: int, management_revision: int):
+        document, _ = await self._locked_upload(document_id, revision, management_revision=management_revision)
         knowledge_base = await self._active(document.knowledge_base_id)
-        if document.processing_status == ProcessingStatus.PROCESSING:
+        processing = await self._session.scalar(select(DocumentProcessingRecord).where(
+            DocumentProcessingRecord.id == document.latest_processing_id,
+        ).with_for_update())
+        if processing is None:
+            raise FileDocumentError("file_document_not_found")
+        if processing.state in {"processing", "indexing", "adopting"}:
             raise FileDocumentError("file_processing_busy")
-        if document.processing_status == ProcessingStatus.FAILED:
-            document.processing_status = ProcessingStatus.PENDING
-            document.last_processing_error = None
+        if processing.source_stored_at is None:
+            raise FileDocumentError("file_source_recovery_required")
+        if processing.state in {"failed", "review"}:
+            processing.state = "pending"
+            processing.error_code = None
+            processing.parsed_document = None
+            processing.chunk_result = None
+            processing.preview_fingerprint = None
+            processing.candidate_revision += 1
+            document.management_revision += 1
             document.updated_at = datetime.now(UTC)
-        view = _view(document, knowledge_base)
+        view = _view(document, knowledge_base, processing=processing)
         await self._session.commit()
         return view
 

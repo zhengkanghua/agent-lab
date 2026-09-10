@@ -62,7 +62,12 @@ class DocumentRepository:
         statement = (
             select(DocumentRecord)
             .options(selectinload(DocumentRecord.source), selectinload(DocumentRecord.knowledge_base))
-            .where(DocumentRecord.id == document_id)
+            .where(
+                DocumentRecord.id == document_id,
+                DocumentRecord.current_version_id.is_not(None),
+                DocumentRecord.usage_status == "active",
+                ~exists().where(DocumentDeletionRecord.document_id == DocumentRecord.id),
+            )
         )
         # scalar：获取查询结果中第一行第一列的那个数据。
         return await self._session.scalar(statement)
@@ -91,6 +96,8 @@ class DocumentRepository:
             select(DocumentRecord.id)
             .where(
                 ~exists().where(DocumentDeletionRecord.document_id == DocumentRecord.id),
+                DocumentRecord.current_version_id.is_not(None),
+                DocumentRecord.usage_status == "active",
                 DocumentRecord.processing_status.in_(
                     [ProcessingStatus.PENDING, ProcessingStatus.FAILED]
                 )
@@ -275,6 +282,8 @@ class DocumentRepository:
             .where(
                 DocumentRecord.id == document_id,
                 DocumentRecord.index_revision == expected_revision,
+                DocumentRecord.current_version_id.is_not(None),
+                DocumentRecord.usage_status == "active",
                 ~exists().where(DocumentDeletionRecord.document_id == DocumentRecord.id),
                 DocumentRecord.processing_status.in_(
                     [ProcessingStatus.PENDING, ProcessingStatus.FAILED]

@@ -917,6 +917,7 @@ FILE_DOCUMENT_ERROR_DETAILS = {
     "file_write_recovery_required": (409, "写操作结果需要人工核实，暂时不能修改文件。", False),
     "file_delete_failed": (503, "删除尚未完成，请核对列表中的状态后继续删除。", True),
     "file_storage_unavailable": (503, "文件文档服务暂时不可用。", True),
+    "file_source_recovery_required": (409, "原件保存结果需要核实，请打开处理记录检查。", False),
 }
 
 
@@ -924,6 +925,25 @@ def build_file_document_error_response(error) -> JSONResponse:
     """只读用例提供的稳定错误码，不读取或回显异常正文。"""
     status_code, detail, retryable = FILE_DOCUMENT_ERROR_DETAILS[error.code]
     return build_error_response(status_code, error.code, detail, retryable=retryable)
+
+
+PROCESSING_ERROR_DETAILS = {
+    "object_storage_not_configured": (503, "尚未配置原件存储，暂时不能接收资料。", False),
+    "object_storage_disabled": (503, "尚未配置原件存储，暂时不能接收资料。", False),
+    "document_source_storage_failed": (503, "原件保存尚未确认，请查看处理记录后重试。", False),
+    "document_processing_storage_unavailable": (503, "文档处理服务暂时不可用，请核对处理记录。", True),
+    "document_processing_not_found": (404, "处理记录不存在。", False),
+    "document_processing_conflict": (409, "处理记录已更新，请刷新后操作。", False),
+    "document_deletion_pending": (409, "资料正在删除，请先完成删除。", False),
+}
+
+
+def build_processing_error_response(error) -> JSONResponse:
+    """处理原因只按应用错误码映射，第三方异常文本不会进入响应。"""
+    status, detail, retryable = PROCESSING_ERROR_DETAILS.get(
+        error.code, (503, "文档处理暂时不可用，请查看处理记录。", False),
+    )
+    return build_error_response(status, error.code, detail, retryable=retryable)
 
 
 def build_knowledge_base_error_response(error: BaseException) -> JSONResponse:

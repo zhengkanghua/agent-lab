@@ -1,6 +1,5 @@
 """只读取已提交的文本字节；保留 Markdown 原文，以成熟解析器派生索引文本。"""
 
-from hashlib import sha256
 from pathlib import PurePosixPath
 
 from markdown_it import MarkdownIt
@@ -9,7 +8,7 @@ from agent_lab.knowledge.files import FILE_MIME_TYPES, MAX_FILE_BYTES, FileDocum
 
 
 def parse_text_file(filename: str, data: bytes) -> TextFile:
-    """上传与替换共用校验；无效文件不会进入业务事务。"""
+    """上传与替换共用入口校验；原件内容异常由后台保留记录并转人工处理。"""
     name = PurePosixPath(filename.replace("\\", "/")).name
     if not name or len(name) > 255 or any(ord(char) < 32 for char in name):
         raise FileDocumentError("file_name_invalid")
@@ -18,18 +17,9 @@ def parse_text_file(filename: str, data: bytes) -> TextFile:
         raise FileDocumentError("file_format_unsupported")
     if len(data) > MAX_FILE_BYTES:
         raise FileDocumentError("file_too_large")
-    try:
-        content = data.decode("utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
-    except UnicodeDecodeError:
-        raise FileDocumentError("file_encoding_invalid") from None
-    if "\0" in content:
-        raise FileDocumentError("file_content_invalid")
-    if not content.strip():
-        raise FileDocumentError("file_empty")
     return TextFile(
         filename=name, title=PurePosixPath(name).stem.strip() or name.strip(),
-        mime_type=FILE_MIME_TYPES[suffix], content_text=content,
-        content_hash=sha256(content.encode("utf-8")).hexdigest(),
+        mime_type=FILE_MIME_TYPES[suffix], raw_bytes=bytes(data),
     )
 
 

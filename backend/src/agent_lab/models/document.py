@@ -172,15 +172,15 @@ class DocumentRecord(TimestampMixin, Base):
         server_default=text("'{}'::text[]"),
         comment="正文图片 URL 列表，不保存图片二进制。",
     )
-    content_text: Mapped[str] = mapped_column(
+    content_text: Mapped[str | None] = mapped_column(
         Text,
-        nullable=False,
-        comment="清洗后的完整正文纯文本。",
+        nullable=True,
+        comment="当前已采用正文；首次采用前为空。",
     )
-    content_hash: Mapped[str] = mapped_column(
+    content_hash: Mapped[str | None] = mapped_column(
         String(64),
-        nullable=False,
-        comment="规范化正文的 SHA-256，用于检测内容变化。",
+        nullable=True,
+        comment="当前已采用正文的 SHA-256；首次采用前为空。",
     )
     processing_status: Mapped[ProcessingStatus] = mapped_column(
         Enum(
@@ -231,7 +231,18 @@ class DocumentRecord(TimestampMixin, Base):
         comment="最近一次索引失败的脱敏、限长错误说明，不保存密钥或完整正文。",
     )
     current_version_id: Mapped[UUID | None] = mapped_column(
-        Uuid, nullable=True, comment="当前正式可见的 DocumentVersion 身份。"
+        Uuid, ForeignKey("document_versions.id", ondelete="SET NULL", use_alter=True,
+                         name="fk_documents_current_version_id"), nullable=True,
+        comment="当前正式可见的 DocumentVersion 身份。"
+    )
+    latest_processing_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("document_processing_records.id", ondelete="SET NULL", use_alter=True,
+                         name="fk_documents_latest_processing_id"), nullable=True,
+        comment="最近接收的候选记录；不会改变当前已采用正文。",
+    )
+    management_revision: Mapped[int] = mapped_column(
+        nullable=False, default=1, server_default="1",
+        comment="管理修改的并发修订；接收候选不推进正式业务版本。",
     )
     usage_status: Mapped[str] = mapped_column(
         String(32), nullable=False, default="active", server_default="active",
