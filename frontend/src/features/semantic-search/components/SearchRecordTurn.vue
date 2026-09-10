@@ -163,7 +163,7 @@ function toggle(): void {
   left: 6px;
   width: 2px;
   background: var(--surface-sunken);
-  border-radius: 1px;
+  border-radius: var(--radius-pill);
 }
 
 .record:last-child::before {
@@ -229,8 +229,8 @@ function toggle(): void {
   min-width: 0;
   overflow: hidden;
   color: var(--text-primary);
-  font-size: 0.95rem;
-  font-weight: 760;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-bold);
   text-overflow: ellipsis;
   white-space: nowrap;
   transition: color 150ms ease;
@@ -240,7 +240,7 @@ function toggle(): void {
   flex: 1 1 auto;
   min-width: 0;
   color: var(--text-tertiary);
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   white-space: nowrap;
   text-align: right;
 }
@@ -262,7 +262,7 @@ function toggle(): void {
 .record-scope {
   margin: 0 14px 6px;
   color: var(--text-secondary);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
 
@@ -291,14 +291,14 @@ function toggle(): void {
 
 .state-panel h3 {
   color: var(--text-primary);
-  font-size: 1.06rem;
-  font-weight: 760;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-bold);
 }
 
 .state-panel p {
   margin-top: 4px;
   color: var(--text-secondary);
-  font-size: 0.84rem;
+  font-size: var(--fs-sm);
   line-height: 1.6;
 }
 
@@ -338,7 +338,7 @@ function toggle(): void {
   gap: 7px;
   margin: 4px 0 0;
   color: var(--text-tertiary);
-  font-size: 0.7rem;
+  font-size: var(--fs-xs);
 }
 
 @container (max-width: 600px) {

@@ -33,7 +33,7 @@ defineProps<{ stats: DirectoryStats }>()
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-secondary);
   font-family: var(--mono-font);
-  font-size: 0.68rem;
+  font-size: var(--fs-xs);
 }
 
 /* 每一格是一个 flex 行盒：数字与说明之间的距离由 gap 给出，
@@ -47,7 +47,7 @@ defineProps<{ stats: DirectoryStats }>()
 
 .account-summary strong {
   color: var(--text-primary);
-  font-size: 1.08rem;
+  font-size: var(--fs-lg);
 }
 
 .summary-note {

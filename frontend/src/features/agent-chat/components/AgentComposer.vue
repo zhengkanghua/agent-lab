@@ -198,7 +198,7 @@ function onEnter(event: KeyboardEvent): void {
   outline: none;
   color: var(--text-primary);
   background: none;
-  font-size: 0.95rem;
+  font-size: var(--fs-base);
   line-height: 1.65;
 }
 
@@ -235,8 +235,8 @@ function onEnter(event: KeyboardEvent): void {
   border-radius: var(--radius-pill);
   color: var(--accent);
   background: var(--accent-soft);
-  font-size: 0.72rem;
-  font-weight: 700;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
   white-space: nowrap;
   transition:
     color var(--duration-fast) var(--ease-out-smooth),
@@ -267,7 +267,7 @@ function onEnter(event: KeyboardEvent): void {
 .character-count {
   color: var(--text-tertiary);
   font-family: var(--mono-font);
-  font-size: 0.67rem;
+  font-size: var(--fs-xs);
   white-space: nowrap;
   transition: color var(--duration-normal) var(--ease-out-smooth);
 }
@@ -291,8 +291,8 @@ function onEnter(event: KeyboardEvent): void {
 .field-error {
   padding: 7px 7px 2px;
   color: var(--danger);
-  font-size: 0.78rem;
-  font-weight: 650;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
 }
 
 @container (max-width: 520px) {

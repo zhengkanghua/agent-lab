@@ -116,8 +116,8 @@ function refresh(): void {
 
 .history-heading p {
   color: var(--text-secondary);
-  font-size: 0.72rem;
-  font-weight: 760;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
 }
 
 /* 刷新键走 BaseButton（ghost），与两处目录同款；转动用共享 .spin（motion.css）。 */
@@ -128,7 +128,7 @@ function refresh(): void {
   gap: 9px;
   margin-top: 13px;
   color: var(--text-tertiary);
-  font-size: 0.76rem;
+  font-size: var(--fs-xs);
 }
 
 .history-state-error {
@@ -148,7 +148,7 @@ function refresh(): void {
   gap: 4px;
   padding: 10px 2px;
   border-bottom: 1px solid var(--border-subtle);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
 }
 
 .run-item:last-child {
@@ -165,9 +165,9 @@ function refresh(): void {
 
 .run-badge {
   padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 0.68rem;
-  font-weight: 720;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
   color: var(--text-secondary);
   background: var(--surface-hover);
 }
@@ -187,19 +187,19 @@ function refresh(): void {
 }
 
 .run-trigger {
-  font-size: 0.68rem;
-  font-weight: 640;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
 }
 
 .run-error-type {
   margin-left: auto;
   color: var(--danger);
   font-family: var(--mono-font);
-  font-size: 0.68rem;
+  font-size: var(--fs-xs);
 }
 
 .run-stats {
   color: var(--text-tertiary);
-  font-size: 0.71rem;
+  font-size: var(--fs-xs);
 }
 </style>

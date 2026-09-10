@@ -177,19 +177,19 @@ const hasTracesOnly = computed(() => isUnanswered.value && props.turn.traces.len
   gap: 8px;
   margin-bottom: 6px;
   color: var(--text-tertiary);
-  font-size: 0.7rem;
-  font-weight: 720;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
 }
 
 .turn-state {
   color: var(--warning);
-  font-weight: 650;
+  font-weight: var(--fw-semibold);
 }
 
 .run-scope {
   margin-bottom: 10px;
   color: var(--text-secondary);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
 
@@ -211,7 +211,7 @@ const hasTracesOnly = computed(() => isUnanswered.value && props.turn.traces.len
   color: var(--accent);
   background: transparent;
   text-align: left;
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   line-height: 1.55;
   overflow-wrap: anywhere;
   cursor: pointer;
@@ -224,7 +224,7 @@ const hasTracesOnly = computed(() => isUnanswered.value && props.turn.traces.len
 .citation-warning {
   margin-top: 12px;
   color: var(--warning);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   line-height: 1.6;
 }
 
@@ -232,7 +232,7 @@ const hasTracesOnly = computed(() => isUnanswered.value && props.turn.traces.len
    答案正文的排版与流式光标都归 MarkdownAnswer，这里不再有 .answer-text。 */
 .question-text {
   color: var(--text-primary);
-  font-size: 0.92rem;
+  font-size: var(--fs-sm);
   line-height: 1.75;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -240,13 +240,13 @@ const hasTracesOnly = computed(() => isUnanswered.value && props.turn.traces.len
 
 .thinking {
   color: var(--text-tertiary);
-  font-size: 0.85rem;
+  font-size: var(--fs-sm);
 }
 
 /* 与 .thinking 同一档视觉重量：两者都是「这里本该有内容」的中性说明，不该比真实回答更显眼。 */
 .unanswered {
   color: var(--text-tertiary);
-  font-size: 0.85rem;
+  font-size: var(--fs-sm);
   font-style: italic;
 }
 
@@ -254,7 +254,7 @@ const hasTracesOnly = computed(() => isUnanswered.value && props.turn.traces.len
   display: block;
   margin-top: 4px;
   color: var(--text-tertiary);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
 }
 
 /* 错误面板本体归 BaseCallout；这里只留外边距。 */

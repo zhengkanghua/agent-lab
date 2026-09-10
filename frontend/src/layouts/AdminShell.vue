@@ -282,14 +282,14 @@ onScopeDispose(() => {
 }
 
 .sidebar-brand-copy strong {
-  font-size: 0.98rem;
-  font-weight: 760;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-bold);
   line-height: 1.2;
 }
 
 .sidebar-brand-copy small {
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: var(--fs-xs);
 }
 
 .sidebar-close {
@@ -314,8 +314,8 @@ onScopeDispose(() => {
   margin-bottom: 6px;
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
-  font-size: 0.86rem;
-  font-weight: 600;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
   text-decoration: none;
   transition:
     color 150ms ease,
@@ -330,8 +330,8 @@ onScopeDispose(() => {
 .menu-group-label {
   padding: 16px 12px 7px;
   color: var(--text-tertiary);
-  font-size: 0.68rem;
-  font-weight: 720;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
   letter-spacing: 0;
   text-transform: uppercase;
 }
@@ -343,8 +343,8 @@ onScopeDispose(() => {
   padding: 10px 12px;
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
-  font-size: 0.88rem;
-  font-weight: 560;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
   text-decoration: none;
   transition:
     color 150ms ease,
@@ -359,7 +359,7 @@ onScopeDispose(() => {
 /* 激活项：左色条 + 浅青底。router-link-active 由 RouterLink 在命中时自动加上。 */
 .menu-item.router-link-active {
   color: var(--accent);
-  font-weight: 640;
+  font-weight: var(--fw-semibold);
   background: var(--accent-soft);
   box-shadow: inset 3px 0 var(--accent);
 }
@@ -408,14 +408,14 @@ onScopeDispose(() => {
 
 .topbar-subtitle {
   color: var(--text-secondary);
-  font-size: 0.7rem;
-  font-weight: 700;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
 }
 
 .topbar-title {
   margin: 1px 0 0;
-  font-size: 1.08rem;
-  font-weight: 720;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
   line-height: 1.25;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -439,7 +439,7 @@ onScopeDispose(() => {
   padding: 6px 10px;
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   text-decoration: none;
   transition:
     color 150ms ease,
@@ -468,7 +468,7 @@ onScopeDispose(() => {
   top: calc(100% + 8px);
   right: 0;
   color: var(--danger);
-  font-size: 0.7rem;
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 

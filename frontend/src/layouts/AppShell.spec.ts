@@ -7,7 +7,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 /* vi.mock 的工厂会被提到文件顶部，普通顶层变量在那时还没初始化，所以走 hoisted。
    替身用普通对象而不是 ref：外壳只在渲染时读一次 user.value，本文件每个用例都在
    挂载前把它设好，用不上响应式。 */
-const session = vi.hoisted(() => ({ user: { value: null as { email: string } | null } }))
+const session = vi.hoisted(() => ({
+  user: { value: null as { email: string; is_superuser?: boolean } | null },
+}))
 
 vi.mock('@/features/auth/auth-session', () => ({ authSession: { user: session.user } }))
 
@@ -21,7 +23,7 @@ function testRouter(): Router {
     routes: [
       { path: '/', name: 'search', component: { template: '<div />' } },
       { path: '/agent', name: 'agent-chat', component: { template: '<div />' } },
-      { path: '/admin', name: 'user-admin', component: { template: '<div />' } },
+      { path: '/admin', name: 'admin', component: { template: '<div />' } },
       { path: '/settings/:section?', name: 'settings', component: { template: '<div />' } },
     ],
   })
@@ -109,7 +111,7 @@ describe('AppShell', () => {
     const { wrapper } = await mountShell({
       navLinks: [
         { to: { name: 'agent-chat' }, label: '隐藏的', icon: Bot, visible: false },
-        { to: { name: 'user-admin' }, label: '显示的', icon: Bot },
+        { to: { name: 'admin' }, label: '显示的', icon: Bot },
       ],
     })
 
@@ -187,5 +189,24 @@ describe('AppShell', () => {
     const root = wrapper.element as HTMLElement
     const marks = Array.from(root.children).map((child) => child.tagName.toLowerCase())
     expect(marks).toEqual(['a', 'header', 'main'])
+  })
+
+  it('超管在顶栏看到后台入口，指向 /admin', async () => {
+    session.user.value = { email: 'admin@example.com', is_superuser: true }
+    const { wrapper } = await mountShell()
+
+    const link = wrapper.get('a[aria-label="后台管理"]')
+    expect(link.attributes('href')).toBe('/admin')
+    wrapper.unmount()
+  })
+
+  it('普通账号看不到后台入口，但账号与退出仍在', async () => {
+    session.user.value = { email: 'user@example.com', is_superuser: false }
+    const { wrapper } = await mountShell()
+
+    expect(wrapper.find('a[aria-label="后台管理"]').exists()).toBe(false)
+    expect(wrapper.find('.account-identity').exists()).toBe(true)
+    expect(wrapper.find('button[aria-label="退出登录"]').exists()).toBe(true)
+    wrapper.unmount()
   })
 })

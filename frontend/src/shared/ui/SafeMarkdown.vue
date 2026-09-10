@@ -147,7 +147,7 @@ const linkAttrs: CustomAttrs = {
 
 .markdown-answer {
   color: var(--text-primary);
-  font-size: 0.92rem;
+  font-size: var(--fs-sm);
   line-height: 1.75;
   overflow-wrap: anywhere;
 }
@@ -163,23 +163,23 @@ const linkAttrs: CustomAttrs = {
 .markdown-answer :deep(h3),
 .markdown-answer :deep(h4) {
   color: var(--text-primary);
-  font-weight: 760;
+  font-weight: var(--fw-bold);
   line-height: 1.35;
 }
 
 /* 答案正文里的标题不该比页面 h1 还大：模型很爱用 `#`，照浏览器默认渲染会盖过页面层级。
    四级压到一个窄区间，靠字重和间距区分，不靠字号。 */
 .markdown-answer :deep(h1) {
-  font-size: 1.12rem;
+  font-size: var(--fs-lg);
 }
 
 .markdown-answer :deep(h2) {
-  font-size: 1.04rem;
+  font-size: var(--fs-base);
 }
 
 .markdown-answer :deep(h3),
 .markdown-answer :deep(h4) {
-  font-size: 0.96rem;
+  font-size: var(--fs-base);
 }
 
 .markdown-answer :deep(* + h1),
@@ -210,7 +210,7 @@ const linkAttrs: CustomAttrs = {
 
 .markdown-answer :deep(strong) {
   color: var(--text-primary);
-  font-weight: 720;
+  font-weight: var(--fw-bold);
 }
 
 .markdown-answer :deep(a) {
@@ -225,10 +225,10 @@ const linkAttrs: CustomAttrs = {
 
 .markdown-answer :deep(.verified-citation) {
   padding: 2px 4px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--accent-soft);
   font-size: 0.82em;
-  font-weight: 720;
+  font-weight: var(--fw-bold);
   text-decoration: none;
   white-space: nowrap;
 }
@@ -237,7 +237,7 @@ const linkAttrs: CustomAttrs = {
    块级的要像一个独立区域。 */
 .markdown-answer :deep(code) {
   padding: 0.12em 0.34em;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   background: var(--surface-sunken);
   font-family: var(--mono-font);
@@ -258,7 +258,7 @@ const linkAttrs: CustomAttrs = {
   padding: 0;
   border-radius: 0;
   background: none;
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   white-space: pre;
 }
@@ -274,7 +274,7 @@ const linkAttrs: CustomAttrs = {
   width: 100%;
   overflow-x: auto;
   border-collapse: collapse;
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
 }
 
 .markdown-answer :deep(th),
@@ -288,7 +288,7 @@ const linkAttrs: CustomAttrs = {
 .markdown-answer :deep(th) {
   color: var(--text-secondary);
   background: var(--surface-base);
-  font-weight: 720;
+  font-weight: var(--fw-bold);
   white-space: nowrap;
 }
 

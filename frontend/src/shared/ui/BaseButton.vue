@@ -112,24 +112,39 @@ const spinnerSize = computed(() => (props.size === 'md' ? 18 : 15))
   gap: 8px;
   height: 44px;
   padding: 0 16px;
-  font-size: 0.85rem;
-  font-weight: 760;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
 }
 
 .is-sm {
   gap: 7px;
   min-height: 38px;
   padding: 7px 12px;
-  font-size: 0.78rem;
-  font-weight: 720;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
 }
 
 .is-xs {
   gap: 6px;
   min-height: 28px;
   padding: 0;
-  font-size: 0.74rem;
-  font-weight: 700;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+}
+
+/* 触屏下把两档小尺寸撑到可点高度（约 44px）。
+   紧凑尺寸是为桌面鼠标的精度换来的密度，手指没有那个精度：28px 的行内按钮
+   在手机上要么点不中、要么点到隔壁。只改触屏，桌面端的密集排布不受影响。
+   md 本来就是 44px，不在这一段里。 */
+@media (pointer: coarse) {
+  .is-sm,
+  .is-xs {
+    min-height: var(--tap-target);
+  }
+
+  .is-icon-only.is-sm {
+    width: var(--tap-target);
+  }
 }
 
 .is-icon-only.is-md {

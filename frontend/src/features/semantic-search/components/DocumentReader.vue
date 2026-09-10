@@ -283,8 +283,8 @@ function handleKeydown(event: KeyboardEvent): void {
   align-items: center;
   gap: 7px;
   color: var(--text-secondary);
-  font-size: 0.74rem;
-  font-weight: 760;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
 }
 
 .reader-scroll {
@@ -304,7 +304,7 @@ function handleKeydown(event: KeyboardEvent): void {
   flex-wrap: wrap;
   gap: 8px 13px;
   color: var(--text-secondary);
-  font-size: 0.74rem;
+  font-size: var(--fs-xs);
 }
 
 .reader-meta > span {
@@ -316,19 +316,19 @@ function handleKeydown(event: KeyboardEvent): void {
 .reader-source {
   max-width: 100%;
   padding: 3px 7px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   overflow-wrap: anywhere;
   color: var(--accent);
   background: var(--accent-soft);
-  font-weight: 740;
+  font-weight: var(--fw-bold);
 }
 
 .reader-title-block h2 {
   margin-top: 14px;
   overflow-wrap: anywhere;
   color: var(--text-primary);
-  font-size: 2rem;
-  font-weight: 780;
+  font-size: var(--fs-3xl);
+  font-weight: var(--fw-bold);
   letter-spacing: 0;
   line-height: 1.25;
 }
@@ -340,8 +340,8 @@ function handleKeydown(event: KeyboardEvent): void {
   min-height: 36px;
   margin-top: 15px;
   color: var(--text-secondary);
-  font-size: 0.78rem;
-  font-weight: 740;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
   text-decoration: none;
 }
 
@@ -359,7 +359,7 @@ function handleKeydown(event: KeyboardEvent): void {
   border-left: 3px solid var(--warning);
   color: var(--text-secondary);
   background: var(--warning-soft);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   line-height: 1.55;
 }
 
@@ -388,11 +388,11 @@ function handleKeydown(event: KeyboardEvent): void {
 
 .reader-loading strong {
   color: var(--text-primary);
-  font-size: 0.86rem;
+  font-size: var(--fs-sm);
 }
 
 .reader-loading span:not(.reader-skeleton) {
-  font-size: 0.74rem;
+  font-size: var(--fs-xs);
 }
 
 /* shimmer 皮肤来自 motion.css 的共享 .skeleton-line（模板上两个类并用），
@@ -427,7 +427,7 @@ function handleKeydown(event: KeyboardEvent): void {
 
 .reader-error h3 {
   color: var(--text-primary);
-  font-size: 1.18rem;
+  font-size: var(--fs-lg);
   letter-spacing: 0;
 }
 
@@ -435,7 +435,7 @@ function handleKeydown(event: KeyboardEvent): void {
   max-width: 48ch;
   margin-top: 5px;
   color: var(--text-secondary);
-  font-size: 0.84rem;
+  font-size: var(--fs-sm);
   line-height: 1.65;
 }
 
@@ -453,11 +453,11 @@ function handleKeydown(event: KeyboardEvent): void {
   padding: 14px 16px;
   border-left: 3px solid var(--accent);
   background: var(--surface-base);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   line-height: 1.65;
 }
 .reader-evidence h3 {
-  font-size: 0.86rem;
+  font-size: var(--fs-sm);
 }
 .reader-evidence .evidence-source {
   margin-top: 5px;
@@ -474,14 +474,14 @@ function handleKeydown(event: KeyboardEvent): void {
 .reader-evidence .evidence-note {
   margin-top: 10px;
   color: var(--text-secondary);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
 }
 
 .reader-article > p {
   max-width: 76ch;
   overflow-wrap: anywhere;
   color: var(--text-secondary);
-  font-size: 1rem;
+  font-size: var(--fs-base);
   line-height: 1.95;
   white-space: pre-wrap;
 }
@@ -525,11 +525,11 @@ function handleKeydown(event: KeyboardEvent): void {
   }
 
   .reader-title-block h2 {
-    font-size: 1.55rem;
+    font-size: var(--fs-2xl);
   }
 
   .reader-article > p {
-    font-size: 0.94rem;
+    font-size: var(--fs-base);
     line-height: 1.85;
   }
 }

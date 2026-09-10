@@ -135,14 +135,14 @@ function resetPasswordFor(user: UserAdminDto): string | null {
 
 .directory-heading p {
   color: var(--text-secondary);
-  font-size: 0.74rem;
-  font-weight: 760;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
 }
 
 .directory-heading h2 {
   margin-top: 4px;
-  font-size: 1.24rem;
-  font-weight: 760;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-bold);
 }
 
 /* 刷新键走 BaseButton（ghost），三处目录/历史面板同款。刷新键上那圈转动用共享的
@@ -158,7 +158,7 @@ function resetPasswordFor(user: UserAdminDto): string | null {
   border-top: 1px solid var(--border-subtle);
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-tertiary);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
 }
 
 .directory-state-error {
@@ -183,7 +183,7 @@ function resetPasswordFor(user: UserAdminDto): string | null {
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-tertiary);
   font-family: var(--mono-font);
-  font-size: 0.65rem;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
 }
 

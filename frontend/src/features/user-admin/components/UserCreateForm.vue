@@ -121,14 +121,14 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
 
 .editor-heading p {
   color: var(--text-secondary);
-  font-size: 0.74rem;
-  font-weight: 760;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
 }
 
 .editor-heading h2 {
   margin-top: 4px;
-  font-size: 1.24rem;
-  font-weight: 760;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-bold);
 }
 
 .create-form {
@@ -143,8 +143,8 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
   display: grid;
   gap: 7px;
   color: var(--text-secondary);
-  font-size: 0.75rem;
-  font-weight: 700;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
 }
 
 /* 输入框皮肤在 BaseInput（全站一份）；这里只管外壳排版。 */
@@ -155,7 +155,7 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
   min-height: 42px;
   gap: 10px;
   color: var(--text-secondary);
-  font-size: 0.76rem;
+  font-size: var(--fs-xs);
 }
 
 .check-control input {
@@ -171,8 +171,8 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
 
 .check-control small {
   color: var(--text-tertiary);
-  font-size: 0.67rem;
-  font-weight: 450;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-normal);
 }
 
 .editor-error {

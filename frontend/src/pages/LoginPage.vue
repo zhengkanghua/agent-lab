@@ -215,15 +215,15 @@ async function retrySessionCheck(): Promise<void> {
 }
 
 .login-brand strong {
-  font-size: 1rem;
-  font-weight: 760;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-bold);
   letter-spacing: 0;
   line-height: 1.2;
 }
 
 .login-brand small {
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
 }
 
 .access-label {
@@ -231,7 +231,7 @@ async function retrySessionCheck(): Promise<void> {
      不足会糊进顶栏，用 secondary 保住 4.5:1。 */
   color: var(--text-secondary);
   font-family: var(--mono-font);
-  font-size: 0.7rem;
+  font-size: var(--fs-xs);
 }
 
 .login-main {
@@ -251,15 +251,15 @@ async function retrySessionCheck(): Promise<void> {
 .login-kicker,
 .tool-heading p {
   color: var(--text-secondary);
-  font-size: 0.75rem;
-  font-weight: 760;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
 }
 
 .login-context h1 {
   margin-top: 10px;
   color: var(--text-primary);
-  font-size: 2.65rem;
-  font-weight: 780;
+  font-size: var(--fs-4xl);
+  font-weight: var(--fw-bold);
   letter-spacing: 0;
   line-height: 1.12;
 }
@@ -267,7 +267,7 @@ async function retrySessionCheck(): Promise<void> {
 .login-intro {
   margin-top: 17px;
   color: var(--text-secondary);
-  font-size: 0.96rem;
+  font-size: var(--fs-base);
 }
 
 .signal-register {
@@ -291,7 +291,7 @@ async function retrySessionCheck(): Promise<void> {
 .register-heading span {
   color: var(--text-tertiary);
   font-family: var(--mono-font);
-  font-size: 0.65rem;
+  font-size: var(--fs-xs);
 }
 
 .register-lines {
@@ -346,8 +346,8 @@ async function retrySessionCheck(): Promise<void> {
 
 .tool-heading h2 {
   margin-top: 7px;
-  font-size: 1.55rem;
-  font-weight: 760;
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-bold);
   letter-spacing: 0;
   line-height: 1.2;
 }
@@ -363,7 +363,7 @@ async function retrySessionCheck(): Promise<void> {
   border-left: 3px solid var(--warning);
   color: var(--text-secondary);
   background: var(--surface-base);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
 }
 
 /* ghost/xs 已经带了内联排布、6px 间距、零内边距与强调色。这里只补一条：
@@ -404,7 +404,7 @@ async function retrySessionCheck(): Promise<void> {
 .account-note {
   margin-top: 22px;
   color: var(--text-tertiary);
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
 }
 
 @container (max-width: 820px) {
@@ -453,7 +453,7 @@ async function retrySessionCheck(): Promise<void> {
   }
 
   .login-context h1 {
-    font-size: 2.1rem;
+    font-size: var(--fs-3xl);
   }
 
   .signal-register {

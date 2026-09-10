@@ -232,8 +232,8 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
 .user-copy strong {
   overflow: hidden;
   color: var(--text-primary);
-  font-size: 0.8rem;
-  font-weight: 710;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -242,7 +242,7 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
 .created-cell small,
 .status-cell small {
   color: var(--text-tertiary);
-  font-size: 0.66rem;
+  font-size: var(--fs-xs);
 }
 
 .managed-note {
@@ -276,7 +276,7 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
   width: 32px;
   height: 18px;
   border: 1px solid var(--border-subtle);
-  border-radius: 10px;
+  border-radius: var(--radius-pill);
   background: var(--surface-sunken);
   transition: background 140ms ease;
 }
@@ -316,7 +316,7 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
 .created-cell span {
   color: var(--text-secondary);
   font-family: var(--mono-font);
-  font-size: 0.68rem;
+  font-size: var(--fs-xs);
 }
 
 .row-actions {
@@ -336,8 +336,8 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   background: var(--surface-raised);
-  font-size: 0.7rem;
-  font-weight: 650;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
 }
 
 .row-actions button:hover:not(:disabled) {

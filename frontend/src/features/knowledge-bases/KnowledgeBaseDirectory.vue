@@ -231,7 +231,7 @@ watch(editorOpen, async (open) => {
 }
 .directory-count {
   color: var(--text-secondary);
-  font-size: 0.86rem;
+  font-size: var(--fs-sm);
 }
 .directory-count svg {
   color: var(--accent);
@@ -239,7 +239,7 @@ watch(editorOpen, async (open) => {
 .directory-count strong {
   margin-left: 8px;
   font-family: var(--mono-font);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   color: var(--text-primary);
 }
 .knowledge-editor {
@@ -251,8 +251,8 @@ watch(editorOpen, async (open) => {
   margin-bottom: 18px;
 }
 .editor-heading h2 {
-  font-size: 1rem;
-  font-weight: 700;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-bold);
 }
 .editor-fields {
   display: grid;
@@ -280,7 +280,7 @@ watch(editorOpen, async (open) => {
   align-items: center;
   gap: 8px;
   color: var(--success);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   overflow-wrap: anywhere;
   padding: 16px 0;
 }
@@ -294,7 +294,7 @@ watch(editorOpen, async (open) => {
   justify-content: center;
   gap: 12px;
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--fs-sm);
 }
 .knowledge-table {
   width: 100%;
@@ -304,8 +304,8 @@ watch(editorOpen, async (open) => {
 th {
   padding: 18px 12px;
   color: var(--text-secondary);
-  font-size: 0.72rem;
-  font-weight: 600;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
   text-align: left;
   border-bottom: 1px solid var(--border-subtle);
 }
@@ -333,20 +333,20 @@ td {
   overflow-wrap: anywhere;
 }
 .name-cell strong {
-  font-size: 0.9rem;
-  font-weight: 650;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
 }
 .name-cell p {
   margin-top: 5px;
   color: var(--text-secondary);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   line-height: 1.65;
   white-space: pre-wrap;
 }
 .key-cell code {
   color: var(--text-secondary);
   font-family: var(--mono-font);
-  font-size: 0.76rem;
+  font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
 .active-control {
@@ -355,7 +355,7 @@ td {
   gap: 8px;
   min-height: 36px;
   color: var(--success);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 .active-control input {
@@ -380,7 +380,7 @@ td {
     flex-wrap: wrap;
   }
   .directory-count {
-    font-size: 0.8rem;
+    font-size: var(--fs-sm);
   }
   .editor-fields {
     grid-template-columns: 1fr;

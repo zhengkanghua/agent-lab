@@ -183,7 +183,7 @@ function requestFullText(event: MouseEvent): void {
 }
 
 .document-locator > strong {
-  font-size: 0.88rem;
+  font-size: var(--fs-sm);
   letter-spacing: 0;
 }
 
@@ -203,13 +203,13 @@ function requestFullText(event: MouseEvent): void {
 .document-locator small {
   color: var(--text-tertiary);
   font-family: var(--body-font);
-  font-size: 0.62rem;
+  font-size: var(--fs-xs);
 }
 
 .document-locator b {
   color: var(--text-secondary);
-  font-size: 0.67rem;
-  font-weight: 650;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
   white-space: nowrap;
 }
 
@@ -232,7 +232,7 @@ function requestFullText(event: MouseEvent): void {
   min-width: 0;
   max-width: 100%;
   color: var(--text-secondary);
-  font-size: 0.73rem;
+  font-size: var(--fs-xs);
 }
 
 .source-name {
@@ -248,7 +248,7 @@ function requestFullText(event: MouseEvent): void {
   border-radius: var(--radius-sm);
   color: var(--accent-hover);
   background: var(--accent-soft);
-  font-weight: 700;
+  font-weight: var(--fw-bold);
 }
 
 .meta-item {
@@ -278,16 +278,16 @@ function requestFullText(event: MouseEvent): void {
   color: var(--text-secondary);
   background: var(--surface-base);
   font-family: var(--mono-font);
-  font-size: 0.8rem;
-  font-weight: 700;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
 }
 
 .result-title {
   margin-top: 10px;
   overflow-wrap: anywhere;
   color: var(--text-primary);
-  font-size: 1.18rem;
-  font-weight: 780;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
   letter-spacing: 0;
   line-height: 1.36;
 }
@@ -304,13 +304,13 @@ function requestFullText(event: MouseEvent): void {
   gap: 14px;
   color: var(--text-tertiary);
   font-family: var(--mono-font);
-  font-size: 0.66rem;
+  font-size: var(--fs-xs);
 }
 
 .match-heading span:first-child {
   color: var(--accent-hover);
   font-family: var(--body-font);
-  font-weight: 760;
+  font-weight: var(--fw-bold);
 }
 
 .related-heading {
@@ -320,7 +320,7 @@ function requestFullText(event: MouseEvent): void {
   gap: 14px;
   color: var(--text-tertiary);
   font-family: var(--mono-font);
-  font-size: 0.66rem;
+  font-size: var(--fs-xs);
 }
 
 .related-heading span:last-child {
@@ -335,7 +335,7 @@ function requestFullText(event: MouseEvent): void {
   max-width: 65em;
   overflow-wrap: anywhere;
   color: var(--text-primary);
-  font-size: 0.92rem;
+  font-size: var(--fs-sm);
   line-height: 1.68;
   white-space: pre-line;
 }
@@ -356,8 +356,8 @@ function requestFullText(event: MouseEvent): void {
   border: 0;
   color: var(--accent);
   background: transparent;
-  font-size: 0.76rem;
-  font-weight: 720;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
   cursor: pointer;
   transition: color var(--duration-fast) var(--ease-out-smooth);
 }
@@ -417,7 +417,7 @@ function requestFullText(event: MouseEvent): void {
 
 .related-matches p {
   margin-top: 7px;
-  font-size: 0.86rem;
+  font-size: var(--fs-sm);
 }
 
 .label-list {
@@ -436,11 +436,11 @@ function requestFullText(event: MouseEvent): void {
   max-width: 100%;
   padding: 3px 7px;
   border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   overflow-wrap: anywhere;
   color: var(--text-secondary);
   background: var(--surface-base);
-  font-size: 0.68rem;
+  font-size: var(--fs-xs);
 }
 
 .result-actions {
@@ -464,8 +464,8 @@ function requestFullText(event: MouseEvent): void {
   border-radius: var(--radius-sm);
   color: var(--accent);
   background: var(--surface-raised);
-  font-size: 0.76rem;
-  font-weight: 740;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
   text-decoration: none;
   cursor: pointer;
   transition:
@@ -495,8 +495,8 @@ function requestFullText(event: MouseEvent): void {
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   background: transparent;
-  font-size: 0.76rem;
-  font-weight: 740;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
   text-decoration: none;
   transition:
     border-color var(--duration-fast) var(--ease-out-smooth),
@@ -531,7 +531,7 @@ function requestFullText(event: MouseEvent): void {
 
 .origin-missing {
   color: var(--text-secondary);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
 }
 
 @container (max-width: 680px) {
@@ -568,12 +568,12 @@ function requestFullText(event: MouseEvent): void {
 
   .result-title {
     margin-top: 10px;
-    font-size: 1.12rem;
+    font-size: var(--fs-lg);
   }
 
   .result-excerpt,
   .related-matches p {
-    font-size: 0.88rem;
+    font-size: var(--fs-sm);
   }
 
   .result-actions {

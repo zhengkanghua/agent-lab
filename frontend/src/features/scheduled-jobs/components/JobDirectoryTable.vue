@@ -117,14 +117,14 @@ const emit = defineEmits<{
 
 .directory-heading p {
   color: var(--text-secondary);
-  font-size: 0.74rem;
-  font-weight: 760;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
 }
 
 .directory-heading h2 {
   margin-top: 4px;
-  font-size: 1.1rem;
-  font-weight: 760;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
 }
 
 /* 刷新键走 BaseButton（ghost），与账号目录、执行历史同款；转动用共享 .spin，
@@ -136,7 +136,7 @@ const emit = defineEmits<{
   gap: 10px;
   padding: 26px 12px;
   color: var(--text-tertiary);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
 }
 
 .directory-state-error {
@@ -158,8 +158,8 @@ const emit = defineEmits<{
   gap: 18px;
   padding: 10px;
   color: var(--text-tertiary);
-  font-size: 0.66rem;
-  font-weight: 720;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
   letter-spacing: 0.04em;
 }
 

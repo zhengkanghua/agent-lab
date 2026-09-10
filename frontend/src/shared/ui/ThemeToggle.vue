@@ -99,6 +99,14 @@ watch(theme, (newTheme) => {
   transform: scale(0.95);
 }
 
+/* 触屏下撑到 44px：40px 是配顶栏图标一排的桌面尺寸，手指按容易偏。 */
+@media (pointer: coarse) {
+  .theme-toggle {
+    width: var(--tap-target);
+    height: var(--tap-target);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .theme-toggle {
     transition: color var(--duration-fast);

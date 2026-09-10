@@ -95,6 +95,17 @@ defineExpose({ focus })
   height: 34px;
 }
 
+/* 触屏下把 md/sm 撑到 44px：34px 的图标键在手指下太容易点空，
+   而它常常是行内唯一的操作入口（会话列表的删除键就是 sm）。
+   lg 本来就是 44px，不在这一段里。 */
+@media (pointer: coarse) {
+  .is-md,
+  .is-sm {
+    width: var(--tap-target);
+    height: var(--tap-target);
+  }
+}
+
 .base-icon-button:hover:not(:disabled) {
   border-color: var(--border-subtle);
   color: var(--accent);

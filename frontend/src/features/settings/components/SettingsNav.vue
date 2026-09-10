@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { Component } from 'vue'
-import { Bot, CalendarClock, SlidersHorizontal, UserRound, Users } from '@lucide/vue'
+import { computed, type Component } from 'vue'
+import { Bot, SlidersHorizontal, UserRound } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 
 export type SettingsSection = 'account' | 'search' | 'agent'
@@ -17,8 +17,10 @@ const props = defineProps<{
  * 桌面端是左侧竖排列表（商业产品的设置页标准形态：导航常驻、内容随分区切换），
  * 窄屏收成顶部横向滚动条——设置分区只有三五个，横向一排放得下，不值得为它开抽屉。
  *
- * 超管另有一组「后台管理」直达链接：原来藏在账号页一张卡片里，现在跟着设置导航走，
- * 「我自己」到「管别人」的路径仍在一页之内（ADR 0011 的接续要求）。
+ * 这里刻意不放「后台管理」直达链接：后台的唯一入口是顶栏那枚仅超管可见的入口图标
+ * （见 AppShell）。曾经并排放过「账号管理」「定时任务」两条，但只覆盖五个后台分区里的
+ * 两个——知道地址的人用不上它，不知道的人被它误导以为后台只有这两块。入口收成一个，
+ * 「去后台」就只有一个答案。
  */
 
 interface SectionItem {
@@ -41,16 +43,9 @@ const sections: SectionItem[] = [
   },
 ]
 
-const visibleSections = sections.filter((item) => !item.superuserOnly || props.isSuperuser)
-
-const adminLinks = [
-  { label: '账号管理', to: { name: 'admin', params: { section: 'users' } }, icon: Users },
-  {
-    label: '定时任务',
-    to: { name: 'admin', params: { section: 'scheduled-jobs' } },
-    icon: CalendarClock,
-  },
-]
+const visibleSections = computed(() =>
+  sections.filter((item) => !item.superuserOnly || props.isSuperuser),
+)
 </script>
 
 <template>
@@ -71,21 +66,6 @@ const adminLinks = [
         </RouterLink>
       </li>
     </ul>
-
-    <template v-if="isSuperuser">
-      <div class="admin-divider" role="presentation"></div>
-      <p class="admin-heading">后台管理</p>
-      <ul class="section-list">
-        <li v-for="link in adminLinks" :key="link.label">
-          <RouterLink class="section-link is-tertiary" :to="link.to">
-            <component :is="link.icon" class="section-icon" :size="17" aria-hidden="true" />
-            <span class="section-copy">
-              <span class="section-label">{{ link.label }}</span>
-            </span>
-          </RouterLink>
-        </li>
-      </ul>
-    </template>
   </nav>
 </template>
 
@@ -142,28 +122,14 @@ const adminLinks = [
 }
 
 .section-label {
-  font-size: 0.86rem;
-  font-weight: 720;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
 }
 
 .section-description {
   margin-top: 1px;
   color: var(--text-tertiary);
-  font-size: 0.72rem;
-}
-
-.admin-divider {
-  margin: 14px 0 10px;
-  border-top: 1px solid var(--border-subtle);
-}
-
-.admin-heading {
-  margin: 0 0 6px;
-  padding: 0 12px;
-  color: var(--text-tertiary);
-  font-size: 0.68rem;
-  font-weight: 720;
-  letter-spacing: 0;
+  font-size: var(--fs-xs);
 }
 
 /* 窄屏：横向滚动条。描述文字撤掉，只留图标 + 名称。 */
@@ -192,9 +158,7 @@ const adminLinks = [
     align-items: center;
   }
 
-  .section-description,
-  .admin-divider,
-  .admin-heading {
+  .section-description {
     display: none;
   }
 }

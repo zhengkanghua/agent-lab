@@ -50,7 +50,7 @@ const emit = defineEmits<{ select: [value: string] }>()
   border-radius: var(--radius-md);
   color: var(--text-secondary);
   background: var(--surface-raised);
-  font-size: 0.88rem;
+  font-size: var(--fs-sm);
   text-align: left;
   transition:
     border-color var(--duration-fast) var(--ease-out-smooth),
@@ -83,7 +83,7 @@ const emit = defineEmits<{ select: [value: string] }>()
 @container (max-width: 560px) {
   .suggestion-button {
     padding: 12px 13px;
-    font-size: 0.84rem;
+    font-size: var(--fs-sm);
   }
 }
 

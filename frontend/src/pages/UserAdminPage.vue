@@ -111,7 +111,7 @@ onMounted(() => {
 .page-intro {
   max-width: 640px;
   color: var(--text-secondary);
-  font-size: 0.9rem;
+  font-size: var(--fs-sm);
   line-height: 1.6;
 }
 
@@ -124,7 +124,7 @@ onMounted(() => {
   border-left: 3px solid var(--accent);
   color: var(--accent);
   background: var(--accent-soft);
-  font-size: 0.77rem;
+  font-size: var(--fs-xs);
 }
 
 @container (max-width: 640px) {

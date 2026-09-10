@@ -79,7 +79,7 @@ function onToggle(event: Event): void {
   align-items: center;
   gap: 7px;
   cursor: pointer;
-  font-weight: 700;
+  font-weight: var(--fw-bold);
   /* 去掉默认三角，改用可旋转的箭头；list-style 与 ::marker 两条都要写，
      Safari 只认后者。 */
   list-style: none;
@@ -91,12 +91,12 @@ function onToggle(event: Event): void {
 
 .is-md .disclosure-summary {
   min-height: 32px;
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
 }
 
 .is-sm .disclosure-summary {
   min-height: 24px;
-  font-size: 0.7rem;
+  font-size: var(--fs-xs);
 }
 
 .tone-accent .disclosure-summary {
@@ -139,8 +139,8 @@ function onToggle(event: Event): void {
   margin-left: auto;
   color: var(--text-secondary);
   font-family: var(--mono-font);
-  font-size: 0.68rem;
-  font-weight: 400;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-normal);
 }
 
 .disclosure-body {

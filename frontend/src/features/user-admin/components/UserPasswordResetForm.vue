@@ -73,8 +73,8 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
   display: grid;
   gap: 7px;
   color: var(--text-secondary);
-  font-size: 0.75rem;
-  font-weight: 700;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
 }
 
 /* 输入框皮肤在 BaseInput；取消键走 BaseButton（secondary），与提交键同高同源。 */

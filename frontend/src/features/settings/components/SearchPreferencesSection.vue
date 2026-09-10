@@ -99,15 +99,15 @@ const hasCustomized = computed(
 .section-heading {
   margin: 0 0 var(--space-3);
   color: var(--text-primary);
-  font-size: var(--text-2xl);
-  font-weight: 760;
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-bold);
 }
 
 .section-intro {
   margin: 0 0 var(--space-6);
   max-width: 46ch;
   color: var(--text-secondary);
-  font-size: 0.88rem;
+  font-size: var(--fs-sm);
   line-height: 1.7;
 }
 
@@ -134,7 +134,7 @@ const hasCustomized = computed(
   align-items: center;
   gap: 6px;
   color: var(--text-tertiary);
-  font-size: 0.74rem;
+  font-size: var(--fs-xs);
 }
 
 @media (max-width: 560px) {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, type Component } from 'vue'
-import { LogOut, UserRound } from '@lucide/vue'
+import { LayoutDashboard, LogOut, UserRound } from '@lucide/vue'
 import { RouterLink, type RouteLocationRaw } from 'vue-router'
 import { authSession } from '@/features/auth'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
@@ -17,6 +17,10 @@ import ThemeToggle from '@/shared/ui/ThemeToggle.vue'
  *
  * 直接读 authSession 而不是让调用方传邮箱：会话是应用级单例，三页都只是显示它。
  * 传进来会让每页多一份 v-if 判空，而那个判断三页完全一样。
+ *
+ * 后台入口写在外壳里而不是由页面传进来：它是整个前台的唯一后台入口，三页都要有，
+ * 漏掉一页就等于那个页面上的用户找不到后台。页面传 navLinks 是为了放各自的功能入口，
+ * 后台不是某一页的功能。
  */
 
 interface TopbarNavLink {
@@ -69,6 +73,11 @@ const brandAttrs = computed(() =>
 )
 
 const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visible !== false))
+
+/* 后台入口：唯一，且仅超管可见。
+   权限只是体验层——真正的门在路由 meta.requiresSuperuser 与后端 current_superuser 上，
+   这里不渲染只是不让普通账号看到一个点进去必然失败的入口。 */
+const isSuperuser = computed(() => authSession.user.value?.is_superuser === true)
 </script>
 
 <template>
@@ -107,6 +116,18 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
             </RouterLink>
 
             <ThemeToggle />
+
+            <!-- 后台入口：整个前台只有这一处，所以给它位置上的分量（在账号区之前，
+                 与「我自己」的入口分开），而不是塞进账号菜单里。 -->
+            <RouterLink
+              v-if="isSuperuser"
+              :to="{ name: 'admin' }"
+              class="topbar-nav-link"
+              aria-label="后台管理"
+              title="后台管理"
+            >
+              <LayoutDashboard :size="17" aria-hidden="true" />
+            </RouterLink>
 
             <RouterLink
               v-if="authSession.user.value"
@@ -171,15 +192,15 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
 }
 
 .brand-copy strong {
-  font-size: 1rem;
-  font-weight: 760;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-bold);
   letter-spacing: 0;
   line-height: 1.2;
 }
 
 .brand-copy small {
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   letter-spacing: 0;
 }
 
@@ -207,7 +228,7 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
   align-items: center;
   gap: 8px;
   color: var(--text-secondary);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 
@@ -254,7 +275,7 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
   max-width: 220px;
   gap: 7px;
   color: var(--text-secondary);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   text-decoration: none;
   transition:
     color var(--duration-fast) var(--ease-out-smooth),
@@ -284,7 +305,7 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
   top: calc(100% + 9px);
   right: 0;
   color: var(--danger);
-  font-size: 0.7rem;
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 
@@ -321,7 +342,7 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
   }
 
   .brand-copy strong {
-    font-size: 0.875rem;
+    font-size: var(--fs-sm);
     line-height: 1.3;
   }
 
@@ -344,6 +365,23 @@ const visibleNavLinks = computed(() => props.navLinks.filter((link) => link.visi
 @media (max-width: 380px) {
   .brand-mark {
     display: none;
+  }
+}
+
+/* 触屏下把顶栏这一排图标入口撑到 44px。这个类同时服务于页面传进来的 navLinks
+   与外壳自带的后台入口，改一处两者一起生效。
+   必须写在所有 max-width 断点之后：窄屏断点会把账号链接折成 40px 方块，
+   窄屏的触屏设备会同时命中两条规则，靠源码顺序让触屏这条赢。 */
+@media (pointer: coarse) {
+  .topbar-nav-link {
+    width: var(--tap-target);
+    height: var(--tap-target);
+  }
+
+  .account-identity {
+    width: var(--tap-target);
+    height: var(--tap-target);
+    padding: 0;
   }
 }
 </style>

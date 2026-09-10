@@ -100,14 +100,14 @@ function getFieldError(field: string): string | undefined {
 }
 
 .form-title {
-  font-size: var(--text-lg);
-  font-weight: 600;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
   color: var(--text-primary);
   margin: 0;
 }
 
 .form-description {
-  font-size: var(--text-sm);
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
   margin: 0;
 }

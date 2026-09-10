@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, useId } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import { ChevronDown, Library, RefreshCw } from '@lucide/vue'
 import type { KnowledgeBaseDto } from '@/api/knowledge-bases'
 import type { KnowledgeBaseSelection } from '@/api/knowledge-scope'
@@ -33,11 +33,44 @@ function toggle(id: string, checked: boolean) {
     knowledge_base_ids: checked ? [...ids.value, id] : ids.value.filter((item) => item !== id),
   })
 }
+
+/* 面板是浮层，原生 <details> 只会被自己的 summary 关掉。改成浮层之前它行内展开，
+   开着也不挡路；现在它会盖在检索流上面，所以必须补两条退路：点面板外面、按 Esc。
+   面板内的点击不关——否则选一个知识库就把面板收走了，多选要重开好几次。 */
+const detailsRef = ref<HTMLDetailsElement | null>(null)
+
+function close() {
+  if (detailsRef.value) detailsRef.value.open = false
+}
+
+function onDocumentPointerDown(event: PointerEvent) {
+  const el = detailsRef.value
+  if (el?.open && !el.contains(event.target as Node)) close()
+}
+
+function onKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && detailsRef.value?.open) {
+    close()
+    // 焦点还给触发键：面板关了而焦点留在被移除的元素上，Tab 会从文档开头重来。
+    detailsRef.value.querySelector('summary')?.focus()
+  }
+}
+
+onMounted(() => {
+  // pointerdown 而不是 click：后者要等抬手，拖拽选择文本时也会误触发。
+  document.addEventListener('pointerdown', onDocumentPointerDown)
+  document.addEventListener('keydown', onKeydown)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocumentPointerDown)
+  document.removeEventListener('keydown', onKeydown)
+})
 </script>
 
 <template>
   <div class="scope-picker">
-    <details>
+    <details ref="detailsRef">
       <summary>
         <Library :size="15" aria-hidden="true" /><span>{{ label }}</span>
         <ChevronDown class="scope-chevron" :size="15" aria-hidden="true" />
@@ -99,12 +132,13 @@ function toggle(id: string, checked: boolean) {
   align-items: flex-start;
   gap: 8px;
   padding: 8px 2px;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
 details {
   flex: 1;
   min-width: 0;
+  position: relative;
 }
 summary {
   display: flex;
@@ -135,9 +169,20 @@ summary span {
 summary svg {
   flex-shrink: 0;
 }
+/* 选择面板是浮层，不是行内展开：原位展开会把下方的检索流整体推下去，
+   开合一次视线要重新找位置。浮层盖在上面，检索流一动不动。
+   不配 Portal——它就贴在自己的触发键下面，脱离文档流反而要手动跟随滚动。 */
 fieldset {
-  border: 0;
-  padding: 8px 0 4px;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: var(--z-popover);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-soft);
+  padding: 12px 14px;
   margin: 0;
   min-width: 0;
 }
@@ -148,7 +193,7 @@ fieldset {
   gap: 8px 20px;
 }
 .scope-choices {
-  max-height: 180px;
+  max-height: 240px;
   overflow-y: auto;
   margin-top: 10px;
 }
@@ -179,5 +224,28 @@ input {
   margin: 0;
   color: var(--warning);
   overflow-wrap: anywhere;
+}
+
+/* 触屏没有 hover，指针也不精确：把这一组控件撑到 44px 的可点高度，
+   复选框本身也放大。键盘与鼠标用户的上限、间距不受影响。 */
+@media (pointer: coarse) {
+  summary,
+  label {
+    min-height: var(--tap-target);
+  }
+
+  .scope-refresh {
+    width: var(--tap-target);
+    height: var(--tap-target);
+  }
+
+  input {
+    width: 18px;
+    height: 18px;
+  }
+
+  .scope-choices {
+    gap: 4px 20px;
+  }
 }
 </style>

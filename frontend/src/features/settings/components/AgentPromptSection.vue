@@ -150,15 +150,15 @@ function clearPrompt(): void {
 .section-heading {
   margin: 0 0 var(--space-3);
   color: var(--text-primary);
-  font-size: var(--text-2xl);
-  font-weight: 760;
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-bold);
 }
 
 .section-intro {
   margin: 0 0 var(--space-6);
   max-width: 46ch;
   color: var(--text-secondary);
-  font-size: 0.88rem;
+  font-size: var(--fs-sm);
   line-height: 1.7;
 }
 
@@ -180,7 +180,7 @@ function clearPrompt(): void {
 
 .unsaved-note {
   color: var(--warning);
-  font-size: 0.76rem;
+  font-size: var(--fs-xs);
 }
 
 .status-badge {
@@ -192,8 +192,8 @@ function clearPrompt(): void {
   border-radius: var(--radius-pill);
   color: var(--text-secondary);
   background: var(--surface-sunken);
-  font-size: 0.72rem;
-  font-weight: 700;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
 }
 
 /* 已启用自定义时点亮徽章：扫一眼就知道现在的对话在用什么行为。 */
@@ -208,8 +208,8 @@ function clearPrompt(): void {
   align-items: center;
   gap: 5px;
   color: var(--text-success);
-  font-size: 0.76rem;
-  font-weight: 700;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
 }
 
 .flash-enter-active,
@@ -231,7 +231,7 @@ function clearPrompt(): void {
 
 .char-count {
   font-family: var(--mono-font);
-  font-size: 0.7rem;
+  font-size: var(--fs-xs);
 }
 
 .char-count.is-near {

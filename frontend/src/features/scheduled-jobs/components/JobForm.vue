@@ -368,14 +368,14 @@ function onSubmit(): void {
 
 .editor-heading p {
   color: var(--text-secondary);
-  font-size: 0.74rem;
-  font-weight: 760;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
 }
 
 .editor-heading h2 {
   margin-top: 4px;
-  font-size: 1.24rem;
-  font-weight: 760;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-bold);
 }
 
 .job-form {
@@ -392,14 +392,14 @@ function onSubmit(): void {
   align-content: start;
   gap: 7px;
   color: var(--text-secondary);
-  font-size: 0.75rem;
-  font-weight: 700;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
 }
 
 .field-control small {
   color: var(--text-tertiary);
-  font-size: 0.67rem;
-  font-weight: 450;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-normal);
 }
 
 .field-control small.cron-preview {
@@ -408,7 +408,7 @@ function onSubmit(): void {
 
 .field-error {
   color: var(--danger);
-  font-size: 0.7rem;
+  font-size: var(--fs-xs);
   font-style: normal;
 }
 
@@ -418,7 +418,7 @@ function onSubmit(): void {
   min-height: 42px;
   gap: 10px;
   color: var(--text-secondary);
-  font-size: 0.76rem;
+  font-size: var(--fs-xs);
 }
 
 .check-control input {
@@ -434,8 +434,8 @@ function onSubmit(): void {
 
 .check-control small {
   color: var(--text-tertiary);
-  font-size: 0.67rem;
-  font-weight: 450;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-normal);
 }
 
 .scope-field {

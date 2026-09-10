@@ -216,8 +216,8 @@ function onDeleteClick(): void {
 
 .job-key {
   color: var(--text-primary);
-  font-weight: 680;
-  font-size: 0.82rem;
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -225,8 +225,8 @@ function onDeleteClick(): void {
 
 .job-type {
   color: var(--text-tertiary);
-  font-size: 0.68rem;
-  font-weight: 640;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
 }
 
 .job-cron {
@@ -236,7 +236,7 @@ function onDeleteClick(): void {
   color: var(--accent);
   background: var(--accent-soft);
   font-family: var(--mono-font);
-  font-size: 0.74rem;
+  font-size: var(--fs-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -248,7 +248,7 @@ function onDeleteClick(): void {
   align-items: center;
   gap: 8px;
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   cursor: pointer;
 }
 
@@ -268,14 +268,14 @@ function onDeleteClick(): void {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
 }
 
 .schedule-line small {
   flex: 0 0 auto;
   color: var(--text-tertiary);
-  font-size: 0.64rem;
-  font-weight: 720;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
 }
 
 .schedule-line span {

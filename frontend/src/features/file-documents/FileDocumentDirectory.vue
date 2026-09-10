@@ -254,7 +254,7 @@ async function confirmDelete() {
 .file-hint,
 .files-empty {
   color: var(--text-secondary);
-  font-size: 0.88rem;
+  font-size: var(--fs-sm);
   line-height: 1.7;
 }
 .file-actions {
@@ -272,7 +272,7 @@ async function confirmDelete() {
   border-radius: var(--radius-md);
 }
 .file-editor h2 {
-  font-size: 1rem;
+  font-size: var(--fs-base);
   overflow-wrap: anywhere;
 }
 .file-editor > p {
@@ -281,7 +281,7 @@ async function confirmDelete() {
 .file-editor label {
   display: grid;
   gap: 8px;
-  font-size: 0.85rem;
+  font-size: var(--fs-sm);
 }
 .file-editor select,
 .file-editor input {
@@ -297,7 +297,7 @@ async function confirmDelete() {
 }
 .file-feedback {
   color: var(--accent);
-  font-size: 0.88rem;
+  font-size: var(--fs-sm);
 }
 .file-table {
   width: 100%;
@@ -311,12 +311,12 @@ async function confirmDelete() {
   vertical-align: top;
   border-bottom: 1px solid var(--border-subtle);
   overflow-wrap: anywhere;
-  font-size: 0.85rem;
+  font-size: var(--fs-sm);
 }
 .file-table th {
   color: var(--text-secondary);
-  font-size: 0.75rem;
-  font-weight: 500;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-normal);
 }
 .file-table th:first-child {
   width: 25%;
@@ -326,7 +326,7 @@ async function confirmDelete() {
 }
 .file-title strong {
   display: block;
-  font-weight: 650;
+  font-weight: var(--fw-semibold);
   color: var(--text-primary);
   margin-bottom: 7px;
 }
@@ -334,7 +334,7 @@ async function confirmDelete() {
 .file-table small,
 .file-date {
   color: var(--text-secondary);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
 }
 .file-table small {
   display: block;
@@ -357,7 +357,7 @@ async function confirmDelete() {
 }
 .files-pagination {
   justify-content: flex-end;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
 }
 @media (max-width: 800px) {
   .file-table thead {

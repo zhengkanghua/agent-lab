@@ -147,8 +147,8 @@ watch(
 
 .settings-heading h1 {
   margin: 0;
-  font-size: 1.25rem;
-  font-weight: 720;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-bold);
 }
 
 /* 左导航右内容：商业设置页的标准两栏。左栏自适应内容宽、sticky 跟随滚动，

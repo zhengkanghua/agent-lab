@@ -93,9 +93,9 @@ function testRouter() {
       // 页面在服务端新建会话后会 replace 到这条路由。少了它，vue-router 抛「No match」，
       // 而那个异常发生在 watch 回调里，只表现成未处理的 rejection，不会让用例失败。
       { path: '/agent/:threadId', name: 'agent-thread', component: AgentChatPage },
-      // 顶栏的账号管理入口指向这条。少了它 RouterLink 解析不到目标，
+      // 顶栏的后台入口指向这条。少了它 RouterLink 解析不到目标，
       // 本文件所有用例都会在挂载时炸掉，而不只是与入口相关的那两条。
-      { path: '/admin/users', name: 'user-admin', component: { template: '<div>admin</div>' } },
+      { path: '/admin/:section?', name: 'admin', component: { template: '<div>admin</div>' } },
       // 顶栏邮箱链接指向设置中心的账号分区。
       {
         path: '/settings/:section?',
@@ -160,26 +160,27 @@ describe('AgentChatPage', () => {
 
   /* 断言 aria-label 而不是图标组件：入口对用户和读屏的可见性由它决定，
      换图标不该让这两条失败。
-     后台入口按新契约收敛：前台顶栏只保留前台功能跳转，不再提供账号管理的直达图标，
-     统一从右上角账号设置（/account）进入后台。 */
-  it('顶栏不提供账号管理直达：后台统一从账号设置页进入', async () => {
+     后台入口按新契约收敛：前台顶栏只给超管一枚后台入口，它是通往后台的唯一入口
+     （设置导航里那两条直达链接已撤掉，只覆盖五个分区里的两个）。 */
+  it('超管在本页顶栏看到后台入口，指向 /admin', async () => {
     const { wrapper } = await mountPage()
 
     const labels = wrapper.findAll('.topbar-nav-link').map((item) => item.attributes('aria-label'))
-    expect(labels).toEqual(['语义检索'])
+    expect(labels).toContain('后台管理')
+    expect(wrapper.get('a[aria-label="后台管理"]').attributes('href')).toBe('/admin')
 
-    // 账号与设置入口仍在右上角，管理后台从这里进入。
+    // 账号与设置入口仍在右上角，两条路径互不替代。
     expect(wrapper.get('.account-identity').attributes('href')).toBe('/settings/account')
     wrapper.unmount()
   })
 
-  it('非超管在本页顶栏看不到账号管理入口', async () => {
+  it('非超管在本页顶栏看不到后台入口', async () => {
     auth.user.value = { ...SUPERUSER, is_superuser: false, is_environment_admin: false }
     const { wrapper } = await mountPage()
 
     const labels = wrapper.findAll('.topbar-nav-link').map((item) => item.attributes('aria-label'))
 
-    expect(labels).not.toContain('账号管理')
+    expect(labels).not.toContain('后台管理')
     expect(labels).toContain('语义检索')
     wrapper.unmount()
   })

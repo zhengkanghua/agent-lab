@@ -103,8 +103,8 @@ defineExpose({ controlId })
   display: block;
   margin-bottom: 7px;
   color: var(--text-secondary);
-  font-size: 0.8rem;
-  font-weight: 700;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
 }
 
 .required-mark {
@@ -115,14 +115,14 @@ defineExpose({ controlId })
 .field-error {
   margin-top: 8px;
   color: var(--danger);
-  font-size: 0.78rem;
-  font-weight: 650;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
 }
 
 .field-hint {
   margin-top: 8px;
   color: var(--text-tertiary);
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   line-height: 1.55;
 }
 </style>

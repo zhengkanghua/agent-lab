@@ -57,8 +57,8 @@ defineProps<{ user: AuthUserDto | null }>()
 .section-heading {
   margin: 0 0 var(--space-5);
   color: var(--text-primary);
-  font-size: var(--text-2xl);
-  font-weight: 760;
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-bold);
 }
 
 .info-card {
@@ -87,8 +87,8 @@ defineProps<{ user: AuthUserDto | null }>()
   align-items: center;
   gap: var(--space-2);
   color: var(--text-secondary);
-  font-size: var(--text-sm);
-  font-weight: 500;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-normal);
 }
 
 .info-label svg {
@@ -98,7 +98,7 @@ defineProps<{ user: AuthUserDto | null }>()
 .info-value {
   margin: 0;
   color: var(--text-primary);
-  font-size: var(--text-base);
+  font-size: var(--fs-base);
 }
 
 @media (max-width: 560px) {

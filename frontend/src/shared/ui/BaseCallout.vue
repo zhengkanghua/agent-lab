@@ -60,14 +60,14 @@ const slots = defineSlots<{
 
 .callout-title {
   color: var(--text-primary);
-  font-size: 0.85rem;
-  font-weight: 720;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
 }
 
 .callout-description {
   margin-top: 2px;
   color: var(--text-secondary);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   line-height: 1.6;
 }
 
@@ -108,7 +108,7 @@ const slots = defineSlots<{
 
 .is-neutral .callout-description {
   color: var(--text-tertiary);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   line-height: 1.55;
 }
 </style>

@@ -124,18 +124,18 @@ const emit = defineEmits<{
   align-items: center;
   gap: 7px;
   color: var(--text-tertiary);
-  font-size: 0.7rem;
-  font-weight: 720;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
   letter-spacing: 0;
 }
 
 .count {
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--text-secondary);
   background: var(--surface-sunken);
-  font-size: 0.68rem;
-  font-weight: 650;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
 }
 
 .sidebar-state {
@@ -144,7 +144,7 @@ const emit = defineEmits<{
   gap: 7px;
   padding: 6px 4px;
   color: var(--text-tertiary);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   line-height: 1.6;
 }
 

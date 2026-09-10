@@ -210,7 +210,7 @@ function openCreate(): void {
 .page-intro {
   max-width: 640px;
   color: var(--text-secondary);
-  font-size: 0.9rem;
+  font-size: var(--fs-sm);
   line-height: 1.6;
 }
 
@@ -223,7 +223,7 @@ function openCreate(): void {
   border-left: 3px solid var(--accent);
   color: var(--accent);
   background: var(--accent-soft);
-  font-size: 0.77rem;
+  font-size: var(--fs-xs);
 }
 
 .empty-hint {
@@ -232,7 +232,7 @@ function openCreate(): void {
   gap: 7px;
   margin-top: 14px;
   color: var(--text-tertiary);
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
 }
 
 @container (max-width: 640px) {

@@ -180,12 +180,13 @@ describe('SettingsPage', () => {
     wrapper.unmount()
   })
 
-  it('超管在导航里能看到后台管理直达链接', async () => {
+  it('后台入口不在设置导航里：设置导航只放三个设置分区', async () => {
     const { wrapper } = await mountAt('/settings')
 
     const labels = wrapper.findAll('.section-link').map((link) => link.text())
-    expect(labels.join()).toContain('账号管理')
-    expect(labels.join()).toContain('定时任务')
+    expect(labels.join()).toContain('账号安全')
+    expect(labels.join()).not.toContain('账号管理')
+    expect(labels.join()).not.toContain('定时任务')
     wrapper.unmount()
   })
 })

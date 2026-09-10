@@ -159,14 +159,14 @@ defineExpose({ focusInput })
   box-shadow: none;
   color: var(--text-primary);
   background: transparent;
-  font-size: 1.1rem;
+  font-size: var(--fs-lg);
   line-height: 1.5;
   font-family: inherit;
 }
 
 .query-input::placeholder {
   color: var(--text-tertiary);
-  font-weight: 400;
+  font-weight: var(--fw-normal);
 }
 
 .query-container {
@@ -219,7 +219,7 @@ defineExpose({ focusInput })
   bottom: -22px;
   left: 0;
   margin: 0;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
 }
 
 .query-actions {
@@ -232,7 +232,7 @@ defineExpose({ focusInput })
 .character-count {
   color: var(--text-tertiary);
   font-family: var(--mono-font);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   padding-right: 4px;
 }
 
@@ -264,6 +264,16 @@ defineExpose({ focusInput })
   border-color: var(--border-subtle);
   color: var(--accent);
   background: var(--surface-base);
+}
+
+/* 触屏下撑到 44px。38px 是与 BaseIconButton 的 md 对齐的视觉尺寸，但这是链接、
+   不复用那个组件（要中键新开、读屏报「链接」），因此拿不到那边的触屏规则，
+   只能在这里自己补一条。 */
+@media (pointer: coarse) {
+  .prefs-link {
+    width: var(--tap-target);
+    height: var(--tap-target);
+  }
 }
 
 .clear-button {

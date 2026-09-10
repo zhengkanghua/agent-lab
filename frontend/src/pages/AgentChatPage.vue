@@ -353,7 +353,7 @@ async function chooseExample(value: string): Promise<void> {
 .thread-state {
   padding: 6px 2px 12px;
   color: var(--text-tertiary);
-  font-size: 0.85rem;
+  font-size: var(--fs-sm);
 }
 
 /* 面板本体归 BaseCallout；这里只留节奏。 */
@@ -368,7 +368,7 @@ async function chooseExample(value: string): Promise<void> {
 .summary-background {
   margin: 0 0 18px;
   color: var(--text-secondary);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   line-height: 1.7;
 }
 .summary-background summary {
@@ -383,7 +383,7 @@ async function chooseExample(value: string): Promise<void> {
 }
 .scope-note {
   color: var(--text-tertiary);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   margin: 0 2px 8px;
 }
 
@@ -437,7 +437,7 @@ async function chooseExample(value: string): Promise<void> {
   gap: 6px;
   padding: 8px 4px 0;
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: var(--fs-xs);
   line-height: 1.5;
 }
 

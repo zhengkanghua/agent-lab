@@ -116,19 +116,19 @@ const exactTime = computed(() => {
 .title {
   overflow: hidden;
   color: var(--text-primary);
-  font-size: 0.83rem;
+  font-size: var(--fs-sm);
   line-height: 1.45;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
 .is-active .title {
-  font-weight: 650;
+  font-weight: var(--fw-semibold);
 }
 
 .time {
   color: var(--text-tertiary);
-  font-size: 0.68rem;
+  font-size: var(--fs-xs);
 }
 
 /* 删除键平时隐形，悬停或键盘聚焦到行内任何元素时才出现：常驻会让列表变成一排垃圾桶，
@@ -144,5 +144,14 @@ const exactTime = computed(() => {
 .thread-item:focus-within .remove-button,
 .remove-button[aria-busy='true'] {
   opacity: 1;
+}
+
+/* 触屏没有 hover，也点不出 :focus-within——上面那三条在手机和平板上一条都不会命中，
+   结果不是「删除键被藏起来」，而是「删除键根本不存在」。所以触屏下让它常驻。
+   不把上面那条直接放宽：桌面端常驻会让整个列表变成一排垃圾桶图标，那正是要避免的。 */
+@media (pointer: coarse) {
+  .remove-button {
+    opacity: 1;
+  }
 }
 </style>

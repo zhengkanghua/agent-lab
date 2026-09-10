@@ -55,7 +55,7 @@ function onInput(event: Event): void {
   outline: none;
   color: var(--text-primary);
   background: var(--surface-raised);
-  font-size: 0.84rem;
+  font-size: var(--fs-sm);
   transition:
     border-color var(--duration-fast) var(--ease-out-smooth),
     box-shadow var(--duration-fast) var(--ease-out-smooth);

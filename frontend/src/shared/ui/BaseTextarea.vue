@@ -46,7 +46,7 @@ function onInput(event: Event): void {
   outline: none;
   color: var(--text-primary);
   background: var(--surface-raised);
-  font-size: 0.84rem;
+  font-size: var(--fs-sm);
   line-height: 1.65;
   resize: vertical;
   transition:
@@ -56,7 +56,7 @@ function onInput(event: Event): void {
 
 .base-textarea.is-mono {
   font-family: var(--mono-font);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   line-height: 1.6;
 }
 

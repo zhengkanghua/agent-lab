@@ -75,8 +75,8 @@ function isLast(index: number): boolean {
 
 .empty-state h3 {
   color: var(--text-primary);
-  font-size: 1.72rem;
-  font-weight: 780;
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-bold);
   line-height: 1.2;
   letter-spacing: -0.01em;
 }
@@ -85,7 +85,7 @@ function isLast(index: number): boolean {
   max-width: 44ch;
   margin-top: 12px;
   color: var(--text-secondary);
-  font-size: 0.9rem;
+  font-size: var(--fs-sm);
   line-height: 1.7;
 }
 
@@ -95,7 +95,7 @@ function isLast(index: number): boolean {
 
 @container (max-width: 560px) {
   .empty-state h3 {
-    font-size: 1.5rem;
+    font-size: var(--fs-2xl);
   }
 
   .example-list {

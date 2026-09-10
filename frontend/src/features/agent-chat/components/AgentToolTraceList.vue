@@ -185,18 +185,18 @@ function formatArguments(args: Record<string, unknown>): string {
   align-items: center;
   gap: 8px;
   color: var(--text-secondary);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
 }
 
 .trace-heading b {
-  font-weight: 720;
+  font-weight: var(--fw-bold);
 }
 
 /* 原来是 --text-tertiary：它在 --surface-base 上只有 3.85:1，这个字号不到 AA 的 4.5。
    「执行中 / 未成功」是状态信息不是装饰，改用 7.57:1 的 --text-secondary。 */
 .trace-state {
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: var(--fs-xs);
 }
 
 .trace-arguments {
@@ -204,7 +204,7 @@ function formatArguments(args: Record<string, unknown>): string {
   overflow-wrap: anywhere;
   color: var(--text-secondary);
   font-family: var(--mono-font);
-  font-size: 0.7rem;
+  font-size: var(--fs-xs);
   line-height: 1.5;
 }
 
@@ -215,7 +215,7 @@ function formatArguments(args: Record<string, unknown>): string {
 .trace-scope {
   margin-top: 4px;
   color: var(--text-secondary);
-  font-size: 0.74rem;
+  font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
 
@@ -227,11 +227,11 @@ function formatArguments(args: Record<string, unknown>): string {
   overflow: auto;
   padding: 10px 11px;
   border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   background: var(--surface-raised);
   font-family: var(--mono-font);
-  font-size: 0.7rem;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
