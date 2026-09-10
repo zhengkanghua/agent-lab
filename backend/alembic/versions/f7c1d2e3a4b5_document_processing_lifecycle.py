@@ -113,6 +113,7 @@ def upgrade() -> None:
         sa.Column("actor_id", sa.Uuid(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
         sa.Column("conclusion", sa.Text(), nullable=True),
         sa.Column("preview_fingerprint", sa.String(64), nullable=True),
+        sa.Column("content_snapshot", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.CheckConstraint("decision IN ('adopt', 'reject', 'retry')", name="ck_document_review_decision"),

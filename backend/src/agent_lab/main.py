@@ -34,6 +34,7 @@ from agent_lab.api.health import router as health_router
 from agent_lab.api.knowledge_bases import router as knowledge_bases_router
 from agent_lab.api.sources import router as sources_router
 from agent_lab.api.file_documents import router as file_documents_router
+from agent_lab.api.document_review import router as document_review_router
 from agent_lab.api.error_contract import build_file_document_error_response, build_processing_error_response
 from agent_lab.knowledge.files import FileDocumentError
 from agent_lab.knowledge.processing.lifecycle import ProcessingApplicationError
@@ -542,6 +543,7 @@ def create_app(
         return build_processing_error_response(error)
 
     application.include_router(file_documents_router)
+    application.include_router(document_review_router)
     application.include_router(knowledge_bases_router)
     application.include_router(sources_router, dependencies=[Depends(current_superuser)])
     application.include_router(health_router)

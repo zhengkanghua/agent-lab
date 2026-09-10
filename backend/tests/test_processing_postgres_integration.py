@@ -14,6 +14,7 @@ from agent_lab.knowledge.adapters.adoption import postgres_adoption_work
 from agent_lab.knowledge.adapters.files import postgres_file_work
 from agent_lab.knowledge.adapters.processing import postgres_processing_work
 from agent_lab.knowledge.adapters.importing import postgres_import_work
+from agent_lab.knowledge.adapters.review import postgres_review_work
 from agent_lab.knowledge.adapters.text_files import parse_text_file
 from agent_lab.knowledge.adapters.visibility import PostgresDocumentVisibility
 from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID as KB
@@ -27,6 +28,7 @@ from agent_lab.models.document import DocumentRecord
 from agent_lab.models.source import SourceRecord
 from agent_lab.domain.source_document import SourceDocument, SourceInfo
 from agent_lab.knowledge.processing.lifecycle import ProcessingApplicationError
+from agent_lab.knowledge.processing.review import DocumentReviewApplication
 from agent_lab.models.document_processing import DocumentProcessingRecord, DocumentReviewRecord, DocumentVersion
 from agent_lab.qdrant.index_spec import VectorIndexSpec
 from agent_lab.qdrant.search import QdrantVectorSearch
@@ -70,9 +72,11 @@ async def scenario(db, processor):
         adoption = DocumentAdoptionApplication(
             partial(postgres_adoption_work, db.sessions), WriteCoordinator(db.sessions), indexer, spec.collection_metadata,
         )
+        review = DocumentReviewApplication(partial(postgres_review_work, db.sessions), WriteCoordinator(db.sessions),
+                                           lambda: processing, lambda: adoption, lambda: storage)
         search = AdoptedVectorSearch(QdrantVectorSearch(vectors.client, vectors.settings, spec), PostgresDocumentVisibility(db.sessions))
         yield SimpleNamespace(files=files, processing=processing, adoption=adoption, search=search,
-                              vectors=vectors, embeddings=embeddings, storage=storage, spec=spec, store=store)
+                              vectors=vectors, embeddings=embeddings, storage=storage, spec=spec, store=store, review=review)
 
 
 async def current(db, document_id):

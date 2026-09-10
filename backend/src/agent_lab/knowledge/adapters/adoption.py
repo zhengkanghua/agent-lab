@@ -64,7 +64,8 @@ class PostgresAdoptionRepository:
             index_spec["chunk_size"], index_spec["parser_id"],
         ):
             raise ProcessingApplicationError("document_index_spec_changed")
-        if not preview.chunk_result.chunks or any(chunk.token_count > actual.max_tokens for chunk in preview.chunk_result.chunks):
+        if (not preview.document.title.strip() or not preview.chunk_result.chunks
+                or any(chunk.token_count > actual.max_tokens for chunk in preview.chunk_result.chunks)):
             raise ProcessingApplicationError("document_preview_invalid")
         if preview.fingerprint != record.preview_fingerprint:
             raise ProcessingApplicationError("document_preview_stale")
@@ -93,6 +94,9 @@ class PostgresAdoptionRepository:
             candidate_revision=record.candidate_revision, decision="adopt",
             decision_source="manual" if manual else "automatic", actor_id=actor_id,
             conclusion=conclusion, preview_fingerprint=preview.fingerprint,
+            content_snapshot={"title": preview.document.title, "body": preview.document.body,
+                              "text_format": preview.document.text_format, "content_hash": target.content_hash,
+                              "source_sha256": target.source.sha256},
         ))
         return target
 
@@ -207,7 +211,9 @@ class PostgresAdoptionRepository:
             .join(DocumentRecord, DocumentRecord.id == DocumentProcessingRecord.document_id).where(
                 DocumentProcessingRecord.index_cleanup_pending.is_(True), DocumentProcessingRecord.index_deleted_at.is_(None),
                 DocumentProcessingRecord.index_instance_id.is_not(None),
-                DocumentRecord.current_index_instance_id.is_distinct_from(DocumentProcessingRecord.index_instance_id),
+                ((DocumentRecord.current_index_instance_id.is_distinct_from(DocumentProcessingRecord.index_instance_id))
+                 | (DocumentRecord.usage_status == "rejected")),
+                DocumentRecord.usage_status != "deleting",
             ).order_by(DocumentProcessingRecord.updated_at).limit(1))).one_or_none()
         return tuple(row) if row else None
 
@@ -218,7 +224,7 @@ class PostgresAdoptionRepository:
         if processing_id is None:
             return
         knowledge_base, document, record = await lock_candidate(self._session, processing_id, require_active=False)
-        if document.current_index_instance_id == index_instance_id:
+        if document.current_index_instance_id == index_instance_id and document.usage_status == "active":
             raise ProcessingApplicationError("document_adoption_conflict")
         record.index_cleanup_pending, record.index_deleted_at = False, datetime.now(UTC)
         knowledge_base.visibility_revision += 1

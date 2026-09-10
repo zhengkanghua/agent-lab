@@ -942,6 +942,23 @@ PROCESSING_ERROR_DETAILS = {
     "document_processing_not_found": (404, "处理记录不存在。", False),
     "document_processing_conflict": (409, "处理记录已更新，请刷新后操作。", False),
     "document_deletion_pending": (409, "资料正在删除，请先完成删除。", False),
+    "document_processing_busy": (409, "候选正在采用或不适合此操作，请刷新状态。", False),
+    "document_draft_required": (409, "请先建立或修正人工草稿，再生成预览并确认采用。", False),
+    "document_preview_required": (409, "请先生成结构和 Chunk 预览。", False),
+    "document_preview_stale": (409, "预览已失效，请重新生成。", False),
+    "document_preview_invalid": (422, "预览缺少标题、有效正文或 Chunk，请先修正。", False),
+    "document_index_spec_changed": (409, "处理规格已变化，请重新生成预览后采用。", False),
+    "document_adoption_conflict": (409, "正式版本或候选已变化，请刷新后重新确认。", False),
+    "document_knowledge_base_inactive": (409, "知识库已停用，暂时不能处理或采用资料。", False),
+    "document_source_not_found": (404, "尚未找到已保存原件；请重新提交文件或继续同步来源。", False),
+    "document_source_waiting_sync": (409, "原件已保存，等待来源同步确认本页，请继续同步。", False),
+    "document_content_invalid": (422, "正文包含不支持的空字符。", False),
+    "document_encoding_invalid": (422, "正文必须是有效的 UTF-8 文本。", False),
+    "document_write_busy": (409, "其他文档写操作正在执行，请稍后重试。", True),
+    "document_write_recovery_required": (409, "旧写入结果需要人工核实，暂时不能重试。", False),
+    "object_storage_get_failed": (503, "暂时无法读取原件，请稍后重试。", True),
+    "object_storage_inspect_failed": (503, "暂时无法核对原件，请稍后重试。", True),
+    "object_storage_content_mismatch": (409, "原件与保存的摘要不一致，请检查对象存储。", False),
 }
 
 

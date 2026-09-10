@@ -46,17 +46,30 @@ def build_document_processor():
 
 def build_document_processing_application(session_factory=async_session_factory):
     """接收和后台消费共用装配；缺少 S3 配置时明确失败，不回落到无原件路径。"""
-    from agent_lab.config.object_storage import get_object_storage_settings
     from agent_lab.knowledge.adapters.processing import postgres_processing_work
     from agent_lab.knowledge.processing.application import DocumentProcessingApplication
+    return DocumentProcessingApplication(partial(postgres_processing_work, session_factory), build_document_storage(), build_document_processor)
+
+
+def build_document_storage():
+    """原件 SDK 只在此处选择；构造本身不发网络请求。"""
+    from agent_lab.config.object_storage import get_object_storage_settings
     from agent_lab.knowledge.processing.lifecycle import ProcessingApplicationError
     from agent_lab.knowledge.storage import ObjectStorageError, S3ObjectStorage
-
     try:
-        storage = S3ObjectStorage(get_object_storage_settings())
+        return S3ObjectStorage(get_object_storage_settings())
     except ObjectStorageError as exc:
         raise ProcessingApplicationError(exc.code) from None
-    return DocumentProcessingApplication(partial(postgres_processing_work, session_factory), storage, build_document_processor)
+
+
+def build_document_review_application(session_factory=async_session_factory):
+    from agent_lab.knowledge.adapters.review import postgres_review_work
+    from agent_lab.knowledge.processing.review import DocumentReviewApplication
+    return DocumentReviewApplication(
+        partial(postgres_review_work, session_factory), WriteCoordinator(session_factory),
+        partial(build_document_processing_application, session_factory),
+        partial(build_document_adoption_application, session_factory), build_document_storage,
+    )
 
 
 def build_document_adoption_application(session_factory=async_session_factory, *, qdrant_settings=None, ollama_settings=None):

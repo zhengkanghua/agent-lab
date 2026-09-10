@@ -34,6 +34,10 @@ class DocumentAdoptionApplication:
         self._work, self._coordinator = work, coordinator
         self._indexer, self._index_spec = indexer, index_spec
 
+    @property
+    def index_spec(self) -> dict:
+        return dict(self._index_spec)
+
     async def adopt(self, processing_id: UUID, *, candidate_revision: int, management_revision: int,
                     fingerprint: str, actor_id: UUID, conclusion: str | None = None) -> ProcessingReceipt:
         """人工确认只持久化决定和冻结目标，HTTP 不等待向量化或 Qdrant。"""

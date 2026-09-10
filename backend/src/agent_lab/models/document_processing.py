@@ -106,3 +106,5 @@ class DocumentReviewRecord(TimestampMixin, Base):
     actor_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     conclusion: Mapped[str | None] = mapped_column(Text, nullable=True)
     preview_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    content_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"),
+        comment="作出决定时的正文与格式；之后修正草稿不会改写该结论依据。")
