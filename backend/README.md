@@ -320,6 +320,25 @@ uv run alembic upgrade b38f9a7c6d21:head --sql
 uv run alembic downgrade head:b38f9a7c6d21 --sql
 ```
 
+## 文档处理资源
+
+文档结构解析使用锁定的 Docling Markdown/HTML 文本后端，本期上传仍只开放 MD、TXT。
+`docling-slim` 不安装 PDF/OCR 或 PyTorch；Chunk 计数使用固定 revision 的 BGE-M3 tokenizer。
+安装依赖后，在 `backend/` 显式准备资源：
+
+```powershell
+uv run python -m agent_lab.prepare_document_resources
+uv run python -m agent_lab.prepare_document_resources --check
+```
+
+首次准备需要访问 Hugging Face，仅下载 tokenizer 的四个配置与词表文件，不下载模型权重。
+默认位置 `.cache/tokenizers/bge-m3`，可通过 `DOCUMENT_TOKENIZER_PATH` 指定预先准备的目录。
+运行时校验所有文件 SHA-256 并只从本地加载，文件缺失或替换后不会静默下载另一套 tokenizer。
+镜像构建也会准备并核验这些资源，构建环境需要可用网络；服务运行不需要访问 Hugging Face。
+
+默认 `DOCUMENT_CHUNK_MAX_TOKENS=512`，预算包含章节上下文及模型特殊 token。
+改变预算属于处理规格变化，需要新预览和采用，不能用重建静默改变已采用 Chunk。
+
 ## 测试
 
 开发中先运行受影响的测试文件，需要定位单个用例时追加 `-k <用例名片段>`。连续小修改不逐次执行全量测试：

@@ -7,20 +7,21 @@ from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTok
 
 from agent_lab.knowledge.adapters.docling_serialization import ContextBudgetHybridChunker, DocumentSerializerProvider
 from agent_lab.knowledge.adapters.docling_structure import import_structure
+from agent_lab.knowledge.adapters.tokenizer_resources import (
+    BGE_M3_TOKENIZER, BGE_M3_TOKENIZER_REVISION, verify_tokenizer_resources,
+)
 from agent_lab.knowledge.processing.contracts import (
     ChunkResult, ChunkSpecification, DocumentProcessingError, ParsedDocument,
     PreviewChunk, ProcessingIssue,
 )
 
 
-BGE_M3_TOKENIZER_REVISION = "5617a9f61b028005a4858fdac845db406aefb181"
-
-
 class DoclingStructuredChunker:
     def __init__(self, *, tokenizer_path: str | Path, max_tokens: int = 512):
+        path = verify_tokenizer_resources(tokenizer_path)
         try:
             tokenizer = HuggingFaceTokenizer.from_pretrained(
-                model_name=tokenizer_path, max_tokens=max_tokens, local_files_only=True,
+                model_name=path, max_tokens=max_tokens, local_files_only=True,
             )
         except Exception as exc:
             raise DocumentProcessingError("document_tokenizer_unavailable") from exc
@@ -35,7 +36,7 @@ class DoclingStructuredChunker:
             serializer_provider=DocumentSerializerProvider(),
         )
         self.specification = ChunkSpecification(
-            algorithm="docling-hybrid-2.95.0-v1", tokenizer="BAAI/bge-m3",
+            algorithm="docling-hybrid-2.95.0-v1", tokenizer=BGE_M3_TOKENIZER,
             tokenizer_revision=BGE_M3_TOKENIZER_REVISION, max_tokens=max_tokens,
         )
 

@@ -36,6 +36,8 @@ COPY src/ ./src/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
+RUN uv run python -m agent_lab.prepare_document_resources --directory /app/resources/tokenizers/bge-m3
+
 # ---------- 第二阶段：运行 ----------
 FROM python:3.12-slim-bookworm AS runtime
 
@@ -44,6 +46,7 @@ FROM python:3.12-slim-bookworm AS runtime
 # PYTHONDONTWRITEBYTECODE：运行期不再写 .pyc，构建阶段已经预编译过。
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    DOCUMENT_TOKENIZER_PATH=/app/resources/tokenizers/bge-m3 \
     PATH="/app/.venv/bin:$PATH"
 
 # 用非 root 跑。容器逃逸时 root 容器等于宿主机 root，这一层几乎零成本。
@@ -55,6 +58,7 @@ WORKDIR /app
 # .venv 里的启动器（uvicorn、alembic、agent-lab）写死了 /app/.venv 这个绝对路径，
 # 所以两个阶段的 WORKDIR 必须一致，否则拷过来的启动器找不到解释器。
 COPY --from=builder --chown=agentlab:agentlab /app/.venv /app/.venv
+COPY --from=builder --chown=agentlab:agentlab /app/resources /app/resources
 COPY --chown=agentlab:agentlab src/ ./src/
 
 # 拷贝启动脚本（支持 WORKER_COUNT 环境变量）
