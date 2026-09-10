@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import func, select, update
@@ -12,15 +13,20 @@ from sqlalchemy import func, select, update
 from agent_lab.knowledge.adapters.adoption import postgres_adoption_work
 from agent_lab.knowledge.adapters.files import postgres_file_work
 from agent_lab.knowledge.adapters.processing import postgres_processing_work
+from agent_lab.knowledge.adapters.importing import postgres_import_work
 from agent_lab.knowledge.adapters.text_files import parse_text_file
 from agent_lab.knowledge.adapters.visibility import PostgresDocumentVisibility
 from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID as KB
 from agent_lab.knowledge.file_application import FileDocumentService
+from agent_lab.knowledge.importing import SourceImportService
 from agent_lab.knowledge.processing.adoption import DocumentAdoptionApplication
 from agent_lab.knowledge.processing.application import DocumentProcessingApplication
 from agent_lab.knowledge.processing.indexing import CandidateIndexer
 from agent_lab.knowledge.visibility import AdoptedVectorSearch
 from agent_lab.models.document import DocumentRecord
+from agent_lab.models.source import SourceRecord
+from agent_lab.domain.source_document import SourceDocument, SourceInfo
+from agent_lab.knowledge.processing.lifecycle import ProcessingApplicationError
 from agent_lab.models.document_processing import DocumentProcessingRecord, DocumentReviewRecord, DocumentVersion
 from agent_lab.qdrant.index_spec import VectorIndexSpec
 from agent_lab.qdrant.search import QdrantVectorSearch
@@ -182,4 +188,88 @@ def test_newer_source_prevents_late_automatic_adoption(isolated_database, proces
             await app.adoption.process(second.processing_id)
             assert "latest candidate" in (await current(db, first.document_id)).content_text
             assert len(await hits(app)) == 1
+    run(verify())
+
+
+def test_freshrss_intake_recovery_and_bad_content_do_not_skip_unstored_items(isolated_database, processor):
+    async def verify():
+        db = isolated_database
+        source_id = uuid4()
+        source = SourceInfo(provider="test", external_id="feed/1", name="测试来源")
+        async with db.sessions() as session:
+            session.add(SourceRecord(id=source_id, provider=source.provider, external_id=source.external_id,
+                                     name=source.name, knowledge_base_id=KB, sync_checkpoint="1"))
+            await session.commit()
+        storage = MemoryStorage(fail=True)
+        processing = DocumentProcessingApplication(partial(postgres_processing_work, db.sessions), storage, lambda: processor)
+        importer = SourceImportService(None, partial(postgres_import_work, db.sessions), lambda: processing)
+        documents = [SourceDocument(external_id=str(index), title=title, url=f"https://example.com/{index}",
+                                    raw_bytes=html, source=source)
+                     for index, title, html in [(2, "", b"<p>Body</p>"), (3, "normal", b"<h1>Chapter</h1><p>Normal body</p>")]]
+        with pytest.raises(ProcessingApplicationError, match="document_source_storage_failed"):
+            await importer.save_source_page(documents=documents, existing_source_id=source_id,
+                                            expected_checkpoint="1", new_checkpoint="3")
+        async with db.sessions() as session:
+            assert (await session.get(SourceRecord, source_id)).sync_checkpoint == "1"
+            original_ids = set((await session.scalars(select(DocumentProcessingRecord.id))).all())
+            assert len(original_ids) == 2
+        storage.fail = False
+        assert await importer.save_source_page(documents=documents, existing_source_id=source_id,
+                                              expected_checkpoint="1", new_checkpoint="3") == (2, True)
+        async with db.sessions() as session:
+            assert (await session.get(SourceRecord, source_id)).sync_checkpoint == "3"
+            records = list((await session.scalars(select(DocumentProcessingRecord))).all())
+            assert {record.id for record in records} == original_ids
+        states = {(await processing.process(record.id)).state for record in records}
+        assert states == {"ready", "review"} and len(storage.data) == 2
+        # 同一原件与元数据重复接收，不新建候选、不重新排队失败正文。
+        assert await importer.save_source_page(documents=documents, existing_source_id=source_id,
+                                              expected_checkpoint="3", new_checkpoint="3") == (2, False)
+        async with db.sessions() as session:
+            assert await session.scalar(select(func.count()).select_from(DocumentProcessingRecord)) == 2
+    run(verify())
+
+
+def test_source_metadata_candidate_keeps_adopted_name_and_original(isolated_database, processor):
+    async def verify():
+        db = isolated_database
+        source_id = uuid4()
+        source = SourceInfo(provider="test", external_id="feed/1", name="原来源")
+        async with db.sessions() as session:
+            session.add(SourceRecord(id=source_id, provider=source.provider, external_id=source.external_id,
+                                     name=source.name, knowledge_base_id=KB))
+            await session.commit()
+        async with scenario(db, processor) as app:
+            importer = SourceImportService(None, partial(postgres_import_work, db.sessions), lambda: app.processing)
+            incoming = SourceDocument(external_id="item/1", title="标题", url="https://example.com/1",
+                                      raw_bytes=b"<h1>Heading</h1><p>Body</p>", source=source)
+            await importer.save_source_page(documents=[incoming], existing_source_id=source_id,
+                                            expected_checkpoint=None, new_checkpoint="1")
+            async with db.sessions() as session:
+                document = await session.scalar(select(DocumentRecord))
+            await app.processing.process(document.latest_processing_id)
+            await app.adoption.process(document.latest_processing_id)
+            original = await current(db, document.id)
+            async with db.sessions() as session:
+                await session.execute(update(DocumentRecord).where(DocumentRecord.id == document.id).values(manual_review_required=True))
+                await session.commit()
+            renamed = source.model_copy(update={"name": "新来源"})
+            async with postgres_import_work(db.sessions) as work:
+                await work.sources.upsert(renamed)
+                await work.commit()
+            async with db.sessions() as session:
+                current_doc = await DocumentRepository(session).get_with_source(document.id)
+                assert current_doc.source.name == "新来源"
+                assert current_doc.current_version.metadata_snapshot["source_name"] == "原来源"
+                assert current_doc.content_hash == original.content_hash
+                assert current_doc.latest_processing_id != original.latest_processing_id
+                candidate_id = current_doc.latest_processing_id
+                candidate = await session.get(DocumentProcessingRecord, candidate_id)
+                old = await session.get(DocumentProcessingRecord, original.latest_processing_id)
+                assert candidate.source_object_key == old.source_object_key
+                assert candidate.requires_review
+            assert (await app.processing.process(candidate_id)).state == "review"
+            assert await app.adoption.process(candidate_id) is None
+            assert (await hits(app))[0].matches[0].source_name == "原来源"
+            assert len(app.storage.data) == 1
     run(verify())

@@ -40,6 +40,14 @@ class SourceIntake:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceReception:
+    """来源幂等接收准备结果；已有可靠原件可复用，不重复写入对象。"""
+
+    intake: SourceIntake
+    stored: bool
+
+
+@dataclass(frozen=True, slots=True)
 class ProcessingReceipt:
     processing_id: UUID
     document_id: UUID

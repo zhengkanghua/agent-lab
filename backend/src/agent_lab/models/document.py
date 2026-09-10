@@ -31,6 +31,7 @@ from agent_lab.db.base import Base, TimestampMixin
 from agent_lab.domain.enums import DocumentType, ProcessingStatus
 
 if TYPE_CHECKING:
+    from agent_lab.models.document_processing import DocumentVersion
     from agent_lab.models.source import SourceRecord
     from agent_lab.models.knowledge_base import KnowledgeBaseRecord
 
@@ -262,3 +263,6 @@ class DocumentRecord(TimestampMixin, Base):
     # source_id 外键承担。Pipeline 使用该属性前必须 eager-load，避免异步懒加载。
     source: Mapped[SourceRecord | None] = relationship(back_populates="documents")
     knowledge_base: Mapped[KnowledgeBaseRecord] = relationship()
+    current_version: Mapped[DocumentVersion | None] = relationship(
+        foreign_keys=[current_version_id], viewonly=True,
+    )

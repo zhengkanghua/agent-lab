@@ -178,6 +178,7 @@ class PostgresAdoptionRepository:
         for field in ("document_type", "url", "upload_filename", "published_at", "source_updated_at"):
             setattr(document, field, getattr(target.metadata, field))
         document.authors, document.labels = list(target.metadata.authors), list(target.metadata.labels)
+        document.image_urls = list(target.metadata.image_urls)
         document.index_revision = document.indexed_revision = revision
         document.indexed_content_hash, document.indexed_schema_version = target.content_hash, target.index_spec["schema_version"]
         document.processing_status = ProcessingStatus.INDEXED

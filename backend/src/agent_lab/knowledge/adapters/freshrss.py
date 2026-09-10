@@ -1,5 +1,7 @@
 """FreshRSS 订阅与完整增量页适配器；不访问数据库、不决定 KnowledgeBase 归属。"""
 
+import asyncio
+
 from agent_lab.config.freshrss import FreshRSSSettings
 from agent_lab.domain.source_document import SourceInfo
 from agent_lab.ingestion.freshrss_client import FreshRSSClient, FreshRSSProtocolError
@@ -54,7 +56,7 @@ class FreshRSSSourceAdapter:
             item = by_key[key]
             if item.origin.stream_id != subscription.id:
                 raise FreshRSSMappingError("FreshRSS 条目来源与请求的订阅不一致。")
-            documents.append(self._mapper.map(item, subscription, provider=source.provider))
+            documents.append(await asyncio.to_thread(self._mapper.map, item, subscription, provider=source.provider))
         checkpoint = self._select_checkpoint(expected_checkpoint, marker_page.continuation, data_page, limit)
         return SourceImportPage(tuple(documents), checkpoint)
 

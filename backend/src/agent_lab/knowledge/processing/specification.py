@@ -2,7 +2,7 @@
 
 from agent_lab.knowledge.processing.contracts import ChunkSpecification
 
-PARSER_ID = "docling-text-2.126.0-v1"
+PARSER_ID = "docling-text-2.126.0-v2"
 CHUNK_ALGORITHM = "docling-hybrid-2.95.0-v1"
 TOKENIZER_ID = "BAAI/bge-m3"
 TOKENIZER_REVISION = "5617a9f61b028005a4858fdac845db406aefb181"

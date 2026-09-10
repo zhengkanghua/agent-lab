@@ -41,7 +41,7 @@ class ImageReference(BaseModel):
 
 
 class SourceDocument(BaseModel):
-    """新闻、政策、经济发布或财报进入处理流水线后的统一表示。"""
+    """来源条目的身份、元数据与原始字节；正文解析在可靠保存之后进行。"""
 
     external_id: str = Field(
         min_length=1,
@@ -56,10 +56,10 @@ class SourceDocument(BaseModel):
         description="文档业务类型，用于后续过滤和选择处理规则。",
     )
     mime_type: str = Field(
-        default="text/plain", min_length=1,
-        description="文档内容格式，与业务类型独立；规范化的 FreshRSS 正文为 text/plain。",
+        default="text/html", min_length=1,
+        description="原始字节的格式；FreshRSS 选定正文为 text/html。",
     )
-    title: str = Field(min_length=1, description="文档标题。")
+    title: str = Field(description="来源标题；空标题由保存后的质量检查转人工处理。")
     url: AnyHttpUrl = Field(description="文档原始页面地址。")
     published_at: datetime | None = Field(
         default=None,
@@ -72,13 +72,7 @@ class SourceDocument(BaseModel):
     source: SourceInfo = Field(description="文档来源信息。")
     authors: tuple[str, ...] = Field(default=(), description="规范化后的作者列表。")
     labels: tuple[str, ...] = Field(default=(), description="业务标签，不含已读等状态标签。")
-    content_html: str | None = Field(
-        default=None,
-        description="用于清洗、提取链接和图片的临时 HTML，不要求写入 PostgreSQL。",
-    )
-    content_text: str = Field(
-        description="清洗后的完整正文，也是 PostgreSQL 保存和 Embedding 的文本。",
-    )
+    raw_bytes: bytes = Field(repr=False, description="实际收到并选作正文的原始字节。")
     images: tuple[ImageReference, ...] = Field(
         default=(),
         description="正文中提取的图片引用。",

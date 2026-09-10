@@ -33,6 +33,7 @@ from agent_lab.schemas.freshrss import (
 from agent_lab.repositories.source_repository import SourceRepository
 from agent_lab.knowledge.importing import SourceImportService
 from agent_lab.knowledge.composition import build_source_import_service
+from agent_lab.knowledge.processing.lifecycle import ProcessingApplicationError, SourceIntake, SourceReception
 
 
 def run(coroutine: Any) -> Any:
@@ -121,8 +122,12 @@ class MemoryStore:
     bindings: dict[str, UUID] = field(default_factory=dict)
     checkpoints: dict[str, str | None] = field(default_factory=dict)
     documents: dict[tuple[str, str], SourceDocument] = field(default_factory=dict)
-    revisions: dict[tuple[str, str], int] = field(default_factory=dict)
+    intakes: dict[tuple[str, str], SourceIntake] = field(default_factory=dict)
+    states: dict[UUID, str] = field(default_factory=dict)
+    objects: dict[str, bytes] = field(default_factory=dict)
     fail_commit_once: set[str] = field(default_factory=set)
+    fail_checkpoint_once: set[str] = field(default_factory=set)
+    fail_storage_once: set[str] = field(default_factory=set)
     fail_document_upsert: set[str] = field(default_factory=set)
     inactive_knowledge_bases: set[UUID] = field(default_factory=set)
 
@@ -155,6 +160,8 @@ class FakeSession:
         self.pending_source: tuple[str, UUID] | None = None
         self.pending_source_info: SourceInfo | None = None
         self.pending_documents: dict[tuple[str, str], SourceDocument] = {}
+        self.pending_intakes: dict[tuple[str, str], SourceIntake] = {}
+        self.pending_confirmations: list[UUID] = []
         self.pending_checkpoint: tuple[str, str] | None = None
         self.commit_count = 0
         self.rollback_count = 0
@@ -166,6 +173,9 @@ class FakeSession:
         if external_id in self.store.fail_commit_once:
             self.store.fail_commit_once.remove(external_id)
             raise RuntimeError("数据库响应体必须保持私密")
+        if self.pending_checkpoint and external_id in self.store.fail_checkpoint_once:
+            self.store.fail_checkpoint_once.remove(external_id)
+            raise RuntimeError("checkpoint commit failed")
 
         if self.pending_source is not None:
             source_external_id, source_id = self.pending_source
@@ -173,12 +183,13 @@ class FakeSession:
             self.store.checkpoints.setdefault(source_external_id, None)
             self.store.sources[source_external_id] = self.pending_source_info
         for key, document in self.pending_documents.items():
-            existing = self.store.documents.get(key)
-            if existing is None:
-                self.store.revisions[key] = 1
-            elif existing.content_text != document.content_text:
-                self.store.revisions[key] += 1
             self.store.documents[key] = document
+        for key, intake in self.pending_intakes.items():
+            self.store.intakes[key] = intake
+            self.store.states[intake.id] = "received"
+        for processing_id in self.pending_confirmations:
+            if self.store.states[processing_id] == "stored":
+                self.store.states[processing_id] = "pending"
         if self.pending_checkpoint is not None:
             source_external_id, checkpoint = self.pending_checkpoint
             self.store.checkpoints[source_external_id] = checkpoint
@@ -208,6 +219,8 @@ class FakeSession:
         self.pending_source = None
         self.pending_source_info = None
         self.pending_documents.clear()
+        self.pending_intakes.clear()
+        self.pending_confirmations.clear()
         self.pending_checkpoint = None
 
 
@@ -285,19 +298,19 @@ class FakeSourceRepository:
 
 
 class FakeDocumentRepository:
-    """暂存文档 upsert，并可按来源注入 PostgreSQL 失败。"""
+    """暂存接收意图与整页确认；对象保存独立发生，不能被数据库回滚。"""
 
     def __init__(self, session: FakeSession) -> None:
         self.session = session
 
-    async def upsert(
+    async def prepare(
         self,
         document: SourceDocument,
         *,
         source_id: UUID,
         knowledge_base_id: UUID | None,
     ) -> Any:
-        """按来源与文章 ID 暂存文档，不修改 processing/revision 真实实现。"""
+        """按来源与条目 ID 暂存候选，完全相同请求复用接收意图。"""
 
         external_id = document.source.external_id
         assert source_id == self.session.store.source_id(external_id)
@@ -306,8 +319,37 @@ class FakeDocumentRepository:
         if external_id in self.session.store.fail_document_upsert:
             raise RuntimeError("数据库 URL 和语句必须保持私密")
         key = (external_id, document.external_id)
+        if self.session.store.documents.get(key) == document:
+            intake = self.session.store.intakes[key]
+            return SourceReception(intake, self.session.store.states[intake.id] in {"stored", "pending"})
         self.session.pending_documents[key] = document
-        return SimpleNamespace(id=uuid5(source_id, document.external_id))
+        intake = SourceIntake.prepare(document_id=uuid5(source_id, document.external_id), source_kind="freshrss",
+                                      data=document.raw_bytes, mime_type=document.mime_type, metadata={"title": document.title})
+        self.session.pending_intakes[key] = intake
+        return SourceReception(intake, False)
+
+    async def confirm_receptions(self, processing_ids, **_scope):
+        assert all(self.session.store.states[identity] in {"stored", "pending"} for identity in processing_ids)
+        self.session.pending_confirmations.extend(processing_ids)
+
+    async def refresh_source_metadata(self, *_args):
+        # 此测试只验证导入编排；元数据候选在真实 PostgreSQL 验证中覆盖。
+        pass
+
+
+class FakeProcessing:
+    def __init__(self, store):
+        self.store = store
+
+    async def store_source(self, intake, data, *, queue_processing):
+        assert not queue_processing
+        source = next(key[0] for key, value in self.store.intakes.items() if value.id == intake.id)
+        if source in self.store.fail_storage_once:
+            self.store.fail_storage_once.remove(source)
+            self.store.states[intake.id] = "receiving_failed"
+            raise ProcessingApplicationError("document_source_storage_failed")
+        self.store.objects[intake.reference.key] = data
+        self.store.states[intake.id] = "stored"
 
 
 class FakeFreshRSSClient:
@@ -431,6 +473,7 @@ def service_for(client: FakeFreshRSSClient, session: FakeSession) -> SourceImpor
     return build_source_import_service(
         settings(), sessions,
         client_factory=lambda _settings: client,  # type: ignore[arg-type,return-value]
+        processing_factory=lambda: FakeProcessing(session.store),
     )
 
 
@@ -439,7 +482,7 @@ def fake_repositories(monkeypatch: pytest.MonkeyPatch) -> None:
     """让本文件所有导入测试使用 commit-aware 内存 Repository。"""
 
     monkeypatch.setattr(import_module, "SourceRepository", FakeSourceRepository)
-    monkeypatch.setattr(import_module, "DocumentRepository", FakeDocumentRepository)
+    monkeypatch.setattr(import_module, "PostgresImportDocumentRepository", FakeDocumentRepository)
     class KnowledgeBaseRepository:
         def __init__(self, session):
             self.store = session.store
@@ -566,21 +609,19 @@ def test_checkpoint_is_not_published_when_page_commit_fails() -> None:
     assert ("feed/1", "feed/1/item/1") in store.documents
 
 
-@pytest.mark.parametrize("failure_mode", ["request", "mapping", "postgresql"])
-def test_request_mapping_or_postgresql_failure_never_advances_checkpoint(
+@pytest.mark.parametrize("failure_mode", ["request", "postgresql"])
+def test_request_or_postgresql_failure_never_advances_checkpoint(
     failure_mode: str,
 ) -> None:
     store = MemoryStore()
     store.install_checkpoint("feed/1", "1")
     session = FakeSession(store)
     fail_sources = {"feed/1"} if failure_mode == "request" else set()
-    item_titles = {"feed/1/item/2": ""} if failure_mode == "mapping" else {}
     if failure_mode == "postgresql":
         store.fail_document_upsert.add("feed/1")
     client = FakeFreshRSSClient(
         {"feed/1": [1, 2]},
         fail_sources=fail_sources,
-        item_titles=item_titles,
     )
 
     result = run(
@@ -590,6 +631,38 @@ def test_request_mapping_or_postgresql_failure_never_advances_checkpoint(
     assert result.failed_source_count == 1
     assert store.checkpoints["feed/1"] == "1"
     assert ("feed/1", "feed/1/item/2") not in store.documents
+
+
+def test_empty_title_is_received_with_normal_items_and_checkpoint_advances():
+    store = MemoryStore()
+    store.register("feed/1")
+    client = FakeFreshRSSClient({"feed/1": [1, 2]}, item_titles={"feed/1/item/1": ""})
+    result = run(service_for(client, FakeSession(store)).import_recent_per_source())
+    assert result.synchronized_count == 2 and result.failed_source_count == 0
+    assert store.checkpoints["feed/1"] == "2"
+    assert len(store.objects) == 2
+    assert set(store.states.values()) == {"pending"}
+    assert store.documents["feed/1", "feed/1/item/1"].title == ""
+
+
+@pytest.mark.parametrize("failure_stage", ["storage", "confirmation"])
+def test_failed_page_preserves_intent_and_reuses_original_on_retry(failure_stage):
+    store = MemoryStore()
+    store.register("feed/1")
+    if failure_stage == "storage":
+        store.fail_storage_once.add("feed/1")
+    else:
+        store.fail_checkpoint_once.add("feed/1")
+    service = service_for(FakeFreshRSSClient({"feed/1": [1]}), FakeSession(store))
+    failed = run(service.import_recent_per_source())
+    assert failed.failed_source_count == 1 and store.checkpoints["feed/1"] is None
+    assert set(store.states.values()) == {"receiving_failed" if failure_stage == "storage" else "stored"}
+    before = next(iter(store.intakes.values()))
+    succeeded = run(service.import_recent_per_source())
+    assert succeeded.synchronized_count == 1 and succeeded.failed_source_count == 0
+    assert store.checkpoints["feed/1"] == "1" and set(store.states.values()) == {"pending"}
+    assert next(iter(store.intakes.values())).id == before.id
+    assert list(store.objects) == [before.reference.key]
 
 
 def test_one_source_failure_is_isolated_and_other_source_commits() -> None:
@@ -624,7 +697,7 @@ def test_pending_document_deletion_rolls_back_source_page_and_checkpoint(monkeyp
     store.register("feed/healthy")
     session = FakeSession(store)
     client = FakeFreshRSSClient({"feed/blocked": [1, 2], "feed/healthy": [3]})
-    original = FakeDocumentRepository.upsert
+    original = FakeDocumentRepository.prepare
 
     async def guarded(repository, document, *, source_id, knowledge_base_id):
         if document.source.external_id == "feed/blocked":
@@ -636,7 +709,7 @@ def test_pending_document_deletion_rolls_back_source_page_and_checkpoint(monkeyp
             knowledge_base_id=knowledge_base_id,
         )
 
-    monkeypatch.setattr(FakeDocumentRepository, "upsert", guarded)
+    monkeypatch.setattr(FakeDocumentRepository, "prepare", guarded)
     result = run(service_for(client, session).import_recent_per_source(limit_per_source=2))
     assert result.failed_source_count == 1
     assert result.failures[0].error_type == "DocumentDeletionPendingError"

@@ -55,6 +55,7 @@ def record(*, source: Any = "available") -> Any:
         title="政策利率维持不变",
         url="https://example.com/news",
         source=source_value,
+        current_version=SimpleNamespace(metadata_snapshot={"source_name": source_value.name if source_value else None}),
         published_at=datetime(2026, 8, 14, tzinfo=UTC),
         authors=["作者甲"],
         labels=["宏观", "利率"],
@@ -145,6 +146,13 @@ def test_document_detail_database_failure_is_sanitized() -> None:
         "detail": "文档服务不可用。",
     }
     assert "postgres" not in response.text
+
+
+def test_document_detail_uses_adopted_source_name_until_candidate_is_adopted():
+    item = record()
+    item.source.name = "尚未采用的新来源名称"
+    response = run(request(build_app(FakeRepository(item)), f"/documents/{item.id}"))
+    assert response.status_code == 200 and response.json()["source_name"] == "测试来源"
 
 
 def test_document_detail_invalid_uuid_uses_global_sanitized_422() -> None:

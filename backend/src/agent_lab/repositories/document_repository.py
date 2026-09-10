@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from sqlalchemy import case, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from agent_lab.domain.enums import ProcessingStatus
 from agent_lab.domain.write_scope import DocumentDeletionPendingError
@@ -42,7 +42,7 @@ class DocumentRepository:
         self._session = session
 
     async def get_with_source(self, document_id: UUID) -> DocumentRecord | None:
-        """读取一篇文档并 eager-load ``source`` relationship。
+        """读取可用文档与其已采用快照，来源展示字段以该快照为准。
 
         Args:
             document_id: PostgreSQL ``documents.id`` 主键。
@@ -61,7 +61,8 @@ class DocumentRepository:
 
         statement = (
             select(DocumentRecord)
-            .options(selectinload(DocumentRecord.source), selectinload(DocumentRecord.knowledge_base))
+            .options(joinedload(DocumentRecord.current_version), selectinload(DocumentRecord.source),
+                     selectinload(DocumentRecord.knowledge_base))
             .where(
                 DocumentRecord.id == document_id,
                 DocumentRecord.current_version_id.is_not(None),

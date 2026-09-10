@@ -35,6 +35,7 @@ from agent_lab.agent.tools.read_document import build_read_document_tool
 from agent_lab.agent.tools.search_documents import build_search_documents_tool
 from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.models.document import DocumentRecord
+from agent_lab.models.document_processing import DocumentVersion
 from agent_lab.models.source import SourceRecord
 from agent_lab.schemas.document_search import (
     DocumentSearchMatch,
@@ -98,6 +99,7 @@ def build_record(*, content_text: str) -> DocumentRecord:
         content_hash=CONTENT_HASH,
     )
     record.source = SourceRecord(name="示例财经")
+    record.current_version = DocumentVersion(metadata_snapshot={"source_name": "示例财经"})
     record.knowledge_base = KnowledgeBaseRecord(id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID, key="news", name="新闻", is_active=True)
     return record
 

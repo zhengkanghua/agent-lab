@@ -64,7 +64,7 @@ class PostgresProcessingRepository:
         document.management_revision += 1
         await self._session.commit()
 
-    async def mark_stored(self, processing_id: UUID, reference: ObjectReference) -> bool:
+    async def mark_stored(self, processing_id: UUID, reference: ObjectReference, *, queue_processing: bool = True) -> bool:
         result = await self._session.execute(update(DocumentProcessingRecord).where(
             DocumentProcessingRecord.id == processing_id,
             DocumentProcessingRecord.state.in_(("received", "receiving_failed")),
@@ -75,10 +75,24 @@ class PostgresProcessingRepository:
             _not_deleting(),
         ).values(
             source_object_version=reference.version_id, source_stored_at=datetime.now(UTC),
-            state="pending", error_code=None, updated_at=datetime.now(UTC),
+            state="pending" if queue_processing else "stored", error_code=None, updated_at=datetime.now(UTC),
         ))
         await self._session.commit()
         return result.rowcount == 1
+
+    async def get_receiving_intake(self, processing_id: UUID) -> SourceIntake | None:
+        record = await self._session.scalar(select(DocumentProcessingRecord).where(
+            DocumentProcessingRecord.id == processing_id,
+            DocumentProcessingRecord.state.in_(("received", "receiving_failed")),
+            DocumentProcessingRecord.source_stored_at.is_(None), _not_deleting(),
+        ))
+        if record is None:
+            return None
+        return SourceIntake(
+            record.id, record.document_id, record.source_kind,
+            ObjectReference(record.source_object_key, record.source_size, record.source_sha256, record.source_object_version),
+            record.source_mime_type, dict(record.source_metadata),
+        )
 
     async def mark_receiving_failure(self, processing_id: UUID, code: str):
         await self._session.execute(update(DocumentProcessingRecord).where(

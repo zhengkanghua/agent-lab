@@ -16,6 +16,7 @@ from agent_lab.knowledge.document_contracts import (
     ReplaceChunksResult, RetentionCandidate, SourceImportPage, RebuiltDocument,
 )
 from agent_lab.domain.source_document import SourceDocument, SourceInfo
+from agent_lab.knowledge.processing.lifecycle import SourceReception
 if TYPE_CHECKING:
     from agent_lab.schemas.vector_search import VectorSearchFilters, VectorSearchResult
 
@@ -191,7 +192,8 @@ class ImportSourceRepository(Protocol):
 
 
 class ImportDocumentRepository(Protocol):
-    async def upsert(self, document: SourceDocument, *, source_id: UUID, knowledge_base_id: UUID) -> UUID: ...
+    async def prepare(self, document: SourceDocument, *, source_id: UUID, knowledge_base_id: UUID) -> SourceReception: ...
+    async def confirm_receptions(self, processing_ids: Sequence[UUID], *, source_id: UUID, knowledge_base_id: UUID) -> None: ...
 
 
 class ImportUnitOfWork(Protocol):

@@ -66,12 +66,10 @@ async def get_document(
             数据库记录违反公开契约时返回 502。
 
     Notes:
-        只执行一次 eager-load source 的 PostgreSQL 查询；不会重新切分正文或查询
-        Qdrant Chunk，也不会把 ORM 对象直接交给 FastAPI 序列化。
+        读取当前已采用快照；不会重新切分正文或查询 Qdrant Chunk。
     """
 
-    # 1、一次查询把 source 一起 eager-load 出来。下面要用 source.name，分两次查会多一趟
-    #    往返，而且 Session 在响应组装时可能已经关了。
+    # 1、读取正式版本；来源已改名但新候选未采用时，仍显示已采用的来源名称。
     try:
         record = await repository.get_with_source(document_id)
     except SQLAlchemyError as exc:
@@ -103,7 +101,7 @@ async def get_document(
             title=record.title,
             mime_type=record.mime_type,
             url=record.url,
-            source_name=record.source.name if record.source else None,
+            source_name=record.current_version.metadata_snapshot.get("source_name"),
             published_at=record.published_at,
             authors=list(record.authors),
             labels=list(record.labels),

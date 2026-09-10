@@ -33,6 +33,10 @@ class MemoryStorage:
             raise ObjectStorageError("object_storage_get_failed")
         return self.data[key]
 
+    async def inspect(self, key, *, version_id=None):
+        data = self.data.get(key)
+        return ObjectReference(key, len(data), sha256(data).hexdigest(), version_id) if data is not None else None
+
 
 @dataclass
 class Record:
@@ -54,13 +58,17 @@ class MemoryRepository:
     async def create_intent(self, intake):
         self.records[intake.id] = Record(intake)
 
-    async def mark_stored(self, processing_id, reference):
+    async def mark_stored(self, processing_id, reference, *, queue_processing=True):
         if self.fail_confirmation:
             raise ProcessingApplicationError("document_processing_storage_unavailable")
         record = self.records[processing_id]
-        record.state = "pending"
+        record.state = "pending" if queue_processing else "stored"
         record.stored = True
         return True
+
+    async def get_receiving_intake(self, processing_id):
+        record = self.records.get(processing_id)
+        return record.intake if record and not record.stored else None
 
     async def mark_receiving_failure(self, processing_id, code):
         self.records[processing_id].state = "receiving_failed"
@@ -170,6 +178,23 @@ def test_database_confirmation_failure_does_not_acknowledge_storage_success(appl
         assert record.state == "received"
         assert storage.data[record.intake.reference.key] == b"text"
         assert await app.process() is None
+    asyncio.run(verify())
+
+
+@pytest.mark.parametrize("source_kind,expected_state", [("file", "pending"), ("freshrss", "stored")])
+def test_confirmation_recovery_uses_saved_object_without_rewriting(application, source_kind, expected_state):
+    async def verify():
+        app, repository, storage = application
+        repository.fail_confirmation = True
+        with pytest.raises(ProcessingApplicationError):
+            await app.receive(document_id=uuid4(), source_kind=source_kind, data=b"body", mime_type="text/plain")
+        identity = next(iter(repository.records))
+        repository.fail_confirmation = False
+        storage.fail = True
+        receipt = await app.recover_source(identity)
+        assert receipt.state == expected_state
+        assert repository.records[identity].state == expected_state
+        assert len(storage.data) == 1
     asyncio.run(verify())
 
 

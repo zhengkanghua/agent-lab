@@ -15,9 +15,10 @@ logger = logging.getLogger(__name__)
 class SourceImportService:
     """每个来源单独失败隔离，网络请求期间不持有数据库事务。"""
 
-    def __init__(self, external_source: ExternalSourceFactory, work: ImportWorkFactory):
+    def __init__(self, external_source: ExternalSourceFactory, work: ImportWorkFactory, processing):
         self._external_source = external_source
         self._work = work
+        self._processing = processing
 
     async def import_recent_per_source(self, *, limit_per_source: int = 2) -> SourceImportResult:
         if limit_per_source < 1:
@@ -50,20 +51,40 @@ class SourceImportService:
         self, *, documents: Sequence[SourceDocument], existing_source_id: UUID,
         expected_checkpoint: str | None, new_checkpoint: str | None,
     ) -> tuple[int, bool]:
-        """同一事务内复核绑定与启用状态、保存完整页面、条件推进 checkpoint。"""
+        """意图先落库，事务外保存原件；最终把可消费待办与 checkpoint 一起确认。"""
         if not documents and new_checkpoint == expected_checkpoint:
             return 0, False
         async with self._work() as work:
             current = await work.sources.get_for_update(existing_source_id)
             if current is None:
                 return 0, False
+            if current.sync_checkpoint != expected_checkpoint:
+                return 0, False
             target = await work.knowledge_bases.get_for_update(current.knowledge_base_id) if current.knowledge_base_id else None
             try:
                 require_active_knowledge_base(target)
             except (KnowledgeBaseInactiveError, KnowledgeBaseNotFoundError):
                 return 0, False
-            for document in documents:
-                await work.documents.upsert(document, source_id=current.id, knowledge_base_id=current.knowledge_base_id)
+            knowledge_base_id = current.knowledge_base_id
+            receptions = [await work.documents.prepare(document, source_id=current.id, knowledge_base_id=knowledge_base_id)
+                          for document in documents]
+            await work.commit()
+
+        # S3 字节与回执已确认也不提前排队，避免消费器越过本页事务确认。
+        processing = self._processing() if any(not item.stored for item in receptions) else None
+        for document, reception in zip(documents, receptions, strict=True):
+            if not reception.stored:
+                await processing.store_source(reception.intake, document.raw_bytes, queue_processing=False)
+
+        async with self._work() as work:
+            current = await work.sources.get_for_update(existing_source_id)
+            if current is None or current.knowledge_base_id != knowledge_base_id or current.sync_checkpoint != expected_checkpoint:
+                return 0, False
+            target = await work.knowledge_bases.get_for_update(knowledge_base_id)
+            if target is None or not target.is_active:
+                return 0, False
+            await work.documents.confirm_receptions([item.intake.id for item in receptions],
+                                                    source_id=current.id, knowledge_base_id=knowledge_base_id)
             advanced = False
             if new_checkpoint is not None and new_checkpoint != expected_checkpoint:
                 advanced = await work.sources.update_sync_checkpoint(

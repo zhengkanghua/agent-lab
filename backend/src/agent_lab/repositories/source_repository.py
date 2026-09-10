@@ -1,20 +1,16 @@
-"""封装 ``sources`` 表幂等写入及来源变化后的文档重新排队。
+"""封装 ``sources`` 表幂等写入和来源 checkpoint 条件更新。
 
-本模块位于 Repository 持久层，只执行当前 PostgreSQL 事务内的来源和关联文档更新；
-不访问 FreshRSS 网络、不构建 Payload、不调用 Embedding 或 Qdrant。来源展示字段变化
-会影响未来 Point Payload，因此本层递增关联文档 revision，完整索引仍由 Service 完成。
+只修改来源记录；来源名称变化对应的文档候选由导入适配器创建，采用前不改正式正文。
 """
 
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import case, func, or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_lab.domain.source_document import SourceInfo
-from agent_lab.domain.enums import ProcessingStatus
-from agent_lab.models.document import DocumentRecord
 from agent_lab.models.source import SourceRecord
 
 
@@ -22,8 +18,8 @@ class SourceRepository:
     """在当前 AsyncSession 中通过业务唯一键维护一个外部来源。
 
     实例与调用方事务工作单元同生命周期，不跨并发任务共享。``provider + external_id``
-    是来源唯一键；实际来源变化会让已有文档重新排队，完全相同同步保持 updated_at 和
-    revision 不变。Repository 不提交事务，由上层 SourceImportService 工作单元提交或回滚。
+    是来源唯一键；完全相同同步保持 updated_at 不变。Repository 不提交事务，由上层
+    SourceImportService 工作单元提交或回滚。
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -85,18 +81,13 @@ class SourceRepository:
             )
             .returning(SourceRecord)
             # 来源对象也可能已存在于 Session identity map；实际 UPDATE 后必须让
-            # RETURNING 的新名称和 URL 覆盖旧属性，后续 DocumentBuilder 才能生成
-            # 与数据库一致的 Payload。
+            # RETURNING 的新名称和 URL 覆盖旧属性，后续导入才能生成正确候选元数据。
             .execution_options(populate_existing=True)
         )
 
         record = (await self._session.scalars(upsert_statement)).one_or_none()
-        # 4、有返回行 = 真的插了或改了。来源的展示名称会进 Qdrant Payload，所以它一变，
-        #    名下所有文档的 Payload 就旧了，必须重新排队索引。新来源名下还没有文档，
-        #    这一步影响 0 行。Feed/home URL 变化也一起触发这次保守重索引：来源配置极少
-        #    变动，第一版宁可多索引一次，也不引入「取旧值比对」那类数据库技巧。
+        # 4、有返回行表示实际插入或更新；文档版本由独立采用流程维护。
         if record is not None:
-            await self._mark_documents_for_reindex(record.id)
             return record
 
         # 5、没有返回行 = 记录已存在且内容完全一样（上面那个 WHERE 让 UPDATE 没执行）。
@@ -214,33 +205,3 @@ class SourceRepository:
         )
         result = await self._session.execute(statement)
         return result.rowcount == 1
-
-    async def _mark_documents_for_reindex(self, source_id: UUID) -> None:
-        """来源实际变化时，让所有关联文档进入新的索引 revision。
-
-        Args:
-            source_id: 已写入 ``sources.id`` 的 PostgreSQL UUID。
-
-        Notes:
-            这是当前事务内的 PostgreSQL 写入，不提交事务。正在处理的文档保持
-            ``processing``，旧 Worker 结束后再把新 revision 释放为 ``pending``；其他
-            文档立即设为 ``pending``。方法不会修改 Qdrant。
-        """
-
-        await self._session.execute(
-            update(DocumentRecord)
-            .where(DocumentRecord.source_id == source_id)
-            .values(
-                index_revision=DocumentRecord.index_revision + 1,
-                updated_at=func.now(),
-                last_processing_error=None,
-                processing_status=case(
-                    (
-                        DocumentRecord.processing_status
-                        == ProcessingStatus.PROCESSING,
-                        ProcessingStatus.PROCESSING.value,
-                    ),
-                    else_=ProcessingStatus.PENDING.value,
-                ),
-            )
-        )

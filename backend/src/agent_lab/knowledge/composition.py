@@ -118,14 +118,16 @@ def build_file_document_service():
     )
 
 
-def build_source_import_service(settings, session_factory=async_session_factory, *, client_factory=FreshRSSClient) -> SourceImportService:
+def build_source_import_service(settings, session_factory=async_session_factory, *, client_factory=FreshRSSClient,
+                                processing_factory=None) -> SourceImportService:
     """生产与离线验证使用同一导入应用，替换外部来源和持久化适配器即可。"""
     @asynccontextmanager
     async def external_source():
         async with client_factory(settings) as client:
             yield FreshRSSSourceAdapter(settings, client)
 
-    return SourceImportService(external_source, partial(postgres_import_work, session_factory))
+    return SourceImportService(external_source, partial(postgres_import_work, session_factory),
+                               processing_factory or partial(build_document_processing_application, session_factory))
 
 
 @asynccontextmanager

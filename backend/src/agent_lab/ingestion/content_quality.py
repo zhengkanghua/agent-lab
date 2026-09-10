@@ -116,11 +116,11 @@ class ContentQualityNormalizer:
 
         # 2、去掉「正文开头或结尾与标题完全重复的完整段落」——很多源会把标题在
         #    正文里再贴一遍。比较键忽略标点/空白/大小写，只在首尾做
-        title_key = self._title_comparison_key(normalized_title)
-        if title_key and paragraphs and self._title_comparison_key(paragraphs[0]) == title_key:
+        title_key = self.title_comparison_key(normalized_title)
+        if title_key and paragraphs and self.title_comparison_key(paragraphs[0]) == title_key:
             paragraphs.pop(0)
             removed_title_line = True
-        if title_key and paragraphs and self._title_comparison_key(paragraphs[-1]) == title_key:
+        if title_key and paragraphs and self.title_comparison_key(paragraphs[-1]) == title_key:
             paragraphs.pop()
             removed_trailing_title_line = True
 
@@ -193,7 +193,7 @@ class ContentQualityNormalizer:
         ]
 
     @staticmethod
-    def _title_comparison_key(value: str) -> str:
+    def title_comparison_key(value: str) -> str:
         """生成只用于正文首尾标题判断的严格比较键。
 
         Args:

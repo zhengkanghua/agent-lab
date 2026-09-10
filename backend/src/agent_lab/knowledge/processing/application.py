@@ -36,7 +36,7 @@ class DocumentProcessingApplication:
             await repository.create_intent(intake)
         return await self.store_source(intake, data)
 
-    async def store_source(self, intake: SourceIntake, data: bytes) -> ProcessingReceipt:
+    async def store_source(self, intake: SourceIntake, data: bytes, *, queue_processing: bool = True) -> ProcessingReceipt:
         """入口已提交接收意图；只有原件核验与数据库确认完成才返回保存成功。"""
         try:
             verify_object_bytes(intake.reference, data)
@@ -50,9 +50,9 @@ class DocumentProcessingApplication:
                 await repository.mark_receiving_failure(intake.id, exc.code)
             raise ProcessingApplicationError("document_source_storage_failed") from None
         async with self._work() as repository:
-            if not await repository.mark_stored(intake.id, reference):
+            if not await repository.mark_stored(intake.id, reference, queue_processing=queue_processing):
                 raise ProcessingApplicationError("document_processing_conflict")
-        return ProcessingReceipt(intake.id, intake.document_id, "pending", reference.sha256)
+        return ProcessingReceipt(intake.id, intake.document_id, "pending" if queue_processing else "stored", reference.sha256)
 
     async def process(self, processing_id: UUID | None = None) -> ProcessingReceipt | None:
         """一次消费一条持久待办；失败留待人工处理，不在当前批次无限重领。"""
@@ -91,6 +91,25 @@ class DocumentProcessingApplication:
         async with self._work() as repository:
             saved = await repository.save_failure(claim, failure, state=state)
         return self._receipt(claim, state, failure) if saved else None
+
+    async def recover_source(self, processing_id: UUID) -> ProcessingReceipt:
+        """只核对已保存意图指向的原件；回执丢失不触发新的对象写入。"""
+        async with self._work() as repository:
+            intake = await repository.get_receiving_intake(processing_id)
+        if intake is None:
+            raise ProcessingApplicationError("document_processing_conflict")
+        try:
+            reference = await self._storage.inspect(intake.reference.key, version_id=intake.reference.version_id)
+            if reference is None:
+                raise ProcessingApplicationError("document_source_not_found")
+            if (reference.size, reference.sha256) != (intake.reference.size, intake.reference.sha256):
+                raise ObjectStorageError("object_storage_content_mismatch")
+        except ObjectStorageError as exc:
+            raise ProcessingApplicationError(exc.code) from None
+        async with self._work() as repository:
+            if not await repository.mark_stored(processing_id, reference, queue_processing=intake.source_kind != "freshrss"):
+                raise ProcessingApplicationError("document_processing_conflict")
+        return ProcessingReceipt(processing_id, intake.document_id, "stored" if intake.source_kind == "freshrss" else "pending", reference.sha256)
 
     def _build_preview(self, data: bytes, *, mime_type: str, title: str) -> DocumentPreview:
         return self._processor().preview(data, mime_type=mime_type, title=title)

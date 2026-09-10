@@ -49,7 +49,7 @@ def build_read_document_tool(session_factory: SessionFactory) -> BaseTool:
                 knowledge_base_name=record.knowledge_base.name, title=record.title,
                 content_hash=record.content_hash, excerpt=content[:READ_DOCUMENT_MAX_CHARS],
                 kind="document", truncated=len(content) > READ_DOCUMENT_MAX_CHARS,
-                source_name=record.source.name if record.source else None,
+                source_name=record.current_version.metadata_snapshot.get("source_name"),
                 upload_filename=record.upload_filename, url=record.url, published_at=record.published_at,
             )
             published = record.published_at.strftime("%Y-%m-%d %H:%M") if record.published_at else "发布时间未知"

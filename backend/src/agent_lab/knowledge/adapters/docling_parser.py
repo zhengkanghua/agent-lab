@@ -10,6 +10,7 @@ from docling.datamodel.document import InputDocument
 from docling_core.types.doc import DocItemLabel, DoclingDocument
 
 from agent_lab.knowledge.adapters.docling_structure import export_structure
+from agent_lab.knowledge.adapters.docling_html import normalize_html_document
 from agent_lab.knowledge.processing.contracts import DocumentProcessingError, ParsedDocument, ProcessingIssue
 from agent_lab.knowledge.processing.specification import PARSER_ID
 
@@ -33,7 +34,11 @@ class DoclingDocumentParser:
                 native.add_text(label=DocItemLabel.TEXT, text=content, orig=content)
             else:
                 native = self._convert(content, mime_type=mime_type)
+                if mime_type == "text/html":
+                    normalize_html_document(native, title=title)
             blocks, outline, issues = export_structure(native)
+            if not title.strip():
+                issues += (ProcessingIssue(code="document_title_empty"),)
             has_body = any(block.kind not in {"heading", "group", "image"} and block.text.strip() for block in blocks)
             if not has_body:
                 issues += (ProcessingIssue(code="document_body_empty"),)

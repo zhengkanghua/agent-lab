@@ -1,8 +1,7 @@
 """把 FreshRSS 外部协议对象转换为稳定的内部 ``SourceDocument``。
 
-本模块位于 ingestion 映射层，负责 URL、时间、标签、图片、HTML 文本和内容质量规则；
-它不发送 FreshRSS 请求、不写 PostgreSQL、不构建 LangChain Chunk，也不调用 Embedding
-或 Qdrant。任何无法安全判断的关键字段或正文质量问题以明确映射异常返回。
+本模块负责 URL、时间、标签、图片引用和单一原始 HTML 的选择。协议身份错误阻止接收，
+正文质量交给原件保存后的统一解析组件；这里不发送请求、不执行解析或索引。
 """
 
 from datetime import UTC, datetime, timedelta
@@ -23,47 +22,14 @@ class FreshRSSMappingError(ValueError):
     """FreshRSS 数据缺少构建内部文档所需的关键字段。"""
 
 
-class FreshRSSContentQualityError(FreshRSSMappingError):
-    """FreshRSS 新闻因稳定内容质量原因不能进入持久化流程。
-
-    异常生命周期限于当前同步页。``reason`` 是可测试、可安全统计的固定标识，异常
-    不保存标题、正文或 HTML；调用方必须让整页失败，避免 checkpoint 越过该文章。
-    """
-
-    reason: str
-
-    def __init__(self, reason: str) -> None:
-        """保存稳定拒绝原因。
-
-        Args:
-            reason: ``empty_title``、``empty_content`` 或 ``title_only`` 等固定标识。
-        """
-
-        self.reason = reason
-        super().__init__(f"FreshRSS content quality rejected item: {reason}.")
-
-
 class FreshRSSItemMapper:
     """把一篇 FreshRSS 协议文章统一成内部 ``SourceDocument``。
 
-    职责：URL、时间、标签、图片、HTML→纯文本、内容质量规则全都在这层做，因为
-    只有在这一层才能做到「把外部协议的差异一次性消化掉」——之后的 PostgreSQL/
-    LangChain/Embedding 都不用再关心来源是 FreshRSS 还是 SEC。
-
-    一个关键约束：HTML 转纯文本后若命中已确认的完全重复片段会删除；但「正文过短」
-    只作为诊断信息、不阻断入库，以兼容确实有业务价值的短快讯。
+    这里只消化协议差异，选择单一原始正文；质量异常留给保存后的统一处理能力。
     """
 
     _LABEL_PREFIX = "user/-/label/"
     _IGNORED_TAGS = ("script", "style", "noscript", "template")
-
-    def __init__(self) -> None:
-        """创建无状态的正文质量规范化器。
-
-        规范化器不保存文章状态，也不访问数据库；同一个 Mapper 可以安全复用。
-        """
-
-        self._content_quality_normalizer = ContentQualityNormalizer()
 
     def map(
         self,
@@ -80,10 +46,10 @@ class FreshRSSItemMapper:
             provider: 当前 FreshRSS 实例的稳定标识，会参与来源唯一键。
 
         Returns:
-            已完成标题、时间、正文、标签和图片规范化的统一领域文档。
+            保留原始 HTML 字节的接收对象。
 
         Raises:
-            FreshRSSMappingError: 文章缺少 URL、可读正文或非空标题时抛出。
+            FreshRSSMappingError: 文章缺少协议所需 URL 或时间标识无法解释时抛出。
             pydantic.ValidationError: 外部 URL 等值无法满足领域模型约束时抛出。
         """
 
@@ -92,38 +58,16 @@ class FreshRSSItemMapper:
         if article_url is None:
             raise FreshRSSMappingError("FreshRSS 条目没有规范链接或备用链接（URL）。")
 
-        # 2、清洗标题并抽纯文本，空标题按质量原因拒绝（can't 入库检索）
+        # 2、标题可规范化；正文保持实际选中的 HTML，不在接收前压平或拒绝。
         title = self._clean_title(item.title)
-        if not title:
-            raise FreshRSSContentQualityError("empty_title")
+        content_html, _ = self._select_body_html(item)
+        images = self._images_from_html(content_html, article_url)
 
-        # 3、选正文块（content 优先于 summary，绝不拼接二者），并转成纯文本+取图片
-        content_html, content_kind = self._select_body_html(item)
-        if not content_html:
-            raise FreshRSSContentQualityError("empty_content")
-
-        content_text, images = self._clean_html(content_html, article_url)
-        if not content_text:
-            raise FreshRSSContentQualityError("empty_content")
-
-        # 4、统一质量规范化：HTML entity / NFC / 空白 / 边界标题块 / 相邻重复段
-        #    （只做确定性去重；合法短快讯仍保留，正文过短只是诊断信号不阻断）
-        quality_result = self._content_quality_normalizer.inspect(
-            title=title,
-            content_text=content_text,
-            content_kind=content_kind,
-        )
-        content_text = quality_result.normalized_text
-        if not content_text:
-            raise FreshRSSContentQualityError(
-                quality_result.rejection_reason or "empty_content"
-            )
-
-        # 5、抽标签和作者
+        # 3、抽标签和作者
         labels = self._extract_labels(item, subscription)
         authors = (item.author.strip(),) if item.author and item.author.strip() else ()
 
-        # 6、组装来源信息（provider + external_id 构成来源唯一键）
+        # 4、组装来源信息（provider + external_id 构成来源唯一键）
         source = SourceInfo(
             provider=provider,
             external_id=subscription.id,
@@ -132,7 +76,7 @@ class FreshRSSItemMapper:
             home_url=item.origin.html_url or subscription.html_url,
         )
 
-        # 7、返回与外部协议解耦的统一领域文档；时间统一转成带时区 UTC
+        # 5、返回与外部协议解耦的统一领域文档；时间统一转成带时区 UTC
         return SourceDocument(
             external_id=item.id,
             title=title,
@@ -142,8 +86,8 @@ class FreshRSSItemMapper:
             source=source,
             authors=authors,
             labels=labels,
-            content_html=content_html,
-            content_text=content_text,
+            mime_type="text/html",
+            raw_bytes=content_html.encode("utf-8", errors="surrogatepass"),
             images=images,
         )
 
@@ -155,7 +99,7 @@ class FreshRSSItemMapper:
             item: 已校验的 FreshRSS 外部文章。
 
         Returns:
-            非空 HTML 与 ``content``/``summary`` 来源类型；都为空时返回两个空串。
+            选中的 HTML 与 ``content``/``summary`` 来源类型；空正文仍保留实际字节。
 
         Notes:
             content 与 summary 常是同一正文的两种协议表示，绝不拼接二者。选择一个
@@ -164,6 +108,9 @@ class FreshRSSItemMapper:
 
         for kind, block in (("content", item.content), ("summary", item.summary)):
             if block is not None and block.content.strip():
+                return block.content, kind
+        for kind, block in (("content", item.content), ("summary", item.summary)):
+            if block is not None:
                 return block.content, kind
         return "", ""
 
@@ -184,42 +131,32 @@ class FreshRSSItemMapper:
         )
         return ContentQualityNormalizer.normalize_inline_text(title_text)
 
-    def _clean_html(
+    def _images_from_html(
         self,
         content_html: str,
         article_url: str,
-    ) -> tuple[str, tuple[ImageReference, ...]]:
-        """使用 BeautifulSoup 提取纯文本和绝对图片 URL。
+    ) -> tuple[ImageReference, ...]:
+        """只提取既有图片引用元数据，不获取图片或生成索引正文。
 
         Args:
             content_html: FreshRSS 返回的正文或摘要 HTML。
             article_url: 文章规范 URL，用于解析正文中的相对图片地址。
 
         Returns:
-            清洗后的纯文本，以及按正文顺序去重后的图片引用元组。
+            按正文顺序去重后的图片引用元组。
 
         Notes:
-            本方法保留换行表达的段落边界，但不会为特定网站编写正文 selector；
-            网页回源和 selector 属于 FreshRSS 的职责。
+            不执行图片下载；网页回源和正文选择属于 FreshRSS 的职责。
         """
 
         soup = BeautifulSoup(content_html, "html.parser")
 
-        # 这些元素不属于可检索正文；decompose 会同时删除标签和内部文本。
-        # 删除非正文标签（连同内部文本）
+        # 隐藏资源不进入图片引用元数据；实际原件始终保持不变。
         for unwanted in soup.find_all(self._IGNORED_TAGS):
             unwanted.decompose()
 
         # 提取图片（img 标签的 src 等属性）
-        images = self._extract_images(soup, article_url)
-
-        # 提取纯文本（separator="\n" 保留段落边界，strip=True 去首尾空白）
-        raw_text = soup.get_text(separator="\n", strip=True)
-        content_text = "\n".join(
-            line for line in raw_text.splitlines() if line.strip()
-        )
-
-        return content_text, images
+        return self._extract_images(soup, article_url)
 
     def _extract_images(
         self,
@@ -358,7 +295,6 @@ class FreshRSSItemMapper:
 
 
 __all__ = [
-    "FreshRSSContentQualityError",
     "FreshRSSItemMapper",
     "FreshRSSMappingError",
 ]

@@ -25,6 +25,7 @@ class IndexMetadata(ProcessingValue):
     upload_filename: str | None = None
     authors: tuple[str, ...] = ()
     labels: tuple[str, ...] = ()
+    image_urls: tuple[str, ...] = ()
     published_at: datetime | None = None
     source_updated_at: datetime | None = None
 
