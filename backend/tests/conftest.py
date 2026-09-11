@@ -10,6 +10,7 @@ import pytest
 INTEGRATION_SWITCHES = {
     "test_auth_environment_integration.py": "RUN_POSTGRES_AUTH_INTEGRATION_TEST",
     "test_ollama_embedding_integration.py": "RUN_OLLAMA_INTEGRATION_TEST",
+    "test_document_storage_integration.py": "RUN_S3_INTEGRATION_TEST",
     "test_qdrant_remote_integration.py": "RUN_QDRANT_REMOTE_INTEGRATION_TEST",
     "test_scheduler_postgres_integration.py": "RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST",
     "test_knowledge_postgres_integration.py": "RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST",

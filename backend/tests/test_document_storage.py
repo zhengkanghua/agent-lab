@@ -13,7 +13,7 @@ from agent_lab.knowledge.storage import ObjectReference, ObjectStorageError, S3O
 
 def test_storage_requires_private_endpoint_when_enabled():
     with pytest.raises(ObjectStorageError, match="object_storage_not_configured"):
-        S3ObjectStorage(ObjectStorageSettings())
+        S3ObjectStorage(ObjectStorageSettings(_env_file=None, endpoint=None, required=True))
 
 
 def test_storage_can_be_constructed_for_minio_path_style():

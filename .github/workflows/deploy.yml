@@ -100,6 +100,12 @@ jobs:
         working-directory: backend
         run: uv sync --frozen --all-groups
 
+      # 真实 Docling 结构测试依赖锁定的 BGE-M3 tokenizer；缺失时会跳过。
+      # 在测试前下载并核验资源，避免 CI 通过却没有执行结构与预算验证。
+      - name: 准备文档 tokenizer 资源
+        working-directory: backend
+        run: uv run --frozen python -m agent_lab.prepare_document_resources
+
       # 必须给 DATABASE_URL 一个占位值。测试本身不连数据库，但 Settings.database_url 没有
       # 默认值，而 runner 上没有 .env——缺了它 pytest 在**收集阶段**就 ValidationError，
       # 一个用例都跑不到。这个值必须是假的：填真实连接串等于把生产库暴露给 CI 日志。
@@ -211,7 +217,8 @@ jobs:
             # 本地旧镜像——表现是本工作流全绿、容器也重启了，但跑的还是上一版代码。
             docker compose pull
 
-            # 首次从未采用写资源协议的旧版升级，须先按部署文档停写并确认远端写入结束。
+            # 首次从未采用写资源协议的旧版升级，或首次切换 Docling，须先按部署文档
+            # 停写并确认远端写入结束；Docling 的开发资料重置不由本工作流自动执行。
             # 迁移中的旧执行快照不能替代该步骤，也不能追踪旧 HTTP Pipeline/CLI。
             # 迁移必须在 up -d 之前，且这两条的顺序不能反：checkpointer 的四张表不由
             # Alembic 管，见 docs/adr/0004-checkpointer-tables-outside-alembic.md。
