@@ -174,4 +174,24 @@ def test_failed_adoption_retry_reuses_frozen_index_identity(isolated_database, p
                 assert (await session.get(DocumentProcessingRecord, first.processing_id)).index_target == frozen
                 assert await session.scalar(select(func.count()).select_from(DocumentVersion)) == 1
                 assert await session.scalar(select(func.count()).select_from(DocumentReviewRecord)) == 2
+            # 人工采用失败后可对同一正文重新预览，不要求为了生成新候选而随意改字。
+            started = await app.review.start(first.document_id, management_revision=(
+                await app.review.detail(first.document_id)).document.management_revision)
+            draft = await app.review.detail(first.document_id, started.processing_id)
+            await app.review.adopt(started.processing_id, **command(draft), actor_id=SUPERUSER_ID,
+                                   fingerprint=draft.candidate.preview_fingerprint, conclusion=None)
+            app.embeddings.fail = True
+            assert (await app.adoption.process(started.processing_id)).state == "adoption_failed"
+            failed = await app.review.detail(first.document_id, started.processing_id)
+            async with db.sessions() as session:
+                old_target = (await session.get(DocumentProcessingRecord, started.processing_id)).index_target
+            regenerated = await app.review.preview(started.processing_id, **command(failed))
+            assert regenerated.processing_id != started.processing_id
+            assert (await app.processing.process(regenerated.processing_id)).state == "review"
+            fresh = await app.review.detail(first.document_id, regenerated.processing_id)
+            assert fresh.candidate.draft_text == failed.candidate.draft_text
+            assert fresh.document.current_version_id == failed.document.current_version_id
+            async with db.sessions() as session:
+                old_record = await session.get(DocumentProcessingRecord, started.processing_id)
+                assert old_record.index_target == old_target and old_record.index_cleanup_pending
     run(verify())

@@ -231,8 +231,13 @@ class PostgresReviewRepository:
         _, document, record = await self._locked(processing_id, management_revision=management_revision, candidate_revision=candidate_revision)
         if document.draft_processing_id != record.id:
             raise ProcessingApplicationError("document_draft_required")
-        if record.state in {"adopting", "indexing"} or record.index_target is not None:
+        if record.state in {"adopting", "indexing"}:
             raise ProcessingApplicationError("document_processing_busy")
+        if record.index_target is not None:
+            # 采用失败后的冻结目标不可改写；即使正文未改，也能用新规格重新预览。
+            body, mime_type = record.draft_text, record.draft_mime_type
+            record = await self._mutable_draft(document, record)
+            record.draft_text, record.draft_mime_type = body, mime_type
         if record.state not in {"pending", "processing"}:
             _invalidate(record)
             record.state, record.requires_review = "pending", True
