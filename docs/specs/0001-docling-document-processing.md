@@ -2,7 +2,7 @@
 
 创建日期：2026-09-08。
 
-状态：实现、稳定文档、本地验收与真实 MinIO 对象生命周期验收已完成；ARM64 镜像验证及开发环境资料切换待完成。2026-09-08，老板明确授权开启目标模式、完成本需求及测试，并分批 commit。实际结果见下方工程记录，不将代码或文档完成当作部署完成。
+状态：实现、稳定文档、本地验收、真实 MinIO 对象生命周期验收及开发资料重置与本地 v3 切换已完成；已导入 12 篇资料均可用。FreshRSS 的 feed/13 因外部 API 超时尚未取得首次同步基线，保持原断点等待补同步。ARM64 镜像验证按老板安排，延后到授权 push 后由 GitHub Actions 执行并检查结果；本轮只做本地 commit，未 push。2026-09-08，老板明确授权开启目标模式、完成本需求及测试，并分批 commit。实际结果见下方工程记录，不将代码或文档完成当作部署完成。
 
 ## 问题陈述
 
@@ -318,14 +318,27 @@
 - [x] 完成受影响后端、前端离线回归与桌面/手机浏览器核验。
 - [x] 完成随机隔离 PostgreSQL/Qdrant 生命周期及真实 Ollama、Agent 问答验证，并核对代表问题的核心事实与引用。
 - [x] 完成当前 MinIO 桶的真实对象生命周期验证。
-- [ ] 完成 ARM64 镜像构建验证。
-- [ ] 执行已授权且范围核对后的开发资料重置与切换，记录实际结果。
+- [ ] 老板授权 push 后，由 GitHub Actions 完成 ARM64 镜像构建，助手检查实际运行结果。
+- [x] 执行已授权且范围核对后的开发资料重置、本地 v3 切换与已导入资料验收，记录实际数量及未取得范围。
+- [ ] FreshRSS API 恢复响应后，为 feed/13 补齐首次有界同步；其余 5 个 Source 已取得基线，失败断点未推进。
 - [x] 更新稳定文档，完成实现消融复核，记录已验证结果与剩余交付边界。
 - [ ] 业务交付验证通过后，经老板确认删除本 spec，并在交付说明报告删除路径。
 
 开发过程中实时更新上述进度和新增工程事实。实际验证结果以下方实施记录为准；界面、组件和隔离服务验证不替代真实 S3 与业务环境切换。spec 保存本身不代表本工单完成，不能据此删除。
 
 ### 实施记录
+
+- 2026-09-11：本地切换终态核对完成。开发数据库已升级至 a91b3c7d5e20，alembic check 报告无差异；新迁移的升级/降级离线 SQL 均只有 30 条 COMMENT 和 Alembic 版本记账。当前保留 12 篇已采用 Document（10 篇真实 FreshRSS、MD/TXT 合成资料各 1 篇）、12 份原件、12 个已采用版本及 12 条审核记录；v3 current Alias 下精确计数 307 个 Point，逐个核对 Document、KnowledgeBase、当前索引实例及 content_hash 均一致，最大 Chunk 为 505 token，未超过 512 预算。无活动写占用、未完成删除或索引回收。账号、登录会话、KnowledgeBase 配置、6 个 Source 绑定、任务配置及 100 条历史、Agent 会话及四张 checkpointer 表的数量与摘要全部保持一致；其他项目 Collection 的 Point 数、metadata 与 Alias 不变。结果在 backend/.cache/docling-cutover-final.json，stage=completed；验收用登录会话已退出，本地 API 和独立 scheduler 均正常收尾。feed/13 的外部超时及 ARM64 Actions 验证仍按上方待办保留，spec 未删除。
+
+- 2026-09-11：真实 HTTP、MinIO、Docling、Ollama、PostgreSQL 和 Qdrant 的切换验收通过。上传返回 pending 后可准确下载原件，首次采用前普通全文不可读；多级 MD 生成 4 个目录项与 6 个 Chunk，返回上级章节后的正文归属正确，TXT 的井号/列表/反引号保持普通文字。10 篇真实 FreshRSS 的 HTML 原件摘要、解析预览与采用状态均核对通过。人工预览不自动采用，确认采用前旧版可读，后台完成后正式 revision 从 1 到 2 且检索 hash 同步更新，两份已采用历史保留；拒绝后全文和检索停止，原件与历史仍可管理。随后明确删除 3 份临时验收资料，数据库候选/版本/审核和真实 S3 对象均确认清除；再上传正常 MD，由独立 scheduler 在两个既有 cron 均停用时自动采用，启动至检索确认耗时 39.109 秒。结果在 backend/.cache/docling-cutover-acceptance.json，stage=completed。既有离线与浏览器回归不重复运行；本轮未新增处理分支、兼容路径、自动重试或重置框架，一次性执行记录留在本地缓存。
+
+- 2026-09-11：真实开发服务首轮有界 FreshRSS 同步接收 8 篇，feed/10、feed/13 请求超时；补同步新接收 feed/10 的 2 篇，feed/11、feed/2、feed/13 超时。前两者已有首轮基线，当前 5 个 Source 已接收共 10 篇，feed/13 未取得首次基线，失败请求没有推进对应 checkpoint。独立只读探测仅在内存将 15 秒超时延长到 45 秒，实际登录请求仍在 45.422 秒后 ReadTimeout，尚未到来源读取阶段；没有依据修改默认超时或反复重跑导入。已保存资料继续处理：首批 12 份中 10 份采用、2 份合成异常样本待审核，后续 2 篇正常采用，均无索引失败。FreshRSS 外部连接问题保留为实际环境限制；人工审核、删除及独立消费者核验继续进行。
+
+- 2026-09-11：切换后的 alembic check 发现 27 处字段注释和 3 处表注释与 ORM 不一致，差异全部限于本次文档处理相关说明，未发现字段、约束或索引差异。新增后续迁移 a91b3c7d5e20 补齐说明并保留原迁移历史，不关闭注释比较或修改业务记录；待本次导入验收结束后应用并重新核验。上传实测回执为持久接收后的 pending，验收脚本已按实际契约修正断言，复用首次已保存原件继续，没有再次上传同一份资料。
+
+- 2026-09-11：在现有 WriteCoordinator 同时占用 sync/index 的保护下，开发数据库已升级至 f7c1d2e3a4b5；通过 DocumentDeletionApplication 明确删除旧 Document，文档、候选、版本、审核及删除待办表均核验为空，旧向量 4 个清为 0。仅重置 feed/14 的来源 checkpoint；创建并校验 knowledge_chunks_langchain_v3_001，原子切换 knowledge_chunks_langchain_current 后删除空的旧 v2 Collection。本地 backend/.env 的索引规格改为 v3，其他配置未修改。保留数据及 Source 绑定摘要一致，无关 Collection 的数量、metadata 和 Alias 一致，写占用已释放。结果在 backend/.cache/docling-cutover-reset.json，stage=completed；真实 MD/TXT/FreshRSS 重新导入和切换后验收继续进行。
+
+- 2026-09-11：老板明确安排 ARM64 镜像在授权 push 后由 GitHub Actions 验证；当前先完成开发资料重置、重新导入与本地切换，再 commit，等待 push 授权。只读盘点确认开发数据库 news_vector_lc/public 当前为 e74b9a310c65，文档 1 篇；当前环境 v2 Collection 共 4 个 Point，另有 1 个无关 Collection 保留。6 个 Source 绑定不变，仅 feed/14 有需重置的 checkpoint；2 个 cron 均停用，没有活动任务或持久写占用。本地没有运行中的 API/scheduler 写入口，远端仅见既有 idle 连接。账号、登录会话、任务配置及历史、Agent 会话/checkpointer、KnowledgeBase 和 Source 绑定已记录数量与摘要，记录位于 backend/.cache/docling-cutover-before.json 与 docling-cutover-qdrant-before.json；尚未执行迁移或删除。操作复用现有写协调、明确删除与索引生命周期能力，不新增通用重置框架。
 
 - 2026-09-11：老板再次修正反代后，先通过应用实际 S3 适配器确认上次测试键不存在，再执行 test_document_storage_integration.py，1 项通过（7.36 秒）。V4 签名下原件上传、BOM/中文/换行字节比对、回读核验、重复条件写入、冲突不覆盖及删除均通过，未改应用签名配置。报告 backend/.pytest_cache/docling-s3-report.json 为 stage=completed、cleaned=true；上次及本次测试对象均确认不存在。当前桶未启用版本控制，本次未实测版本桶删除；对应分支已有协议替身验证，未修改桶配置。没有发现新的原件存储问题；本机仍无 Docker，ARM64 镜像构建及开发环境迁移、资料重置与切换尚未执行。
 
