@@ -54,6 +54,48 @@ const BEST_MATCH = {
   chunk_count: 2,
 }
 
+/* 外部来源。后台的「来源管理」分区要读它，缺了会让整页停在失败态。
+   一条已绑定知识库、一条未绑定，覆盖两种单元格形态。 */
+const SOURCES = [
+  {
+    id: '30000000-0000-4000-8000-000000000001',
+    provider: 'freshrss',
+    external_id: 'feed/news',
+    name: '新闻与行业动态',
+    feed_url: 'https://example.com/news.xml',
+    home_url: 'https://example.com/news',
+    knowledge_base_id: NEWS_ID,
+    knowledge_base_key: 'news',
+    sync_checkpoint: '1740000000',
+    sync_checkpoint_updated_at: timestamp,
+  },
+  {
+    id: '30000000-0000-4000-8000-000000000002',
+    provider: 'freshrss',
+    external_id: 'feed/weekly',
+    name: '行业周报',
+    feed_url: 'https://example.com/weekly.xml',
+    home_url: null,
+    knowledge_base_id: null,
+    knowledge_base_key: null,
+    sync_checkpoint: null,
+    sync_checkpoint_updated_at: null,
+  },
+]
+
+/* 可用的定时任务类型。后台的新建/编辑表单靠它取默认值与参数范围。 */
+const SCHEDULED_TASK_TYPES = [
+  {
+    task_type: 'freshrss_sync',
+    description: '从 FreshRSS 拉取订阅内容',
+    defaults: { feed_limit: 50 },
+    params_schema: {
+      type: 'object',
+      properties: { feed_limit: { type: 'integer', minimum: 1, maximum: 500 } },
+    },
+  },
+]
+
 const DOCUMENT_RESULT = {
   document_id: '20000000-0000-4000-8000-000000000001',
   knowledge_base_id: NEWS_ID,
@@ -240,6 +282,8 @@ export async function matchApi(url, authed, options = {}) {
       ),
     )
   if (suffix === '/admin/users') return json([ENV_ADMIN, REGULAR_USER])
+  if (suffix === '/sources') return json(SOURCES)
+  if (suffix === '/scheduled-jobs/task-types') return json(SCHEDULED_TASK_TYPES)
   if (suffix === '/document-search') {
     const scope = resolveScope(body.scope ?? { mode: 'selected', knowledge_base_ids: [NEWS_ID] })
     const results = searchResults(scope)
