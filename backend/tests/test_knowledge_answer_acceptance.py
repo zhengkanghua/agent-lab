@@ -12,7 +12,7 @@ import json
 import os
 from pathlib import Path
 from time import perf_counter
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -25,23 +25,23 @@ from agent_lab.config.llm import get_langsmith_settings, get_llm_settings
 from agent_lab.config.ollama_embedding import OllamaEmbeddingSettings
 from agent_lab.config.qdrant import QdrantSettings
 from agent_lab.db.session import get_db_session
-from agent_lab.knowledge.adapters.documents import postgres_indexing_work
 from agent_lab.knowledge.adapters.postgres import postgres_knowledge_base_work
 from agent_lab.knowledge.application import KnowledgeBaseService
 from agent_lab.models.knowledge_base import KnowledgeBaseRecord
-from agent_lab.pipeline.document_chunk_pipeline import DocumentChunkPipeline
 from agent_lab.pipeline.ollama_embedding_provider import OllamaEmbeddingProvider
 from agent_lab.qdrant.index_spec import VectorIndexSpec
 from agent_lab.qdrant.search import QdrantVectorSearch
 from agent_lab.qdrant.store import QdrantChunkStore
-from agent_lab.services.document_indexing_service import DocumentIndexingService
-from agent_lab.services.news_pipeline_execution_service import NewsPipelineExecutionService
 from agent_lab.services.vector_search_service import VectorSearchService
 from agent_lab.services.write_coordination import WriteCoordinator
 from tests.agent_helpers import OFFLINE_LANGSMITH_SETTINGS
 from tests.app_helpers import create_offline_app
 from tests.auth_helpers import allow_superuser
-from tests.test_file_documents_integration import file_service, isolated_vectors
+from tests.document_fixtures import isolated_vectors, processing_services
+from tests.test_processing_application import MemoryStorage
+from agent_lab.knowledge.composition import build_document_processor
+from agent_lab.knowledge.adapters.visibility import PostgresDocumentVisibility
+from agent_lab.knowledge.visibility import AdoptedVectorSearch
 from tests.test_scheduler_postgres_integration import isolated_database, run
 
 pytestmark = pytest.mark.skipif(
@@ -79,22 +79,16 @@ def test_representative_answers_and_current_document_lifecycle(isolated_database
             async with isolated_vectors(db.schema, spec=spec) as vectors:
                 search = VectorSearchService(
                     embedding_provider=provider,
-                    vector_search=QdrantVectorSearch(vectors.client, vectors.settings, spec), spec=spec,
+                    vector_search=AdoptedVectorSearch(QdrantVectorSearch(vectors.client, vectors.settings, spec), PostgresDocumentVisibility(db.sessions)), spec=spec,
                     knowledge_base_scope=KnowledgeBaseService(partial(postgres_knowledge_base_work, db.sessions)),
                 )
-                indexer = DocumentIndexingService(
-                    chunk_pipeline=DocumentChunkPipeline(), embedding_provider=provider,
-                    point_store=QdrantChunkStore(vectors.client, vectors.settings, spec), spec=spec,
-                )
-                execution = NewsPipelineExecutionService(
-                    partial(postgres_indexing_work, db.sessions), coordinator=WriteCoordinator(db.sessions),
-                )
+                services = processing_services(db.sessions, vectors, build_document_processor, provider, MemoryStorage())
                 runtime = AgentRuntime.build(
                     llm_settings=llm_settings, search_service=search, session_factory=db.sessions,
                     database_url=db.dsn, checkpointer=InMemorySaver(),
                 )
                 app = allow_superuser(create_offline_app())
-                app.dependency_overrides[get_file_document_service] = lambda: file_service(db.sessions, vectors)
+                app.dependency_overrides[get_file_document_service] = lambda: services.files
                 app.dependency_overrides[get_vector_search_service] = lambda: search
                 app.dependency_overrides[get_agent_runtime] = lambda: runtime
                 app.dependency_overrides[get_langsmith_settings] = lambda: OFFLINE_LANGSMITH_SETTINGS
@@ -112,7 +106,7 @@ def test_representative_answers_and_current_document_lifecycle(isolated_database
                             assert response.status_code == 201
                             report["documents"][path.relative_to(CORPUS).as_posix()] = response.json()
                     report["stage"] = "index"
-                    indexed = await execution.index_pending(indexer, batch_size=20, stale_after=timedelta(minutes=15))
+                    indexed = await services.batch.run( batch_size=20, stale_after=timedelta(minutes=15))
                     assert indexed.indexed_count == len(report["documents"]) and not indexed.failures
 
                     # 同一套问题既走普通检索，也走 Agent；每题单独保存原文与引用供核对。
@@ -174,16 +168,24 @@ def test_representative_answers_and_current_document_lifecycle(isolated_database
                     original = report["documents"]["operations/backup-policy.txt"]
                     document_id = original["document_id"]
                     replacement = (CORPUS / "operations" / "backup-policy.txt").read_text(encoding="utf-8").replace("7 天", "14 天")
-                    replaced = await client.put(f"/file-documents/{document_id}/file", data={"revision": str(original["revision"])}, files={"file": ("backup-policy.txt", replacement.encode())})
-                    assert replaced.status_code == 200 and replaced.json()["revision"] == original["revision"] + 1
+                    old_detail = (await client.get(f"/documents/{document_id}")).json()
+                    management = await services.review.detail(UUID(document_id))
+                    replaced = await client.put(f"/file-documents/{document_id}/file",
+                        data={"revision": str(old_detail["revision"]), "management_revision": str(management.document.management_revision)},
+                        files={"file": ("backup-policy.txt", replacement.encode())})
+                    assert replaced.status_code == 200 and replaced.json()["revision"] == old_detail["revision"]
+                    assert (await client.get(f"/documents/{document_id}")).json()["content_hash"] == old_detail["content_hash"]
+                    assert (await services.batch.run(batch_size=20, stale_after=timedelta(minutes=15))).indexed_count == 1
                     current = (await client.get(f"/documents/{document_id}")).json()
-                    assert current["content_hash"] != original["content_hash"] and "14 天" in current["content_text"]
+                    assert current["content_hash"] != old_detail["content_hash"] and "14 天" in current["content_text"]
                     old = next((item for item in report["cases"] if item["id"] == "single_fact" and item.get("replay")), None)
                     if old:
                         reopened = (await client.get(f"/agent/threads/{threads['single_fact']}/messages")).json()
                         assert reopened["turns"][0]["answer"] == old["replay"]["answer"]
                         assert reopened["turns"][0]["citations"] == old["replay"]["citations"]
-                    deleted = await client.delete(f"/file-documents/{document_id}", params={"revision": current["revision"]})
+                    management = await services.review.detail(UUID(document_id))
+                    deleted = await client.delete(f"/file-documents/{document_id}",
+                        params={"revision": current["revision"], "management_revision": management.document.management_revision})
                     assert deleted.status_code == 204
                     assert (await client.get(f"/documents/{document_id}")).status_code == 404
                     report["current_document_lifecycle"] = "replacement_kept_id_and_old_evidence_then_deleted"

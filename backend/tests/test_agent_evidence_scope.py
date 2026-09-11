@@ -119,6 +119,7 @@ def test_actual_tools_keep_two_versions_of_evidence_consistent_in_sse_and_replay
 def test_read_source_less_file_uses_current_hash_and_new_citation():
     record = build_record(content_text="# 当前资料\n\n备份保留 14 天。")
     record.source = None
+    record.current_version.metadata_snapshot = {"source_name": None}
     record.url = record.published_at = None
     record.upload_filename = "手册.md"
     record.content_hash = "b" * 64

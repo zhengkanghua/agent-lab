@@ -31,6 +31,7 @@ from agent_lab.qdrant.payload import (
     QdrantPayloadMapper,
 )
 from agent_lab.qdrant.store import QdrantChunkStore, QdrantPointStoreError
+from tests.test_candidate_index import processor
 
 
 def run(coroutine: Any) -> Any:
@@ -511,211 +512,17 @@ def test_lifecycle_does_not_create_missing_alias_target() -> None:
 
     run(verify())
 
-
-def test_store_never_uses_physical_collection_for_point_io() -> None:
-    class SpyClient:
-        """记录 Point I/O 的 Collection 参数，并返回最小成功响应。"""
-
-        def __init__(self) -> None:
-            self.collection_names: list[str] = []
-            self.scroll_calls = 0
-
-        async def scroll(self, *, collection_name: str, **kwargs: Any) -> Any:
-            self.collection_names.append(collection_name)
-            self.scroll_calls += 1
-            return ([], None)
-
-        async def upsert(self, *, collection_name: str, **kwargs: Any) -> Any:
-            self.collection_names.append(collection_name)
-            return SimpleNamespace(status=models.UpdateStatus.COMPLETED)
-
-        async def delete(self, *, collection_name: str, **kwargs: Any) -> Any:
-            self.collection_names.append(collection_name)
-            return SimpleNamespace(status=models.UpdateStatus.COMPLETED)
-
-    from types import SimpleNamespace
-
-    async def verify() -> None:
-        client = SpyClient()
-        settings = qdrant_settings()
-        store = QdrantChunkStore(client, settings, spec())  # type: ignore[arg-type]
-        document_id = str(uuid4())
-        chunk = build_chunk(document_id=document_id)
-        await store.replace_document_chunks(
-            document_id,
-            [chunk],
-            [[1.0, 0.0, 0.0]],
-        )
-        assert client.collection_names
-        assert set(client.collection_names) == {settings.collection_alias}
-        assert settings.collection_name not in client.collection_names
-
-    run(verify())
-
-
-def test_store_write_batch_size_splits_upsert_requests() -> None:
-    class BatchSpyClient:
-        def __init__(self) -> None:
-            self.batch_sizes: list[int] = []
-
-        async def scroll(self, **kwargs: Any) -> Any:
-            return ([], None)
-
-        async def upsert(self, *, points: list[Any], **kwargs: Any) -> Any:
-            self.batch_sizes.append(len(points))
-            return SimpleNamespace(status=models.UpdateStatus.COMPLETED)
-
-    from types import SimpleNamespace
-
-    async def verify() -> None:
-        client = BatchSpyClient()
-        settings = qdrant_settings(batch_size=2)
-        store = QdrantChunkStore(client, settings, spec())  # type: ignore[arg-type]
-        document_id = str(uuid4())
-        chunks = [
-            build_chunk(
-                document_id=document_id,
-                chunk_index=index,
-                chunk_count=5,
-            )
-            for index in range(5)
-        ]
-        await store.replace_document_chunks(
-            document_id,
-            chunks,
-            [[1.0, 0.0, 0.0] for _ in chunks],
-        )
-        assert client.batch_sizes == [2, 2, 1]
-
-    run(verify())
-
-
-@pytest.mark.parametrize("value", ["", "not-a-uuid"])
-def test_store_rejects_non_uuid_document_id_before_remote_call(value: str) -> None:
-    class FailIfCalledClient:
-        def __getattr__(self, name: str) -> Any:
-            raise AssertionError(f"不允许调用 Qdrant 方法 {name}")
-
-    store = QdrantChunkStore(
-        FailIfCalledClient(),  # type: ignore[arg-type]
-        qdrant_settings(),
-        spec(),
-    )
-
-    with pytest.raises(QdrantPointStoreError, match="UUID"):
-        run(store.list_point_ids(value))
-
-
-def test_store_uses_alias_and_replaces_stale_points() -> None:
-    async def verify() -> None:
-        client = AsyncQdrantClient(location=":memory:")
-        settings = qdrant_settings(batch_size=1)
-        lifecycle = QdrantCollectionLifecycle(client, settings, spec())
-        await lifecycle.ensure_current_collection()
-        store = QdrantChunkStore(client, settings, spec())
-        document_id = str(uuid4())
-        old_chunks = [
-            build_chunk(
-                document_id=document_id,
-                chunk_index=index,
-                chunk_count=3,
-            )
-            for index in range(3)
-        ]
-        new_chunks = old_chunks[:2]
-        new_chunks[0].metadata["chunk_count"] = 2
-        new_chunks[1].metadata["chunk_count"] = 2
-        try:
-            first = await store.replace_document_chunks(
-                document_id,
-                old_chunks,
-                [[3.0, 4.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            )
-            second = await store.replace_document_chunks(
-                document_id,
-                new_chunks,
-                [[3.0, 4.0, 0.0], [0.0, 1.0, 0.0]],
-            )
-            records, _ = await client.scroll(
-                collection_name=settings.collection_alias,
-                with_payload=True,
-                with_vectors=True,
-                limit=10,
-            )
-
-            assert store.collection_name == "knowledge_chunks_test_current"
-            assert first.deleted_ids == ()
-            assert second.deleted_ids == (old_chunks[2].id,)
-            assert {str(record.id) for record in records} == {
-                new_chunks[0].id,
-                new_chunks[1].id,
-            }
-            # Qdrant 的 Cosine Collection 会把有效向量按单位长度存储；应用不重复归一化。
-            first_record = next(
-                record for record in records if str(record.id) == new_chunks[0].id
-            )
-            assert first_record.vector == pytest.approx([0.6, 0.8, 0.0])
-        finally:
-            await client.close()
-
-    run(verify())
-
-
-@pytest.mark.parametrize(
-    ("vector", "message"),
-    [
-        ([1.0, 2.0], "维度不匹配"),
-        ([0.0, 0.0, 0.0], "L2 范数为零"),
-        ([1.0, float("nan"), 0.0], "不是有限值"),
-        ([1.0, float("inf"), 0.0], "不是有限值"),
-        ([1.7e308, 1.7e308, 1.7e308], "L2 范数不是有限值"),
-    ],
-)
-def test_store_rejects_invalid_vector_before_remote_call(
-    vector: list[float], message: str
-) -> None:
-    class FailIfCalledClient:
-        """任何 Qdrant 调用都说明输入校验发生得太晚。"""
-
-        def __getattr__(self, name: str) -> Any:
-            raise AssertionError(f"不允许调用 Qdrant 方法 {name}")
-
-    chunk = build_chunk()
-    store = QdrantChunkStore(
-        FailIfCalledClient(),  # type: ignore[arg-type]
-        qdrant_settings(),
-        spec(),
-    )
-
-    with pytest.raises(QdrantPointStoreError, match=message):
-        run(
-            store.replace_document_chunks(
-                str(chunk.metadata["document_id"]),
-                [chunk],
-                [vector],
-            )
-        )
-
-
-def test_store_empty_replacement_deletes_existing_document_points() -> None:
-    async def verify() -> None:
-        client = AsyncQdrantClient(location=":memory:")
-        settings = qdrant_settings()
-        await QdrantCollectionLifecycle(
-            client, settings, spec()
-        ).ensure_current_collection()
-        store = QdrantChunkStore(client, settings, spec())
-        document_id = str(uuid4())
-        chunk = build_chunk(document_id=document_id)
-        try:
-            await store.replace_document_chunks(
-                document_id, [chunk], [[1.0, 0.0, 0.0]]
-            )
-            result = await store.replace_document_chunks(document_id, [], [])
-            assert result.upserted_ids == ()
-            assert result.deleted_ids == (chunk.id,)
-            assert await store.list_point_ids(document_id) == set()
-        finally:
-            await client.close()
-
-    run(verify())
+# 整篇覆盖和旧尾部删除已由候选实例采用替代；失败输入仍必须在远端写入前拦截。
+@pytest.mark.parametrize("vector", [
+    [1.0, 2.0], [0.0, 0.0, 0.0], [1.0, float("nan"), 0.0],
+    [1.0, float("inf"), 0.0], [1.7e308, 1.7e308, 1.7e308], [True, 0.0, 0.0],
+])
+def test_candidate_rejects_invalid_vector_before_remote_write(vector, processor):
+    from unittest.mock import AsyncMock
+    from tests.test_candidate_index import candidate
+    client = SimpleNamespace(upsert=AsyncMock())
+    index_spec = VectorIndexSpec(dimension=3, chunk_size=64)
+    target = candidate(processor, index_spec, uuid4())
+    with pytest.raises(QdrantPointStoreError):
+        run(QdrantChunkStore(client, qdrant_settings(), index_spec).prepare_candidate(target, [vector]))
+    client.upsert.assert_not_awaited()

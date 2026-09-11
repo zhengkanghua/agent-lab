@@ -1,12 +1,5 @@
-"""把已持久化文档转换为 Chunk，并调用 Ollama 生成内存 Embedding。"""
+"""共享写入装配与 Ollama 文本向量化；文档处理位于 knowledge.processing。"""
 
-from agent_lab.pipeline.document_chunk_pipeline import DocumentChunkPipeline
-from agent_lab.pipeline.ollama_embedding_provider import (
-    ChunkEmbedding,
-    OllamaEmbeddingProvider,
-)
-__all__ = [
-    "ChunkEmbedding",
-    "DocumentChunkPipeline",
-    "OllamaEmbeddingProvider",
-]
+from agent_lab.pipeline.ollama_embedding_provider import OllamaEmbeddingProvider
+
+__all__ = ["OllamaEmbeddingProvider"]

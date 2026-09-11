@@ -157,7 +157,6 @@ async def index_rebuild_service(generation: int):
     from agent_lab.config.ollama_embedding import get_ollama_embedding_settings
     from agent_lab.knowledge.adapters.rebuilding import PostgresRebuildRepository
     from agent_lab.knowledge.rebuilding import IndexRebuildService
-    from agent_lab.pipeline.document_chunk_pipeline import DocumentChunkPipeline
     from agent_lab.pipeline.ollama_embedding_provider import OllamaEmbeddingProvider
     from agent_lab.qdrant.index_spec import VectorIndexSpec
     from agent_lab.qdrant.lifecycle import build_qdrant_client
@@ -175,6 +174,6 @@ async def index_rebuild_service(generation: int):
         stack.push_async_callback(embeddings.close)
         yield IndexRebuildService(
             PostgresRebuildRepository(async_session_factory),
-            QdrantRebuildTarget(client, settings, spec, DocumentChunkPipeline(), embeddings),
+            QdrantRebuildTarget(client, settings, spec, embeddings),
             WriteCoordinator(async_session_factory),
         )

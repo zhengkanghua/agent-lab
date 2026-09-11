@@ -1,4 +1,4 @@
-"""把 LangChain Chunk Document 映射成受控的 Qdrant Payload。
+"""把冻结候选中的展示正文与索引身份映射为受控的 Qdrant Payload。
 
 Payload = 向量旁边附带的结构化数据，用途有四：展示新闻内容、按来源/时间过滤、
 按文档清理旧 Chunk、审计索引版本。本模块只从 Chunk 的 ``page_content`` 和「白名单
@@ -29,8 +29,8 @@ class QdrantPayloadMapper:
 
     把一个 Chunk 的正文和业务 Metadata 转成稳定、扁平的 Payload。
 
-    Mapper 存在是为了隔离「LangChain 内存对象」和「Qdrant 存储格式」两种形态：
-    - chunk.page_content → Payload.page_content（这是被 Embedding 的原文，检索时展示用）；
+    对外输入是 IndexTarget 与 PreviewChunk；内部借助 LangChain Document 复用字段校验：
+    - chunk.page_content → Payload.page_content（供检索展示，实际 Embedding 使用冻结的 embedding_text）；
     - chunk.id → 直接变成 Qdrant Point 的 ID（不进 Payload，因为 Point 自带主键）；
     - 其他白名单 Metadata → Payload 的业务字段。
 
@@ -62,8 +62,8 @@ class QdrantPayloadMapper:
         """把一个 LangChain Chunk 转换为 Qdrant 扁平 Payload。
 
         Args:
-            chunk: ``DocumentChunker`` 生成的 Chunk。只有 ``page_content`` 进入
-                Embedding；``id`` 不复制进 Payload，而是由 Point 使用。
+            chunk: 由候选适配生成的内存对象；这里只处理展示正文和 Metadata。
+                ``id`` 不复制进 Payload，而是由 Point 使用。
 
         Returns:
             包含正文、新闻字段、Chunk 关系和索引规格审计信息的 Payload 字典。

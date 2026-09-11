@@ -5,7 +5,6 @@ import os
 from uuid import uuid4
 
 import pytest
-from langchain_core.documents import Document
 from pydantic import SecretStr
 from qdrant_client.http import models
 
@@ -16,6 +15,9 @@ from agent_lab.qdrant.lifecycle import (
     build_qdrant_client,
 )
 from agent_lab.qdrant.store import QdrantChunkStore
+from agent_lab.knowledge.processing.indexing import IndexMetadata
+from tests.test_candidate_index import candidate, processor
+from datetime import UTC, datetime
 
 
 pytestmark = pytest.mark.skipif(
@@ -27,7 +29,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_remote_qdrant_alias_lifecycle_and_point_round_trip() -> None:
+def test_remote_qdrant_alias_lifecycle_and_point_round_trip(processor) -> None:
     """只写随机隔离的测试 Collection/Alias，并在 finally 中删除。"""
 
     async def verify() -> None:
@@ -39,47 +41,21 @@ def test_remote_qdrant_alias_lifecycle_and_point_round_trip() -> None:
             base_url=base_url,
             api_key=SecretStr(api_key),
             environment=f"integration_{suffix}",
-            collection_schema_version="v2",
+            collection_schema_version="v3",
             collection_generation=1,
             vector_dimension=3,
             distance="Cosine",
         )
-        spec = VectorIndexSpec(dimension=3, schema_version="v2")
+        spec = VectorIndexSpec(dimension=3, schema_version="v3", chunk_size=64)
         client = build_qdrant_client(settings)
         lifecycle = QdrantCollectionLifecycle(client, settings, spec)
         store = QdrantChunkStore(client, settings, spec)
-        document_id = str(uuid4())
-        knowledge_base_id = str(uuid4())
-        chunk = Document(
-            id=str(uuid4()),
-            page_content="远程 Qdrant 隔离测试文本",
-            metadata={
-                "document_id": document_id,
-                "knowledge_base_id": knowledge_base_id,
-                "source_id": str(uuid4()),
-                "source_provider": "integration_test",
-                "source_external_id": f"feed/{suffix}",
-                "document_external_id": f"article/{suffix}",
-                "content_hash": "a" * 64,
-                "document_type": "article",
-                "mime_type": "text/plain",
-                "title": "远程 Qdrant 集成测试新闻",
-                "url": "https://example.com/qdrant-integration",
-                "source_name": "远程集成测试来源",
-                "authors": [],
-                "labels": ["测试"],
-                "published_at": "2026-08-13T01:02:03+00:00",
-                "chunk_index": 0,
-                "chunk_count": 1,
-            },
-        )
+        knowledge_base_id = uuid4()
+        target = candidate(processor, spec, knowledge_base_id, text="远程 Qdrant 隔离测试文本")
+        target = target.model_copy(update={"metadata": IndexMetadata(published_at=datetime(2026, 8, 13, 1, 2, 3, tzinfo=UTC))})
         try:
             await lifecycle.ensure_current_collection()
-            await store.replace_document_chunks(
-                document_id,
-                [chunk],
-                [[3.0, 4.0, 0.0]],
-            )
+            await store.prepare_candidate(target, [[3.0, 4.0, 0.0]])
             records, _ = await client.scroll(
                 collection_name=settings.collection_alias,
                 with_payload=True,
@@ -88,8 +64,8 @@ def test_remote_qdrant_alias_lifecycle_and_point_round_trip() -> None:
             assert len(records) == 1
             assert records[0].vector == pytest.approx([0.6, 0.8, 0.0])
             assert records[0].payload["published_at"] == "2026-08-13T01:02:03+00:00"
-            assert records[0].payload["knowledge_base_id"] == knowledge_base_id
-            assert records[0].payload["index_schema_version"] == "v2"
+            assert records[0].payload["knowledge_base_id"] == str(knowledge_base_id)
+            assert records[0].payload["index_schema_version"] == "v3"
         finally:
             aliases = await client.get_aliases()
             if any(alias.alias_name == settings.collection_alias for alias in aliases.aliases):

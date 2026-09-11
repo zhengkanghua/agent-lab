@@ -259,7 +259,7 @@ class PostgresReviewRepository:
             DocumentProcessingRecord.document_id == document.id, DocumentProcessingRecord.index_instance_id.is_not(None),
             DocumentProcessingRecord.index_deleted_at.is_(None),
         ).values(index_cleanup_pending=True))
-        if record.state != "adopted":
+        if record.state not in {"adopted", "rebuilding", "publishing", "rebuilt"}:
             record.state = "rejected"
         document.usage_status, document.manual_review_required = "rejected", True
         document.management_revision += 1

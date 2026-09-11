@@ -14,9 +14,9 @@ from agent_lab.api.dependencies import get_vector_search_service
 from agent_lab.api.documents import get_document_repository
 from agent_lab.config.qdrant import QdrantSettings
 from agent_lab.domain.enums import DocumentType
-from agent_lab.knowledge.adapters.documents import document_snapshot
-from agent_lab.pipeline.document_builder import DocumentBuilder
-from agent_lab.pipeline.document_chunker import DocumentChunker
+from agent_lab.knowledge.processing.indexing import CandidateIndexer, IndexMetadata
+from agent_lab.knowledge.visibility import AdoptedVectorSearch
+from agent_lab.models.document_processing import DocumentVersion
 from agent_lab.pipeline.ollama_embedding_provider import OllamaEmbeddingProvider
 from agent_lab.qdrant.index_spec import VectorIndexSpec
 from agent_lab.qdrant.payload import QdrantPayloadMapper
@@ -27,13 +27,14 @@ from agent_lab.services.vector_search_service import VectorSearchService
 from tests.app_helpers import create_offline_app
 from tests.auth_helpers import allow_reader
 from tests.knowledge_helpers import ActiveKnowledgeBaseScope
-from tests.test_document_pipeline import build_record
+from tests.document_fixtures import build_record
+from tests.test_candidate_index import MemoryVisibility, candidate, processor
 from tests.test_qdrant_vector_store import build_chunk
 from tests.test_vector_search import ollama_settings
 
 
 @pytest.mark.parametrize("missing", ["all", "source", "url", "external_id"])
-def test_generic_document_roundtrip(missing):
+def test_generic_document_roundtrip(missing, processor):
     async def verify():
         record = build_record(content_text="技术资料正文与具体操作记录。")
         record.knowledge_base_id = uuid4()
@@ -48,10 +49,20 @@ def test_generic_document_roundtrip(missing):
             record.url = None
         if missing in ("all", "external_id"):
             record.external_id = None
-        document = DocumentBuilder().build(document_snapshot(record))
-        chunks = DocumentChunker().chunk(document)
-        settings = QdrantSettings(_env_file=None, environment="generic_test", vector_dimension=3, collection_schema_version="v2")
-        spec = VectorIndexSpec.from_settings(settings, ollama_settings())
+        settings = QdrantSettings(_env_file=None, environment="generic_test", vector_dimension=3, collection_schema_version="v3")
+        spec = VectorIndexSpec(dimension=3, chunk_size=64)
+        source = record.source
+        metadata = IndexMetadata(document_type=record.document_type, source_id=record.source_id,
+            source_name=source.name if source else None, source_provider=source.provider if source else None,
+            source_external_id=source.external_id if source else None, document_external_id=record.external_id,
+            url=record.url, authors=tuple(record.authors), labels=tuple(record.labels))
+        target = candidate(processor, spec, record.knowledge_base_id, document_id=record.id, text=record.content_text)
+        target = target.model_copy(update={"metadata": metadata})
+        record.current_version_id = target.version_id
+        record.current_version = DocumentVersion(id=target.version_id, metadata_snapshot=metadata.model_dump(mode="json"))
+        record.content_hash = target.content_hash
+        visibility = MemoryVisibility(record.knowledge_base_id)
+        visibility.intent(target)
         embeddings = SimpleNamespace(
             aembed_documents=AsyncMock(side_effect=lambda texts: [[1.0, 0.0, 0.0] for _ in texts]),
             aembed_query=AsyncMock(return_value=[1.0, 0.0, 0.0]),
@@ -63,9 +74,9 @@ def test_generic_document_roundtrip(missing):
             await client.update_collection_aliases([models.CreateAliasOperation(create_alias=models.CreateAlias(
                 collection_name=settings.collection_name, alias_name=settings.collection_alias,
             ))])
-            vectors = await provider.embed_documents([chunk.page_content for chunk in chunks])
-            await QdrantChunkStore(client, settings, spec).replace_document_chunks(str(record.id), chunks, vectors)
-            service = VectorSearchService(embedding_provider=provider, vector_search=QdrantVectorSearch(client, settings, spec), spec=spec, knowledge_base_scope=ActiveKnowledgeBaseScope())
+            await CandidateIndexer(provider, QdrantChunkStore(client, settings, spec), spec.collection_metadata).prepare(target)
+            visibility.adopt(target)
+            service = VectorSearchService(embedding_provider=provider, vector_search=AdoptedVectorSearch(QdrantVectorSearch(client, settings, spec), visibility), spec=spec, knowledge_base_scope=ActiveKnowledgeBaseScope())
             app = allow_reader(create_offline_app())
             app.dependency_overrides[get_vector_search_service] = lambda: service
             app.dependency_overrides[get_document_repository] = lambda: SimpleNamespace(get_with_source=AsyncMock(return_value=record))
@@ -77,19 +88,19 @@ def test_generic_document_roundtrip(missing):
                     assert result["document_id"] == str(record.id)
                     assert result["knowledge_base_id"] == str(record.knowledge_base_id)
                     assert result["mime_type"] == "text/markdown"
-                    assert result["source_name"] == document.metadata["source_name"]
+                    assert result["source_name"] == metadata.source_name
                     assert result["url"] == record.url
                     if path == "/vector-search":
                         assert result["document_type"] == "other"
                         assert result["document_external_id"] == record.external_id
                 detail = await http.get(f"/documents/{record.id}")
                 assert detail.status_code == 200, detail.text
-                assert detail.json()["source_name"] == document.metadata["source_name"]
+                assert detail.json()["source_name"] == metadata.source_name
                 assert detail.json()["url"] == record.url
                 assert detail.json()["knowledge_base_id"] == str(record.knowledge_base_id)
                 assert detail.json()["mime_type"] == "text/markdown"
                 assert detail.json()["content_text"] == record.content_text
-            assert embeddings.aembed_documents.await_args.args[0] == [chunk.page_content for chunk in chunks]
+            assert embeddings.aembed_documents.await_args.args[0] == [chunk.embedding_text for chunk in target.preview.chunk_result.chunks]
         finally:
             await client.close()
 

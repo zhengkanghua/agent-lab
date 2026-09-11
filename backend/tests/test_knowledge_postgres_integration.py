@@ -27,7 +27,6 @@ from agent_lab.agent.checkpointer import to_psycopg_conninfo
 from agent_lab.config.scheduler import SchedulerSettings
 from agent_lab.domain.enums import DocumentType
 from agent_lab.domain.source_document import SourceDocument, SourceInfo
-from agent_lab.knowledge.adapters.documents import PostgresIndexingRepository
 from agent_lab.knowledge.adapters.importing import postgres_import_work
 from agent_lab.knowledge.adapters.sources import postgres_source_binding_work
 from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID, KnowledgeBaseInactiveError
@@ -104,7 +103,7 @@ def test_disable_commit_wins_over_waiting_source_write(isolated_database, operat
             await session.commit()
 
         binding = SourceBindingService(partial(postgres_source_binding_work, db.sessions), WriteCoordinator(db.sessions))
-        importer = SourceImportService(None, partial(postgres_import_work, db.sessions))
+        importer = SourceImportService(None, partial(postgres_import_work, db.sessions), None)
         entered = asyncio.Event()
 
         async def waiting_write():
@@ -113,7 +112,7 @@ def test_disable_commit_wins_over_waiting_source_write(isolated_database, operat
                 return await binding.bind(source_id, DEFAULT_NEWS_KNOWLEDGE_BASE_ID)
             return await importer.save_source_page(
                 existing_source_id=source_id, expected_checkpoint="1", new_checkpoint="2",
-                documents=[SourceDocument(external_id="2", title="New", url="https://example.invalid/2", source=info, content_text="new")],
+                documents=[SourceDocument(external_id="2", title="New", url="https://example.invalid/2", source=info, raw_bytes=b"new")],
             )
 
         async with db.sessions() as disabling:
@@ -142,41 +141,6 @@ def test_disable_commit_wins_over_waiting_source_write(isolated_database, operat
             assert source.knowledge_base_id == (DEFAULT_NEWS_KNOWLEDGE_BASE_ID if operation == "save_page" else None)
             assert await session.scalar(select(func.count()).select_from(DocumentRecord)) == 0
             assert await session.scalar(select(func.count()).select_from(WriteOperationRecord)) == 0
-
-    run(verify())
-
-
-def test_generic_document_persists_and_snapshot_survives_rollback(isolated_database):
-    async def verify():
-        db = isolated_database
-        knowledge_id, document_id = uuid4(), uuid4()
-        async with db.sessions() as session:
-            session.add(KnowledgeBaseRecord(id=knowledge_id, key="notes", name="Notes"))
-            await session.flush()
-            session.add(DocumentRecord(
-                id=document_id, knowledge_base_id=knowledge_id, source_id=None, external_id=None,
-                title="Internal note", url=None, document_type=DocumentType.OTHER, mime_type="text/markdown",
-                content_text="# Internal note", content_hash=sha256(b"# Internal note").hexdigest(),
-            ))
-            await session.commit()
-        async with db.sessions() as session:
-            snapshot = await PostgresIndexingRepository(session).get_for_indexing(document_id)
-            assert not session.in_transaction()
-        assert snapshot.knowledge_base_id == knowledge_id and snapshot.source is None
-        assert snapshot.mime_type == "text/markdown" and snapshot.url is None
-        app = allow_reader(create_offline_app())
-
-        async def repository():
-            async with db.sessions() as session:
-                yield DocumentRepository(session)
-
-        app.dependency_overrides[get_document_repository] = repository
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
-            detail = await client.get(f"/documents/{document_id}")
-            assert detail.status_code == 200
-            assert detail.json()["knowledge_base_id"] == str(knowledge_id)
-            assert detail.json()["mime_type"] == "text/markdown"
-            assert detail.json()["url"] is None and detail.json()["source_name"] is None
 
     run(verify())
 
@@ -285,88 +249,5 @@ def test_upgrade_from_previous_head_preserves_nonknowledge_records():
             async with engine.begin() as connection:
                 await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
             await engine.dispose()
-
-    run(verify())
-
-
-@pytest.mark.skipif(os.getenv("RUN_SCHEDULER_QDRANT_INTEGRATION_TEST") != "1", reason="还需要隔离 Qdrant 写入授权。")
-def test_persisted_generic_documents_rebuild_into_remote_qdrant(isolated_database):
-    """真实 PG 和随机 Qdrant generation；Embedding 的网络响应仍用确定性替身。"""
-    from unittest.mock import AsyncMock
-    from qdrant_client import models
-    from agent_lab.config.qdrant import QdrantSettings
-    from agent_lab.knowledge.adapters.postgres import postgres_knowledge_base_work
-    from agent_lab.knowledge.adapters.rebuilding import PostgresRebuildRepository
-    from agent_lab.knowledge.application import KnowledgeBaseService
-    from agent_lab.knowledge.rebuilding import IndexRebuildService
-    from agent_lab.pipeline.document_chunk_pipeline import DocumentChunkPipeline
-    from agent_lab.pipeline.ollama_embedding_provider import OllamaEmbeddingProvider
-    from agent_lab.qdrant.index_spec import VectorIndexSpec
-    from agent_lab.qdrant.lifecycle import build_qdrant_client
-    from agent_lab.qdrant.rebuilding import QdrantRebuildTarget
-    from agent_lab.qdrant.search import QdrantVectorSearch
-    from agent_lab.schemas.document_search import DocumentSearchRequest
-    from agent_lab.services.vector_search_service import VectorSearchService
-    from tests.test_vector_search import ollama_settings
-
-    async def verify():
-        db = isolated_database
-        settings = QdrantSettings(
-            _env_file=None, base_url=os.environ["SCHEDULER_TEST_QDRANT_URL"],
-            api_key=os.getenv("SCHEDULER_TEST_QDRANT_API_KEY", ""),
-            environment=db.schema, collection_schema_version="v2", collection_generation=2,
-            vector_dimension=3,
-        )
-        spec = VectorIndexSpec(dimension=3)
-        client = build_qdrant_client(settings)
-        old_name = settings.model_copy(update={"collection_generation": 1}).collection_name
-        knowledge_id = uuid4()
-        async with db.sessions() as session:
-            session.add(KnowledgeBaseRecord(id=knowledge_id, key="tech", name="Tech"))
-            await session.flush()
-            session.add_all([DocumentRecord(
-                id=uuid4(), knowledge_base_id=target, source_id=None, external_id=None,
-                title="Retained generic document", mime_type="text/markdown", document_type=DocumentType.OTHER,
-                url=None, content_text="# Synthetic note", content_hash=sha256(b"# Synthetic note").hexdigest(),
-                processing_status="indexed", indexed_revision=1, indexed_schema_version="v1",
-            ) for target in (knowledge_id, DEFAULT_NEWS_KNOWLEDGE_BASE_ID)])
-            await session.commit()
-        provider = OllamaEmbeddingProvider(ollama_settings(), embeddings=SimpleNamespace(
-            aembed_documents=AsyncMock(side_effect=lambda texts: [[1.0, 0.0, 0.0] for _ in texts]),
-            aembed_query=AsyncMock(return_value=[1.0, 0.0, 0.0]),
-        ))
-        try:
-            await client.create_collection(old_name, vectors_config=spec.vector_params, metadata=spec.collection_metadata)
-            await client.update_collection_aliases([models.CreateAliasOperation(create_alias=models.CreateAlias(
-                collection_name=old_name, alias_name=settings.collection_alias,
-            ))])
-            result = await IndexRebuildService(
-                PostgresRebuildRepository(db.sessions),
-                QdrantRebuildTarget(client, settings, spec, DocumentChunkPipeline(), provider),
-                WriteCoordinator(db.sessions),
-            ).rebuild(batch_size=1)
-            assert result.document_count == 2 and result.point_count == 2
-            info = await client.get_collection(settings.collection_name)
-            assert info.payload_schema["knowledge_base_id"].data_type == models.PayloadSchemaType.UUID
-            service = VectorSearchService(
-                embedding_provider=provider, vector_search=QdrantVectorSearch(client, settings, spec), spec=spec,
-                knowledge_base_scope=KnowledgeBaseService(partial(postgres_knowledge_base_work, db.sessions)),
-            )
-            for target in (knowledge_id, DEFAULT_NEWS_KNOWLEDGE_BASE_ID):
-                results = await service.search_documents(DocumentSearchRequest(query="note", knowledge_base_id=target))
-                assert len(results) == 1 and results[0].knowledge_base_id == target
-                assert results[0].mime_type == "text/markdown" and results[0].source_name is None
-            async with db.sessions() as session:
-                documents = (await session.scalars(select(DocumentRecord))).all()
-                assert all(document.indexed_revision == document.index_revision and document.indexed_schema_version == "v2" for document in documents)
-                assert await session.scalar(select(func.count()).select_from(WriteOperationRecord)) == 0
-        finally:
-            # 名称全部由本测试随机 schema 派生，不能清理应用 Collection 或 Alias。
-            await client.update_collection_aliases([models.DeleteAliasOperation(delete_alias=models.DeleteAlias(alias_name=settings.collection_alias))])
-            for name in (settings.collection_name, old_name):
-                if await client.collection_exists(name):
-                    await client.delete_collection(name)
-            await provider.close()
-            await client.close()
 
     run(verify())

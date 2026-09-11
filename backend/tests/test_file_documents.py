@@ -14,7 +14,7 @@ import pytest
 from agent_lab.api.file_documents import get_file_document_service
 from agent_lab.domain.enums import ProcessingStatus
 from agent_lab.knowledge.adapters.files import PostgresFileDocumentRepository
-from agent_lab.knowledge.adapters.text_files import markdown_index_text, parse_text_file
+from agent_lab.knowledge.adapters.text_files import parse_text_file
 from agent_lab.knowledge.file_application import FileDocumentService
 from agent_lab.knowledge.deletion import DocumentDeletionApplication
 from agent_lab.knowledge.files import FileDocument, FileDocumentError, MAX_FILE_BYTES
@@ -25,7 +25,7 @@ from agent_lab.models.knowledge_base import KnowledgeBaseRecord
 from tests.app_helpers import create_offline_app
 from tests.auth_helpers import allow_superuser
 from tests.test_auth import auth_app, user
-from tests.test_document_pipeline import build_record
+from tests.document_fixtures import build_record
 
 
 def run(coroutine):
@@ -49,11 +49,6 @@ def test_intake_preserves_raw_bom_newlines_indentation_and_repetition():
     bom = parse_text_file("guide.md", ("\ufeff" + content.replace("\n", "\r\n")).encode())
     assert plain.raw_bytes == content.encode()
     assert bom.raw_bytes == ("\ufeff" + content.replace("\n", "\r\n")).encode()
-    indexed = markdown_index_text(content)
-    assert indexed.count("重复段落") == 2
-    assert "    print('原样')" in indexed
-    assert "数量" in indexed and "12" in indexed
-    assert "图片内容未读取" in markdown_index_text("![操作示意](https://example.com/image.png)")
     assert len(parse_text_file("limit.txt", b"x" * MAX_FILE_BYTES).raw_bytes) == MAX_FILE_BYTES
 
 

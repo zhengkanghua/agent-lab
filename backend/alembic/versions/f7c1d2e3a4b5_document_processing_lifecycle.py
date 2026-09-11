@@ -56,11 +56,10 @@ def upgrade() -> None:
         sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("index_instance_id", sa.Uuid(), nullable=True, unique=True),
         sa.Column("index_target", postgresql.JSONB(), nullable=True),
+        sa.Column("index_location", postgresql.JSONB(), nullable=True),
         sa.Column("index_prepared_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("index_cleanup_pending", sa.Boolean(), nullable=False, server_default="false"),
         sa.Column("index_deleted_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("latest_source_object_key", sa.String(1024), nullable=True),
-        sa.Column("latest_source_sha256", sa.String(64), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )

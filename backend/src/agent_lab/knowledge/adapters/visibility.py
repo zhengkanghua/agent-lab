@@ -28,6 +28,14 @@ class PostgresDocumentVisibility:
                 revisions = await self._revisions(session, knowledge_base_ids)
                 if len(revisions) != len(set(knowledge_base_ids)) or not all(row[2] for row in revisions):
                     raise SearchVisibilityError()
+                # Alias 与数据库指向没有共同事务；发布窗口给出可重试失败，不能误报空结果。
+                publishing = await session.scalar(select(exists().where(
+                    DocumentProcessingRecord.document_id == DocumentRecord.id,
+                    DocumentRecord.knowledge_base_id.in_(knowledge_base_ids),
+                    DocumentProcessingRecord.state == "publishing",
+                )))
+                if publishing:
+                    raise SearchVisibilityError()
                 # 只枚举尚在准备、已停用和待回收实例；清理确认后退出排除集合。
                 excluded = await session.scalars(select(DocumentProcessingRecord.index_instance_id)
                     .join(DocumentRecord, DocumentRecord.id == DocumentProcessingRecord.document_id).where(

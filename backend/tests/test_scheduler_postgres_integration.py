@@ -36,6 +36,9 @@ from agent_lab.models.source import SourceRecord
 from agent_lab.models.write_operation import DocumentDeletionRecord, WriteOperationRecord
 from agent_lab.repositories.scheduled_job_repository import ScheduledJobRepository, ScheduledJobStore
 from agent_lab.repositories.document_repository import DocumentRepository
+from agent_lab.knowledge.adapters.importing import PostgresImportDocumentRepository
+from agent_lab.knowledge.processing.lifecycle import ProcessingApplicationError
+from agent_lab.models.document_processing import DocumentProcessingRecord, DocumentVersion
 from agent_lab.repositories.document_retention_repository import DocumentRetentionRepository
 from agent_lab.scheduler_maintenance import inspect_or_recover
 from agent_lab.services.scheduled_job_service import ScheduledJobService
@@ -498,6 +501,20 @@ async def seed_documents(sessions, dates_and_statuses, *, knowledge_base_id=DEFA
             index_revision=1, indexed_revision=1 if status == ProcessingStatus.INDEXED else None,
         ) for index, (published, created, status) in enumerate(dates_and_statuses)]
         session.add_all(documents)
+        await session.flush()
+        # 本夹具只服务保留期：构造已采用关系，不运行无关的解析与模型调用。
+        for document in documents:
+            if document.processing_status != ProcessingStatus.INDEXED:
+                continue
+            processing_id, version_id, instance_id = uuid4(), uuid4(), uuid4()
+            session.add(DocumentProcessingRecord(id=processing_id, document_id=document.id,
+                source_kind="freshrss", state="adopted", index_instance_id=instance_id))
+            await session.flush()
+            session.add(DocumentVersion(id=version_id, document_id=document.id, processing_id=processing_id,
+                revision=1, title=document.title, mime_type="text/plain", content_text=document.content_text,
+                content_hash=document.content_hash, parsed_document={}, chunk_result={}, processing_spec={}))
+            await session.flush()
+            document.current_version_id, document.current_index_instance_id = version_id, instance_id
         await session.commit()
         return documents
 
@@ -526,18 +543,18 @@ def test_retention_boundaries_pending_guards_and_conditional_finish(isolated_dat
             target = documents[0]
             target_id = target.id
             source = await session.get(SourceRecord, target.source_id)
-            incoming = SourceDocument(external_id=target.external_id, title="Changed", url=target.url, content_text="new body", source=SourceInfo(provider=source.provider, external_id=source.external_id, name=source.name))
+            incoming = SourceDocument(external_id=target.external_id, title="Changed", url=target.url, raw_bytes=b"new body", source=SourceInfo(provider=source.provider, external_id=source.external_id, name=source.name))
             with pytest.raises(DocumentDeletionPendingError):
-                await DocumentRepository(session).upsert(incoming, source_id=target.source_id, knowledge_base_id=target.knowledge_base_id)
+                await PostgresImportDocumentRepository(session).prepare(incoming, source_id=target.source_id, knowledge_base_id=target.knowledge_base_id)
             await session.rollback()
+            await repository.mark_qdrant_deleted(intents)
             # 模拟一个绕过正式入口的状态/版本变化，验证恢复仍不会盲删。
             await session.execute(update(DocumentRecord).where(DocumentRecord.id == target_id).values(index_revision=2, processing_status=ProcessingStatus.FAILED))
             await session.commit()
-            assert target_id not in await DocumentRepository(session).list_index_candidate_ids(limit=20)
-            assert not await DocumentRepository(session).claim_for_indexing(document_id=target_id, expected_revision=2)
-            with pytest.raises(RuntimeError):
+            assert await DocumentRepository(session).get_with_source(target_id) is None
+            with pytest.raises(ProcessingApplicationError, match="document_deletion_conflict"):
                 await repository.verify(intents)
-            with pytest.raises(RuntimeError):
+            with pytest.raises(ProcessingApplicationError, match="document_deletion_conflict"):
                 await repository.finish(intents)
             await session.rollback()
             assert await session.get(DocumentRecord, target_id) is not None

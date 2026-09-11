@@ -151,6 +151,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=_bounded_integer("generation", minimum=1, maximum=999999),
         help="尚未存在的目标 generation；原 Collection 和 Source 游标保留。",
     )
+    recover_rebuild = subparsers.add_parser(
+        "recover-index-rebuild", help="核实未完成重建的 Alias 并完成或撤销数据库发布屏障，不重做远端写入。",
+    )
+    recover_rebuild.add_argument("--generation", required=True,
+        type=_bounded_integer("generation", minimum=1, maximum=999999),
+        help="已有待恢复发布的 generation；先按写协调规则确认旧执行与未决写入已停止。")
 
     run_parser = subparsers.add_parser(
         "run-once",
@@ -267,9 +273,9 @@ async def dispatch_command(args: argparse.Namespace) -> CommandOutcome:
     if args.command == "prune-old-threads":
         return await _prune_old_threads(args)
 
-    if args.command == "rebuild-index":
+    if args.command in {"rebuild-index", "recover-index-rebuild"}:
         async with index_rebuild_service(args.generation) as service:
-            result = await service.rebuild()
+            result = await service.rebuild() if args.command == "rebuild-index" else await service.recover()
             return CommandOutcome(
                 payload={"command": args.command, "ok": True, "generation": args.generation, **asdict(result)},
                 exit_code=0,

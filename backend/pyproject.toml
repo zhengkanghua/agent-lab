@@ -21,15 +21,12 @@ dependencies = [
     "langchain-core>=1.5.4",
     "langchain-ollama>=1.1.0",
     "langchain-openai>=1.5.1",
-    "langchain-text-splitters>=1.1.2",
     "langgraph-checkpoint-postgres>=3.1.2",
-    "markdown-it-py>=4,<5",
     "psycopg[binary]>=3.3.4",
     "pydantic-settings>=2.15.0",
     "python-multipart>=0.0.26",
     "qdrant-client>=1.19.0",
     "sqlalchemy>=2.0.51",
-    "tiktoken>=0.13.0",
     "uvicorn>=0.52.1",
 ]
 

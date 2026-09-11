@@ -176,6 +176,9 @@ class FakeWriteRuntime:
         return SimpleNamespace(
             requeued_stale_count=1,
             candidate_count=3,
+            parsed_count=3,
+            review_count=1,
+            cleaned_count=1,
             indexed_count=2,
             skipped_count=0,
             failed_count=0,
@@ -255,6 +258,9 @@ class TestUnifiedExecution:
             assert record is not None and record.status == "succeeded"
             assert record.stats["candidate_count"] == 3
             assert record.stats["requeued_stale_count"] == 1
+            assert record.stats["parsed_count"] == 3
+            assert record.stats["review_count"] == 1
+            assert record.stats["cleaned_count"] == 1
             assert runtime.index_calls == [
                 {"batch_size": 5, "stale_after": timedelta(minutes=30)}
             ]

@@ -51,11 +51,11 @@ class DocumentProcessingRecord(TimestampMixin, Base):
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     index_instance_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
     index_target: Mapped[dict | None] = mapped_column(JSONB, nullable=True, comment="采用决定冻结的索引写入目标。")
+    index_location: Mapped[dict | None] = mapped_column(JSONB, nullable=True,
+        comment="重建的物理目标、原 Alias 目标和原指向；用于发布核验与人工恢复。")
     index_prepared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     index_cleanup_pending: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     index_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    latest_source_object_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
-    latest_source_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class DocumentVersion(TimestampMixin, Base):

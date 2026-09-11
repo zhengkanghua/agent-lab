@@ -12,6 +12,7 @@ from agent_lab.config.qdrant import QdrantSettings
 from agent_lab.knowledge.adapters.docling_chunker import DoclingStructuredChunker
 from agent_lab.knowledge.adapters.docling_parser import DoclingDocumentParser
 from agent_lab.knowledge.processing.indexing import CandidateIndexer, IndexMetadata, IndexTarget
+from agent_lab.knowledge.processing.lifecycle import ProcessingApplicationError
 from agent_lab.knowledge.processing.processor import DocumentProcessor
 from agent_lab.knowledge.storage import ObjectReference
 from agent_lab.knowledge.visibility import AdoptedVectorSearch, SearchVisibilityError, VisibilitySnapshot
@@ -248,3 +249,24 @@ def test_indexer_embeds_frozen_contextual_text_without_rechunking(processor):
         finally:
             await client.close()
     asyncio.run(verify())
+
+
+@pytest.mark.parametrize("mismatch", ["model", "spec", "empty"])
+def test_indexer_rejects_invalid_target_without_embedding_or_writing(processor, mismatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    spec = VectorIndexSpec(dimension=3, chunk_size=64)
+    target = candidate(processor, spec, uuid4())
+    embeddings = SimpleNamespace(embedding_model=spec.embedding_model, embed_documents=AsyncMock())
+    store = SimpleNamespace(prepare_candidate=AsyncMock())
+    if mismatch == "model":
+        embeddings.embedding_model = "other-model"
+    elif mismatch == "spec":
+        target = target.model_copy(update={"index_spec": dict(target.index_spec, chunk_size=32)})
+    else:
+        target = target.model_copy(update={"preview": target.preview.model_copy(update={
+            "chunk_result": target.preview.chunk_result.model_copy(update={"chunks": ()})})})
+    with pytest.raises(ProcessingApplicationError):
+        asyncio.run(CandidateIndexer(embeddings, store, spec.collection_metadata).prepare(target))
+    embeddings.embed_documents.assert_not_awaited()
+    store.prepare_candidate.assert_not_awaited()

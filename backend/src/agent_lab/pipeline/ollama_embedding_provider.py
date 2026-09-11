@@ -1,4 +1,4 @@
-"""通过 Ollama 把 LangChain Chunk 正文转换成经过校验的 Embedding 向量。
+"""通过 Ollama 把调用方确定的文本清单转换成经过校验的 Embedding 向量。
 
 Embedding = 模型把一段文本映射成一组浮点数。核心特点：语义越相近的文本，它们的
 向量就越"靠近"（距离小/角度小）；但单个坐标并不对应某个人类能读懂的词义。
@@ -11,12 +11,10 @@ Embedding = 模型把一段文本映射成一组浮点数。核心特点：语�
 import asyncio
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
 from numbers import Real
 from typing import Never
 
 import httpx
-from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_ollama import OllamaEmbeddings
 from ollama import ResponseError
@@ -53,22 +51,6 @@ class OllamaServiceError(OllamaEmbeddingError):
 
 class EmbeddingResponseError(OllamaEmbeddingError):
     """远程响应无法形成可靠的同维有限数值向量。"""
-
-
-# @dataclass 用来高效定义不可变且省内存数据类的注解。其中 frozen=True 让对象变成只读（不可修改），而 slots=True 通过取消每个实例的字典来节省内存并加快属性访问。
-# frozen=True 对象创建之后，不能修改他的属性
-# slots=True 不再为每个实例动态创建 __dict__字典，减少内存
-@dataclass(frozen=True, slots=True)
-class ChunkEmbedding:
-    """一个 LangChain Chunk 与其内存 Embedding 的稳定映射。
-
-    ``chunk_id`` 来自 LangChain Chunk ``Document.id``，用于后续阶段关联派生数据；
-    ``embedding`` 只来自该 Chunk 的 ``page_content``，ID 与 Metadata 均不进入模型。
-    对象只在内存中生存，本阶段不会把它写入 PostgreSQL、文件或向量数据库。
-    """
-
-    chunk_id: str
-    embedding: list[float]
 
 
 class OllamaEmbeddingProvider:
@@ -299,46 +281,6 @@ class OllamaEmbeddingProvider:
 
         vector = await self.embed_query(text)
         return len(vector)
-
-    async def embed_chunks(self, chunks: Sequence[Document]) -> list[ChunkEmbedding]:
-        """批量生成 Chunk 向量，并保留每项稳定 Chunk ID。
-
-        "把一批 LangChain Chunk(文档片段)直接变成 (chunk_id, 向量) 对"的高层便捷方法
-
-        Args:
-            chunks: ``DocumentChunker`` 输出的 LangChain Chunk Document 序列。
-                ``id`` 必须非空；只有 ``page_content`` 会进入 Embedding。
-
-        Returns:
-            按 Chunk 输入顺序排列的 ``ChunkEmbedding`` 列表，ID 与向量一一对应。
-
-        Raises:
-            ValueError: 任一 Chunk 缺少 ID 或正文为空。
-            OllamaEmbeddingError: 远程调用或响应验证失败。
-
-        Notes:
-            本方法进行远程网络与 Embedding I/O，但不进行数据库或向量库 I/O。
-            Metadata 不进入模型；本阶段返回内存结果后即结束，不保存向量。
-        """
-
-        chunk_ids: list[str] = []
-        for index, chunk in enumerate(chunks):
-            # chunk的id要非空
-            if chunk.id is None or not chunk.id.strip():
-                raise ValueError(
-                    f"在进行嵌入（embedding）之前，必须设置 chunk[{index}].id。"
-                )
-            chunk_ids.append(chunk.id)
-
-        # 只把 Chunk 的 page_content 交给模型；id/metadata 不进向量（关联靠返回的 chunk_id 保持）。批量生成后按 zip(strict) 保证 id 与向量一一对应。
-        # vectors 是一组一组的 vector
-        vectors = await self.embed_documents([chunk.page_content for chunk in chunks])
-        # 将chunk_ids和vectors 进行配对绑定 
-        # zip(chunk_ids, vectors, strict=True)  strict=True强校验，一个chunk_ids就匹配一个vectors
-        return [
-            ChunkEmbedding(chunk_id=chunk_id, embedding=vector)
-            for chunk_id, vector in zip(chunk_ids, vectors, strict=True)
-        ]
 
     @staticmethod
     def _validate_text(text: str, *, context: str) -> str:

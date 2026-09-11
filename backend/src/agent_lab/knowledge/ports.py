@@ -12,12 +12,13 @@ from agent_lab.knowledge.contracts import KnowledgeBaseCreateRequest, SourceView
 from agent_lab.knowledge.domain import KnowledgeBase
 from agent_lab.knowledge.scope import KnowledgeBaseSelection, ResolvedKnowledgeBaseScope
 from agent_lab.knowledge.document_contracts import (
-    DocumentDeletion, DocumentSearchGroup, DocumentSnapshot, ImportSourceState,
-    ReplaceChunksResult, RetentionCandidate, SourceImportPage, RebuiltDocument,
+    DocumentDeletion, DocumentSearchGroup, ImportSourceState,
+    RetentionCandidate, SourceImportPage, RebuiltDocument,
 )
 from agent_lab.domain.source_document import SourceDocument, SourceInfo
 from agent_lab.knowledge.processing.lifecycle import SourceReception
 if TYPE_CHECKING:
+    from agent_lab.knowledge.processing.indexing import IndexTarget
     from agent_lab.schemas.vector_search import VectorSearchFilters, VectorSearchResult
 
 
@@ -101,33 +102,12 @@ class IndexSpecification(Protocol):
     chunk_overlap: int
 
 
-class Chunk(Protocol):
-    """适配器间共享的内存 Chunk 形状；具体切分库由装配选择。"""
-
-    id: str | None
-    page_content: str
-    metadata: dict
-
-
-class ChunkEmbedding(Protocol):
-    chunk_id: str
-    embedding: list[float]
-
-
 class EmbeddingProvider(Protocol):
     embedding_model: str
     dimension: int | None
 
     async def embed_query(self, text: str) -> list[float]: ...
-    async def embed_chunks(self, chunks: Sequence[Chunk]) -> Sequence[ChunkEmbedding]: ...
-
-
-class ChunkPipeline(Protocol):
-    encoding_name: str
-    chunk_size: int
-    chunk_overlap: int
-
-    def build_chunks(self, document: DocumentSnapshot) -> Sequence[Chunk]: ...
+    async def embed_documents(self, texts: Sequence[str]) -> list[list[float]]: ...
 
 
 class VectorSearch(Protocol):
@@ -135,27 +115,6 @@ class VectorSearch(Protocol):
 
     async def search(self, vector: Sequence[float], *, top_k: int, score_threshold: float | None, filters: VectorSearchFilters) -> list[VectorSearchResult]: ...
     async def search_groups(self, vector: Sequence[float], *, document_limit: int, matches_per_document: int, score_threshold: float | None, filters: VectorSearchFilters) -> list[DocumentSearchGroup]: ...
-
-
-class ChunkStore(Protocol):
-    index_spec: IndexSpecification
-
-    async def replace_document_chunks(self, document_id: str, chunks: Sequence[Chunk], vectors: Sequence[Sequence[float]]) -> ReplaceChunksResult: ...
-
-
-class IndexingRepository(Protocol):
-    """每次索引独占的存储端口，状态方法在返回前完成各自短事务。"""
-
-    async def get_for_indexing(self, document_id: UUID) -> DocumentSnapshot | None: ...
-    async def claim_for_indexing(self, *, document_id: UUID, expected_revision: int) -> bool: ...
-    async def mark_indexed(self, *, document_id: UUID, index_revision: int, content_hash: str, schema_version: str) -> bool: ...
-    async def mark_failed(self, *, document_id: UUID, index_revision: int, error_message: str) -> bool: ...
-    async def release_stale_claim(self, *, document_id: UUID, stale_revision: int) -> bool: ...
-    async def requeue_stale_processing(self, *, started_before: datetime) -> int: ...
-    async def list_index_candidate_ids(self, *, limit: int) -> list[UUID]: ...
-
-
-type IndexingWorkFactory = Callable[[], AbstractAsyncContextManager[IndexingRepository]]
 
 
 class RetentionRepository(Protocol):
@@ -210,20 +169,30 @@ type ImportWorkFactory = Callable[[], AbstractAsyncContextManager[ImportUnitOfWo
 
 
 class RebuildRepository(Protocol):
-    """重建读取所有 Document；事务在每次调用返回前结束。"""
+    """重建读取已采用快照，保存新实例意图和发布屏障；方法返回前结束事务。"""
 
     async def require_ready(self) -> None: ...
-    async def list_documents(self, *, after: UUID | None, limit: int) -> list[DocumentSnapshot]: ...
-    async def verify_versions(self, documents: Sequence[RebuiltDocument]) -> None: ...
+    async def list_documents(self, *, after: UUID | None, limit: int) -> list[UUID]: ...
+    async def prepare_document(self, document_id: UUID, *, index_spec: dict, location: dict) -> tuple[RebuiltDocument, IndexTarget] | None: ...
+    async def mark_prepared(self, processing_id: UUID) -> None: ...
+    async def begin_publication(self, documents: Sequence[RebuiltDocument]) -> None: ...
     async def mark_rebuilt(self, documents: Sequence[RebuiltDocument], *, schema_version: str) -> None: ...
+    async def fail_build(self, documents: Sequence[RebuiltDocument]) -> None: ...
+    async def pending_publication(self, collection: str) -> list[tuple[RebuiltDocument, IndexTarget, dict]]: ...
+    async def abort_publication(self, documents: Sequence[RebuiltDocument]) -> None: ...
 
 
 class RebuildTarget(Protocol):
     """隔离 generation 的构建与验收，发布前不改变业务读取目标。"""
 
     schema_version: str
+    index_spec: dict
+    collection_name: str
+    location: dict | None
 
     async def prepare(self) -> None: ...
-    async def write_document(self, document: DocumentSnapshot) -> int: ...
+    async def write_document(self, target: IndexTarget) -> int: ...
+    async def verify_document(self, target: IndexTarget) -> int: ...
     async def verify_total(self, expected_points: int) -> None: ...
     async def publish(self) -> None: ...
+    async def current_target(self) -> str | None: ...

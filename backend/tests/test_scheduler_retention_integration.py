@@ -66,7 +66,7 @@ def test_remote_delete_then_postgres_failure_recovers_without_orphan_points(isol
 
             async with coordinator.hold(("sync", "index")):
                 async with sessions() as session:
-                    result = await DocumentRetentionService(FailingFinish(session), store, clock=lambda: now).prune_old_documents(180, False, knowledge_base_ids=(DEFAULT_NEWS_KNOWLEDGE_BASE_ID,))
+                    result = await DocumentRetentionService(FailingFinish(session), store, lambda: None, clock=lambda: now).prune_old_documents(180, False, knowledge_base_ids=(DEFAULT_NEWS_KNOWLEDGE_BASE_ID,))
                     assert result.documents_deleted == 0 and result.qdrant_points_deleted == 6
                     assert await session.scalar(select(func.count()).select_from(DocumentRecord)) == 3
                     intents = (await session.scalars(select(DocumentDeletionRecord))).all()
@@ -74,7 +74,7 @@ def test_remote_delete_then_postgres_failure_recovers_without_orphan_points(isol
             assert await store.count_by_document_ids([str(item.id) for item in documents]) == 0
             async with coordinator.hold(("sync", "index")):
                 async with sessions() as session:
-                    resumed = await DocumentRetentionService(DocumentRetentionRepository(session), store, clock=lambda: now).prune_old_documents(180, False, knowledge_base_ids=(DEFAULT_NEWS_KNOWLEDGE_BASE_ID,))
+                    resumed = await DocumentRetentionService(DocumentRetentionRepository(session), store, lambda: None, clock=lambda: now).prune_old_documents(180, False, knowledge_base_ids=(DEFAULT_NEWS_KNOWLEDGE_BASE_ID,))
                     assert resumed.documents_deleted == 3 and resumed.qdrant_points_deleted == 0
                     assert await session.scalar(select(func.count()).select_from(DocumentRecord)) == 0
                     assert await session.scalar(select(func.count()).select_from(DocumentDeletionRecord)) == 0

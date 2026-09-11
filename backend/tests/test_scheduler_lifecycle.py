@@ -36,7 +36,7 @@ def test_only_requested_dependencies_are_created_and_all_are_closed(monkeypatch,
     service = SimpleNamespace(prune_old_documents=AsyncMock(return_value="retention-result"))
     monkeypatch.setattr(module, "DocumentRetentionService", Mock(return_value=service))
     runtime = PipelineWriteRuntime.lazy(session_factory=no_resources, freshrss_factory=importer, processing_factory=indexing, qdrant_settings_factory=settings)
-    runtime.executor = SimpleNamespace(writing=no_resources, sync_news=AsyncMock(return_value="sync-result"), index_pending=AsyncMock(return_value="index-result"))
+    runtime.executor = SimpleNamespace(writing=no_resources, sync_news=AsyncMock(return_value="sync-result"))
 
     async def verify():
         if step == "sync":

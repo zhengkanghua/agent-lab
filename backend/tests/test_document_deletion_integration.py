@@ -23,7 +23,7 @@ from agent_lab.repositories.document_retention_repository import DocumentRetenti
 from agent_lab.services.write_coordination import WriteCoordinator
 from tests.test_processing_application import processor
 from tests.test_processing_postgres_integration import current, hits, scenario
-from tests.test_scheduler_postgres_integration import isolated_database, run
+from tests.test_scheduler_postgres_integration import isolated_database, run, seed_documents
 
 pytestmark = pytest.mark.skipif(os.getenv("RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST") != "1", reason="需要授权隔离文档删除验证。")
 
@@ -134,4 +134,21 @@ def test_retention_selects_only_fully_adopted_documents_without_protected_record
             repository = DocumentRetentionRepository(session)
             candidates = await repository.candidates(now - timedelta(days=180), None, 100, knowledge_base_ids=(KB,))
             assert {item.document_id for item in candidates} == {identities["eligible"], identities["no_date"]}
+    run(verify())
+
+
+def test_retention_does_not_resume_or_reselect_explicit_deletion(isolated_database):
+    async def verify():
+        db = isolated_database
+        now = datetime.now(UTC)
+        old = now - timedelta(days=200)
+        documents = await seed_documents(db.sessions, [(old, old, ProcessingStatus.INDEXED)] * 3)
+        async with db.sessions() as session:
+            repository = DocumentRetentionRepository(session)
+            await repository.prepare_explicit(documents[0].id, revision=1, management_revision=1)
+            candidates = await repository.candidates(now - timedelta(days=180), None, 10, knowledge_base_ids=(KB,))
+            assert {item.document_id for item in candidates} == {item.id for item in documents[1:]}
+            await repository.prepare(candidates[:1], now - timedelta(days=180))
+            pending = await repository.pending(None, 10, knowledge_base_ids=(KB,))
+            assert len(pending) == 1 and pending[0].document_id != documents[0].id
     run(verify())

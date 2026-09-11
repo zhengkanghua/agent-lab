@@ -6,7 +6,6 @@ from typing import Any
 
 import httpx
 import pytest
-from langchain_core.documents import Document
 from ollama import ResponseError
 from pydantic import SecretStr, ValidationError
 
@@ -323,31 +322,6 @@ def test_authentication_error_does_not_leak_key() -> None:
 
     assert secret not in str(exc_info.value)
     assert secret not in repr(exc_info.value)
-
-
-def test_embed_chunks_preserves_chunk_ids_and_uses_only_page_content() -> None:
-    chunks = [
-        Document(id="chunk-a", page_content="第一段", metadata={"title": "不嵌入"}),
-        Document(id="chunk-b", page_content="第二段", metadata={"title": "也不嵌入"}),
-    ]
-    fake = FakeEmbeddings(document_responses=[[[1.0, 0.0], [0.0, 1.0]]])
-    provider = OllamaEmbeddingProvider(settings(), embeddings=fake)  # type: ignore[arg-type]
-
-    results = run(provider.embed_chunks(chunks))
-
-    assert [result.chunk_id for result in results] == ["chunk-a", "chunk-b"]
-    assert [result.embedding for result in results] == [[1.0, 0.0], [0.0, 1.0]]
-    assert fake.document_calls == [["第一段", "第二段"]]
-
-
-def test_embed_chunks_requires_id_before_remote_call() -> None:
-    fake = FakeEmbeddings(document_responses=[[[1.0]]])
-    provider = OllamaEmbeddingProvider(settings(), embeddings=fake)  # type: ignore[arg-type]
-
-    with pytest.raises(ValueError, match="必须设置"):
-        run(provider.embed_chunks([Document(page_content="正文")]))
-
-    assert fake.document_calls == []
 
 
 def test_close_does_not_take_ownership_of_injected_embeddings() -> None:

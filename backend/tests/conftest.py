@@ -17,6 +17,7 @@ INTEGRATION_SWITCHES = {
     "test_processing_postgres_integration.py": "RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST",
     "test_document_review_integration.py": "RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST",
     "test_document_deletion_integration.py": "RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST",
+    "test_document_rebuild_integration.py": "RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST",
     "test_knowledge_answer_acceptance.py": "RUN_KNOWLEDGE_ANSWER_ACCEPTANCE_TEST",
     "test_scheduler_retention_integration.py": "RUN_SCHEDULER_QDRANT_INTEGRATION_TEST",
     "test_agent_thread_ownership_integration.py": "RUN_POSTGRES_AGENT_THREAD_INTEGRATION_TEST",

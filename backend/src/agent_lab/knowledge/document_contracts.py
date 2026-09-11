@@ -7,34 +7,10 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from agent_lab.domain.enums import DocumentType
 from agent_lab.domain.source_document import SourceDocument, SourceInfo
 from agent_lab.knowledge.storage import ObjectReference
 if TYPE_CHECKING:
     from agent_lab.schemas.vector_search import VectorSearchResult
-
-
-@dataclass(frozen=True, slots=True)
-class DocumentSnapshot:
-    """当前正文与可索引元数据的独立快照，可在事务关闭后安全使用。"""
-
-    id: UUID
-    knowledge_base_id: UUID
-    source_id: UUID | None
-    external_id: str | None
-    source: SourceInfo | None
-    document_type: DocumentType
-    mime_type: str
-    title: str
-    url: str | None
-    content_text: str
-    content_hash: str
-    index_revision: int
-    authors: tuple[str, ...]
-    labels: tuple[str, ...]
-    published_at: datetime | None
-    source_updated_at: datetime | None
-    upload_filename: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,15 +22,6 @@ class DocumentSearchGroup:
 
 
 @dataclass(frozen=True, slots=True)
-class ReplaceChunksResult:
-    """一次整篇索引替换的已确认 Point 身份，不含正文或向量。"""
-
-    document_id: str
-    upserted_ids: tuple[str, ...]
-    deleted_ids: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
 class RebuiltDocument:
     """新 generation 已验证的文档版本，不保存正文或向量。"""
 
@@ -62,12 +29,17 @@ class RebuiltDocument:
     knowledge_base_id: UUID
     revision: int
     content_hash: str
+    version_id: UUID
+    previous_index_instance_id: UUID
+    processing_id: UUID
+    index_instance_id: UUID
 
 
 @dataclass(frozen=True, slots=True)
 class IndexRebuildResult:
     document_count: int
     point_count: int
+    published: bool = True
 
 
 @dataclass(frozen=True, slots=True)

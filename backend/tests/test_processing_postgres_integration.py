@@ -36,7 +36,7 @@ from agent_lab.qdrant.store import QdrantChunkStore
 from agent_lab.repositories.document_repository import DocumentRepository
 from agent_lab.schemas.vector_search import VectorSearchFilters
 from agent_lab.services.write_coordination import WriteCoordinator
-from tests.test_file_documents_integration import isolated_vectors
+from tests.document_fixtures import isolated_vectors
 from tests.test_processing_application import MemoryStorage, processor
 from tests.test_scheduler_postgres_integration import isolated_database, run
 

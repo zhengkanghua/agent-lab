@@ -34,7 +34,7 @@ def _eligible():
         & (DocumentRecord.indexed_revision == DocumentRecord.index_revision)
         & DocumentRecord.draft_processing_id.is_(None)
         & ~exists().where(DocumentProcessingRecord.document_id == DocumentRecord.id,
-                          DocumentProcessingRecord.state.not_in(("adopted", "superseded")))
+                          DocumentProcessingRecord.state.not_in(("adopted", "superseded", "rebuilt")))
     )
 
 

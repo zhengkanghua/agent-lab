@@ -69,6 +69,19 @@ class TextEmbeddings(Protocol):
     async def embed_documents(self, texts: Sequence[str]) -> list[list[float]]: ...
 
 
+def require_preview_compatible(preview: DocumentPreview, index_spec: dict[str, Any]) -> None:
+    """采用和重建共用规格边界；改变切分规则须重新预览，不能静默重切。"""
+    actual = preview.chunk_result.specification
+    if (actual.algorithm, actual.tokenizer, actual.tokenizer_revision, actual.max_tokens, preview.document.parser) != (
+        index_spec["chunk_algorithm"], index_spec["tokenizer"], index_spec["tokenizer_revision"],
+        index_spec["chunk_size"], index_spec["parser_id"],
+    ):
+        raise ProcessingApplicationError("document_index_spec_changed")
+    if (not preview.document.title.strip() or not preview.chunk_result.chunks
+            or any(chunk.token_count > actual.max_tokens for chunk in preview.chunk_result.chunks)):
+        raise ProcessingApplicationError("document_preview_invalid")
+
+
 class CandidateIndexer:
     """不接触 PostgreSQL 或 Docling，只把冻结清单向量化并写入隔离实例。"""
 

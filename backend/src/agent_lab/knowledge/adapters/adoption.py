@@ -9,7 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agent_lab.domain.enums import ProcessingStatus
 from agent_lab.knowledge.processing.contracts import DocumentPreview
-from agent_lab.knowledge.processing.indexing import IndexMetadata, IndexTarget
+from agent_lab.knowledge.processing.indexing import IndexMetadata, IndexTarget, require_preview_compatible
 from agent_lab.knowledge.processing.lifecycle import ProcessingApplicationError, ProcessingReceipt
 from agent_lab.knowledge.storage import ObjectReference
 from agent_lab.models.document import DocumentRecord
@@ -58,15 +58,7 @@ class PostgresAdoptionRepository:
         if record.parsed_document is None or record.chunk_result is None:
             raise ProcessingApplicationError("document_preview_required")
         preview = DocumentPreview.model_validate({"document": record.parsed_document, "chunk_result": record.chunk_result})
-        actual = preview.chunk_result.specification
-        if (actual.algorithm, actual.tokenizer, actual.tokenizer_revision, actual.max_tokens, preview.document.parser) != (
-            index_spec["chunk_algorithm"], index_spec["tokenizer"], index_spec["tokenizer_revision"],
-            index_spec["chunk_size"], index_spec["parser_id"],
-        ):
-            raise ProcessingApplicationError("document_index_spec_changed")
-        if (not preview.document.title.strip() or not preview.chunk_result.chunks
-                or any(chunk.token_count > actual.max_tokens for chunk in preview.chunk_result.chunks)):
-            raise ProcessingApplicationError("document_preview_invalid")
+        require_preview_compatible(preview, index_spec)
         if preview.fingerprint != record.preview_fingerprint:
             raise ProcessingApplicationError("document_preview_stale")
         metadata = {key: value for key, value in record.source_metadata.items() if key in IndexMetadata.model_fields}
@@ -112,6 +104,9 @@ class PostgresAdoptionRepository:
         return ProcessingReceipt(processing_id, document.id, "adopting", target.source.sha256, candidate_revision)
 
     async def claim_next(self, index_spec, processing_id=None):
+        # 人工释放失联写占用后也不能越过尚未解决的 Alias 发布；先运行重建恢复。
+        if await self._session.scalar(select(exists().where(DocumentProcessingRecord.state == "publishing"))):
+            raise ProcessingApplicationError("document_write_recovery_required")
         statement = select(DocumentProcessingRecord.id).join(
             DocumentRecord, DocumentRecord.id == DocumentProcessingRecord.document_id,
         ).join(KnowledgeBaseRecord, KnowledgeBaseRecord.id == DocumentRecord.knowledge_base_id).where(
@@ -211,6 +206,7 @@ class PostgresAdoptionRepository:
             .join(DocumentRecord, DocumentRecord.id == DocumentProcessingRecord.document_id).where(
                 DocumentProcessingRecord.index_cleanup_pending.is_(True), DocumentProcessingRecord.index_deleted_at.is_(None),
                 DocumentProcessingRecord.index_instance_id.is_not(None),
+                DocumentProcessingRecord.state != "publishing",
                 ((DocumentRecord.current_index_instance_id.is_distinct_from(DocumentProcessingRecord.index_instance_id))
                  | (DocumentRecord.usage_status == "rejected")),
                 DocumentRecord.usage_status != "deleting",
