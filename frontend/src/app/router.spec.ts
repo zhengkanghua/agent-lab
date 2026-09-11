@@ -101,34 +101,23 @@ describe('application router authentication guard', () => {
     expect(router.currentRoute.value.query.redirect).toBe(`/agent/${threadId}`)
   })
 
-  it('后台只有一条路由：分区由路径参数区分，且整体只对超级用户开放', async () => {
-    auth.status.value = 'authenticated'
-    auth.user.value = { is_superuser: false }
-    const regularRouter = await freshRouter()
+  it.each(['users', 'scheduled-jobs', 'documents'])(
+    '后台 %s 分区只对超级用户开放',
+    async (section) => {
+      auth.status.value = 'authenticated'
+      auth.user.value = { is_superuser: false }
+      const regularRouter = await freshRouter()
 
-    await regularRouter.push('/admin/users')
-    await regularRouter.isReady()
-    expect(regularRouter.currentRoute.value.name).toBe('search')
+      await regularRouter.push('/admin/' + section)
+      await regularRouter.isReady()
+      expect(regularRouter.currentRoute.value.name).toBe('search')
 
-    auth.user.value = { is_superuser: true }
-    const superuserRouter = await freshRouter()
-    await superuserRouter.push('/admin/users')
-    await superuserRouter.isReady()
-    expect(superuserRouter.currentRoute.value.name).toBe('admin')
-    expect(superuserRouter.currentRoute.value.params.section).toBe('users')
-
-    // 另一个分区走同一条路由；守卫同样生效（后端 /scheduled-jobs 也只对超管开放）。
-    auth.user.value = { is_superuser: false }
-    const regularRouter2 = await freshRouter()
-    await regularRouter2.push('/admin/scheduled-jobs')
-    await regularRouter2.isReady()
-    expect(regularRouter2.currentRoute.value.name).toBe('search')
-
-    auth.user.value = { is_superuser: true }
-    const superuserRouter2 = await freshRouter()
-    await superuserRouter2.push('/admin/scheduled-jobs')
-    await superuserRouter2.isReady()
-    expect(superuserRouter2.currentRoute.value.name).toBe('admin')
-    expect(superuserRouter2.currentRoute.value.params.section).toBe('scheduled-jobs')
-  })
+      auth.user.value = { is_superuser: true }
+      const superuserRouter = await freshRouter()
+      await superuserRouter.push('/admin/' + section)
+      await superuserRouter.isReady()
+      expect(superuserRouter.currentRoute.value.name).toBe('admin')
+      expect(superuserRouter.currentRoute.value.params.section).toBe(section)
+    },
+  )
 })

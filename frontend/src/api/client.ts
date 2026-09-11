@@ -132,10 +132,34 @@ export async function requestVoid(
   await requestApi(path, init, options)
 }
 
+export interface ApiFile {
+  blob: Blob
+  filename: string | null
+}
+
+/** 原件与 JSON 请求共用 Cookie、超时和错误处理；文件名使用该原件自己的下载回执。 */
+export async function requestFile(path: string, init: RequestInit): Promise<ApiFile> {
+  return (await requestApi(path, init, {}, async (response) => {
+    const encoded = response.headers
+      .get('Content-Disposition')
+      ?.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+    let filename: string | null = null
+    if (encoded) {
+      try {
+        filename = decodeURIComponent(encoded)
+      } catch {
+        /* 无法识别时使用调用方的下载名称。 */
+      }
+    }
+    return { blob: await response.blob(), filename }
+  })) as ApiFile
+}
+
 async function requestApi(
   path: string,
   init: RequestInit,
   options: RequestOptions,
+  readBody: (response: Response) => Promise<unknown> = readJsonBody,
 ): Promise<unknown> {
   let timedOut = false
   const requestController = new AbortController()
@@ -187,13 +211,11 @@ async function requestApi(
       })
     }
 
-    const body = await readJsonBody(response)
-
     if (!response.ok) {
-      throw toApiError(response, body, options)
+      throw toApiError(response, await readJsonBody(response), options)
     }
 
-    return body
+    return await readBody(response)
   } catch (error) {
     if (timedOut && !callerSignal?.aborted && isAbortError(error)) {
       throw new ApiError({

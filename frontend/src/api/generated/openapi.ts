@@ -93,7 +93,7 @@ export interface paths {
         put?: never;
         /**
          * 上传文本或 Markdown 文件
-         * @description 创建独立 Document 并进入待索引状态，同名文件不会覆盖。
+         * @description 保存原件与待办后返回，后台解析并采用；同名文件创建独立资料。
          */
         post: operations["upload_file_file_documents_post"];
         delete?: never;
@@ -122,26 +122,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/file-documents/{document_id}/retry": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * 重新排队失败的文件索引
-         * @description 复用原 Document 和 revision，不新增文件或立即执行 Embedding。
-         */
-        post: operations["retry_file_file_documents__document_id__retry_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/file-documents/{document_id}": {
         parameters: {
             query?: never;
@@ -157,6 +137,260 @@ export interface paths {
          * @description 只有索引与文档删除均已确认才返回成功，失败可从同一目标继续。
          */
         delete: operations["delete_file_file_documents__document_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/document-management": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 分页查看所有文档及处理状态 */
+        get: operations["list_documents_document_management_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/document-management/{document_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 查看正文、结构及 Chunk 预览 */
+        get: operations["document_detail_document_management__document_id__get"];
+        put?: never;
+        post?: never;
+        /** 删除文档原件、全部历史与索引 */
+        delete: operations["delete_document_document_management__document_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/document-management/{document_id}/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 查看来源与候选处理记录 */
+        get: operations["candidates_document_management__document_id__candidates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/document-management/{document_id}/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 开始人工复核并保留最新草稿
+         * @description 已有草稿时保留草稿；仅开始复核不会改变正式正文。
+         */
+        post: operations["start_review_document_management__document_id__draft_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/document-management/{document_id}/use-latest-source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 明确换用最新来源作为草稿
+         * @description 替换当前人工草稿，已采用版本保持可用。
+         */
+        post: operations["use_latest_source_document_management__document_id__use_latest_source_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/document-management/candidates/{processing_id}/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 保存最新人工草稿
+         * @description 保存编辑内容后立即返回；旧预览失效，需重新生成。
+         */
+        put: operations["save_draft_document_management_candidates__processing_id__draft_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/document-management/candidates/{processing_id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 后台重新生成结构和 Chunk 预览 */
+        post: operations["preview_document_management_candidates__processing_id__preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/document-management/candidates/{processing_id}/adopt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 确认采用本次预览
+         * @description 新索引准备成功后切换；准备失败时保留旧已采用版本。
+         */
+        post: operations["adopt_document_management_candidates__processing_id__adopt_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/document-management/candidates/{processing_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 拒绝并停止整篇文档使用
+         * @description 停止后续检索、Agent 和普通全文读取，保留原件及审核记录供修正。
+         */
+        post: operations["reject_document_management_candidates__processing_id__reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/document-management/candidates/{processing_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 核对接收结果或重试失败阶段 */
+        post: operations["retry_document_management_candidates__processing_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/document-management/candidates/{processing_id}/original": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 下载已保存的原始资料 */
+        get: operations["original_document_management_candidates__processing_id__original_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/document-management/{document_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 查看已采用版本列表 */
+        get: operations["versions_document_management__document_id__versions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/document-management/{document_id}/versions/{version_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 查看不可变的已采用历史 */
+        get: operations["version_document_management__document_id__versions__version_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/document-management/{document_id}/reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 查看审核结论及当时正文 */
+        get: operations["decisions_document_management__document_id__reviews_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -753,6 +987,17 @@ export interface components {
              */
             new_password: string;
         };
+        /** AdoptRequest */
+        AdoptRequest: {
+            /** Management Revision */
+            management_revision: number;
+            /** Candidate Revision */
+            candidate_revision: number;
+            /** Conclusion */
+            conclusion?: string | null;
+            /** Fingerprint */
+            fingerprint: string;
+        };
         /**
          * AgentChatErrorResponse
          * @description Agent 链路以 HTTP 状态码返回失败时的响应体（固定三字段）。
@@ -1296,6 +1541,8 @@ export interface components {
         Body_replace_file_file_documents__document_id__file_put: {
             /** Revision */
             revision: number;
+            /** Management Revision */
+            management_revision: number;
             /** File */
             file: string;
         };
@@ -1308,6 +1555,71 @@ export interface components {
             knowledge_base_id: string;
             /** File */
             file: string;
+        };
+        /** ChunkResult */
+        ChunkResult: {
+            specification: components["schemas"]["ChunkSpecification"];
+            /** Chunks */
+            chunks: components["schemas"]["PreviewChunk"][];
+            /**
+             * Issues
+             * @default []
+             */
+            issues: components["schemas"]["ProcessingIssue"][];
+        };
+        /** ChunkSpecification */
+        ChunkSpecification: {
+            /** Algorithm */
+            algorithm: string;
+            /** Tokenizer */
+            tokenizer: string;
+            /** Tokenizer Revision */
+            tokenizer_revision: string;
+            /** Max Tokens */
+            max_tokens: number;
+        };
+        /**
+         * ContentBlock
+         * @description 按阅读顺序保存内容；父节点表达列表/行内组合，章节路径另行表达。
+         */
+        ContentBlock: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "heading" | "paragraph" | "list_item" | "code" | "table" | "image" | "group" | "formula";
+            /**
+             * Text
+             * @default
+             */
+            text: string;
+            /** Parent Id */
+            parent_id?: string | null;
+            /**
+             * Heading Ids
+             * @default []
+             */
+            heading_ids: string[];
+            /** Level */
+            level?: number | null;
+            /**
+             * Group Kind
+             * @default group
+             * @enum {string}
+             */
+            group_kind: "inline" | "list" | "ordered_list" | "section" | "group";
+            /**
+             * Enumerated
+             * @default false
+             */
+            enumerated: boolean;
+            /** Marker */
+            marker?: string | null;
+            /** Language */
+            language?: string | null;
+            table?: components["schemas"]["TableContent"] | null;
         };
         /**
          * CronValidateRequest
@@ -1463,6 +1775,11 @@ export interface components {
              * @default false
              */
             truncated: boolean;
+        };
+        /** DocumentPreview */
+        DocumentPreview: {
+            document: components["schemas"]["ParsedDocument"];
+            chunk_result: components["schemas"]["ChunkResult"];
         };
         /**
          * DocumentSearchMatch
@@ -1676,7 +1993,7 @@ export interface components {
             /** Mime Type */
             mime_type: string;
             /** Content Hash */
-            content_hash: string;
+            content_hash: string | null;
             /** Revision */
             revision: number;
             /**
@@ -1691,14 +2008,20 @@ export interface components {
             deletion_pending: boolean;
             /** Deletion Error */
             deletion_error: string | null;
-        };
-        /** FileRevisionRequest */
-        FileRevisionRequest: {
-            /**
-             * Revision
-             * @description 页面最近读取的文档业务版本。
-             */
-            revision: number;
+            /** Management Revision */
+            management_revision: number;
+            /** Processing Id */
+            processing_id: string | null;
+            /** Candidate Revision */
+            candidate_revision: number | null;
+            /** Candidate State */
+            candidate_state: string | null;
+            /** Candidate Error */
+            candidate_error: string | null;
+            /** Current Version Id */
+            current_version_id: string | null;
+            /** Usage Status */
+            usage_status: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1925,6 +2248,107 @@ export interface components {
              */
             is_active?: boolean | null;
         };
+        /** ManagedDocument */
+        ManagedDocument: {
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /**
+             * Knowledge Base Id
+             * Format: uuid
+             */
+            knowledge_base_id: string;
+            /** Knowledge Base Name */
+            knowledge_base_name: string;
+            /** Knowledge Base Active */
+            knowledge_base_active: boolean;
+            /** Title */
+            title: string;
+            /**
+             * Source Kind
+             * @enum {string}
+             */
+            source_kind: "file" | "freshrss";
+            /** Upload Filename */
+            upload_filename: string | null;
+            /** Usage Status */
+            usage_status: string;
+            /** Revision */
+            revision: number;
+            /** Management Revision */
+            management_revision: number;
+            /** Current Version Id */
+            current_version_id: string | null;
+            /** Latest Processing Id */
+            latest_processing_id: string | null;
+            /** Draft Processing Id */
+            draft_processing_id: string | null;
+            /** Processing State */
+            processing_state: string | null;
+            /** Error Code */
+            error_code: string | null;
+            /** Deletion Pending */
+            deletion_pending: boolean;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** ManagedDocumentList */
+        ManagedDocumentList: {
+            /** Items */
+            items: components["schemas"]["ManagedDocument"][];
+            /** Has More */
+            has_more: boolean;
+        };
+        /** ManagementRevisionRequest */
+        ManagementRevisionRequest: {
+            /** Management Revision */
+            management_revision: number;
+        };
+        /** OutlineEntry */
+        OutlineEntry: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Level */
+            level: number;
+            /** Parent Id */
+            parent_id?: string | null;
+        };
+        /**
+         * ParsedDocument
+         * @description 审核正文与结构属于同一份解析结果；块标识仅在该版本内有效。
+         */
+        ParsedDocument: {
+            /** Title */
+            title: string;
+            /** Body */
+            body: string;
+            /**
+             * Text Format
+             * @enum {string}
+             */
+            text_format: "markdown" | "plain";
+            /** Parser */
+            parser: string;
+            /** Blocks */
+            blocks: components["schemas"]["ContentBlock"][];
+            /**
+             * Outline
+             * @default []
+             */
+            outline: components["schemas"]["OutlineEntry"][];
+            /**
+             * Issues
+             * @default []
+             */
+            issues: components["schemas"]["ProcessingIssue"][];
+        };
         /**
          * PipelineErrorResponse
          * @description 批次级失败的稳定、脱敏 HTTP 错误响应。
@@ -1977,12 +2401,12 @@ export interface components {
         PipelineIndexStatistics: {
             /**
              * Requeued Stale Document Count
-             * @description 从超时 processing 状态重新排队的文档数量。
+             * @description 重新排队的超时解析计算数量，不包含远端索引写入。
              */
             requeued_stale_document_count: number;
             /**
              * Candidate Document Count
-             * @description 本次批量上限内读取到的 pending/failed 候选数量。
+             * @description 本次解析和采用阶段实际处理的不同候选数量。
              */
             candidate_document_count: number;
             /**
@@ -2006,6 +2430,24 @@ export interface components {
              * @default []
              */
             failures: components["schemas"]["PipelineFailureType"][];
+            /**
+             * Parsed Document Count
+             * @description 本次完成解析尝试的候选数量。
+             * @default 0
+             */
+            parsed_document_count: number;
+            /**
+             * Review Document Count
+             * @description 本次进入待人工处理的候选数量。
+             * @default 0
+             */
+            review_document_count: number;
+            /**
+             * Cleaned Index Instance Count
+             * @description 本次确认回收的旧索引实例数量。
+             * @default 0
+             */
+            cleaned_index_instance_count: number;
         };
         /**
          * PipelineRunOnceRequest
@@ -2045,7 +2487,7 @@ export interface components {
          * @description 一次手动执行完成后的类型化响应。
          *
          *     ok = 同步和索引都没有「部分失败」；execution_mode 固定为 manual，明确告诉
-         *     调用方请求结束后没有后台任务或自动调度在继续跑。
+         *     调用方本轮有界执行已经结束；未采用待办仍可由独立 scheduler 继续消费。
          */
         PipelineRunOnceResponse: {
             /**
@@ -2055,7 +2497,7 @@ export interface components {
             ok: boolean;
             /**
              * Execution Mode
-             * @description 固定为 manual，表明请求结束后没有后台任务或自动调度。
+             * @description 固定为 manual，表示本次请求主动触发了一个有界处理批次。
              * @default manual
              * @constant
              */
@@ -2105,11 +2547,175 @@ export interface components {
             failures: components["schemas"]["PipelineFailureType"][];
         };
         /**
+         * PreviewChunk
+         * @description 展示与向量化文本显式分开；采用只能消费这份已冻结的清单。
+         */
+        PreviewChunk: {
+            /** Sequence */
+            sequence: number;
+            /** Text */
+            text: string;
+            /** Embedding Text */
+            embedding_text: string;
+            /** Token Count */
+            token_count: number;
+            /** Block Ids */
+            block_ids: string[];
+            /**
+             * Heading Ids
+             * @default []
+             */
+            heading_ids: string[];
+            /**
+             * Headings
+             * @default []
+             */
+            headings: string[];
+        };
+        /** ProcessingDetail */
+        ProcessingDetail: {
+            /**
+             * Processing Id
+             * Format: uuid
+             */
+            processing_id: string;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Source Kind */
+            source_kind: string;
+            /** State */
+            state: string;
+            /** Title */
+            title: string;
+            /** Candidate Revision */
+            candidate_revision: number;
+            /** Requires Review */
+            requires_review: boolean;
+            /** Preview Fingerprint */
+            preview_fingerprint: string | null;
+            /** Error Code */
+            error_code: string | null;
+            /** Issue Codes */
+            issue_codes: string[];
+            /** Source Stored */
+            source_stored: boolean;
+            /** Source Sha256 */
+            source_sha256: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Draft Text */
+            draft_text: string | null;
+            /**
+             * Text Format
+             * @enum {string}
+             */
+            text_format: "markdown" | "plain";
+            preview: components["schemas"]["DocumentPreview"] | null;
+        };
+        /**
+         * ProcessingIssue
+         * @description 可持久化的质量原因；不保存解析器异常文本。
+         */
+        ProcessingIssue: {
+            /** Code */
+            code: string;
+            /**
+             * Block Ids
+             * @default []
+             */
+            block_ids: string[];
+        };
+        /** ProcessingList */
+        ProcessingList: {
+            /** Items */
+            items: components["schemas"]["ProcessingSummary"][];
+            /** Has More */
+            has_more: boolean;
+        };
+        /** ProcessingReceipt */
+        ProcessingReceipt: {
+            /**
+             * Processing Id
+             * Format: uuid
+             */
+            processing_id: string;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** State */
+            state: string;
+            /** Source Sha256 */
+            source_sha256: string;
+            /**
+             * Candidate Revision
+             * @default 1
+             */
+            candidate_revision: number;
+            /** Error Code */
+            error_code?: string | null;
+        };
+        /**
          * ProcessingStatus
          * @description 文档从发现到写入向量数据库的处理状态。
          * @enum {string}
          */
         ProcessingStatus: "pending" | "processing" | "indexed" | "failed";
+        /** ProcessingSummary */
+        ProcessingSummary: {
+            /**
+             * Processing Id
+             * Format: uuid
+             */
+            processing_id: string;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Source Kind */
+            source_kind: string;
+            /** State */
+            state: string;
+            /** Title */
+            title: string;
+            /** Candidate Revision */
+            candidate_revision: number;
+            /** Requires Review */
+            requires_review: boolean;
+            /** Preview Fingerprint */
+            preview_fingerprint: string | null;
+            /** Error Code */
+            error_code: string | null;
+            /** Issue Codes */
+            issue_codes: string[];
+            /** Source Stored */
+            source_stored: boolean;
+            /** Source Sha256 */
+            source_sha256: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
         /**
          * ResolvedKnowledgeBaseScope
          * @description 应用已校验的本次范围，供过滤、展示与运行上下文复用。
@@ -2122,6 +2728,81 @@ export interface components {
             mode: "all" | "selected";
             /** Knowledge Bases */
             knowledge_bases: components["schemas"]["KnowledgeBaseSummary"][];
+        };
+        /** ReviewDecision */
+        ReviewDecision: {
+            /**
+             * Review Id
+             * Format: uuid
+             */
+            review_id: string;
+            /**
+             * Processing Id
+             * Format: uuid
+             */
+            processing_id: string;
+            /** Candidate Revision */
+            candidate_revision: number;
+            /** Decision */
+            decision: string;
+            /** Decision Source */
+            decision_source: string;
+            /** Actor Id */
+            actor_id: string | null;
+            /** Conclusion */
+            conclusion: string | null;
+            /** Preview Fingerprint */
+            preview_fingerprint: string | null;
+            /** Content Snapshot */
+            content_snapshot: {
+                [key: string]: unknown;
+            };
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** ReviewDecisionList */
+        ReviewDecisionList: {
+            /** Items */
+            items: components["schemas"]["ReviewDecision"][];
+            /** Has More */
+            has_more: boolean;
+        };
+        /** ReviewDecisionRequest */
+        ReviewDecisionRequest: {
+            /** Management Revision */
+            management_revision: number;
+            /** Candidate Revision */
+            candidate_revision: number;
+            /** Conclusion */
+            conclusion?: string | null;
+        };
+        /** ReviewDetail */
+        ReviewDetail: {
+            document: components["schemas"]["ManagedDocument"];
+            candidate: components["schemas"]["ProcessingDetail"];
+            latest_source: components["schemas"]["ProcessingSummary"] | null;
+            draft: components["schemas"]["ProcessingSummary"] | null;
+        };
+        /** ReviewTargetRequest */
+        ReviewTargetRequest: {
+            /** Management Revision */
+            management_revision: number;
+            /** Candidate Revision */
+            candidate_revision: number;
+        };
+        /** SaveDraftRequest */
+        SaveDraftRequest: {
+            /** Management Revision */
+            management_revision: number;
+            /** Candidate Revision */
+            candidate_revision: number;
+            /** Title */
+            title: string;
+            /** Text */
+            text: string;
         };
         /**
          * ScheduledJobCreateRequest
@@ -2369,6 +3050,48 @@ export interface components {
             /** Sync Checkpoint Updated At */
             sync_checkpoint_updated_at: string | null;
         };
+        /** StartReviewRequest */
+        StartReviewRequest: {
+            /** Management Revision */
+            management_revision: number;
+            /** Processing Id */
+            processing_id?: string | null;
+        };
+        /**
+         * TableCell
+         * @description 表格格子使用半开行列区间，合并单元格无需压成字符串。
+         */
+        TableCell: {
+            /** Text */
+            text: string;
+            /** Row Start */
+            row_start: number;
+            /** Row End */
+            row_end: number;
+            /** Column Start */
+            column_start: number;
+            /** Column End */
+            column_end: number;
+            /**
+             * Column Header
+             * @default false
+             */
+            column_header: boolean;
+            /**
+             * Row Header
+             * @default false
+             */
+            row_header: boolean;
+        };
+        /** TableContent */
+        TableContent: {
+            /** Rows */
+            rows: number;
+            /** Columns */
+            columns: number;
+            /** Cells */
+            cells: components["schemas"]["TableCell"][];
+        };
         /**
          * UserAdminCreateRequest
          * @description 超级用户创建一个封闭内部账号的请求。
@@ -2529,7 +3252,7 @@ export interface components {
              * @description 由 API 异常映射产生的必需稳定错误码；不可空，用于客户端区分 Embedding、Qdrant、timeout、配置和响应契约失败。
              * @enum {string}
              */
-            code: "no_active_knowledge_bases" | "knowledge_base_not_found" | "knowledge_base_inactive" | "knowledge_base_storage_unavailable" | "search_runtime_unavailable" | "embedding_authentication_failed" | "embedding_unavailable" | "embedding_timeout" | "embedding_model_not_found" | "embedding_response_invalid" | "qdrant_authentication_failed" | "qdrant_unavailable" | "qdrant_timeout" | "qdrant_target_missing" | "qdrant_configuration_invalid" | "qdrant_response_invalid" | "qdrant_service_error";
+            code: "no_active_knowledge_bases" | "knowledge_base_not_found" | "knowledge_base_inactive" | "knowledge_base_storage_unavailable" | "search_runtime_unavailable" | "embedding_authentication_failed" | "embedding_unavailable" | "embedding_timeout" | "embedding_model_not_found" | "embedding_response_invalid" | "qdrant_authentication_failed" | "qdrant_unavailable" | "qdrant_timeout" | "qdrant_target_missing" | "qdrant_configuration_invalid" | "qdrant_response_invalid" | "qdrant_service_error" | "document_visibility_unavailable";
             /**
              * Detail
              * @description 由 API 层生成的必需安全中文错误概述；不可空，不包含用户 query、密钥、Vector、新闻正文或第三方原始响应。
@@ -2768,6 +3491,70 @@ export interface components {
              * @description 来自 Qdrant Point Payload.embedding_model 的必需非空模型名；不可空，用于确认命中 Vector 与 query embedding 位于同一模型空间。
              */
             embedding_model: string;
+        };
+        /** VersionDetail */
+        VersionDetail: {
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /**
+             * Processing Id
+             * Format: uuid
+             */
+            processing_id: string;
+            /** Revision */
+            revision: number;
+            /** Title */
+            title: string;
+            /** Content Hash */
+            content_hash: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            preview: components["schemas"]["DocumentPreview"];
+            /** Metadata */
+            metadata: {
+                [key: string]: unknown;
+            };
+            /** Processing Spec */
+            processing_spec: {
+                [key: string]: unknown;
+            };
+        };
+        /** VersionList */
+        VersionList: {
+            /** Items */
+            items: components["schemas"]["VersionSummary"][];
+            /** Has More */
+            has_more: boolean;
+        };
+        /** VersionSummary */
+        VersionSummary: {
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /**
+             * Processing Id
+             * Format: uuid
+             */
+            processing_id: string;
+            /** Revision */
+            revision: number;
+            /** Title */
+            title: string;
+            /** Content Hash */
+            content_hash: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
     };
     responses: never;
@@ -3139,29 +3926,26 @@ export interface operations {
             };
         };
     };
-    retry_file_file_documents__document_id__retry_post: {
+    delete_file_file_documents__document_id__delete: {
         parameters: {
-            query?: never;
+            query: {
+                revision: number;
+                management_revision: number;
+            };
             header?: never;
             path: {
                 document_id: string;
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FileRevisionRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["FileDocumentResponse"];
-                };
+                content?: never;
             };
             /** @description Not Found */
             404: {
@@ -3210,10 +3994,133 @@ export interface operations {
             };
         };
     };
-    delete_file_file_documents__document_id__delete: {
+    list_documents_document_management_get: {
+        parameters: {
+            query?: {
+                knowledge_base_id?: string | null;
+                source_kind?: ("file" | "freshrss") | null;
+                state?: string | null;
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedDocumentList"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    document_detail_document_management__document_id__get: {
+        parameters: {
+            query?: {
+                processing_id?: string | null;
+            };
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDetail"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_document_document_management__document_id__delete: {
         parameters: {
             query: {
                 revision: number;
+                management_revision: number;
             };
             header?: never;
             path: {
@@ -3248,8 +4155,731 @@ export interface operations {
                     "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
                 };
             };
-            /** @description Request Entity Too Large */
-            413: {
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    candidates_document_management__document_id__candidates_get: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProcessingList"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    start_review_document_management__document_id__draft_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProcessingReceipt"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    use_latest_source_document_management__document_id__use_latest_source_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagementRevisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProcessingReceipt"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    save_draft_document_management_candidates__processing_id__draft_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                processing_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveDraftRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProcessingReceipt"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    preview_document_management_candidates__processing_id__preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                processing_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewTargetRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProcessingReceipt"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    adopt_document_management_candidates__processing_id__adopt_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                processing_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdoptRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProcessingReceipt"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    reject_document_management_candidates__processing_id__reject_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                processing_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProcessingReceipt"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    retry_document_management_candidates__processing_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                processing_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewTargetRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProcessingReceipt"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    original_document_management_candidates__processing_id__original_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                processing_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    versions_document_management__document_id__versions_get: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionList"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    version_document_management__document_id__versions__version_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+                version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionDetail"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+        };
+    };
+    decisions_document_management__document_id__reviews_get: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDecisionList"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -33,8 +33,10 @@ export async function saveFileDocument(
 ): Promise<FileDocumentDto> {
   const body = new FormData()
   body.set('file', file)
-  if (target) body.set('revision', String(target.revision))
-  else body.set('knowledge_base_id', knowledgeBaseId)
+  if (target) {
+    body.set('revision', String(target.revision))
+    body.set('management_revision', String(target.management_revision))
+  } else body.set('knowledge_base_id', knowledgeBaseId)
   const value = await requestJson<unknown>(
     target ? `/file-documents/${target.document_id}/file` : '/file-documents',
     {
@@ -46,19 +48,13 @@ export async function saveFileDocument(
   return value
 }
 
-export async function retryFileDocument(item: FileDocumentDto): Promise<FileDocumentDto> {
-  const value = await requestJson<unknown>(`/file-documents/${item.document_id}/retry`, {
-    method: 'POST',
-    body: JSON.stringify({ revision: item.revision }),
-  })
-  if (!isFileDocument(value)) throw invalidResponse()
-  return value
-}
-
 export async function deleteFileDocument(item: FileDocumentDto): Promise<void> {
-  await requestVoid(`/file-documents/${item.document_id}?revision=${item.revision}`, {
-    method: 'DELETE',
-  })
+  await requestVoid(
+    `/file-documents/${item.document_id}?revision=${item.revision}&management_revision=${item.management_revision}`,
+    {
+      method: 'DELETE',
+    },
+  )
 }
 
 function isFileDocument(value: unknown): value is FileDocumentDto {
@@ -71,9 +67,18 @@ function isFileDocument(value: unknown): value is FileDocumentDto {
     hasText(value.upload_filename) &&
     hasText(value.title) &&
     hasText(value.mime_type) &&
-    isSha256(value.content_hash) &&
+    (value.content_hash === null || isSha256(value.content_hash)) &&
     Number.isInteger(value.revision) &&
     Number(value.revision) > 0 &&
+    Number.isInteger(value.management_revision) &&
+    Number(value.management_revision) > 0 &&
+    (value.processing_id === null || isUuid(value.processing_id)) &&
+    (value.candidate_revision === null ||
+      (Number.isInteger(value.candidate_revision) && Number(value.candidate_revision) > 0)) &&
+    (value.candidate_state === null || typeof value.candidate_state === 'string') &&
+    (value.candidate_error === null || typeof value.candidate_error === 'string') &&
+    (value.current_version_id === null || isUuid(value.current_version_id)) &&
+    typeof value.usage_status === 'string' &&
     typeof value.updated_at === 'string' &&
     Number.isFinite(Date.parse(value.updated_at)) &&
     ['pending', 'processing', 'indexed', 'failed'].includes(String(value.processing_status)) &&

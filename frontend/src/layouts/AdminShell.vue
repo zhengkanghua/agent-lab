@@ -3,6 +3,7 @@ import { nextTick, onMounted, onScopeDispose, ref, watch } from 'vue'
 import {
   ArrowLeft,
   CalendarClock,
+  ClipboardCheck,
   FileText,
   Library,
   LogOut,
@@ -46,6 +47,11 @@ const adminMenuItems = [
   { to: { name: 'admin', params: { section: 'users' } }, label: '账号管理', icon: UsersRound },
   { to: { name: 'admin', params: { section: 'knowledge-bases' } }, label: '知识库', icon: Library },
   { to: { name: 'admin', params: { section: 'files' } }, label: '文件资料', icon: FileText },
+  {
+    to: { name: 'admin', params: { section: 'documents' } },
+    label: '文档审核',
+    icon: ClipboardCheck,
+  },
   { to: { name: 'admin', params: { section: 'sources' } }, label: '来源管理', icon: Rss },
   {
     to: { name: 'admin', params: { section: 'scheduled-jobs' } },

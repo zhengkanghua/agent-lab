@@ -6,6 +6,7 @@ import type { FileDocumentDto } from '@/api/file-documents'
 const reader = useDocumentReader()
 
 function readFile(item: FileDocumentDto, trigger: HTMLElement): void {
+  if (!item.content_hash || !item.current_version_id || item.usage_status !== 'active') return
   void reader.open(
     {
       documentId: item.document_id,

@@ -6,6 +6,7 @@ import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
 import { useFileDocuments } from './useFileDocuments'
+import { processingLabel, usageLabel } from '@/shared/model/document-processing'
 
 const files = useFileDocuments()
 const emit = defineEmits<{ 'read-document': [item: FileDocumentDto, trigger: HTMLElement] }>()
@@ -21,13 +22,16 @@ const maxSizeLabel = computed(() =>
 )
 
 async function openEditor(item?: FileDocumentDto) {
+  const keepSelection =
+    editorOpen.value && files.needsReselect.value && item?.document_id === target.value?.document_id
   target.value = item
-  selectedFile.value = undefined
+  if (!keepSelection) selectedFile.value = undefined
+  files.needsReselect.value = false
   localError.value = undefined
   editorOpen.value = true
   await nextTick()
   if (fileInput.value) {
-    fileInput.value.value = ''
+    if (!keepSelection) fileInput.value.value = ''
     fileInput.value.focus()
   }
 }
@@ -51,8 +55,16 @@ async function save() {
     localError.value = `文件不能超过 ${maxSizeLabel.value}。`
     return
   }
-  if ((await files.save(file, knowledgeBaseId.value, target.value)) || files.needsReselect.value)
-    editorOpen.value = false
+  if (await files.save(file, knowledgeBaseId.value, target.value)) editorOpen.value = false
+}
+
+function reselectTarget() {
+  const current = files.items.value.find((item) => item.document_id === target.value?.document_id)
+  if (current) {
+    target.value = current
+    files.needsReselect.value = false
+    files.actionError.value = null
+  }
 }
 
 function read(item: FileDocumentDto, event: MouseEvent) {
@@ -61,9 +73,7 @@ function read(item: FileDocumentDto, event: MouseEvent) {
 
 function statusLabel(item: FileDocumentDto): string {
   if (item.deletion_pending) return '删除未完成'
-  return { pending: '等待索引', processing: '正在索引', indexed: '可检索', failed: '索引失败' }[
-    item.processing_status
-  ]
+  return processingLabel(item.candidate_state)
 }
 
 async function confirmDelete() {
@@ -88,7 +98,9 @@ async function confirmDelete() {
     <form v-if="editorOpen" class="file-editor" @submit.prevent="save">
       <h2>{{ target ? `替换文件：${target.title}` : '上传文件' }}</h2>
       <p v-if="target">
-        所属知识库：{{ target.knowledge_base_name }}。替换会保留同一篇文档，已有引用仍指向它。
+        所属知识库：{{
+          target.knowledge_base_name
+        }}。替换保留文档身份，新结果采用成功后才更新正式版本。
       </p>
       <label v-else
         >所属知识库
@@ -110,7 +122,8 @@ async function confirmDelete() {
         />
       </label>
       <p class="file-hint">
-        支持 UTF-8 编码的 .txt、.md，单文件最大 {{ maxSizeLabel }}。保存后需等待索引完成。
+        支持 UTF-8 编码的 .txt、.md，单文件最大
+        {{ maxSizeLabel }}。保存后由后台解析，异常资料在文档审核中处理。
       </p>
       <BaseCallout
         v-if="localError || files.directoryError.value"
@@ -118,10 +131,15 @@ async function confirmDelete() {
         :description="localError || files.directoryError.value || ''"
       />
       <div class="file-actions">
+        <BaseButton v-if="files.needsReselect.value" variant="outline" @click="reselectTarget">
+          使用刷新后的记录继续替换
+        </BaseButton>
         <BaseButton
           type="submit"
           :loading="files.busy.value"
-          :disabled="!files.maxFileBytes.value || !!files.directoryError.value"
+          :disabled="
+            !files.maxFileBytes.value || !!files.directoryError.value || files.needsReselect.value
+          "
           >{{ target ? '确认替换' : '保存文件' }}</BaseButton
         >
         <BaseButton variant="outline" :disabled="files.busy.value" @click="editorOpen = false"
@@ -138,7 +156,11 @@ async function confirmDelete() {
       {{ files.feedback.value }}
     </p>
     <BaseCallout v-if="deleting" tone="neutral">
-      <p>确认删除「{{ deleting.title }}」及其索引？已有回答会保留，但将无法再打开这篇原文。</p>
+      <p>
+        确认完整删除「{{
+          deleting.title
+        }}」？原件、草稿、已采用历史、审核结论及索引都会清除。已有回答保留，但无法再打开这篇原文。
+      </p>
       <template #actions>
         <BaseButton :loading="files.busy.value" @click="confirmDelete">确认删除</BaseButton>
         <BaseButton variant="outline" :disabled="files.busy.value" @click="deleting = undefined"
@@ -181,14 +203,27 @@ async function confirmDelete() {
               class="file-status"
               :data-status="item.deletion_pending ? 'failed' : item.processing_status"
               >{{ statusLabel(item) }}</span
-            ><small v-if="item.deletion_error || item.processing_error">{{
-              item.deletion_error || item.processing_error
+            ><small>{{
+              usageLabel(item.usage_status, !!item.current_version_id, item.knowledge_base_active)
+            }}</small>
+            <small v-if="item.deletion_error || item.candidate_error">{{
+              item.deletion_error || item.candidate_error
             }}</small>
           </td>
           <td class="file-date">{{ new Date(item.updated_at).toLocaleString('zh-CN') }}</td>
           <td>
             <div class="file-actions">
-              <BaseButton variant="ghost" size="sm" @click="read(item, $event)"
+              <BaseButton
+                variant="ghost"
+                size="sm"
+                :disabled="
+                  !item.current_version_id ||
+                  !item.content_hash ||
+                  item.usage_status !== 'active' ||
+                  !item.knowledge_base_active ||
+                  item.deletion_pending
+                "
+                @click="read(item, $event)"
                 ><BookOpenText :size="15" />查看</BaseButton
               >
               <BaseButton
@@ -199,12 +234,14 @@ async function confirmDelete() {
                 >替换文件</BaseButton
               >
               <BaseButton
-                v-if="item.processing_status === 'failed' && !item.deletion_pending"
                 variant="ghost"
                 size="sm"
-                :disabled="files.busy.value || !item.knowledge_base_active"
-                @click="files.retry(item)"
-                >重试索引</BaseButton
+                :to="{
+                  name: 'admin',
+                  params: { section: 'documents' },
+                  query: { document: item.document_id },
+                }"
+                >查看与审核</BaseButton
               >
               <BaseButton
                 variant="ghost"

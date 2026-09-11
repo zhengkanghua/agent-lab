@@ -1,6 +1,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { API_REQUEST_TIMEOUT_MS } from '@/api/client'
 import type { FileDocumentDto } from '@/api/file-documents'
 import { newsKnowledgeBase, techKnowledgeBase } from '@/api/knowledge-bases.fixture'
@@ -14,21 +15,32 @@ const file: FileDocumentDto = {
   upload_filename: 'notes.txt',
   title: 'notes',
   mime_type: 'text/plain',
-  content_hash: 'a'.repeat(64),
+  content_hash: null,
   revision: 1,
   updated_at: '2026-09-08T00:00:00Z',
   processing_status: 'pending',
   processing_error: null,
   deletion_pending: false,
   deletion_error: null,
+  management_revision: 7,
+  processing_id: '20000000-0000-4000-8000-000000000002',
+  candidate_revision: 1,
+  candidate_state: 'pending',
+  candidate_error: null,
+  current_version_id: null,
+  usage_status: 'active',
 }
 
 const wrappers: VueWrapper[] = []
 
 function mountDirectory() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/admin/:section?', name: 'admin', component: { template: '<div />' } }],
+  })
   const wrapper = mount(FileDocumentDirectory, {
-    global: { plugins: [[VueQueryPlugin, { queryClient }]] },
+    global: { plugins: [router, [VueQueryPlugin, { queryClient }]] },
   })
   wrappers.push(wrapper)
   return wrapper
@@ -78,23 +90,25 @@ describe('文件资料管理', () => {
     expect(wrapper.get('tbody').text()).toContain(file.upload_filename)
   })
 
-  it('替换冲突结束旧编辑，重新选择后使用刷新得到的 revision', async () => {
+  it('替换冲突保留文件，明确选用刷新记录后携带新的管理修订', async () => {
     let item = { ...file }
     const revisions: FormDataEntryValue[] = []
+    const managementRevisions: FormDataEntryValue[] = []
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         if (String(input).includes('/knowledge-bases')) return Response.json([newsKnowledgeBase])
         if (init?.method === 'PUT') {
           revisions.push((init.body as FormData).get('revision')!)
+          managementRevisions.push((init.body as FormData).get('management_revision')!)
           if (revisions.length === 1) {
-            item = { ...file, revision: 2, title: '另一页面的有效更新' }
+            item = { ...file, management_revision: 8, title: '另一页面的有效更新' }
             return Response.json(
               { code: 'file_revision_conflict', detail: '资料已更新', retryable: false },
               { status: 409 },
             )
           }
-          item = { ...item, revision: 3 }
+          item = { ...item, management_revision: 9 }
           return Response.json(item)
         }
         return listResponse([item])
@@ -106,13 +120,16 @@ describe('文件资料管理', () => {
     await selectFile(wrapper, 'updated.txt')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
-    expect(wrapper.find('input[type="file"]').exists()).toBe(false)
+    expect(wrapper.find('input[type="file"]').exists()).toBe(true)
+    expect((wrapper.get('input[type="file"]').element as HTMLInputElement).files?.[0]?.name).toBe(
+      'updated.txt',
+    )
     expect(wrapper.text()).toContain('另一页面的有效更新')
-    await click(wrapper, '替换文件')
-    await selectFile(wrapper, 'updated.txt')
+    await click(wrapper, '使用刷新后的记录继续替换')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
-    expect(revisions).toEqual(['1', '2'])
+    expect(revisions).toEqual(['1', '1'])
+    expect(managementRevisions).toEqual(['7', '8'])
   })
 
   afterEach(() => {
@@ -121,7 +138,7 @@ describe('文件资料管理', () => {
     vi.unstubAllGlobals()
   })
 
-  it('上传明确指定归属，替换使用已有 ID 和 revision，待索引不冒充可检索', async () => {
+  it('上传明确指定归属，替换携带两种修订，尚未采用时不能打开全文', async () => {
     let items: FileDocumentDto[] = []
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).includes('/knowledge-bases'))
@@ -142,9 +159,10 @@ describe('文件资料管理', () => {
         expect(input).toBe(`/api/file-documents/${file.document_id}/file`)
         const body = init.body as FormData
         expect(body.get('revision')).toBe('1')
+        expect(body.get('management_revision')).toBe('7')
         expect(body.has('knowledge_base_id')).toBe(false)
         expect((body.get('file') as File).name).toBe('renamed.md')
-        items = [{ ...items[0]!, revision: 2, upload_filename: 'renamed.md' }]
+        items = [{ ...items[0]!, management_revision: 8, upload_filename: 'renamed.md' }]
         return Response.json(items[0])
       }
       return listResponse(items)
@@ -157,8 +175,14 @@ describe('文件资料管理', () => {
     await selectFile(wrapper, 'notes.txt')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
-    expect(wrapper.get('tbody').text()).toContain('等待索引')
+    expect(wrapper.get('tbody').text()).toContain('等待解析')
     expect(wrapper.get('tbody').text()).not.toContain('可检索')
+    expect(
+      wrapper
+        .findAll('button')
+        .find((button) => button.text() === '查看')
+        ?.attributes('disabled'),
+    ).toBeDefined()
     await click(wrapper, '替换文件')
     expect(wrapper.find('select').exists()).toBe(false)
     await selectFile(wrapper, 'renamed.md')
@@ -202,7 +226,9 @@ describe('文件资料管理', () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         if (String(input).includes('/knowledge-bases')) return Response.json([newsKnowledgeBase])
         if (init?.method === 'DELETE') {
-          expect(input).toBe(`/api/file-documents/${file.document_id}?revision=1`)
+          expect(input).toBe(
+            `/api/file-documents/${file.document_id}?revision=1&management_revision=7`,
+          )
           item = { ...file, deletion_pending: true, deletion_error: '索引删除尚未确认' }
           return Response.json(
             { code: 'file_delete_failed', detail: '删除尚未完成', retryable: true },

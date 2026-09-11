@@ -80,6 +80,7 @@ describe('AdminShell', () => {
       '/admin/users',
       '/admin/knowledge-bases',
       '/admin/files',
+      '/admin/documents',
       '/admin/sources',
       '/admin/scheduled-jobs',
     ])

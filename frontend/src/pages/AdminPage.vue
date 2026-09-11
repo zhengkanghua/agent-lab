@@ -7,6 +7,7 @@ import ScheduledJobsPage from './ScheduledJobsPage.vue'
 import KnowledgeBasesPage from './KnowledgeBasesPage.vue'
 import SourcesPage from './SourcesPage.vue'
 import FileDocumentsPage from './FileDocumentsPage.vue'
+import DocumentManagementPage from './DocumentManagementPage.vue'
 
 /**
  * 后台控制台：一条路由（/admin/:section?），板块由路径参数区分。
@@ -18,7 +19,14 @@ import FileDocumentsPage from './FileDocumentsPage.vue'
 const route = useRoute()
 const router = useRouter()
 
-const SECTIONS = ['users', 'scheduled-jobs', 'knowledge-bases', 'sources', 'files'] as const
+const SECTIONS = [
+  'users',
+  'scheduled-jobs',
+  'knowledge-bases',
+  'sources',
+  'files',
+  'documents',
+] as const
 
 type AdminSection = (typeof SECTIONS)[number]
 
@@ -28,6 +36,7 @@ const SECTION_META: Record<AdminSection, { title: string; subtitle: string }> = 
   'knowledge-bases': { title: '知识库', subtitle: '知识管理' },
   sources: { title: '来源管理', subtitle: '订阅绑定' },
   files: { title: '文件资料', subtitle: '知识管理' },
+  documents: { title: '文档审核', subtitle: '解析与采用' },
 }
 
 const section = computed<AdminSection>(() => {
@@ -57,5 +66,6 @@ const heading = computed(() => SECTION_META[section.value])
     <KnowledgeBasesPage v-else-if="section === 'knowledge-bases'" />
     <SourcesPage v-else-if="section === 'sources'" />
     <FileDocumentsPage v-else-if="section === 'files'" />
+    <DocumentManagementPage v-else-if="section === 'documents'" />
   </AdminShell>
 </template>

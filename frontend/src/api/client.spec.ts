@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { API_REQUEST_TIMEOUT_MS, requestJson, setUnauthorizedHandler } from './client'
+import { API_REQUEST_TIMEOUT_MS, requestFile, requestJson, setUnauthorizedHandler } from './client'
 
 describe('requestJson', () => {
   afterEach(() => {
@@ -106,5 +106,37 @@ describe('requestJson', () => {
       code: 'authentication_required',
     })
     expect(unauthorized).toHaveBeenCalledOnce()
+  })
+
+  it('原件下载同样处理登录失效，不把错误 JSON 当作文件返回', async () => {
+    const unauthorized = vi.fn()
+    setUnauthorizedHandler(unauthorized)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(Response.json({ detail: '需要登录。' }, { status: 401 })),
+    )
+    await expect(
+      requestFile('/document-management/candidates/example/original', { method: 'GET' }),
+    ).rejects.toMatchObject({ status: 401, code: 'authentication_required' })
+    expect(unauthorized).toHaveBeenCalledOnce()
+  })
+
+  it('下载保留原始字节和历史原件文件名，不借用当前文档的文件名', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(new Uint8Array([255, 10]), {
+          headers: {
+            'Content-Disposition':
+              "attachment; filename*=UTF-8''" + encodeURIComponent('原始手册.md'),
+          },
+        }),
+      ),
+    )
+    const file = await requestFile('/document-management/candidates/example/original', {
+      method: 'GET',
+    })
+    expect(file.filename).toBe('原始手册.md')
+    expect(new Uint8Array(await file.blob.arrayBuffer())).toEqual(new Uint8Array([255, 10]))
   })
 })

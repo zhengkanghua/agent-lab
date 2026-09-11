@@ -5,10 +5,14 @@ import { listKnowledgeBases } from '@/api/knowledge-bases'
 import {
   deleteFileDocument,
   listFileDocuments,
-  retryFileDocument,
   saveFileDocument,
   type FileDocumentDto,
 } from '@/api/file-documents'
+import {
+  isProcessing,
+  isDocumentConflict,
+  processingLabel,
+} from '@/shared/model/document-processing'
 
 export function useFileDocuments() {
   const offset = ref(0)
@@ -17,11 +21,7 @@ export function useFileDocuments() {
     queryFn: ({ signal }) => listFileDocuments(offset.value, signal),
     retry: false,
     refetchInterval: (state) =>
-      state.state.data?.items.some((item) =>
-        ['pending', 'processing'].includes(item.processing_status),
-      )
-        ? 5000
-        : false,
+      state.state.data?.items.some((item) => isProcessing(item.candidate_state)) ? 5000 : false,
   })
   const directory = useQuery({
     queryKey: ['file-knowledge-bases'],
@@ -51,33 +51,24 @@ export function useFileDocuments() {
     try {
       const saved = await saveFileDocument(file, knowledgeBaseId, target)
       feedback.value =
-        target && saved.revision === target.revision
-          ? '文件内容与索引信息没有变化，已保留原有处理状态。'
-          : '文件已保存，正在等待建立索引；处理完成后即可检索。'
+        '文件已保存。' +
+        processingLabel(saved.candidate_state) +
+        '；新结果采用成功后才更新正式版本。'
       offset.value = 0
       await query.refetch()
       return true
     } catch (error) {
       actionError.value = errorCopy(error, target ? '替换' : '上传')
-      if (error instanceof ApiError && error.code === 'file_revision_conflict') {
+      if (isDocumentConflict(error)) {
         needsReselect.value = true
+        await query.refetch()
+      } else if (
+        error instanceof ApiError &&
+        ['request_timeout', 'network_error', 'response_invalid'].includes(error.code)
+      ) {
         await query.refetch()
       }
       return false
-    } finally {
-      busy.value = false
-    }
-  }
-
-  async function retry(item: FileDocumentDto) {
-    busy.value = true
-    actionError.value = feedback.value = null
-    try {
-      await retryFileDocument(item)
-      feedback.value = '已重新排队，等待索引执行端处理。'
-      await query.refetch()
-    } catch (error) {
-      actionError.value = errorCopy(error, '重试')
     } finally {
       busy.value = false
     }
@@ -89,12 +80,12 @@ export function useFileDocuments() {
     actionError.value = feedback.value = null
     try {
       await deleteFileDocument(item)
-      feedback.value = '文档及其索引已删除。'
+      feedback.value = '文档、原件、全部历史及索引已删除。'
       await query.refetch()
       return true
     } catch (error) {
       actionError.value = errorCopy(error, '删除')
-      needsReselect.value = error instanceof ApiError && error.code === 'file_revision_conflict'
+      needsReselect.value = isDocumentConflict(error)
       await query.refetch()
       return false
     } finally {
@@ -125,7 +116,6 @@ export function useFileDocuments() {
     needsReselect,
     refresh,
     save,
-    retry,
     remove,
   }
 }
@@ -136,8 +126,7 @@ function errorCopy(error: unknown, action: string): string {
     return `${action}结果尚未确认，请刷新列表核对；再次新增上传会创建另一篇文档。`
   }
   if (error.code === 'knowledge_base_inactive') return '知识库已停用，请选择启用的知识库。'
-  if (error.code === 'file_revision_conflict')
-    return '文档刚被更新，列表已刷新。请重新选择文档并确认操作。'
+  if (isDocumentConflict(error)) return '文档刚被更新，列表已刷新。请重新选择文档并确认操作。'
   if (error.status === 413) return '文件超过允许的体积上限，请选择更小的文件。'
   return error.detail
 }
