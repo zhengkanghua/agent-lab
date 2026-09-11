@@ -22,9 +22,23 @@ POST /document-search                     文档分组只读语义检索
 GET  /documents/{document_id}             按需读取 PostgreSQL 完整正文
 GET  /file-documents                      分页列出文件资料与处理状态（超级用户）
 POST /file-documents                      上传文本或 Markdown（超级用户）
-PUT  /file-documents/{document_id}/file    按 ID/revision 替换文件（超级用户）
-POST /file-documents/{document_id}/retry   失败索引重新排队（超级用户）
-DELETE /file-documents/{document_id}       删除文件资料与索引（超级用户）
+PUT  /file-documents/{document_id}/file    按 ID、正式及管理修订替换文件（超级用户）
+DELETE /file-documents/{document_id}       完整删除文件原件、历史与索引（超级用户）
+GET  /document-management                分页筛选文件与 FreshRSS 文档（超级用户）
+GET  /document-management/{document_id}   查看候选、草稿、结构及 Chunk（超级用户）
+POST /document-management/{document_id}/draft  开始人工复核（超级用户）
+POST /document-management/{document_id}/use-latest-source  明确换用最新来源（超级用户）
+PUT  /document-management/candidates/{processing_id}/draft  保存草稿（超级用户）
+POST /document-management/candidates/{processing_id}/preview  后台生成预览（超级用户）
+POST /document-management/candidates/{processing_id}/adopt    确认采用（超级用户）
+POST /document-management/candidates/{processing_id}/reject   停止使用（超级用户）
+POST /document-management/candidates/{processing_id}/retry    核对或重试失败阶段（超级用户）
+GET  /document-management/candidates/{processing_id}/original 下载原件（超级用户）
+GET  /document-management/{document_id}/candidates  处理记录（超级用户）
+GET  /document-management/{document_id}/versions    已采用版本列表（超级用户）
+GET  /document-management/{document_id}/versions/{version_id}  已采用历史详情（超级用户）
+GET  /document-management/{document_id}/reviews     审核结论（超级用户）
+DELETE /document-management/{document_id}          完整删除文档（超级用户）
 POST /pipeline/run-once                   手动、同步、有界的写入流水线（超级用户）
 POST /agent/chat                          Agent 对话，SSE 流式（超级用户）
 GET  /agent/default-prompt                默认系统提示词（超级用户）
@@ -49,7 +63,7 @@ POST   /scheduled-jobs/validate-cron      校验 cron 并预览未来 3 次执�
 
 除 ``/health`` 和 ``/auth/login`` 外都需要有效登录 Cookie。搜索与全文要求普通启用
 账号，``/pipeline/run-once``、``/admin/users``、``/scheduled-jobs``、``/knowledge-bases``
-的管理写接口、``/sources``、``/file-documents`` 与 ``/agent`` 要求 ``is_superuser=true``。**没有 ``/auth/register``**，
+的管理写接口、``/sources``、``/file-documents``、``/document-management`` 与 ``/agent`` 要求 ``is_superuser=true``。**没有 ``/auth/register``**，
 账号只能由超级用户或 CLI 创建。
 
 ``/agent`` 定成超级用户不是因为它有写权限（它没有，见 ADR 0003），而是因为每次对话都是
@@ -75,19 +89,26 @@ Agent 新会话默认所有启用库，迁移旧会话保留 news；每次运行
 `prune_old_documents` 缺省仍只作用于新闻库，候选和定时删除待办恢复使用同一范围，且排除
 人工文件删除待办。停用库仍可显式维护清理，Source 只允许新绑定启用库，已有绑定保留。
 
-## 文件资料
+## 文件资料与统一审核
 
-`knowledge/file_application.py` 编排上传、替换、重试和按 ID 删除；文本解析和 PostgreSQL
-留在适配器。上传创建没有 Source 的独立 Document，同名互不覆盖。Markdown 原文保存在
-`content_text`，索引时由成熟解析器派生文本，保留代码和表格文字，不采集图片或链接内容。
+`knowledge/file_application.py` 负责文件身份、知识库归属、上传和替换，复用持久接收能力。
+上传原件先通过格式与大小校验，再保存接收意图、写入并核对 S3 对象，确认待办后返回；
+同名文件创建独立 Document，文件不要求 Source 或外部 URL。解码与内容异常在原件保存后由后台处理。
 
-替换保留 ID 与 KnowledgeBase，按 revision 防止覆盖并发更新。正文或可索引元数据变化时
-推进 revision 并排队；完全相同则不推进。上传和索引重试不在请求内执行 Embedding，处理
-继续使用既有 Document 状态与条件确认。
+替换保留 ID 与 KnowledgeBase，同时核验正式 `revision` 和 `management_revision`。
+新来源只产生候选，不提前覆盖已采用正文和正式 revision。管理修订与候选修订分别防止并发操作及迟到计算误写。
 
-人工删除复用 sync/index 写协调与 `document_deletions`。`cutoff_date=None` 区分人工 ID
-删除；先保存待办，Qdrant 确认后保存确认标记，再按 revision 删除当前 Document。失败保留
-待办与安全错误类型，重试不会撤销已确认远端步骤；定时清理不接管这些待办。
+`knowledge/processing/review.py` 承载统一审核用例，PostgreSQL 逻辑留在 `adapters/review.py`。
+管理读取分别提供当前已采用版本、最新人工草稿和最新来源；保存草稿使预览失效，重新预览在后台完成。
+采用绑定候选修订、预览 fingerprint 和处理规格；打开复核、编辑和预览都不会撤下旧版。
+已有人工版本或草稿时，来源更新进入复核，换用来源必须显式选择。
+
+原件只经超级用户接口下载，HTML 使用附件响应并禁止缓存和内容类型猜测。审核结论保存当时正文依据，
+已采用历史冻结正文、结构、Chunk 清单、元数据及原件引用；编辑草稿仅保留最新，已被决定或冻结的依据不会改写。
+
+完整删除由 `knowledge/deletion.py` 统一执行：先停止使用并冻结清理依据，删除指定 Document 在本环境
+各 generation 的 Point，再逐项删除原件，最后清除数据库正文、候选、历史及审核记录。每个远端步骤有确认进度，
+失败保留待办；文件与统一审核入口都能继续同一目标的删除。拒绝只停止使用，保留管理资料。
 
 ## 账号与权限
 
@@ -103,183 +124,110 @@ Agent 新会话默认所有启用库，迁移旧会话保留 news；每次运行
 
 ## FreshRSS 增量同步
 
-同步使用显式分类白名单，不读取总阅读列表：
+`SourceImportService.import_recent_per_source()` 按分类白名单处理已绑定启用 KnowledgeBase 的来源。
+首次保存最近的有界基线，之后从已提交 checkpoint 按旧到新追赶；新 Source 只登记，停用库保留绑定和位置。
+FreshRSS 适配器选择 `content` 或 `summary` 的一份原始 HTML，不拼接两份正文，也不按文章 URL 抓取页面。
 
-```text
-FRESHRSS_SYNC_CATEGORIES=["新闻","财经","宏观数据"]
-```
+接收分为意图、对象保存和来源确认。意图先入 PostgreSQL，S3 请求在事务外执行；随后锁定 Source 和
+KnowledgeBase 复核准入，以同一事务确认已保存原件对应的处理待办和 checkpoint。条件推进失败不倒退来源位置。
+原件字节及可索引元数据相同保持幂等；标题、来源名称等索引字段变化仍产生候选，不提前改变正式全文的展示快照。
 
-``SourceImportService.import_recent_per_source()`` 使用 FreshRSS 适配器，从至少属于一个允许分类的已绑定启用来源
-读取一页。首次运行保存最近的有界基线；之后使用 FreshRSS numeric ``continuation`` 从已
-提交 checkpoint 之后按旧到新追赶，因此两次手动运行之间到达的新闻不会因「只看最近 N
-篇」被静默越过。同一订阅属于多个允许分类时只处理一次；``source_id + external_id``
-保持幂等，完全相同的文章不会新增行或递增 revision。
-
-「文档 + checkpoint」在同一个数据库事务提交，checkpoint 用条件 UPDATE 推进（WHERE 带读到
-的旧值），因此外部 cron 或多实例并发时不会把游标退回旧值。条件不满足不算错误：文档仍幂等
-提交，只是本次不报告游标推进。新来源只登记、不拉文章；停用库保留绑定和 checkpoint。
-每次发现都会幂等更新 Source 展示元数据，不依赖是否有新文章；名称或地址变化沿用 revision 和重新索引规则。
-网络请求不持有数据库事务，保存时锁定 Source 和 KnowledgeBase 复核启用状态，避免网络期间停用后仍写入。
+某条原件未可靠保存时不能越过它推进 checkpoint。原件已保存后的解析异常则保留记录，继续处理同页正常资料。
+接收未决时复用同一个对象键核对，不用新键制造不可追踪对象；已保存意图与原件不会因后续来源确认失败而丢失。
 
 ## 正文质量规范化
 
-``ingestion/content_quality.py`` 是 FreshRSS Mapper 的统一规范化路径，也可用于历史正文的只读
-诊断。新文章在计算 content_hash、revision、构建 Document 和 Chunk **之前**完成规范化。
+FreshRSS 的规范化位于 Docling 结构转换之后，由 `knowledge/adapters/docling_html.py` 保留标题和阅读顺序，
+处理实体、Unicode 与空白，以及首尾和标题一致的完整正文段、同一章节相邻且完全相同的正文段。
+不同章节重复正文、正文中间的重复句子和非相邻重复段落不会被全局去重；首个标题之前的正文仍参与解析。
 
-``ContentQualityNormalizer`` 只自动处理确定性规则：HTML entity、Unicode NFC、Unicode 空白、
-正文首尾与标题匹配的完整独立块，以及相邻且规范化后完全相同的完整段落。标题比较只在首尾发生，
-并只忽略标点、空白和大小写；正文中间的重复句子和非相邻重复段落保留。content 与 summary 按
-协议优先级选择一个，绝不拼接。相同输入重复规范化产生相同正文与 content_hash，不会无意义增加
-revision 或改变稳定 Chunk ID。
-
-空标题、空正文和只剩标题分别以稳定质量原因失败，导致整页 rollback 且 checkpoint 不推进；
-「正文过短」只作为诊断信号，合法短快讯仍保存。历史记录无法区分 content 与 summary，诊断结果
-使用 ``unknown``。
+解码或解析失败、无有效正文或 Chunk、内容丢弃警告、无法满足标题与正文预算等结果进入人工处理。
+合法短文、标题跳级和重复标题本身不构成异常。检查只拦截可检测问题，正常结果仍允许主动复核。
+`ingestion/content_quality.py` 的纯文本规范化工具仍可用于诊断，但不再作为 FreshRSS 原件保存前的整页解析门槛。
 
 ## 数据对象分层
 
 ```text
-FreshRSSItem
-    外部协议对象，声明在 schemas/freshrss.py
-        ↓ FreshRSSItemMapper
-SourceDocument
-    内部统一 Pydantic 模型，声明在 domain/source_document.py
-        ↓ Repository
-DocumentRecord
-    SQLAlchemy ORM 模型，对应 PostgreSQL documents 表
-        ↓ PostgreSQL 适配器（事务内预加载来源）
-DocumentSnapshot
-    与事务生命周期独立的文档快照
-        ↓ DocumentBuilder
-LangChain Document
-    完整的 RAG 文档对象
-        ↓ DocumentChunker / RecursiveCharacterTextSplitter
-LangChain Document Chunk
-    可独立检索的 Document，带稳定 ID、Metadata 和文档关系
-        ↓ OllamaEmbeddingProvider / bge-m3:567m
-ChunkEmbedding
-    Chunk ID 与 list[float] 的内存映射
-        ↓ QdrantChunkStore / current Alias
-Qdrant Point
-    稳定 Chunk UUID + 1024 维 Vector + Document/Chunk Payload
-        ↑ QdrantVectorSearch / current Alias
-用户 query
-    -> OllamaEmbeddingProvider.embed_query()
-    -> 1024 维 query Vector
-    -> 按 Qdrant score 排序的 Chunk 搜索结果
+FreshRSSItem / 文件字节
+    → SourceDocument / TextFile：外部输入与身份元数据
+    → SourceIntake + ObjectReference：接收意图及可核验的 S3 原件
+    → ParsedDocument：项目正文、内容块、阅读顺序和标题父子关系
+    → DocumentPreview：结构、Chunk 清单、质量原因和预览 fingerprint
+    → IndexTarget：冻结候选、原件、元数据与独立索引实例
+    → TextEmbeddings：只接收每个 Chunk 的 embedding_text
+    → Qdrant Point：实例内稳定 Chunk ID、Vector 与 Payload
+    → DocumentVersion + Document 当前指向：准备成功后采用
 ```
 
-这些层不能合并：外部协议会变化，内部模型需要稳定，数据库只保存需要持久化的字段，LangChain
-Document 则服务于 Chunk 和 Embedding。
+这些契约位于 `knowledge/processing/`，不暴露 Docling、SQLAlchemy 或 S3 SDK 对象。
+存储适配器在短事务中构造独立快照；解析与网络调用不持有 ORM 会话。检索 query 独立向量化，
+再由采用可见性组件与 Qdrant 查询返回结果。
 
-RSS 来源是否兼容在 ``FreshRSSItemMapper`` 这一层决定：只要 FreshRSS 提供文章 URL、非空标题和
-可读的正文或摘要且能通过协议模型校验，就能转换成统一 ``SourceDocument``。
+## Docling 结构解析与 Chunk
 
-## LangChain Document 与 Chunk
+`DocumentParser.parse()` 与 `StructuredChunker.build_chunks()` 是独立替换入口，
+`DocumentProcessor` 组合两者并生成预览；`knowledge/composition.py` 负责选择实现。
+MD 和 FreshRSS HTML 使用 Docling 文本后端，TXT 构造保留普通字符语义的结构对象，
+井号、反引号和列表符号不会把 TXT 变成 Markdown。本期不接收 PDF、Word 或 HTML 文件上传。
 
-``pipeline/document_builder.py`` 把纯数据 ``DocumentSnapshot`` 转换成 LangChain ``Document``：正文放入
-``page_content``，标题、来源和过滤字段放入 ``metadata``，PostgreSQL 文档 UUID 作为稳定的
-``id``。只有 ``page_content`` 参与 Embedding，UUID、外部 ID、URL 和发布时间不拼入向量文本。
-适配器在事务结束前加载可选 Source 并构造快照，构建器不持有 ORM 或访问数据库。
-Markdown 的 `page_content` 是派生索引文本，`content_hash` 仍标识对应原文；文件名保留在 metadata。
+`DoclingStructuredChunker` 使用 HybridChunker，优先尊重章节身份与内容块，默认不跨章节合并。
+重复标题具有独立身份，不能凭标题文本或相同正文去重。长正文、代码和表格按锁定 token 预算继续拆分，
+保留必要标题上下文和表头，无法完整满足预算时暴露质量原因，不静默删掉正文。
 
-``pipeline/document_chunker.py`` 使用 ``RecursiveCharacterTextSplitter`` 切分。默认
-``cl100k_base`` tokenizer、512 token Chunk 上限、96 token 重叠上限，不按 Python 字符数计量；
-中英文段落、句末标点、逗号和空格按优先级递归切分。
+Chunk 的 `text` 用于展示，`embedding_text` 是确切的向量化输入，包含标题路径；同时保留块引用、
+章节身份、阅读序号和 token 数。预算包括模型特殊 token，计数使用固定 revision、文件 SHA-256 校验的
+BGE-M3 tokenizer，运行时只从本地加载。处理实现和预算版本集中在 `processing/specification.py`。
 
-每个 Chunk 复制父 Metadata，并增加 ``parent_document_id``、``chunk_index``、``chunk_count``、
-``previous_chunk_id`` 和 ``next_chunk_id``。Chunk ID 由父文档 UUID、tokenizer、切分参数和序号
-经 uuid5 稳定生成，重复处理相同版本不产生随机新 ID。切分后先过滤空白 Chunk 和同文档完全重复
-的 ``page_content``，再**按去重后的最终列表**重建 index/count/previous/next，避免被丢弃的片段
-在关系链上留下空洞。Chunk 不写 PostgreSQL。
-
-串接入口是 ``DocumentChunkPipeline.build_chunks(record)``：传入 ``DocumentSnapshot``，
-按固定顺序执行 ``DocumentBuilder -> DocumentChunker``。
+预览、自动采用、人工采用共用冻结清单；重建也直接复用已采用版本的清单。改变解析或切分规格必须重新预览、
+采用。新索引实例拥有独立身份，Chunk ID 在实例内按序号稳定生成；重试复用冻结身份，不能覆盖旧版 Point。
+原件保存后解析才发生，解析过程中不读取远程图片、本地引用、外链页面，也不启动 OCR 或生成式模型。
 
 ## Ollama Embedding
 
-``pipeline/ollama_embedding_provider.py`` 统一创建官方 ``OllamaEmbeddings``，业务层不直接拼装
-客户端。它的配置由独立的 ``OllamaEmbeddingSettings``（``config/ollama_embedding.py``）读取，
-与数据库、FreshRSS、Qdrant 各自一份 settings 平级。它提供异步 query、document、Chunk 批量调用和真实维度探测；空列表不访问网络，非空
-列表严格按 ``OLLAMA_EMBEDDING_BATCH_SIZE`` 分批并保持顺序。
+`pipeline/ollama_embedding_provider.py` 集中创建官方 `OllamaEmbeddings`，统一模型、认证、超时、
+批量大小、异常分类与向量校验。独立 `OllamaEmbeddingSettings` 管理配置；query 与 document 使用同一模型。
+Provider 接受确切文本列表，不了解文件、FreshRSS、解析、审核或数据库状态。
 
-每批响应都会验证数量、非空向量、数值类型、NaN/Infinity 和维度，不同批次及同一 Provider
-生命周期中的维度也必须稳定。向量维度取自服务真实返回长度，不在源码中硬编码。Provider 只
-返回内存结果，``DocumentIndexingService`` 才在完整 Qdrant 写入后更新 ``processing_status``。
+非空输入按批量配置保持顺序调用，空列表不访问网络。每批核验数量、非空向量、数值类型、有限数值和维度，
+跨批次和 Provider 生命周期的维度保持一致。准备索引由 `CandidateIndexer` 编排，只有完成远端核验后，
+采用应用才能更新正式版本；Provider 本身只返回内存向量。
 
 ## Qdrant 向量存储
 
-Qdrant 使用官方 ``qdrant-client``（当前 lock 解析为 1.19.0）写入已由 ``OllamaEmbeddings`` 生成
-并校验的 Vector。``langchain-qdrant`` 的公开写入方法会再次执行 Embedding 并固定嵌套 Metadata，
-不适合本项目的预计算向量和扁平 Payload，因此**不是本项目依赖**。LangChain 负责 Document、
-Chunk 和 Embedding，Qdrant client 只负责 Point 及 Collection/Alias 生命周期。
+官方 `qdrant-client` 负责 Point、Collection/Alias 与搜索，`langchain-qdrant` 不在依赖中。
+向量已由独立 Embedding 组件生成，存储适配器不会再执行向量化。完整规格由
+`qdrant/index_spec.py` 的 `VectorIndexSpec` 表达，包含模型、维度、距离、解析/切分版本、
+tokenizer 身份及 revision、文本预算与 Payload 版本；当前采用 v3 规格。
 
-当前索引规格（``qdrant/index_spec.py`` 的 ``VectorIndexSpec``）：
+`schema_version` 表示索引空间版本。模型、维度、距离、处理规则或 Payload 不兼容时必须建立新规格，
+不能把 v2 Point 当成 v3 候选索引使用。物理 Collection 按环境、schema 和 generation 命名，
+普通查询访问环境的 current Alias；日常候选准备写当前目标，重建写显式的新 generation。
+显式写入口负责 `ensure_ready()`，搜索不会创建或切换 Alias。
 
-```text
-model: bge-m3:567m
-dimension: 1024
-distance: Cosine
-tokenizer: cl100k_base
-chunk_size: 512
-chunk_overlap: 96
-schema_version: v2
-payload_schema_version: v2
-```
+Payload 保存独立 `index_instance_id`、Document/KnowledgeBase 身份、Chunk 正文与关系、标题路径、
+文档展示元数据、正文 hash、模型和规格。字段及索引以 `payload.py`、`lifecycle.py` 为准。
+候选准备按冻结身份写入并完整回读核验，失败或退休实例按 Document 与实例精确回收，覆盖本环境各 generation。
 
-``schema_version`` 代表整个索引空间的版本，不只是数据库迁移版本：模型、维度、Distance、
-tokenizer、Chunk 参数或 Payload 契约任一不兼容，就必须换新版本。
+查询前排除未采用及退休实例，Qdrant 按 `index_instance_id` 分组，避免同一 Document 的不同版本混组。
+查询后 PostgreSQL 批量核验当前正式指向与可用性，投影为每篇 Document 的公开结果；状态漂移则有界重查，
+不能把无效结果简单删掉而损失文档名额。公开返回不暴露候选实例管理数据。
 
-物理 Collection 真正保存 Point，名称由 ``QDRANT_ENVIRONMENT``、Schema 版本和 generation 组合；
-所有应用 Point I/O 只访问稳定 Alias：
-
-```text
-knowledge_chunks_<environment>_v2_<generation>       物理 Collection
-knowledge_chunks_<environment>_current              应用通过 Alias 访问
-```
-
-只有 ``QdrantCollectionLifecycle`` 直接操作物理 Collection；``QdrantChunkStore`` 的 upsert、
-scroll 和 delete 始终使用 current Alias。索引调用方必须先显式 ``ensure_ready()``，搜索则只读
-已由部署准备好的 current Alias。
-
-Payload 保存 Chunk 正文、稳定关系、标题、URL、来源、作者、标签、``published_at``、
-``source_updated_at``、正文 hash、模型和 Schema 版本。过滤/分组索引
-（``qdrant/lifecycle.py`` 的 ``PAYLOAD_INDEX_SCHEMAS``）：
-
-```text
-document_id      KEYWORD    （grouped query 的 group_by 要求 keyword/integer）
-source_id        UUID
-source_provider  KEYWORD
-document_type    KEYWORD
-published_at     DATETIME
-labels           KEYWORD
-```
-
-``ensure_current_collection()`` 对 ``document_id`` 上历史遗留的 UUID 索引只重建该索引，不
-修改 Point、Alias 或正文；**其他**索引类型漂移会停止并抛 ``VectorIndexConfigurationError``。
-
-写入边界拒绝错误维度、非有限数值和零 L2 norm 向量。统一 client builder 显式使用
-``port=None``，避免 qdrant-client 给完整 HTTPS 反代 URL 强行追加默认 6333；URL 自带端口时仍
-原样保留。
+写入边界拒绝错误维度、非有限值和零向量。统一 client builder 使用 `port=None`，
+让 HTTPS 反向代理 URL 保持原端口。Collection metadata 不匹配时停止，不能自动覆盖既有索引空间。
 
 ## 两个 Runtime：读写权限分离
 
-``qdrant/runtime.py`` 提供两个 Runtime，共享零件由模块级 ``_build_shared_components()``
-组装（规格、Qdrant client、Embedding Provider），``_close_shared_clients()`` 负责「两个
-client 都尝试关闭、保留第一个异常为根因」。刻意用函数而不是共同基类：两者的分裂是**权限
-边界**，只读 Runtime 绝不能通过继承意外获得写能力。
+`qdrant/runtime.py` 通过共享构造函数组装规格、客户端和 Embedding Provider，不以共同基类混合读写权限：
 
-```text
-VectorSearchRuntime      只读。Provider + Qdrant client + 规格 + 只查 current Alias 的
-                         搜索组件。没有 lifecycle、Point Store、索引 Service 或
-                         ensure_ready。lifespan 启动时创建一次，全部请求共享。
+- `VectorSearchRuntime` 只持有 query Provider、Qdrant 查询与采用可见性组件。构造时必须显式传入知识库范围
+  和 `DocumentVisibility`，没有生命周期管理、Point 写入或 `ensure_ready()`。
+- `DocumentIndexingRuntime` 提供生命周期、候选 Point 存储和 `CandidateIndexer`，消费已冻结输入，
+  不解析或重新切分正文。
+- `PipelineWriteRuntime` 编排接收、处理批次与清理，按调用创建、结束关闭；`knowledge/composition.py`
+  选择解析、对象存储、数据库与索引适配器，API、CLI 和 scheduler 复用装配。
 
-DocumentIndexingRuntime  写入。额外持有切分流水线、Collection/Alias lifecycle 和只用
-                         current Alias 的 Point Store，提供 ensure_ready()。
-
-PipelineWriteRuntime     手动写入编排（pipeline/write_runtime.py）。绑定 FreshRSS、
-                         Session factory 与索引写路径，按请求新建、请求结束整体关闭。
-```
+只读 Runtime 按进程共享，写客户端按工作生命周期创建。各客户端都尝试关闭，并保留首个关闭异常；
+网络调用不占用业务长事务。
 
 ## Chunk 级语义检索：POST /vector-search
 
@@ -309,34 +257,13 @@ published_from/to           （带时区且包含端点）
 Python 中重排；同一 Document 的多个 Chunk 可以分别返回，不做 document 聚合或时间加权。成功返回
 ``VectorSearchResult[]``，空命中返回 200 ``[]``。
 
-程序内直接使用 Runtime（不经 HTTP）：
-
-```python
-from agent_lab.config.ollama_embedding import get_ollama_embedding_settings
-from agent_lab.config.qdrant import get_qdrant_settings
-from agent_lab.qdrant.runtime import VectorSearchRuntime
-from agent_lab.schemas.vector_search import VectorSearchFilters, VectorSearchRequest
-
-runtime = VectorSearchRuntime.build(
-    get_qdrant_settings(), get_ollama_embedding_settings()
-)
-try:
-    # 搜索不会调用 ensure_ready，也不会创建/切换 Alias；部署必须先准备好索引。
-    results = await runtime.service.search(
-        VectorSearchRequest(
-            query="央行近期是否调整利率？",
-            top_k=10,
-            filters=VectorSearchFilters(labels=["宏观", "利率"]),
-        )
-    )
-finally:
-    await runtime.close()
-```
+程序内构造只读 Runtime 时也必须显式提供知识库范围与已采用版本可见性端口，不能绕过 HTTP 后省略权限和版本核验。
+生产装配由 `main.py` 完成；离线与隔离测试的端口注入见 `tests/test_qdrant_runtime.py`。
 
 ## 文档级语义检索：POST /document-search
 
-``POST /document-search`` 使用 Qdrant 正式的 ``query_points_groups()``，按 Payload
-``document_id``（KEYWORD index）完成**服务端**分组。它不先取 ``top_k`` Chunk 再由前端
+`POST /document-search` 使用 Qdrant 的 `query_points_groups()`，按 Payload
+`index_instance_id` 在服务端分组，再核验并投影为当前可用的 Document。它不先取 ``top_k`` Chunk 再由前端
 去重，因此 ``document_limit`` 始终限制不同 Document 数量，``matches_per_document`` 始终限制
 每篇 Document 返回的相关片段数量：
 
@@ -367,7 +294,7 @@ default matches_per_document = 3   maximum = 20
 
 ``qdrant/search.py`` 是「Qdrant 响应可信度」的信任边界：Qdrant 返回的内容一律当作外部不可信
 输入，Point/Payload 契约和文档分组的跨 Chunk 不变量都在这里一次验干净。``search_groups()``
-保证：组非空、组内每个 Payload 的 document_id 等于本组 ``document_id``、组内 chunk_id 互不
+保证：组非空、组内每个 Payload 的 index_instance_id 与 Qdrant 分组身份相同、Document 元数据一致、组内 chunk_id 互不
 重复、文档级元数据（``content_hash``、``title``、``url``、``source_name``、``published_at``、
 ``authors``、``labels``、``chunk_count``）组内一致、``matches`` 按 score 降序。
 
@@ -386,9 +313,9 @@ default matches_per_document = 3   maximum = 20
 
 用户从检索、Agent 引用或文件列表打开全文时，通过 ``DocumentRepository.get_with_source()``
 加载可选 Source 与 KnowledgeBase，返回当前 ``content_text``、``content_hash``、``index_revision``
-（响应字段名 ``revision``）、格式和展示元数据。搜索只查知识库目录，不逐篇回查正文，不产生 N+1。
+（响应字段名 ``revision``）、格式和展示元数据。搜索另做批量可用性核验，但不逐篇回查正文，不产生全文 N+1。
 
-文档不存在返回固定脱敏 404；没有 Source 的文件仍可读。知识库停用返回 409；数据库不可用返回 503；数据库记录违反公开契约返回
+文档不存在、尚未采用、已拒绝或正在删除时返回固定脱敏 404；没有 Source 的已采用文件仍可读。知识库停用返回 409；数据库不可用返回 503；数据库记录违反公开契约返回
 502（只记异常类型，不把字段值或正文写进日志）。前端比较搜索结果 hash 与详情 hash，不一致时
 提示原文已更新，并使用 PostgreSQL 最新正文，不伪造历史版本。引用阅读另外展示当时取得的片段。
 
@@ -603,8 +530,7 @@ try 接不到，统一由应用级 handler 映射成同一个 503。
 
 需要更强脱敏的路由改用 ``SanitizedValidationRoute``（``APIRoute`` 子类），把校验失败收敛成单一
 ``invalid_request``。做成 route class 而不是在装配根判断 URL 前缀，是因为脱敏是**路由自身的
-属性**（它的请求体里有明文密码），不是 ``main.py`` 要维护的一串路径常量。当前只有
-``/admin/users`` 路由族挂了它。
+属性**（它的请求体里有明文密码），不是 ``main.py`` 要维护的一串路径常量。文档管理、文件、账号等涉及敏感输入的路由均使用它；具体挂载以各路由声明为准。
 
 ## 共享的依赖注入与校验器
 
@@ -620,68 +546,41 @@ Service；``get_pipeline_write_runtime_factory()`` 取「能造写 Runtime 的�
 两者是独立请求契约（字段集合不同，不能合并成一个模型），但对 ``query`` 和 ``score_threshold``
 的要求必须完全一致——**包括错误文案**，因为 422 响应体里的文案属于对外契约且有测试直接断言。
 
-## 文档索引状态机
+## 文档处理与采用状态
 
-``documents`` 继续保存业务事实，不保存 Chunk 或 Embedding。索引状态列：
+Document 的正式可用性、候选处理阶段和管理修订分开。`documents` 保存已采用正文及当前版本/索引实例指向；
+`document_processing_records` 保存接收、草稿、预览、领取代次和冻结写入目标；
+`document_versions` 保存不可变已采用快照，`document_review_records` 保存决定及当时正文依据。
+具体状态字段由模型和契约维护，不再用 Document 的旧索引状态独自代表整个流程。
 
-```text
-processing_status        pending | processing | indexed | failed
-index_revision          当前业务版本（>= 1）
-indexed_revision        成功写入 Qdrant 的版本快照
-indexed_content_hash
-indexed_schema_version
-processing_started_at
-indexed_at
-last_processing_error
-```
+处理应用先条件领取计算快照，在事务外读原件、解析与切分，再按领取代次和候选修订保存结果。
+正常自动候选进入采用；人工草稿和质量异常等待人工确认。纯计算中断可以重新排队，明确失败不会无限自动重领。
 
-关键设计是「派生副本」与「业务事实」分开：``index_revision`` 是业务版本，``indexed_*`` 是成功
-快照。
+采用先持久冻结候选、处理规格及索引实例，后台生成向量并完整回读 Point；再条件更新正式正文与实例指向，
+保留新已采用版本和审核结论。准备失败、并发新来源、拒绝或迟到工作均不能覆盖旧正式版本。
+失败重试复用冻结目标；需要新预览时创建新候选，同时保留旧目标的清理依据。退休向量回收不删除管理历史。
 
-``DocumentIndexingService`` 的编排：
-
-```text
-1. claim        条件 UPDATE 把 pending/failed 原子改成 processing，抢不到就跳过
-2. 处理          Document/Chunk -> Ollama Embedding -> Qdrant current Alias upsert
-                 -> 删除同一 Document 多余的旧 Chunk Point
-3. mark_indexed 带 revision 条件更新 -> indexed
-                 条件不满足说明处理期间有新版本 -> release_stale_claim 放回 pending
-4. 任一步异常    尽力 mark_failed（也带 revision 条件），再原样抛出
-```
-
-失败也写 ``failed`` 而不是直接抛，是为了让文档保持可被下轮重新领取的状态。Document 在处理期间更新
-时只递增 revision 并暂留 ``processing``，旧 Worker 结束后把新版本释放为 ``pending``，避免新旧
-版本并发覆盖同一 Chunk UUID。
+正式搜索、全文与 Agent 共用可用性规则。拒绝立即停止后续读取；尚未采用的候选只供管理使用。
+兼容重建保留已采用快照和正文 revision，只改变实际索引实例；发布屏障覆盖 Alias 与数据库映射间的窗口，
+不让中间态泄露到检索。
 
 ## 手动写入入口
 
-CLI 子命令（``agent-lab``）均为显式一次性执行，常规同步/索引为有界批次，重建遍历全部文档。命令用法见
-[`../README.md`](../README.md) 的「手动写入命令」。
+CLI、HTTP Pipeline 和定时索引共用 `DocumentProcessingBatch`，解析、采用、旧索引回收分别有界。
+`sync-news` 只接收原始资料并确认来源位置，不生成向量；`index-pending` 消费已保存待办；
+`run-once` 和 `POST /pipeline/run-once` 顺序执行一次同步和处理批次。
 
-CLI 与 HTTP 共用 ``pipeline/limits.py`` 的有界参数：
+参数边界在 `pipeline/limits.py`。回执区分已解析、待审核、已采用、跳过、失败和清理数量，
+不把待审核当成已完成索引；仅输出安全统计和错误类型，不输出正文、Vector、完整异常或凭据。
+来源接收失败不推进该来源 checkpoint，已可靠接收的其他资料仍可处理。
 
-```text
-limit_per_source     默认 2    最大 100
-batch_size           默认 20   最大 1000
-stale_after_minutes  默认 60   最大 10080（7 天）
-```
+`rebuild-index --generation N` 遍历当前可用的已采用快照，使用新 generation 与独立索引实例，
+复用冻结 Chunk 和 embedding_text，不重新解析。目标必须尚未存在；逐篇和全量核验成功后建立发布屏障，
+切换 current Alias 并条件更新数据库索引映射，已采用历史和正文 revision 不变。
 
-``sync-news`` 不构造 Qdrant/Ollama Runtime；``index-pending`` 在领取 PostgreSQL 候选前调用一次
-``ensure_ready()``，随后逐篇使用独立 ``AsyncSession``。候选由条件 UPDATE 原子领取，多进程竞争
-时安全跳过。单篇失败会记录 UUID 与异常类型并继续本批，但最终 JSON ``ok=false`` 且退出码为 1；
-完整异常、正文、Vector 和密钥不进入命令输出。
-
-``POST /pipeline/run-once``（超级用户）接受同样三个边界参数，同步等待
-``FreshRSS -> PostgreSQL -> Ollama -> Qdrant`` 一轮完成。成功响应包含来源、checkpoint、候选、
-indexed/skipped/failed 数量以及按 ``error_type`` 聚合的失败，不返回正文、完整异常、Vector、
-凭据或数据库 URL。来源失败会回滚该来源页并继续其他来源，随后仍索引成功保存的文档，但
-``ok=false``（HTTP 仍为 200）；订阅列表、配置或 lifecycle 等批次级错误使用脱敏 5xx。写 API 按
-请求创建独立 ``PipelineWriteRuntime``。
-
-常规 Pipeline 命令或请求只处理一个有界批次。``rebuild-index --generation N`` 是显式全量维护入口，
-取得 sync/index 后分页读取全部 Document，独立目标逐篇核验 Payload 与总数，数据库版本再次核对后原子切 Alias，
-最后更新索引成功快照。目标必须是新 generation，不复用失败目标；账号、会话、任务配置和 Source 游标保持不变。
-构建失败不发布；发布阶段不确定结果保留占用，先人工核实。日常索引跟随已发布且规格相符的 current 目标。
+构建失败保留原 Alias。发布阶段中断时，`recover-index-rebuild --generation N` 核对实际 Alias
+与已准备目标并恢复映射，不重新向量化。写占用仍需先确认旧进程和远端写入已停止后恢复。
+普通候选写入跟随规格匹配的 current 目标；重建不会修改账号、会话、任务配置或 Source 接收位置。
 
 ## 定时任务与调度器
 
@@ -700,7 +599,7 @@ indexed/skipped/failed 数量以及按 ``error_type`` 聚合的失败，不返�
 - **写资源协调**：``write_coordination.py`` 用 PostgreSQL 短事务咨询锁维护持久占用。同步、索引各自串行，彼此可以并行；清理排他取得二者。API Pipeline、CLI、定时任务都经 ``PipelineWriteRuntime`` 的公开写入口参与。等待时不占长事务；心跳过期不自动释放资源。
 - **资源归属**：``pipeline/assembly.py`` 是 API、CLI、scheduler 共用装配。Runtime 按需创建客户端，清理直接使用 ``QdrantDeletionStore``，不读取索引 Service 内部属性。Engine 和工厂归进程，Runtime/client 归本次调用，Session/事务归各工作单元。
 - **收尾与恢复**：关闭先拒绝新受理，等待当前执行，再按关闭宽限取消并等待收尾，最后关闭进程依赖。业务结果、资源关闭错误、终态保存失败分别记录；只重试一次幂等终态保存，不重复业务。强制退出可能来不及收尾，须人工核实旧进程与远端写入停止后释放占用。
-- **清理**：固定本次 UTC 截止时刻，优先发布时间、缺失才用入库时间，严格早于边界且 indexed 才进入新候选。每批 50 连续处理，无整次上限；预演不改业务表或 Qdrant。真实删除按独立待办、Qdrant 确认、PostgreSQL 条件删除推进，失败目标不在本次原地重试。待办同时阻挡同步更新和索引认领，不能让 checkpoint 越过未保存的来源页。
+- **清理**：固定本次 UTC 截止时刻，优先发布时间、缺失才用入库时间。仅清理已采用且没有待处理候选的到期资料，保护待审核、失败和拒绝记录。每批连续处理，预演不改文档或远端存储。真实删除通过独立待办依次确认 Qdrant、S3 和数据库收尾，失败目标不在本次原地重试；待办阻挡同步与采用，checkpoint 不能越过未保存来源内容。
 - **API 与前端**：``GET /scheduled-jobs/task-types`` 导出类型默认值及参数 schema；``GET /scheduled-jobs/{job_id}/runs/{run_id}`` 精确查询回执。``active_run`` 表示未释放执行，``needs_attention`` 表示待核实。前端显式适配三种表单，未知类型仍可列出，部分失败不显示全部成功。手动回执按账号保存在当前浏览器标签页，重新进入页面继续查询；请求超时不自动重复提交。
 - **时间与就绪**：cron 解释、预览和注册共用 ``SCHEDULER_TIMEZONE``，记录存 UTC。``next_run_at`` 是数据库配置算出的下次计划时间，API 不开启 cron 时也可计算；它不证明 scheduler 就绪。本地就绪文件记录配置加载与刷新状态，Compose 和发布流程另行检查 scheduler。
 
@@ -708,56 +607,37 @@ indexed/skipped/failed 数量以及按 ``error_type`` 聚合的失败，不返�
 
 完整跨进程顺序见 [定时任务执行](../../docs/flows/scheduled-job-execution.md)。持久占用与跨库删除在隔离集成验证通过前，不以 mock 测试代替实测保证。
 
-写路径的 CPU 段（HTML 解析、切块、tiktoken 计数）由 ``DocumentIndexingService`` 通过
-``asyncio.to_thread`` 移出事件循环执行——该步骤是纯计算、无共享状态；手动与定时两条入口
-同时受益，定时执行期间 SSE 流式响应不再被切块计算卡顿。
+独立 scheduler 同时运行 `DocumentProcessingConsumer`，不依赖新增 cron，API worker 不启动该消费者。
+消费者复用有界处理批次，停止时等待当前步骤收尾；远端取消和结果不确定继续由持久协调器保护。
+Docling 解析、切分和 tokenizer 计数由处理应用通过 `asyncio.to_thread` 移出事件循环；S3 同步 SDK 也在线程中执行。
 
 ## 模块边界
 
-```text
-config / schemas
-        ↓
-ingestion（外部协议访问、正文规范化与映射）
-        ↓
-domain（稳定的内部数据模型）
-        ↓
-repositories + models（PostgreSQL 持久化）
-        ↓
-pipeline（Document、Chunk、Ollama Embedding）
-        ↓
-services + qdrant（索引状态编排、Point/Payload、Collection/Alias 生命周期与只读搜索）
-        ↓
-pipeline write runtime（组合同步、索引与清理写路径；不提供搜索）
-        ↓
-agent（模型客户端、只读工具、中间件、图装配与流式翻译；只消费 services 的只读能力）
-        ↓
-api（HTTP 校验、按请求 Runtime、错误契约；不实现 Embedding/Qdrant/模型调用细节）
-        ↘ cli（一次性写入命令组装；不实现 HTTP、定时器或无限循环）
-```
+`knowledge/` 组织知识库业务领域的契约、应用和端口；`knowledge/adapters/` 容纳 Docling 与 PostgreSQL
+实现，`knowledge/storage.py` 容纳原件端口与 S3 适配器。第三方对象不进入 HTTP、ORM 快照或应用公开输入。
+`knowledge/composition.py` 是实现选择点，不建设动态插件加载器。
 
-``agent/`` 排在 ``services`` 之后、``api`` 之前：它是 ``VectorSearchService`` 和
-``DocumentRepository`` 的**调用方**，反向不成立——检索链路不 import ``agent/`` 里的任何东西。
-``agent/checkpointer.py`` 和 ``agent/errors.py`` 是这一层的叶子模块，刻意不 import 框架的图相关
-模块，因为 ``alembic/env.py`` 每次迁移都会加载前者，不该为了四个表名把整个 Agent 依赖树拖进来。
+接收、解析、Chunk、向量化、采用、审核和删除各自围绕自己的契约；调用方使用公开应用入口。
+`ingestion/` 负责 FreshRSS 外部协议，`pipeline/` 保留运行装配与 Ollama Provider，
+`qdrant/` 负责候选实例、检索与 Collection/Alias，`services/` 复用范围、查询和写协调能力。
+旧 Builder、递归切分器及整篇覆盖索引服务已移除。
 
-``api/`` 内部再分一层：``dependencies.py`` 与 ``error_contract.py`` 是基础设施，
-``vector_search.py``、``document_search.py``、``documents.py``、``pipeline.py``、
-``user_admin.py``、``scheduled_jobs.py``、``auth.py``、``health.py``、``agent_chat.py`` 是平级
-特性路由，彼此不互相 import；``main.py`` 是 API 装配根，写入与调度装配复用 ``pipeline/assembly.py``。``dependencies.py`` 里
-``AgentRuntime`` 只在 ``TYPE_CHECKING`` 下导入——运行时导入会成环（``dependencies`` →
-``agent.runtime`` → ``agent.middleware`` → ``api.error_contract`` → ``dependencies``），而本模块
-只从 ``app.state`` 取现成对象、从不构造也不 ``isinstance``。
+`agent/` 只消费 `VectorSearchService` 与 `DocumentRepository` 的正式只读能力，不反向参与索引。
+`agent/checkpointer.py` 与 `agent/errors.py` 保持叶子依赖，避免迁移为表名导入完整 Agent 图。
 
-``SourceImportService`` 编排来源准入与事务，FreshRSS 适配器负责分页和协议映射；``DocumentBuilder`` 只做纯快照到
-RAG Document 的内存转换；``DocumentChunker`` 只负责切分。调用方依赖 Pipeline 门面，不在业务代码
-里散落创建框架切分器。
+API、CLI、scheduler 通过装配使用业务能力。平级路由不互相 import，`api/dependencies.py` 和
+`api/error_contract.py` 是共同边界；`main.py` 管 API 进程资源，`pipeline/assembly.py` 复用写入与调度装配。
+跨层类型仅用于注解时使用 `TYPE_CHECKING`，避免 `dependencies → agent.runtime → middleware → error_contract` 环。
 
 ## 数据库表
 
 ```text
 sources          Feed、机构或其他文档来源，以及来源级 sync_checkpoint 与推进时间
 knowledge_bases  逻辑知识库的稳定业务键、展示信息和启停配置
-documents        当前正文、格式与文件名、可选来源、处理状态，以及索引 revision/成功快照
+documents        已采用正文、归属、当前版本/索引实例、使用状态及正式/管理修订
+document_processing_records  接收意图、原件引用、候选/草稿、预览与冻结索引目标
+document_versions           已采用的正文、结构、Chunk、元数据、规格及原件快照
+document_review_records     人工或自动审核结论及当时正文依据
 users            内部登录邮箱、Argon2 密码 Hash、启用/超级用户状态和唯一环境托管标记
 access_tokens    浏览器登录产生的可撤销随机 Token、创建时间和所属用户
 agent_threads    Agent 会话的账号归属、选择范围、标题与最后活跃时间；不含任何消息内容
@@ -765,16 +645,16 @@ scheduled_jobs   定时任务配置：key 唯一、任务类型、cron、params�
 scheduled_job_runs  任务执行历史：触发方式、状态、起止时间、脱敏统计与 error_type；
                     保存执行快照、执行者和心跳；级联删除，裁剪保护活动和占用中的记录
 write_operations   同步、索引、清理的持久资源占用；失联不自动抢占
-document_deletions  独立删除待办：目标、版本、时间边界、Qdrant 确认及脱敏错误
+document_deletions  独立删除待办：目标、修订、资格、原件引用、远端确认进度及脱敏错误
 alembic_version  由 Alembic 维护当前迁移版本
 
 以下四张由 langgraph-checkpoint-postgres 自建自迁移，Alembic 既不生成也不删除（ADR 0004）：
 checkpoints、checkpoint_blobs、checkpoint_writes、checkpoint_migrations
 ```
 
-``documents`` 保存 ``content_text``：FreshRSS 为清洗正文，文件为规范化换行后的文本或 Markdown 原文；不保存附件原始字节。作者、标签和
-图片 URL 使用 PostgreSQL ``text[]``。所有时间使用带时区 ``datetime``，数据库连接会话
-固定为 UTC。仍未新增 Chunk、Embedding 或 pipeline_runs 表。
+`documents.content_text` 是当前已采用正文，原始字节在 S3，候选和历史快照在各自记录中。
+Chunk 清单与结构作为预览和已采用快照保存在 PostgreSQL，向量仍只在 Qdrant，不另建 Chunk 或 Embedding 关系表。
+作者、标签和图片 URL 使用 PostgreSQL `text[]`；所有时间带时区，数据库连接会话固定为 UTC。
 
 Agent 的会话数据分在两处，边界是「内容 / 归属」：四张 ``checkpoint*`` 表存消息内容，
 ``agent_threads`` 存归属、展示元信息和下一次运行的选择范围。前者由第三方库管、不由 Alembic 管；后者是普通业务表，

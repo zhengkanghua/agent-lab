@@ -10,14 +10,15 @@ Cloudflare 与账号管理内容收在本文第五节。
   → OpenResty（TLS、反代、限流、静态站）        ← 自行配置，本文不提供配置
       ├─ /        → <WEB_ROOT>   dist 静态文件
       └─ /api/*   → 127.0.0.1:18000（去掉 /api 前缀）        backend 容器
-                                                      scheduler 容器（无端口，只跑定时任务）
-                      → 远程 PostgreSQL / Ollama / Qdrant / FreshRSS
+                                                      scheduler 容器（定时任务与文档待办）
+                      → 远程 PostgreSQL / Ollama / Qdrant / FreshRSS / MinIO(S3)
 ```
 
 前端没有容器：`dist` 是静态文件，不运行、无依赖、无需隔离。后端是**两个容器**（同镜像）：
-`backend` 服务 HTTP（worker 数由 `WORKER_COUNT` 控制），`scheduler` 只跑定时任务调度进程
-（`python -m agent_lab.scheduler_main`）——多 worker 下进程内调度器会重复执行任务，所以调度
-拆成独立进程，取舍见 [ADR 0017](adr/0017-scheduler-runs-in-a-dedicated-process.md)。
+`backend` 服务 HTTP（worker 数由 `WORKER_COUNT` 控制），`scheduler` 运行定时任务和文档待办消费器
+（`python -m agent_lab.scheduler_main`）。文件与 FreshRSS 原件保存后，由该进程完成解析、预览和采用，
+不需要额外创建 cron。API worker 不消费文档待办；独立进程的取舍见
+[ADR 0017](adr/0017-scheduler-runs-in-a-dedicated-process.md)。
 
 ## 与容器化无关的内容
 
@@ -105,7 +106,7 @@ CRLF 行尾，而 `.env` 不经过 Git（`.gitattributes` 管不到它），`\r`
 URL、API Key 后面多一个看不见的字符。这类故障很难查：日志里的报错看起来像密码错或地址错，
 但值「看上去」完全正确。
 
-填写时注意五点：
+填写时注意以下配置：
 
 1. `AUTH_COOKIE_SECURE=true`（生产走 HTTPS，必须）。
 2. `DATABASE_URL` 指远程库。**不要**写 `localhost`——容器里的 `localhost` 指容器自己，
@@ -118,6 +119,29 @@ URL、API Key 后面多一个看不见的字符。这类故障很难查：日志
    定时任务由独立的 `scheduler` 容器执行（见
    [ADR 0017](adr/0017-scheduler-runs-in-a-dedicated-process.md)）。cron 与启停在管理端
    （`scheduled_jobs` 表）配置。
+6. 文档原件必须配置 `S3_ENDPOINT`、`S3_BUCKET`、`S3_REGION`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`
+   和 `S3_ADDRESSING_STYLE`。MinIO endpoint 是后端可达的 API 地址，不是管理控制台地址。
+   保持 `S3_REQUIRED=true`；缺少原件存储时上传和 FreshRSS 接收不能成功，不回退旧处理链。
+7. 新版使用 `QDRANT_COLLECTION_SCHEMA_VERSION=v3`。镜像已设置
+   `DOCUMENT_TOKENIZER_PATH=/app/resources/tokenizers/bge-m3`，通常无需在 `.env` 重复设置；
+   不要用本地开发的 `.cache/...` 路径覆盖它。`DOCUMENT_CHUNK_MAX_TOKENS` 默认 512，包含标题上下文。
+
+原件桶需预先创建并保持私有，按环境隔离。应用凭据只需覆盖本项目对象的读取、条件写入和删除；
+开启桶版本控制时也要允许读取和删除具体对象版本。应用不会创建桶或修改桶配置。不要为原件启用
+对象锁，也不要配置会绕过应用保留规则的桶级到期清理：待审核、失败、拒绝资料及已采用历史仍需保留。
+浏览器通过后端鉴权下载原件，无需桶公开读权限或浏览器侧 S3 密钥。
+
+构建环境首次安装依赖并从 Hugging Face 下载锁定的 tokenizer 文件，校验 SHA-256 后放入镜像，
+不下载 Embedding 模型权重。CI 在结构测试前也显式准备这些资源；运行时只读本地文件。
+部署时可先用新镜像做离线资源检查：
+
+```bash
+docker compose run --rm backend python -m agent_lab.prepare_document_resources --check
+```
+
+这条检查不连接数据库、S3 或模型服务。真实 S3 的字节读写、幂等和版本删除验收入口见
+[后端测试说明](../backend/README.md#测试)，只使用随机测试键；资源检查或 API `/health` 成功
+不能代替原件存储验收。
 
 ### 4. 让 deploy 用户能写静态站目录
 
@@ -268,7 +292,8 @@ docker compose logs -f backend
 CI 的完整顺序在 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) 里，
 几个顺序约束是有意的，不要调整：
 
-1. **测试在构建之前**：任何测试失败就不构建、不推送、不部署。
+1. **测试在构建之前**：后端先准备锁定 tokenizer，再运行包含真实 Docling 的离线测试；
+   任何步骤失败就不构建、不推送、不部署。
 2. **迁移在 `up -d` 之前**，且 `alembic upgrade head` 在 `agent-lab init-checkpointer`
    之前。理由见 [ADR 0004](adr/0004-checkpointer-tables-outside-alembic.md)。
 3. **后端部署在前端上传之前**：迁移失败时部署中止，前端仍是旧版本，不会出现「新前端调
@@ -277,6 +302,33 @@ CI 的完整顺序在 [`.github/workflows/deploy.yml`](../.github/workflows/depl
    直接复用本地旧镜像——表现是 CI 全绿、容器也重启了，但跑的还是上一版代码。
 
 ## 三、排查
+
+### Docling 首次切换与恢复
+
+首次从旧文档链升级到 Docling 是一次资料切换，不能只更新镜像或把旧 Collection 改名为 v3。
+旧 Point 没有候选索引身份，旧 Document 也没有可供采用或重建的冻结 Chunk。当前开发资料已获准
+清空后重新导入，不建设旧正文迁移；以下顺序需记录实际执行结果，代码提交本身不表示切换已完成：
+
+1. 准备私有 S3 桶、服务端配置、包含 tokenizer 的 ARM64 新镜像及迁移；先完成随机隔离资源验收。
+2. 核对目标 PostgreSQL、当前项目的 Collection/Alias 与原件引用，列出待清理文档数量和来源范围。
+   停止旧 backend、scheduler 及容器外 CLI，确认远端未决写入结束，避免旧版在迁移后继续写入。
+3. 用新镜像执行 `alembic upgrade head`，按已核对范围清除文档、处理记录、已采用历史、审核记录、
+   相关删除待办及对应索引和原件；只重置重新接收所必需的 Source checkpoint。
+   保留账号、KnowledgeBase 配置、Source 绑定、定时任务配置、Agent 会话和 checkpointer 历史。
+4. 使用 v3 的空目标启动新版 API 与 scheduler，上传合成 MD/TXT 并接收范围内的 FreshRSS HTML。
+   核对保存回执、原件下载、结构与 Chunk、正常自动采用、异常人工处理、旧版保留、检索和删除。
+5. 记录实际清理与重新导入的数量及失败记录，再恢复日常入口。FreshRSS 沿用首次有界同步规则，
+   重置 checkpoint 不保证回灌全部历史。存储或镜像未就绪时先保持切换未完成，不先清空资料。
+
+日常重建只复用当前已采用版本的冻结 Chunk。需要改变正文、章节或切分规则时，应生成候选并重新采用。
+重建新 generation 失败时保留原 Alias；发布结果不确定时先按下一节核实旧执行和写占用，再恢复发布：
+
+```bash
+docker compose run --rm backend agent-lab recover-index-rebuild --generation <目标代次>
+```
+
+该命令核对已发布或仍在原 Alias 的状态，不重新向量化。解析或采用失败在文档管理中重试、修正或拒绝；
+拒绝只停止使用，明确删除才清除原件和文档历史。原件、向量删除中断保留待办，需继续核对并完成清理。
 
 ### 定时任务升级与恢复
 

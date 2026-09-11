@@ -1,9 +1,9 @@
 # Agent Lab 后端
 
-本服务将 FreshRSS 新闻和上传的文本/Markdown 资料保存为 PostgreSQL Document，用 LangChain 切分成 Chunk、经
-Ollama ``bge-m3:567m`` 生成 Embedding 写入 Qdrant，并对外提供受登录保护的**只读**语义
-检索接口。写入链路是显式手动入口（CLI 与一个同步 HTTP 接口），另有定时任务调度器按
-cron 自动触发同一套执行器（进程内或独立进程两种运行形态，见下文）。
+本服务接收 FreshRSS HTML 与上传的 MD/TXT 原件，使用 MinIO/S3 持久保存，再由 Docling
+解析结构并生成带章节上下文的 Chunk。Ollama `bge-m3:567m` 消费冻结文本生成 Embedding，
+Qdrant 保存候选索引，准备成功后切换 PostgreSQL 中的已采用版本。对外提供受登录保护的只读
+语义检索与超级用户文档审核；独立 scheduler 消费持久待办，CLI、HTTP Pipeline 和定时任务复用同一处理能力。
 
 在检索之上还有一条 Agent 对话链路（``POST /agent/chat``，SSE）：一个 LangGraph 工具调用
 Agent 把上面的检索能力当工具用，在本次知识库范围内由生成式 LLM 组织带证据引用的答案。
@@ -22,14 +22,15 @@ Tool 不修改 Document 或 Qdrant；会话归属和范围写 ``agent_threads``�
 对外接口清单见 [`docs/architecture.md`](docs/architecture.md) 的「对外 HTTP 接口」，
 或启动后访问 ``/docs``。
 
-文件管理走超级用户 ``/file-documents`` API：上传创建独立 Document，明确 ID/revision 替换，
-失败索引重新排队，按 ID 删除复用既有持久待办。文件不要求 Source 或外部 URL；保存成功后
-等待既有 ``index_pending`` 执行，不在上传请求内生成向量。格式和编码约束见 OpenAPI，
-跨模块流程见 [文件生命周期](../docs/flows/file-document-lifecycle.md)。
+文件管理走超级用户 `/file-documents` API：上传创建独立 Document，按 ID、正式及管理修订替换；
+文件不要求 Source 或外部 URL。原件与待办保存成功即返回，后台正常结果自动采用，异常等待人工处理。
+`/document-management` 提供原件、候选、草稿、结构与 Chunk 预览、采用、拒绝、重试和历史查询。
+新索引失败时旧已采用版本继续可用；完整删除通过持久待办清除原件、历史和索引。格式及输入边界见
+OpenAPI，跨模块流程见 [文档生命周期](../docs/flows/file-document-lifecycle.md)。
 
 ## 外部依赖
 
-服务自身不可独立运行，需要四个外部依赖，用 Agent 对话时还要第五个：
+外部依赖按能力配置：
 
 ```text
 PostgreSQL   业务事实、账号与登录 Token。独立 Database news_vector_lc。
@@ -41,18 +42,16 @@ FreshRSS     唯一的新闻来源。动态网页回源和站点 CSS selector �
 Ollama       bge-m3:567m，1024 维。query 与 document 使用同一模型，
              换模型等于换索引空间（必须提升 schema_version 并重建）。
 Qdrant       Point 存储。current Alias 必须由部署预先准备，搜索不会创建它。
+MinIO/S3     私有原件存储。先创建桶并配置后端读写与删除权限；浏览器不直接访问桶。
 生成式 LLM   仅 /agent/* 需要。OpenAI 兼容中转站或 Ollama，二选一由 LLM_PROVIDER 决定。
              和上面的 Ollama Embedding 是两件事：Embedding 产出向量，这个产出文字，
              即使都指向同一台 Ollama 也是两套配置。不配则只有 /agent/* 返回 503。
 ```
 
-Python 版本固定 ``>=3.12,<3.13``。关键依赖当前解析版本：fastapi 0.141.1、
-fastapi-users 15.0.5、langchain 1.3.15、langchain-ollama 1.1.0、qdrant-client 1.19.0。
-Agent 链路新增：langchain-core 1.5.4、langchain-openai 1.5.1、langgraph 1.2.11、
-langgraph-checkpoint-postgres 3.1.2、langsmith 0.10.18。这里的版本号都是 ``uv.lock`` 当前
-解析结果，不是上界：装上的每个包对 ``langchain-core`` 都只要求 ``<2.0.0``，所以升级前先跑
-``uv lock --upgrade-package`` 看解析，不要照抄这些数字当约束。会话记忆直接用 ``psycopg``
-3.3.4 连 PostgreSQL，与 SQLAlchemy 的业务连接池是两套独立连接。
+Python 版本固定 `>=3.12,<3.13`，依赖声明与解析版本以 `pyproject.toml`、`uv.lock` 为准。
+Docling 使用文本解析所需的轻量依赖，锁定 Docling、docling-core 和 BGE-M3 tokenizer 资源；
+Agent 继续使用 LangChain/LangGraph，向量存储使用官方 qdrant-client。会话记忆由 psycopg
+连接 PostgreSQL，与 SQLAlchemy 的业务连接池分开。
 
 ## 启动前置条件
 
@@ -61,22 +60,26 @@ langgraph-checkpoint-postgres 3.1.2、langsmith 0.10.18。这里的版本号都�
 2. Qdrant current Alias 已存在          （搜索不会 ensure_ready）
 3. .env 配置合法                         （启动即读，非法配置直接失败）
 4. agent-lab init-checkpointer 已完成    （仅用 /agent/* 时需要；启动不建表）
+5. S3 私有桶与原件访问配置可用          （接收文件、FreshRSS 原件和完整删除需要）
+6. tokenizer 资源校验通过               （见「文档处理资源」）
+7. 独立 scheduler 正在运行              （自动消费文档待办，不需要另建 cron）
 ```
 
 第 1 步不到位时 ``/agent/*`` 会返回 503（``agent_thread_database_unavailable``）而不是崩溃：
 归属记录读不出来就不让对话开始，避免在没有归属的情况下写下一段谁都管不了的历史。
 
 应用启动**只**访问 PostgreSQL（同步环境托管管理员；``SCHEDULER_ENABLED=true`` 时调度器还会
-读一次定时任务清单），不探测 FreshRSS、Ollama 或 Qdrant，也不创建 Collection 或 Alias。
-真正的 Embedding 与 current Alias query 只在收到请求时执行；新闻同步与索引只在手动 CLI、
-``POST /pipeline/run-once`` 或调度器到点触发时发生（调度器与手动入口共用同一套写 Runtime
+读一次定时任务清单），不探测 FreshRSS、Ollama、Qdrant 或 S3，也不创建 Collection 或 Alias。
+真正的 Embedding 与 current Alias query 在查询或处理待办时执行；新闻同步由 CLI、
+`POST /pipeline/run-once` 或 cron 触发，独立 scheduler 另外持续消费文档待办（调度器与手动入口共用写 Runtime
 生命周期，取舍见 ``docs/adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md``）。
 
 **定时任务调度器有两种运行形态**（取舍见 [ADR
 0017](../docs/adr/0017-scheduler-runs-in-a-dedicated-process.md)）：
 
-- 裸进程部署（本地开发）：``SCHEDULER_ENABLED=true`` 时调度器在 uvicorn 进程内启动。此形态
-  必须保持单 uvicorn worker、单实例，否则同一任务会被重复调度。
+- 裸进程部署（本地开发）：推荐 API 保持 `SCHEDULER_ENABLED=false`，另起独立 scheduler，
+  同时承载 cron 和文档消费。旧的 `SCHEDULER_ENABLED=true` 进程内形态只启动 cron，
+  不启动文档消费者；此形态必须保持单 uvicorn worker、单实例。
 - 生产容器部署：调度跑在同镜像的独立 ``scheduler`` 容器（``python -m agent_lab.scheduler_main``），
   backend 容器由 compose 强制 ``SCHEDULER_ENABLED="false"``；``WORKER_COUNT``（默认 2）只影响
   API worker 数，与调度器无关。``.env`` 里的 ``SCHEDULER_ENABLED`` 在容器部署下被 compose 覆盖，
@@ -84,7 +87,7 @@ langgraph-checkpoint-postgres 3.1.2、langsmith 0.10.18。这里的版本号都�
 
 定时任务现在有同步、索引、旧 Document 清理三种类型。配置修改顺序统一为先停用、等当前任务执行结束、保存修改，再单独启用；停用仍允许手动触发。配置默认每 5 秒由独立 scheduler 刷新，错过 cron 不补执行。同任务互斥与清理占用由 PostgreSQL 协调，手动 Pipeline 和 CLI 也参与。
 
-清理默认预演，仅选择已完成索引且超过保留期的 Document，每批 50 连续处理，没有整次上限。失败可能保留删除待办或待核实占用，不能仅因心跳过期就解锁。规则与代价见 [ADR 0019](../docs/adr/0019-scheduled-execution-and-write-coordination.md)，排查和升级顺序见 [部署文档](../docs/container_deployment.md#定时任务升级与恢复)。
+清理默认预演，仅选择已采用且超过保留期、没有待处理候选的 Document；待审核、失败和拒绝记录不自动清理。每批 50 连续处理，没有整次上限。失败可能保留删除待办或待核实占用，不能仅因心跳过期就解锁。规则与代价见 [ADR 0019](../docs/adr/0019-scheduled-execution-and-write-coordination.md)，排查和升级顺序见 [部署文档](../docs/container_deployment.md#定时任务升级与恢复)。
 
 Agent Runtime 的装配是**非致命**的：LLM 配置缺失或会话记忆连不上时，只记异常类型（配置和
 连接串里都有凭据，异常文本可能带出来），把 ``app.state.agent_runtime`` 留成 ``None``，进程
@@ -104,6 +107,11 @@ AUTH_ADMIN_EMAIL        保底超级管理员，必须与 AUTH_ADMIN_PASSWORD �
 AUTH_ADMIN_PASSWORD     留成 AUTH_ADMIN_EMAIL= 这样的空值会因邮箱格式校验直接启动失败。
                         密码 12 到 128 字符，且不能等于邮箱。
 FRESHRSS_SYNC_CATEGORIES  分类白名单，JSON 数组。不配就同步不到任何东西。
+S3_ENDPOINT / S3_BUCKET    后端可达的 MinIO/S3 地址与预先创建的私有桶。
+S3_ACCESS_KEY / S3_SECRET_KEY  仅配置在服务端；需要读取、条件写入和删除原件的权限。
+S3_REGION / S3_ADDRESSING_STYLE  区域及 path/virtual 寻址方式，按对象存储配置。
+DOCUMENT_TOKENIZER_PATH    已准备并校验的本地 tokenizer 目录。
+DOCUMENT_CHUNK_MAX_TOKENS  包含标题与特殊 token 的文本预算，改变后须重新预览与采用。
 SCHEDULER_ENABLED         默认 false。生产 compose 对 API 强制 false、scheduler 强制 true；
                           关闭时定时任务管理 API 仍可用（可手动触发），只是不到点自动执行。
 SCHEDULER_TIMEZONE        cron 表达式的解释时区，默认 Asia/Shanghai。只影响「0 9 * * *」
@@ -148,6 +156,7 @@ uv sync
 Copy-Item .env.example .env
 # 编辑 .env，同时填写 AUTH_ADMIN_EMAIL/AUTH_ADMIN_PASSWORD；
 # 本地 HTTP 设置 AUTH_COOKIE_SECURE=false，生产 HTTPS 必须保持 true。
+uv run python -m agent_lab.prepare_document_resources
 uv run alembic upgrade head
 # 只在要用 Agent 对话页时需要：建四张 checkpoint* 会话历史表，幂等，可重复执行。
 uv run agent-lab init-checkpointer
@@ -155,6 +164,15 @@ uv run agent-lab run-once --limit-per-source 2 --batch-size 20
 uv run uvicorn agent_lab.main:app --reload --host 127.0.0.1 `
   --loop agent_lab.runtime:selector_loop_factory
 ```
+
+另开终端在 `backend/` 启动文档待办消费者；仅为该终端启用调度，API 终端保持关闭：
+
+```powershell
+$env:SCHEDULER_ENABLED="true"
+uv run python -m agent_lab.scheduler_main
+```
+
+只启动 API 不会自动推进文档解析；可用 `index-pending` 显式执行一个处理批次。
 
 ``--loop agent_lab.runtime:selector_loop_factory`` 只为解决 Windows 兼容问题：Uvicorn
 在 Windows 默认用 ProactorEventLoop，而 Psycopg 3 的异步连接要求 SelectorEventLoop。
@@ -175,17 +193,20 @@ CLI 子命令（``agent-lab``）都是显式、一次性执行后退出的：
 uv run agent-lab create-user --email someone@example.com
 uv run agent-lab create-user --email admin2@example.com --superuser
 
-# 只执行 FreshRSS -> PostgreSQL；每个白名单来源默认最多 2 篇
+# 只接收 FreshRSS 原始 HTML 到 S3 并确认 PostgreSQL 待办；每个白名单来源默认最多 2 篇
 uv run agent-lab sync-news --limit-per-source 2
 
-# 显式准备 Qdrant current Alias，并顺序处理最多 20 个 pending/failed 文档
+# 有界消费解析、采用及旧索引回收待办；明确失败的候选等待人工重试
 uv run agent-lab index-pending --batch-size 20 --stale-after-minutes 60
 
 # 先同步，再处理一个索引批次，然后退出
 uv run agent-lab run-once --limit-per-source 2 --batch-size 20
 
-# 全量重建现有 Document，包括已 indexed 的记录；选择尚未存在的 generation
+# 使用已采用版本的冻结 Chunk 重建，选择尚未存在的 generation
 uv run agent-lab rebuild-index --generation 2
+
+# 发布中断后核对已准备目标与当前 Alias，恢复映射；不重新解析或生成向量
+uv run agent-lab recover-index-rebuild --generation 2
 
 # 建 Agent 会话历史的四张 checkpoint* 表（数据库结构写入，幂等，不动业务表和 Qdrant）
 uv run agent-lab init-checkpointer
@@ -287,37 +308,28 @@ Invoke-RestMethod -Method Post `
 
 ## 知识库升级与索引重建
 
-知识库模型迁移和 v2 Payload 升级需要在恢复正常写任务前完成。原新闻索引不能直接作为
-新通用索引使用；`index-pending` 只处理待索引记录，不能替代存量数据的全量重建。
-以下是部署操作，执行前按环境权限确认：
+Docling 采用新文档处理表和 v3 索引规格。旧 v2 Point 缺少候选隔离所需身份，不能直接用于新版检索。
+本期按已确认的开发资料重置方案切换，不建设旧正文回填或双处理路径。执行顺序：
 
-1. 停止或协调现有写任务，核实没有失联/uncertain 写占用、processing 文档和删除待办。
-2. 执行 `uv run alembic upgrade head`，为已有 Source/Document 回填 news 归属及通用字段。
-3. 配置 `QDRANT_COLLECTION_SCHEMA_VERSION=v2`，执行上面的 `rebuild-index`，代次必须未存在。
-4. 命令在 sync/index 占用内构建全部文档，逐篇回读 Payload、核对版本与总数，全部通过后
-   才发布 current Alias 并更新 PostgreSQL 成功快照。构建失败保留原 Alias；发布结果不确定
-   时保留写占用，按 [写协调恢复流程](../docs/flows/scheduled-job-execution.md) 核实后恢复。
-5. 恢复应用与调度；新发现的 Source 在后台完成绑定后才会拉取文章。保留存量数据时无需
-   重新绑定已有 Source，也不重置其 checkpoint。知识数据清空重拉是另一个需确认的操作。
+1. 核对目标数据库、当前环境 Collection/Alias 和原件范围；确认旧 API、scheduler、CLI 与远端未决写入已停止。
+2. 准备私有 S3 桶、后端配置及锁定 tokenizer，执行 `uv run alembic upgrade head`。
+3. 在已授权范围内清除文档、候选、已采用历史、审核记录和对应索引；仅重置确有必要重新接收的 Source checkpoint。
+   保留账号、KnowledgeBase 配置、Source 绑定、任务配置、Agent 会话及其 checkpointer 历史。
+4. 使用 `QDRANT_COLLECTION_SCHEMA_VERSION=v3` 和空的新目标，启动新版 API 与独立 scheduler。
+   上传合成 MD/TXT，接收范围内的 FreshRSS 条目，核对原件、预览、采用、检索和删除。
+5. 记录清空和重新导入的数量、实际范围及未完成项。重置 checkpoint 后沿用 FreshRSS 首次有界同步，
+   不承诺回灌全部历史；S3 未配置时不能完成该切换。
 
-命令不删除账号、会话、checkpointer 历史、任务配置、Source 游标或旧 Collection。
-旧 Collection 经发布确认后单独清理；失败 generation 不自动复用。相同规格的运行进程
-跟随 current Alias，无需仅因 generation 变化而修改其配置。随机隔离验收通过不等于已在
-应用数据库执行升级或已完成正式发布。
+日常 `rebuild-index --generation N` 仅重建当前可用的已采用快照，复用冻结的 Chunk 与向量化文本。
+新 generation 逐篇回读核验，建立发布屏障后切换 Alias 与数据库索引映射；正文 revision 和已采用历史不变。
+切分规格变化必须重新预览、采用，不能用重建静默重切。构建失败保留原 Alias，发布中断用
+`recover-index-rebuild --generation N` 核对；写占用恢复仍需先确认旧执行与远端写入已停止。
 
-已经完成第一阶段 v2 升级的环境，第二阶段应用以下迁移：
-``c49a70d2e831`` 增加上传文件名并允许人工删除待办，``d63e0891f752`` 保存会话范围。
-``e74b9a310c65`` 同步遗留字段说明，使数据库与 ORM 元数据一致，不改字段约束或业务数据。
-已有会话回填为 news，新建会话默认所有启用知识库。新增 Payload 文件名是可空字段，
-已有 v2 Point 缺省仍可读取，不要求为本次多库范围或文件入口重建全部索引。
-升级仍须作为独立部署步骤，经确认后在应用启动前执行；本地测试不会升级共享 schema。
-降级会移除文件名和会话范围字段，必须先完成所有人工删除待办；不得据此宣称保留第二阶段功能。
-
-只检查本次迁移生成的 SQL、不连接数据库：
+迁移 `f7c1d2e3a4b5` 增加处理、已采用版本和审核记录，表结构以迁移与 ORM 为准。部署操作独立于
+离线测试；随机隔离验收通过不表示应用数据库已迁移或已切换。只生成 SQL、不连接数据库：
 
 ```powershell
-uv run alembic upgrade b38f9a7c6d21:head --sql
-uv run alembic downgrade head:b38f9a7c6d21 --sql
+uv run alembic upgrade e74b9a310c65:head --sql
 ```
 
 ## 文档处理资源
@@ -347,7 +359,7 @@ uv run python -m agent_lab.prepare_document_resources --check
 uv run pytest -q tests/test_scheduler_runner.py
 ```
 
-默认测试完全离线，不访问 PostgreSQL、FreshRSS、Ollama 或 Qdrant。需要完整离线回归时执行：
+默认测试完全离线，不访问 PostgreSQL、FreshRSS、Ollama、Qdrant 或 S3。需要完整离线回归时执行：
 
 ```powershell
 uv run pytest -q
@@ -368,11 +380,24 @@ $env:RUN_POSTGRES_AUTH_INTEGRATION_TEST="1"
 uv run pytest -q tests/test_auth_environment_integration.py
 ```
 
-真实 Ollama 的 query 与批量 document Embedding；校验维度一致且数值有限：
+真实 Ollama 的 query 与批量 document Embedding，并核对冻结 Chunk 的本地/服务端 token 计数；需要本地 tokenizer 资源：
 
 ```powershell
 $env:RUN_OLLAMA_INTEGRATION_TEST="1"
 uv run pytest -q tests/test_ollama_embedding_integration.py
+```
+
+真实 MinIO/S3 原件生命周期使用已有私有桶中的随机 `acceptance/docling/` 对象键，覆盖原始字节、
+幂等条件写入、冲突不覆盖及按版本删除。不建桶、不更改桶版本设置、不读取或清空其他对象；
+需要配置 `S3_*` 与相应权限。结果及测试键写入 `.pytest_cache/docling-s3-report.json`，默认跳过：
+
+```powershell
+$env:RUN_S3_INTEGRATION_TEST="1"
+try {
+  uv run pytest -q --tb=short tests/test_document_storage_integration.py
+} finally {
+  Remove-Item Env:RUN_S3_INTEGRATION_TEST
+}
 ```
 
 真实远程 Qdrant 的 Collection/Alias/Point 生命周期；只写随机隔离命名的测试 Collection
@@ -390,10 +415,14 @@ uv run pytest -q --tb=short --scheduler-configured-services `
   tests/test_knowledge_postgres_integration.py `
   tests/test_scheduler_postgres_integration.py `
   tests/test_scheduler_retention_integration.py `
-  tests/test_file_documents_integration.py
+  tests/test_file_documents_integration.py `
+  tests/test_processing_postgres_integration.py `
+  tests/test_document_review_integration.py `
+  tests/test_document_deletion_integration.py `
+  tests/test_document_rebuild_integration.py
 ```
 
-这组测试会生成常规 pytest/Python 缓存，不生成新闻导出文件。强制终止测试可能留下带 ``scheduler_test_`` 标识的资源，须先确认测试进程已退出再清理。离线测试不能证明多进程数据库锁、跨库恢复或实际部署；上面的隔离验证也只覆盖合成数据，不等于生产发布验收。
+这组测试的原件存储仍使用替身，不能作为真实 S3 验收。测试会生成常规 pytest/Python 缓存，不生成新闻导出文件。强制终止测试可能留下带 ``scheduler_test_`` 标识的资源，须先确认测试进程已退出再清理。离线测试不能证明多进程数据库锁、跨库恢复或实际部署；上面的隔离验证也只覆盖合成数据，不等于生产发布验收。
 
 第二阶段文件验证可只运行 ``tests/test_file_documents_integration.py``：覆盖上传到索引、检索、
 全文和替换，以及不同状态按 ID 删除、Qdrant 确认后数据库失败恢复、定时清理排除人工待办。
@@ -460,9 +489,9 @@ uv run pytest -q tests/test_scheduled_task_registry.py tests/test_scheduler_runn
 # 增量同步与正文质量
 uv run pytest -q tests/test_freshrss_incremental_sync.py tests/test_content_quality.py
 
-# 切分、Embedding、Payload 与索引状态机
-uv run pytest -q tests/test_document_pipeline.py tests/test_ollama_embedding.py `
-  tests/test_qdrant_vector_store.py tests/test_document_indexing_service.py
+# 真实 Docling 解析、冻结 Chunk、原件协议与审核契约（外部服务仍为替身）
+uv run pytest -q tests/test_document_processing.py tests/test_ollama_embedding.py `
+  tests/test_candidate_index.py tests/test_document_storage.py tests/test_document_review_api.py
 ```
 
 ## Alembic

@@ -1,7 +1,8 @@
 # Agent Lab
 
 仓库当前的业务领域是知识库语义检索：新闻与上传资料归属不同 KnowledgeBase，共用
-Document、Chunk 和同规格向量索引。PostgreSQL 保存当前文档，Qdrant 提供语义检索。
+Document、Chunk 和同规格向量索引。MinIO/S3 保存原件，PostgreSQL 保存候选、已采用版本和审核记录，
+Qdrant 提供语义检索；MD 与 FreshRSS HTML 使用 Docling 解析并按结构生成 Chunk，TXT 保持纯文本语义。
 
 该工作区把知识库服务与浏览器工作台作为两个独立运行时维护：
 
@@ -30,9 +31,11 @@ LangGraph checkpointer 存在 PostgreSQL 的四张 `checkpoint*` 表里。Agent 
 `/admin/users` 创建和管理其他账号。普通账号只能读取，超级用户额外拥有账号管理、
 Agent 对话、知识库/来源/文件管理与手动 Pipeline 权限，CLI 只保留为恢复入口。
 
-超级用户在 `/admin/files` 上传 `.txt`、`.md`，指定归属知识库，查看当前正文和索引状态，
-或按 Document ID 替换、重试索引、删除。同名上传是独立文档，替换使用 revision 检查并发；
-保存成功后仍需既有索引任务处理，才会进入检索结果。
+超级用户在 `/admin/files` 上传 `.txt`、`.md`，指定归属知识库，或按 Document ID 替换、删除。
+原件和待办保存成功即返回，独立 scheduler 在后台解析并处理采用；正常结果自动索引，异常留待人工处理。
+`/admin/documents` 统一管理文件和 FreshRSS 资料，可对照原件、编辑正文、检查标题目录与 Chunk、
+采用、拒绝和查看历史。同名上传是独立文档，替换携带正式及管理修订检查并发；新索引准备成功后
+才切换，失败保留旧已采用版本。首次采用前，普通全文、检索和 Agent 均不可读取候选。
 
 Agent 为每次提问保存实际范围和可核对的引用。点击引用可对照当时取得的片段与当前原文；
 原文更新、删除或知识库停用时明确提示。会话范围另存于 `agent_threads`，较早问答压缩后
@@ -42,7 +45,7 @@ Agent 为每次提问保存实际范围和可核对的引用。点击引用可�
 ## 本地启动
 
 前置：需要一个可连接的 PostgreSQL（独立 Database `news_vector_lc`，表结构由 Alembic 迁移建），
-`DATABASE_URL` 指向它；Qdrant 与 Ollama 的安装和配置见 `backend/README.md` 的「外部依赖」。
+`DATABASE_URL` 指向它；Qdrant、Ollama 和 MinIO/S3 私有桶的配置见 `backend/README.md` 的「外部依赖」。
 
 先启动后端：
 
@@ -52,12 +55,23 @@ uv sync
 Copy-Item .env.example .env
 # 编辑 .env：同时配置 AUTH_ADMIN_EMAIL、AUTH_ADMIN_PASSWORD，
 # 并在本地 HTTP 环境设置 AUTH_COOKIE_SECURE=false。
+# 文档接收还需配置 S3_ENDPOINT、S3_BUCKET、S3_ACCESS_KEY、S3_SECRET_KEY。
 # 要用 Agent 对话页还需配置 LLM_API_KEY（缺失时只有 /agent/* 返回 503，检索照常）。
+uv run python -m agent_lab.prepare_document_resources
 uv run alembic upgrade head
 uv run agent-lab init-checkpointer   # 只建 Agent 会话历史表，与 Alembic 互不干涉
 uv run uvicorn agent_lab.main:app --reload --host 127.0.0.1 --port 8000 `
   --loop agent_lab.runtime:selector_loop_factory
 ```
+
+另开终端，在 `backend/` 启动文档待办消费者；仅在这个终端启用调度，API 终端保持关闭：
+
+```powershell
+$env:SCHEDULER_ENABLED="true"
+uv run python -m agent_lab.scheduler_main
+```
+
+文档消费不依赖新增 cron；只启动 API 时，上传仍会保存，但后台处理不会自动推进。
 
 再启动前端：
 

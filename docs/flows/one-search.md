@@ -1,7 +1,7 @@
 # 一次检索
 
 跨前端 `pages/` → `features/semantic-search/` → `api/`，后端 `api/` → `services/` → `qdrant/`
-加两个外部服务。本文只记跨模块顺序、两次请求的分工和失败边界。
+以及 PostgreSQL、Ollama 和 Qdrant。本文只记跨模块顺序、两次请求的分工和失败边界。
 
 ## 用户感知的「一次检索」其实是两次请求
 
@@ -11,7 +11,7 @@
 ```
 
 第一次请求先用 PostgreSQL 解析实际启用 KnowledgeBase 范围，再走 Ollama 和 Qdrant。
-搜索不逐篇回查正文，避免每条命中增加一次数据库查询；用户打开全文时才读取 Document。
+搜索读取可用版本快照，并在向量查询后批量核验文档状态；不逐篇回查正文。用户打开全文时才读取已采用正文。
 
 代价是列表页拿不到正文。要展示摘要就只能用 Qdrant payload 里已有的字段，不能临时回表。
 
@@ -28,7 +28,8 @@ SearchPage.vue
             └─ services/vector_search_service.py
                 ├─ KnowledgeBaseScope    解析所有启用库或非空集合；旧 HTTP 缺省 news
                 ├─ Ollama    query 向量化 + 按索引规格校验向量
-                └─ qdrant/search.py       grouped query，一次只读查询
+                └─ knowledge/visibility.py    可用实例过滤及查询后状态核验
+                    └─ qdrant/search.py       grouped query；状态变化时有界重查
 ```
 
 检索页重构后把每次搜索追加成一条「检索记录」形成向下长的检索流（最新贴顶、旧记录折叠、
@@ -39,14 +40,17 @@ SearchPage.vue
 和数组响应。每条检索记录保留提交选择、实际集合和名称，随后改选或改名不重写已有记录。
 Agent 复用范围解析，但选择保存在会话中，每次运行冻结后只允许 Tool 进一步缩小。
 
-后端顺序固定：**核验知识库、向量化、查询 Qdrant**。向量化后还要对着当前索引规格
+后端先核验知识库并向量化，再按可用版本查询 Qdrant、批量核验结果。向量化后还要对着当前索引规格
 （维度、模型）校验一遍，不合就直接报错——避免用错模型的向量去查，那会返回看似正常
 但完全不相关的结果。
 
+候选写入、采用、拒绝、删除和重建可能与查询并发。后端只返回当前可用的已采用实例；状态漂移时
+重新查询，无法取得一致结果时返回可重试失败。不能仅在结果末尾删掉无效项而让它们占用文档名额。
+
 ## 排序和去重在后端
 
-Qdrant 的 grouped query 按 `document_id` 分组，`document_limit` 控制返回几篇、
-`matches_per_document` 控制每篇几个片段。结果按每篇最高分降序。
+Qdrant 的 grouped query 先按独立索引实例分组，后端核验当前可用性后投影成每篇 Document 的结果。
+`document_limit` 控制返回几篇，`matches_per_document` 控制每篇几个片段。结果按每篇最高分降序。
 
 **前端不重排、不聚合、不二次去重**（`features/semantic-search/model/search-result.ts` 的
 `toNewsDocumentResults` 注释有同样的说明）。前端再排一遍的话，两边规则一有出入，用户看到的
