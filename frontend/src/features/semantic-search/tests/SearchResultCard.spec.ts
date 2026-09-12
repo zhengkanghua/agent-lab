@@ -35,7 +35,7 @@ const result = {
 describe('SearchResultCard', () => {
   it('renders source, title, score and labels', () => {
     const wrapper = mount(SearchResultCard, {
-      props: { result, rank: 0 },
+      props: { result },
     })
 
     expect(wrapper.text()).toContain('测试来源')
@@ -46,9 +46,19 @@ describe('SearchResultCard', () => {
     expect(wrapper.find('a').attributes('href')).toBe(result.url)
   })
 
+  it('降噪后没有序号列与「最佳命中」标签，score 收成安静数字 chip', () => {
+    const wrapper = mount(SearchResultCard, {
+      props: { result },
+    })
+
+    expect(wrapper.text()).not.toContain('文档 2 段')
+    expect(wrapper.text()).not.toContain('最佳命中')
+    expect(wrapper.get('.score-chip').text()).toBe('0.912')
+  })
+
   it('expands the full best-match text and collapses it again', async () => {
     const wrapper = mount(SearchResultCard, {
-      props: { result, rank: 0 },
+      props: { result },
     })
     const expandButton = wrapper.get('.best-expand')
     const excerpt = wrapper.get('.result-excerpt')
@@ -67,7 +77,7 @@ describe('SearchResultCard', () => {
 
   it('expands and collapses the other related matches in the same result', async () => {
     const wrapper = mount(SearchResultCard, {
-      props: { result, rank: 0 },
+      props: { result },
     })
     const toggle = wrapper.get('.related-toggle')
 
@@ -84,7 +94,6 @@ describe('SearchResultCard', () => {
     const wrapper = mount(SearchResultCard, {
       props: {
         result: { ...result, additionalMatches: [] },
-        rank: 0,
       },
     })
 
@@ -93,7 +102,7 @@ describe('SearchResultCard', () => {
 
   it('emits the selected document and trigger when opening full text', async () => {
     const wrapper = mount(SearchResultCard, {
-      props: { result, rank: 0 },
+      props: { result },
     })
 
     await wrapper.get('.read-button').trigger('click')
@@ -110,7 +119,6 @@ describe('SearchResultCard', () => {
     const wrapper = mount(SearchResultCard, {
       props: {
         result: { ...result, title: longTitle, publishedAt: null, labels },
-        rank: 0,
       },
     })
 

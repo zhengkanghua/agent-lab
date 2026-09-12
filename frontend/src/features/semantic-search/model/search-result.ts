@@ -98,11 +98,6 @@ export function formatScore(value: number): string {
 /** 片段折叠阈值：超过这个字符数的正文先截断，由卡片自己提供展开开关。 */
 export const COLLAPSED_CHARACTERS = 520
 
-/** 结果序号的展示形式，从 0 起的下标转成 01、02 这样的定宽编号。 */
-export function formatRankLabel(rank: number): string {
-  return String(rank + 1).padStart(2, '0')
-}
-
 /** 作者行：去空白、去重、最多列两位，更多时以「等」收尾。 */
 export function formatAuthorLine(authors: string[]): string {
   const unique = [...new Set(authors.map((author) => author.trim()).filter(Boolean))]

@@ -23,7 +23,6 @@ function mountComposer(overrides: Partial<ComposerProps> = {}) {
       loading: false,
       inputError: null,
       remainingCharacters: 4088,
-      hasRecords: false,
       preferenceSummary: '每次检索 10 篇 · 每篇 3 条（在设置中调整）',
       ...overrides,
     },
@@ -59,22 +58,20 @@ describe('SearchComposer', () => {
     expect(wrapper.get('.search-submit').attributes('aria-label')).toBe('搜索文档')
   })
 
-  it('shows the clear-stream button only after there are records', async () => {
-    const wrapper = mountComposer({ hasRecords: false })
-    expect(wrapper.find('.clear-button').exists()).toBe(false)
+  it('输入区坐在共享的 ComposerDock 里，与 Agent 输入条同一颗坞', () => {
+    const wrapper = mountComposer()
 
-    await wrapper.setProps({ hasRecords: true })
-    expect(wrapper.find('.clear-button').exists()).toBe(true)
+    const dock = wrapper.get('section[aria-label="语义检索输入条"]')
+    expect(dock.find('.query-input').exists()).toBe(true)
+    expect(dock.find('.search-submit').exists()).toBe(true)
   })
 
-  it('emits submit on form submit and clear on the clear button', async () => {
-    const wrapper = mountComposer({ hasRecords: true })
+  it('emits submit on form submit', async () => {
+    // 「清空检索流」不在这条输入条上：它是整页的主操作，唯一的一枚在外壳侧栏（新检索）。
+    const wrapper = mountComposer()
 
     await wrapper.get('form').trigger('submit')
     expect(wrapper.emitted('submit')).toHaveLength(1)
-
-    await wrapper.get('.clear-button').trigger('click')
-    expect(wrapper.emitted('clear')).toHaveLength(1)
   })
 
   it('Enter sends while composing is ignored and shift+enter does not send', async () => {

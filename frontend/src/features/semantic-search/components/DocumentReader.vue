@@ -244,7 +244,7 @@ function handleKeydown(event: KeyboardEvent): void {
   display: flex;
   justify-content: flex-end;
   background: var(--surface-overlay);
-  backdrop-filter: blur(2px);
+  /* 严禁加 backdrop-filter：Chromium 切换深浅主题时会引起视口黑帧伪影。 */
 }
 
 .reader-panel {

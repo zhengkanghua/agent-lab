@@ -1,18 +1,20 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Eraser, Search, SlidersHorizontal } from '@lucide/vue'
+import { Search, SlidersHorizontal } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseField from '@/shared/ui/BaseField.vue'
+import ComposerDock from '@/shared/ui/ComposerDock.vue'
 import { MAX_QUERY_CHARACTERS } from '../model/search-validation'
 
 /* 检索页顶部常驻的输入条（Q3 / Q4 模型二）。
  *
- * 去掉了「按片段」模式切换和 idle/搜后两态切换：这一条固定在页面顶部、始终同样形态，
- * 输入在顶、最新检索记录顶在其正下方，视觉上构成一条连续向下的检索流。
+ * 视觉外壳是共享的 ComposerDock（与 Agent 输入条同一颗坞）；本组件只管输入行为：
+ * Enter 提交（输入法组合期间不提交）、字数上界、提交后把焦点还给输入框。
  *
  * 数量参数不在这里：它们是全局默认、影响之后所有检索的偏好，归设置中心的「检索偏好」
- * 分区（可发现、可持久）；输入条只留一个跳转入口（右下角滑杆图标），悬停能看到当前值。
+ * 分区（可发现、可持久）；输入条只留一个跳转入口（底栏滑杆图标），悬停能看到当前值。
+ * 知识库范围选择器由页面经 #scope 插槽放进底栏左侧：组件不管它的数据。
  */
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
@@ -24,8 +26,6 @@ const props = withDefaults(
     disabled?: boolean
     inputError: string | null
     remainingCharacters: number
-    /** 是否已有一条以上检索记录：决定「清空检索流」要不要出现。 */
-    hasRecords: boolean
     /** 悬停在设置入口上时展示的当前参数摘要，如「每次 10 篇 · 每篇 3 条」。 */
     preferenceSummary?: string
   }>(),
@@ -35,7 +35,6 @@ const props = withDefaults(
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   submit: []
-  clear: []
 }>()
 
 const draft = computed({
@@ -65,87 +64,69 @@ defineExpose({ focusInput })
 </script>
 
 <template>
-  <section class="composer" aria-label="语义检索输入条" style="container-type: inline-size">
-    <form class="search-form" :aria-busy="loading" @submit.prevent="emit('submit')">
-      <div class="query-container" :class="{ 'has-error': !!inputError }">
-        <BaseField
-          id="search-query"
-          label="研究内容"
-          :error="inputError ?? undefined"
-          class="query-field"
+  <!-- form 包住整颗坞：发送键住在坞的底栏插槽里，type=submit 要求它在表单内。 -->
+  <form class="search-form" :aria-busy="loading" @submit.prevent="emit('submit')">
+    <ComposerDock label="语义检索输入条">
+      <BaseField
+        id="search-query"
+        label="研究内容"
+        :error="inputError ?? undefined"
+        class="query-field"
+      >
+        <template #default="{ control }">
+          <textarea
+            ref="textareaRef"
+            v-bind="control"
+            v-model="draft"
+            class="query-input"
+            name="query"
+            rows="1"
+            :maxlength="MAX_QUERY_CHARACTERS"
+            placeholder="搜索文档中的问题或主题..."
+            @keydown.enter="onEnter"
+          ></textarea>
+        </template>
+      </BaseField>
+
+      <template #bar-left>
+        <!-- 知识库范围选择器由页面塞进来（数据与刷新归页面管），这里只留位。 -->
+        <slot name="scope" />
+
+        <!-- 数量参数的入口迁去了设置中心；这里保留一个能直达的图标，
+             不让「在哪里调参数」变成需要翻文档才知道的事。 -->
+        <RouterLink
+          class="prefs-link"
+          :to="{ name: 'settings', params: { section: 'search' } }"
+          aria-label="检索偏好设置"
+          :title="preferenceSummary ?? '检索偏好设置'"
         >
-          <template #default="{ control }">
-            <textarea
-              ref="textareaRef"
-              v-bind="control"
-              v-model="draft"
-              class="query-input"
-              name="query"
-              rows="1"
-              :maxlength="MAX_QUERY_CHARACTERS"
-              placeholder="搜索文档中的问题或主题..."
-              @keydown.enter="onEnter"
-            ></textarea>
-          </template>
-        </BaseField>
+          <SlidersHorizontal :size="16" aria-hidden="true" />
+        </RouterLink>
+      </template>
 
-        <div class="query-actions">
-          <span class="character-count" :class="counterTone" aria-hidden="true">
-            {{ remainingCharacters.toLocaleString('zh-CN') }}
-          </span>
+      <template #bar-right>
+        <span class="character-count" :class="counterTone" aria-hidden="true">
+          {{ remainingCharacters.toLocaleString('zh-CN') }}
+        </span>
 
-          <!-- 数量参数的入口迁去了设置中心；这里保留一个能直达的图标，
-               不让「在哪里调参数」变成需要翻文档才知道的事。 -->
-          <RouterLink
-            class="prefs-link"
-            :to="{ name: 'settings', params: { section: 'search' } }"
-            aria-label="检索偏好设置"
-            :title="preferenceSummary ?? '检索偏好设置'"
-          >
-            <SlidersHorizontal :size="16" aria-hidden="true" />
-          </RouterLink>
-
-          <BaseButton
-            v-if="hasRecords"
-            class="clear-button"
-            variant="ghost"
-            size="sm"
-            aria-label="清空当前检索流"
-            title="清空当前检索流"
-            :disabled="loading"
-            @click="emit('clear')"
-          >
-            <template #icon><Eraser :size="16" aria-hidden="true" /></template>
-          </BaseButton>
-
-          <BaseButton
-            class="search-submit"
-            variant="primary"
-            size="sm"
-            type="submit"
-            aria-label="搜索文档"
-            title="搜索文档"
-            :loading="loading"
-            :disabled="disabled || (!draft.trim() && !loading)"
-          >
-            <template #icon><Search :size="16" stroke-width="2.4" aria-hidden="true" /></template>
-          </BaseButton>
-        </div>
-      </div>
-    </form>
-  </section>
+        <BaseButton
+          class="search-submit"
+          variant="primary"
+          size="sm"
+          type="submit"
+          aria-label="搜索文档"
+          title="搜索文档"
+          :loading="loading"
+          :disabled="disabled || (!draft.trim() && !loading)"
+        >
+          <template #icon><Search :size="16" stroke-width="2.4" aria-hidden="true" /></template>
+        </BaseButton>
+      </template>
+    </ComposerDock>
+  </form>
 </template>
 
 <style scoped>
-.composer {
-  padding: 0;
-}
-
-.search-form {
-  display: flex;
-  flex-direction: column;
-}
-
 /* 字段标签与字数说明的接线归 BaseField。输入框留在这里：高度、resize、聚焦态是本页专有的。 */
 .query-input {
   display: block;
@@ -169,34 +150,6 @@ defineExpose({ focusInput })
   font-weight: var(--fw-normal);
 }
 
-.query-container {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-soft);
-  transition:
-    border-color var(--duration-fast) ease,
-    box-shadow var(--duration-fast) ease;
-}
-
-.query-container:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-ring);
-}
-
-.query-container.has-error {
-  border-color: var(--danger);
-  box-shadow: 0 0 0 3px var(--danger-soft);
-}
-
-.query-field {
-  flex: 1;
-}
-
 /* 隐藏视觉标签，仅为读屏保留 */
 .query-field :deep(.field-label) {
   border: 0;
@@ -214,35 +167,7 @@ defineExpose({ focusInput })
   display: none;
 }
 
-.query-field :deep(.field-error) {
-  position: absolute;
-  bottom: -22px;
-  left: 0;
-  margin: 0;
-  font-size: var(--fs-xs);
-}
-
-.query-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-bottom: 4px;
-}
-
-.character-count {
-  color: var(--text-tertiary);
-  font-family: var(--mono-font);
-  font-size: var(--fs-xs);
-  padding-right: 4px;
-}
-
-.character-count.is-near {
-  color: var(--warning);
-}
-
-.character-count.is-over {
-  color: var(--danger);
-}
+/* 校验错误用 BaseField 的普通流内提示：在坞内展开，把底栏自然推下去。 */
 
 /* 设置入口与 BaseIconButton 的视觉一档对齐（同尺寸、同悬停），
    但它是链接——要中键新开、要读屏报「链接」。 */
@@ -276,24 +201,38 @@ defineExpose({ focusInput })
   }
 }
 
-.clear-button {
-  color: var(--text-secondary);
-  border-radius: var(--radius-lg);
-}
-
-.clear-button :deep(svg) {
+.character-count {
   color: var(--text-tertiary);
+  font-family: var(--mono-font);
+  font-size: var(--fs-xs);
+  padding-right: 4px;
 }
 
+.character-count.is-near {
+  color: var(--warning);
+}
+
+.character-count.is-over {
+  color: var(--danger);
+}
+
+/* 圆形发送键：有字才实色（primary 的 disabled 态），空时灰。 */
 .search-submit {
-  min-width: 44px; /* Icon button style since text is removed */
-  border-radius: var(--radius-lg);
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
   padding: 0;
-  width: 44px;
-  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
+  border-radius: 50%;
+}
+
+@media (pointer: coarse) {
+  .search-submit {
+    width: var(--tap-target);
+    height: var(--tap-target);
+  }
 }
 
 @container (max-width: 600px) {

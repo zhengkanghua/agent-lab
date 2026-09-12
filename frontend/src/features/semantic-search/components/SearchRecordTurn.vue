@@ -136,10 +136,9 @@ function toggle(): void {
         class="result-list"
       >
         <SearchResultCard
-          v-for="(result, index) in record.results"
+          v-for="result in record.results"
           :key="result.documentId"
           :result="result"
-          :rank="index"
           @read="(item, trigger) => emit('read', item, trigger)"
         />
       </TransitionGroup>
@@ -152,7 +151,6 @@ function toggle(): void {
   position: relative;
   padding-left: 32px;
   background: transparent;
-  transition: opacity 200ms ease;
 }
 
 .record::before {
@@ -160,19 +158,14 @@ function toggle(): void {
   position: absolute;
   top: 26px;
   bottom: -12px;
-  left: 6px;
-  width: 2px;
+  left: 2.5px;
+  width: 1px;
   background: var(--surface-sunken);
   border-radius: var(--radius-pill);
 }
 
 .record:last-child::before {
   bottom: 0;
-}
-
-/* 折叠态记录更沉静：弱化透明度等。 */
-.record.is-collapsed {
-  opacity: 0.8;
 }
 
 .record.is-error::before {
@@ -188,13 +181,13 @@ function toggle(): void {
 .record-mark {
   position: absolute;
   left: 0;
-  top: 14px;
-  width: 14px;
-  height: 14px;
+  top: 19px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   color: transparent;
   background: var(--accent);
-  box-shadow: 0 0 0 4px var(--surface-base);
+  box-shadow: 0 0 0 3px var(--surface-base);
   z-index: var(--z-local);
 }
 
@@ -208,12 +201,17 @@ function toggle(): void {
   gap: 12px;
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 52px;
+  min-height: 44px;
   padding: 8px 14px;
   border: 0;
+  border-radius: var(--radius-md);
   background: transparent;
   text-align: left;
   cursor: pointer;
+}
+
+.record-toggle:hover:not(.record-toggle--static) {
+  background: var(--surface-sunken);
 }
 
 .record-toggle--static {
@@ -230,7 +228,7 @@ function toggle(): void {
   overflow: hidden;
   color: var(--text-primary);
   font-size: var(--fs-base);
-  font-weight: var(--fw-bold);
+  font-weight: var(--fw-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
   transition: color 150ms ease;
@@ -344,14 +342,6 @@ function toggle(): void {
 @container (max-width: 600px) {
   .record {
     padding-left: 20px;
-  }
-  .record::before {
-    left: 4px;
-  }
-  .record-mark {
-    width: 10px;
-    height: 10px;
-    top: 16px;
   }
 
   .record-body {

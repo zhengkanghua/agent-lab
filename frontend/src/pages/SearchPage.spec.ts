@@ -77,6 +77,9 @@ describe('SearchPage search stream', () => {
 
     expect(wrapper.find('.empty-state').exists()).toBe(true)
     expect(wrapper.find('.stream').exists()).toBe(false)
+    // 空态问候是这一屏的主角；「只给原文」的工具定位说明回到空态里。
+    expect(wrapper.get('h2').text()).toBe('想查点什么？')
+    expect(wrapper.text()).toContain('文档检索 · 只给原文')
     await flushPromises()
 
     await wrapper.get('textarea').setValue('央行利率')
@@ -85,6 +88,8 @@ describe('SearchPage search stream', () => {
 
     expect(fetchMock.mock.calls.some(([input]) => input === '/api/document-search')).toBe(true)
     expect(wrapper.find('.empty-state').exists()).toBe(false)
+    // 检索开始后问候退场，让位给检索流。
+    expect(wrapper.find('h2').exists()).toBe(false)
     expect(wrapper.findAll('.record')).toHaveLength(1)
     expect(wrapper.findAll('.result-card')).toHaveLength(1)
     wrapper.unmount()
@@ -154,7 +159,8 @@ describe('SearchPage search stream', () => {
     await flushPromises()
     expect(wrapper.findAll('.record')).toHaveLength(1)
 
-    await wrapper.get('.clear-button').trigger('click')
+    // 「清空检索流」已上移为外壳主操作「新检索」，整页唯一入口。
+    await wrapper.get('.primary-button').trigger('click')
     await flushPromises()
     expect(wrapper.find('.empty-state').exists()).toBe(true)
     expect(wrapper.findAll('.record')).toHaveLength(0)

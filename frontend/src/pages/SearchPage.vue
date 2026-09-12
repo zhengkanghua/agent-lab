@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
-import { Bot, Search } from '@lucide/vue'
 import AppShell from '@/layouts/AppShell.vue'
-import { authSession, useLogout } from '@/features/auth'
+import { useLogout } from '@/features/auth'
 import { usePreferences } from '@/features/settings'
 import BaseSuggestionList from '@/shared/ui/BaseSuggestionList.vue'
 import KnowledgeBaseScopePicker from '@/shared/ui/KnowledgeBaseScopePicker.vue'
@@ -47,11 +46,6 @@ const { loggingOut, logoutError, logout } = useLogout()
 /** 用户手动展开过的旧记录的 id（latest 不需要进这里，恒展开）。 */
 const expandedIds = ref<Set<number>>(new Set())
 
-const isSuperuser = computed(() => authSession.user.value?.is_superuser === true)
-const navLinks = computed(() => [
-  { to: { name: 'agent-chat' }, label: 'Agent 对话', icon: Bot, visible: isSuperuser.value },
-])
-
 /** 悬停在输入条设置入口上时给的当前值摘要。 */
 const preferenceSummary = computed(
   () =>
@@ -92,6 +86,13 @@ async function clearStream(): Promise<void> {
   expandedIds.value = new Set()
 }
 
+/** 外壳主操作「新检索」：清空检索流、把焦点还给输入框，和 ChatGPT 的 New chat 同一体感。 */
+async function startNewSearch(): Promise<void> {
+  await clearStream()
+  await nextTick()
+  composerRef.value?.focusInput()
+}
+
 function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | null): void {
   void reader.open(result, trigger)
 }
@@ -99,23 +100,20 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
 
 <template>
   <AppShell
-    brand-title="Signal Desk"
-    brand-subtitle="知识库工作台"
-    brand-label="Signal Desk 首页"
-    brand-href="/"
+    active="search"
     main-id="search-workspace"
     skip-label="跳到检索工作台"
-    :nav-links="navLinks"
-    mode-label="文档检索"
-    mode-detail="只给原文"
+    primary-label="新检索"
     :logging-out="loggingOut"
     :logout-error="logoutError"
+    @primary="startNewSearch"
     @logout="logout"
   >
-    <template #brand-icon><Search :size="19" stroke-width="2.2" /></template>
-
     <main id="search-workspace" class="workspace" :class="{ 'is-empty': !hasRecords }">
       <h1 class="sr-only">知识库语义检索</h1>
+
+      <!-- 空态问候是主角：还没检索时，整页只回答一个问题——想查点什么。 -->
+      <h2 v-if="!hasRecords" class="empty-greeting">想查点什么？</h2>
 
       <!-- 顶部常驻输入条。检索页不渲染页脚：底部要让位给向下长的检索流。 -->
       <div class="composer-dock" :class="{ 'is-sticky': hasRecords }">
@@ -125,19 +123,20 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
           :loading="stream.isSearching.value"
           :input-error="stream.inputError.value"
           :remaining-characters="stream.remainingCharacters.value"
-          :has-records="hasRecords"
           :preference-summary="preferenceSummary"
           :disabled="scope.error.value !== null"
           @submit="submitSearch()"
-          @clear="clearStream"
-        />
-        <KnowledgeBaseScopePicker
-          v-model="scope.selection.value"
-          :knowledge-bases="scope.knowledgeBases.value"
-          :error="scope.error.value"
-          :loading="scope.loading.value"
-          @refresh="scope.refresh"
-        />
+        >
+          <template #scope>
+            <KnowledgeBaseScopePicker
+              v-model="scope.selection.value"
+              :knowledge-bases="scope.knowledgeBases.value"
+              :error="scope.error.value"
+              :loading="scope.loading.value"
+              @refresh="scope.refresh"
+            />
+          </template>
+        </SearchComposer>
       </div>
 
       <!-- 空态：还没有任何检索记录。只有示例，点一下直接搜。 -->
@@ -147,6 +146,9 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
           aria-label="示例检索"
           @select="submitSearch"
         />
+        <!-- 「只给原文」的工具定位说明：P1 从外壳区移除后回到空态——
+             空态正是「这个页面是什么」的说明位。 -->
+        <p class="empty-note">文档检索 · 只给原文</p>
       </div>
 
       <!-- 检索流：最新贴顶展开，旧记录折叠。 -->
@@ -179,13 +181,13 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
 </template>
 
 <style scoped>
-/* 整页占满「视口 - 顶栏」；单列检索流用检索流宽度居中，比 agent 页的阅读宽度
-   宽一档容纳结果卡的混合排版（令牌取舍见 tokens.css 与 ADR 0016）。 */
+/* 整页占满「视口 - 汉堡条」（桌面端没有 bar，值即视口高）；单列检索流用检索流宽度居中，
+   比 agent 页的阅读宽度宽一档容纳结果卡的混合排版（令牌取舍见 tokens.css 与 ADR 0016）。 */
 .workspace {
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - var(--app-topbar-height, 69px));
-  min-height: calc(100dvh - var(--app-topbar-height, 69px));
+  min-height: calc(100vh - var(--app-header-offset, 0px));
+  min-height: calc(100dvh - var(--app-header-offset, 0px));
 }
 
 .workspace.is-empty {
@@ -206,7 +208,7 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
 
 .composer-dock.is-sticky {
   position: sticky;
-  top: var(--app-topbar-height, 69px);
+  top: var(--app-header-offset, 0px);
   border-bottom-color: var(--surface-sunken);
   /* 半透明表面用 --surface-scrim（96% 不透明）。不配 backdrop-filter：
      那点模糊肉眼不可见，却会在主题切换时闪出一帧黑色矩形（Chromium 伪影）。 */
@@ -225,6 +227,25 @@ function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | n
 .empty-state {
   width: min(100%, calc(var(--reading-width) - 140px));
   margin: 0 auto;
+}
+
+/* 空态问候是这一屏的主角（2026-09 重设计 P2-D）。展示字体令牌只给
+   空态问候与登录主标这两处开关，默认回退无衬线。 */
+.empty-greeting {
+  margin: 0 0 18px;
+  color: var(--text-primary);
+  font-family: var(--display-font);
+  font-size: var(--fs-3xl);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-heading);
+  text-align: center;
+}
+
+.empty-note {
+  margin: 14px 0 0;
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+  text-align: center;
 }
 
 @media (max-width: 560px) {

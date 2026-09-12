@@ -131,30 +131,38 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   align-items: flex-start;
   gap: 8px;
-  padding: 8px 2px;
   font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
 details {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   position: relative;
 }
+/* 安静胶囊：底栏里的一个过滤器入口，不是主操作——描边用弱档、悬停不沾强调色，
+   把 accent 的 5% 面积纪律留给发送键。 */
 summary {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
   min-height: 32px;
-  padding: 4px 6px;
-  border-radius: var(--radius-sm);
+  padding: 4px 11px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
   cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-out-smooth),
+    color var(--duration-fast) var(--ease-out-smooth),
+    background-color var(--duration-fast) var(--ease-out-smooth);
 }
 summary::-webkit-details-marker {
   display: none;
 }
-summary:hover,
-.scope-refresh:hover:not(:disabled) {
-  color: var(--accent);
+summary:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
   background: var(--surface-hover);
 }
 .scope-chevron {
@@ -176,7 +184,6 @@ fieldset {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
-  right: 0;
   z-index: var(--z-popover);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -184,7 +191,9 @@ fieldset {
   box-shadow: var(--shadow-soft);
   padding: 12px 14px;
   margin: 0;
-  min-width: 0;
+  /* 宽随内容、不拉伸到胶囊同宽：触发器收成胶囊后，全宽面板会大得突兀。 */
+  min-width: 260px;
+  max-width: min(340px, 80vw);
 }
 .scope-modes,
 .scope-choices {
@@ -209,8 +218,8 @@ input {
   flex-shrink: 0;
 }
 .scope-refresh {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
   border: 0;
@@ -218,6 +227,11 @@ input {
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
+}
+
+.scope-refresh:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--surface-hover);
 }
 .scope-error {
   flex-basis: 100%;
