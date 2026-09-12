@@ -3,6 +3,7 @@ import { computed, onMounted } from 'vue'
 import { Check, Plus } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseDialog from '@/shared/ui/BaseDialog.vue'
 import { authSession } from '@/features/auth'
 import {
   UserCreateForm,
@@ -53,16 +54,17 @@ onMounted(() => {
       </BaseButton>
     </div>
 
-    <UserCreateForm
-      v-if="createForm.expanded.value"
-      v-model:email="createForm.email.value"
-      v-model:password="createForm.password.value"
-      v-model:superuser="createForm.superuser.value"
-      :error="createForm.error.value"
-      :submitting="createForm.submitting.value"
-      @submit="createForm.submit"
-      @close="createForm.close"
-    />
+    <BaseDialog :open="createForm.expanded.value" label="创建账号" @close="createForm.close">
+      <UserCreateForm
+        v-model:email="createForm.email.value"
+        v-model:password="createForm.password.value"
+        v-model:superuser="createForm.superuser.value"
+        :error="createForm.error.value"
+        :submitting="createForm.submitting.value"
+        @submit="createForm.submit"
+        @close="createForm.close"
+      />
+    </BaseDialog>
 
     <UserDirectorySummary :stats="directory.stats.value" />
 

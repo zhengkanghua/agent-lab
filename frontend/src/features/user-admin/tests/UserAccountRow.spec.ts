@@ -102,9 +102,10 @@ describe('UserAccountRow', () => {
   )
 
   it('三种身份各给一句说明，当前账号能被认出来', () => {
-    expect(mountRow({ user: user({ is_environment_admin: true }) }).text()).toContain(
-      '由部署 Secret 托管',
-    )
+    // 环境托管行用中性描边徽章（全文说明在 title 上），不再是警示色裸文本。
+    const managedRow = mountRow({ user: user({ is_environment_admin: true }) })
+    expect(managedRow.text()).toContain('环境托管')
+    expect(managedRow.get('.managed-badge').attributes('title')).toContain('部署 Secret')
     expect(mountRow({ user: user({ id: CURRENT_USER_ID }) }).text()).toContain('当前账号')
     expect(mountRow().text()).toContain('数据库账号')
   })

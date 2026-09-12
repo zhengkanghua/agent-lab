@@ -109,7 +109,7 @@ describe('UserAdminPage', () => {
     const wrapper = await mountPage()
 
     expect(wrapper.text()).toContain('admin@example.com')
-    expect(wrapper.text()).toContain('由部署 Secret 托管')
+    expect(wrapper.text()).toContain('环境托管')
     expect(
       wrapper.get(`[data-testid="active-${environmentAdmin.id}"]`).attributes(),
     ).toHaveProperty('disabled')

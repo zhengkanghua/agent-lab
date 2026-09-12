@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, ShieldCheck } from '@lucide/vue'
+import { X } from '@lucide/vue'
 import AppShell from '@/layouts/AppShell.vue'
-import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 import { authSession, useLogout } from '@/features/auth'
 import {
   AccountSection,
@@ -17,9 +17,10 @@ import {
 /**
  * 设置中心：账号安全、检索偏好、Agent 偏好（超管）都在这里。
  *
- * 分区由路由参数决定（/settings/search 可刷新、可收藏，和 /agent/:threadId 同一个
- * 取舍），分区组件按需渲染。Agent 偏好分区只对超级用户有意义——后端 /agent/* 只放行
- * 超管，普通用户编辑了提示词也没有地方生效；路由守卫会把这来访客送回账号分区。
+ * 桌面端是外壳内容区上的居中浮层（2026-09 重设计 P4）：路由与深链不变，
+ * /settings/search 等地址仍然直达；侧栏在浮层之外保持可点，导航离开就是出口。
+ * 窄屏（≤720px）回退整页形态——没有遮罩与 Esc，dialog 语义一并撤掉。
+ * 分区由路由参数决定，分区组件按需渲染。Agent 偏好分区只对超级用户有意义。
  */
 const route = useRoute()
 const router = useRouter()
@@ -89,52 +90,157 @@ watch(
     window.scrollTo({ top: 0 })
   },
 )
+
+/* 浮层与整页的切换（同外壳抽屉的 innerWidth 检测）。 */
+const isFloating = ref(window.innerWidth > 720)
+
+function updateViewport(): void {
+  isFloating.value = window.innerWidth > 720
+}
+
+const panelRef = ref<HTMLElement | null>(null)
+
+/** 关闭浮层：有来路就回上一页（多半是从检索页的偏好入口进来的），否则回工作台。
+ *  离开确认不在这里做——onBeforeRouteLeave 守卫统一拦，Esc 和侧栏导航走同一条路。 */
+function closeSettings(): void {
+  const historyState = router.options.history.state as { back?: string | null }
+  if (historyState.back != null) router.back()
+  else void router.push({ name: 'search' })
+}
+
+/** 桌面端浮层点击外部半透明遮罩关闭。 */
+function onOverlayClick(): void {
+  if (isFloating.value) {
+    closeSettings()
+  }
+}
+
+/* Esc 关闭与 Tab 循环只在浮层形态生效（模式与外壳抽屉一致）。 */
+function onPanelKeydown(event: KeyboardEvent): void {
+  if (!isFloating.value) return
+  if (event.key === 'Escape') {
+    event.stopPropagation()
+    closeSettings()
+    return
+  }
+  if (event.key !== 'Tab') return
+  const focusables = panelRef.value?.querySelectorAll<HTMLElement>(
+    'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  )
+  if (!focusables || focusables.length === 0) return
+  const first = focusables[0]!
+  const last = focusables[focusables.length - 1]!
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('resize', updateViewport)
+  if (isFloating.value) panelRef.value?.focus()
+})
+onScopeDispose(() => window.removeEventListener('resize', updateViewport))
 </script>
 
 <template>
-  <!-- 账号页原本不渲染页脚，那是单屏表单页的取舍；设置中心是内容页，页脚回来。 -->
   <AppShell
-    brand-title="Signal Desk"
-    brand-subtitle="知识库语义研究台"
-    brand-label="Signal Desk 首页"
-    brand-href="/"
+    active="settings"
     main-id="settings-page"
     skip-label="跳到设置内容"
     :logging-out="loggingOut"
     :logout-error="logoutError"
     @logout="requestLogout"
   >
-    <template #brand-icon><ShieldCheck :size="19" stroke-width="2.2" /></template>
-
     <main id="settings-page" class="settings-page">
-      <header class="settings-heading">
-        <h1>设置中心</h1>
-        <BaseButton variant="ghost" size="sm" :to="{ name: 'search' }">
-          <template #icon><ArrowLeft :size="15" aria-hidden="true" /></template>
-          返回工作台
-        </BaseButton>
-      </header>
-      <div class="settings-layout">
-        <SettingsNav class="settings-rail" :section="section" :is-superuser="isSuperuser" />
+      <div
+        class="settings-overlay"
+        :class="{ 'is-floating': isFloating }"
+        @click.self="onOverlayClick"
+      >
+        <section
+          ref="panelRef"
+          class="settings-panel"
+          :role="isFloating ? 'dialog' : undefined"
+          :aria-modal="isFloating ? 'true' : undefined"
+          aria-label="设置中心"
+          :tabindex="isFloating ? -1 : undefined"
+          @keydown="onPanelKeydown"
+        >
+          <header class="settings-heading">
+            <h1>设置中心</h1>
+            <BaseIconButton
+              v-if="isFloating"
+              class="panel-close"
+              label="关闭设置"
+              size="sm"
+              @click="closeSettings"
+            >
+              <X :size="17" aria-hidden="true" />
+            </BaseIconButton>
+          </header>
 
-        <div class="settings-content">
-          <AccountSection v-if="section === 'account'" :user="authSession.user.value" />
-          <SearchPreferencesSection v-else-if="section === 'search'" />
-          <AgentPromptSection
-            v-else-if="section === 'agent' && isSuperuser"
-            v-model="agentPromptDraft"
-          />
-        </div>
+          <div class="settings-layout">
+            <SettingsNav class="settings-rail" :section="section" :is-superuser="isSuperuser" />
+
+            <div class="settings-content">
+              <AccountSection v-if="section === 'account'" :user="authSession.user.value" />
+              <SearchPreferencesSection v-else-if="section === 'search'" />
+              <AgentPromptSection
+                v-else-if="section === 'agent' && isSuperuser"
+                v-model="agentPromptDraft"
+              />
+            </div>
+          </div>
+        </section>
       </div>
     </main>
   </AppShell>
 </template>
 
 <style scoped>
+/* 整页形态（≤720px 回退）：内容居中收窄，遮罩与吸附一概没有。 */
 .settings-page {
   width: min(calc(100% - 48px), 960px);
   margin: 0 auto;
   padding: var(--space-6) 0 var(--space-8);
+}
+
+/* 桌面浮层：盖在内容区上。侧栏的 z 层更高（--z-drawer-sidebar 40 > 35），
+   遮罩盖不住它——侧栏导航是设置的第二条合法出口，不该被挡。 */
+.settings-overlay.is-floating {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-drawer-overlay);
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  background: var(--surface-overlay);
+}
+
+.settings-panel {
+  min-width: 0;
+}
+
+.settings-overlay.is-floating .settings-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(720px, 100%);
+  max-height: calc(100dvh - var(--space-6) * 2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-soft);
+  overflow: hidden;
+}
+
+/* 焦点由面板容器持有（tabindex=-1），容器自己不画环：环是给键盘用户的控件提示，
+   面板整体不是控件。 */
+.settings-panel:focus {
+  outline: none;
 }
 
 .settings-heading {
@@ -142,7 +248,8 @@ watch(
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: var(--space-6);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .settings-heading h1 {
@@ -151,18 +258,28 @@ watch(
   font-weight: var(--fw-bold);
 }
 
-/* 左导航右内容：商业设置页的标准两栏。左栏自适应内容宽、sticky 跟随滚动，
-   右栏吃掉剩余宽度。 */
+/* 左导航右内容：商业设置页的标准两栏。内容超高时整个面板体滚动，
+   左导航吸在滚动区顶部。 */
 .settings-layout {
   display: grid;
-  grid-template-columns: 224px minmax(0, 1fr);
-  gap: var(--space-6);
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: var(--space-5);
   align-items: start;
+}
+
+.settings-overlay.is-floating .settings-layout {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: var(--space-5);
 }
 
 .settings-rail {
   position: sticky;
-  top: calc(var(--app-topbar-height, 69px) + 16px);
+  top: calc(var(--app-header-offset, 0px) + 16px);
+}
+
+.settings-overlay.is-floating .settings-rail {
+  top: 0;
 }
 
 .settings-content {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Eye, EyeOff, LogIn, RefreshCw, ScanSearch, Search } from '@lucide/vue'
+import { Eye, EyeOff, LogIn, RefreshCw, Search } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
 import { resolveErrorCopy } from '@/api/error-copy'
 import { queryClient } from '@/app/query-client'
@@ -69,8 +69,10 @@ async function retrySessionCheck(): Promise<void> {
 
 <template>
   <div class="login-shell" style="container-type: inline-size">
-    <header class="login-topbar">
-      <div class="login-wrap topbar-inner">
+    <main class="login-main">
+      <!-- 居中单列（2026-09 重设计 P5）：小品牌锁、28px 主标、一句说明、一张表单卡。
+           原左右分栏的装饰图形与英文微大写撤掉了——「精心设计过的简陋感」的来源。 -->
+      <section class="login-card" aria-labelledby="login-title">
         <a class="login-brand" href="/" aria-label="Signal Desk 首页">
           <span class="brand-mark" aria-hidden="true">
             <Search :size="19" stroke-width="2.2" />
@@ -80,36 +82,9 @@ async function retrySessionCheck(): Promise<void> {
             <small>知识库语义研究台</small>
           </span>
         </a>
-        <span class="access-label">受限访问</span>
-      </div>
-    </header>
 
-    <main class="login-wrap login-main">
-      <section class="login-context" aria-labelledby="login-title">
-        <p class="login-kicker">内部研究工作台</p>
-        <h1 id="login-title">进入资料研究台</h1>
+        <h1 id="login-title" class="login-title">进入资料研究台</h1>
         <p class="login-intro">使用平台管理员为你创建的账号继续。</p>
-
-        <div class="signal-register" aria-hidden="true">
-          <div class="register-heading">
-            <ScanSearch :size="27" stroke-width="1.8" />
-            <span>SEMANTIC INDEX / ACCESS</span>
-          </div>
-          <div class="register-lines">
-            <span class="register-line register-line-long"></span>
-            <span class="register-line register-line-medium"></span>
-            <span class="register-line register-line-short"></span>
-            <span class="register-line register-line-long"></span>
-          </div>
-          <span class="register-locator"></span>
-        </div>
-      </section>
-
-      <section class="login-tool" aria-labelledby="credentials-title">
-        <div class="tool-heading">
-          <p>账号登录</p>
-          <h2 id="credentials-title">验证访问身份</h2>
-        </div>
 
         <div v-if="sessionUnavailable" class="login-notice" role="status">
           <span>登录服务暂时不可用。</span>
@@ -180,35 +155,44 @@ async function retrySessionCheck(): Promise<void> {
             {{ submitting ? '正在登录' : '登录' }}
           </BaseButton>
         </form>
-
-        <p class="account-note">账号由平台管理员创建和管理。</p>
       </section>
     </main>
+
+    <footer class="login-footnote">受限访问 · 账号由管理员创建</footer>
   </div>
 </template>
 
 <style scoped>
 .login-shell {
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
+  background: var(--surface-base);
+}
+
+.login-main {
+  display: grid;
+  flex: 1 1 auto;
+  place-items: center;
+  padding: var(--space-8) var(--space-5);
+}
+
+/* 表单卡：16 圆角、细描边、轻阴影。输入框皮肤与 44px 高度归全站的 BaseInput。 */
+.login-card {
+  width: min(100%, 420px);
+  padding: var(--space-8) var(--space-8) var(--space-6);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
   background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
 }
 
-/* .topbar-inner、.brand-mark、.brand-copy 见 styles/components/topbar.css。
-   容器不复用 .content-wrap：登录页刻意收窄到 1080px（正文页是 --content-width 1420px），
-   且换行断点是 560px 而非 720px，两者只是形状相似，不是同一个容器。 */
-.login-wrap {
-  width: min(calc(100% - 48px), 1080px);
-  margin: 0 auto;
-}
-
-.login-topbar {
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--surface-raised);
-}
-
+/* 品牌锁：brand-mark / brand-copy 见 styles/components/topbar.css（LoginPage 仍是
+   这组共享类的合法使用方）。卡片内居中。 */
 .login-brand {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  justify-content: center;
   gap: 11px;
   color: inherit;
   text-decoration: none;
@@ -226,130 +210,22 @@ async function retrySessionCheck(): Promise<void> {
   font-size: var(--fs-xs);
 }
 
-.access-label {
-  /* 页面角的常驻状态字，不是「可看可不看」的 tertiary：深色下 tertiary 对比度
-     不足会糊进顶栏，用 secondary 保住 4.5:1。 */
-  color: var(--text-secondary);
-  font-family: var(--mono-font);
-  font-size: var(--fs-xs);
-}
-
-.login-main {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 430px);
-  align-items: center;
-  min-height: calc(100vh - 69px);
-  padding-top: 64px;
-  padding-bottom: 72px;
-}
-
-.login-context {
-  min-width: 0;
-  padding-right: 72px;
-}
-
-.login-kicker,
-.tool-heading p {
-  color: var(--text-secondary);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-bold);
-}
-
-.login-context h1 {
-  margin-top: 10px;
+.login-title {
+  margin-top: var(--space-6);
   color: var(--text-primary);
-  font-size: var(--fs-4xl);
-  font-weight: var(--fw-bold);
+  font-family: var(--display-font);
+  font-size: var(--fs-3xl);
+  font-weight: var(--fw-semibold);
   letter-spacing: 0;
-  line-height: 1.12;
+  line-height: var(--lh-heading);
+  text-align: center;
 }
 
 .login-intro {
-  margin-top: 17px;
-  color: var(--text-secondary);
-  font-size: var(--fs-base);
-}
-
-.signal-register {
-  position: relative;
-  max-width: 480px;
-  height: 190px;
-  margin-top: 52px;
-  overflow: hidden;
-  border-top: 1px solid var(--border-subtle);
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.register-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 20px 0 17px;
-  color: var(--accent);
-}
-
-.register-heading span {
+  margin-top: 10px;
   color: var(--text-tertiary);
-  font-family: var(--mono-font);
-  font-size: var(--fs-xs);
-}
-
-.register-lines {
-  display: grid;
-  gap: 13px;
-}
-
-.register-line {
-  display: block;
-  height: 5px;
-  background: var(--surface-sunken);
-}
-
-.register-line-long {
-  width: 88%;
-}
-
-.register-line-medium {
-  width: 68%;
-}
-
-.register-line-short {
-  width: 46%;
-}
-
-.register-locator {
-  position: absolute;
-  top: 59px;
-  bottom: 18px;
-  left: 34%;
-  width: 3px;
-  background: var(--accent);
-}
-
-.register-locator::after {
-  position: absolute;
-  top: 35px;
-  left: -5px;
-  width: 13px;
-  height: 13px;
-  border: 3px solid var(--surface-raised);
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
-  content: '';
-}
-
-.login-tool {
-  padding: 12px 0 12px 64px;
-  border-left: 1px solid var(--border-subtle);
-}
-
-.tool-heading h2 {
-  margin-top: 7px;
-  font-size: var(--fs-2xl);
-  font-weight: var(--fw-bold);
-  letter-spacing: 0;
-  line-height: 1.2;
+  font-size: var(--fs-sm);
+  text-align: center;
 }
 
 .login-notice {
@@ -357,10 +233,11 @@ async function retrySessionCheck(): Promise<void> {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-top: 24px;
+  margin-top: var(--space-5);
   padding: 12px 14px;
   border: 1px solid var(--border-subtle);
   border-left: 3px solid var(--warning);
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   background: var(--surface-base);
   font-size: var(--fs-xs);
@@ -374,8 +251,8 @@ async function retrySessionCheck(): Promise<void> {
 
 .login-form {
   display: grid;
-  gap: 20px;
-  margin-top: 31px;
+  gap: var(--space-4);
+  margin-top: var(--space-6);
 }
 
 /* 标签、错误、说明与 aria 接线都归 BaseField；输入框皮肤归 BaseInput（全站一份）。
@@ -401,81 +278,20 @@ async function retrySessionCheck(): Promise<void> {
   margin-bottom: var(--space-2);
 }
 
-.account-note {
-  margin-top: 22px;
+.login-footnote {
+  padding: var(--space-4) var(--space-5) var(--space-5);
   color: var(--text-tertiary);
   font-size: var(--fs-xs);
+  text-align: center;
 }
 
-@container (max-width: 820px) {
+@container (max-width: 480px) {
   .login-main {
-    grid-template-columns: 1fr;
-    align-content: start;
-    gap: 44px;
-    padding-top: 46px;
+    padding: var(--space-6) var(--space-4);
   }
 
-  .login-context {
-    padding-right: 0;
-  }
-
-  .signal-register {
-    height: 150px;
-    margin-top: 36px;
-  }
-
-  .login-tool {
-    max-width: 560px;
-    padding: 40px 0 0;
-    border-top: 1px solid var(--border-subtle);
-    border-left: 0;
-  }
-}
-
-@container (max-width: 560px) {
-  .login-wrap {
-    width: min(calc(100% - 30px), 1080px);
-  }
-
-  .topbar-inner {
-    min-height: 62px;
-  }
-
-  .login-brand small,
-  .access-label {
-    display: none;
-  }
-
-  .login-main {
-    gap: 34px;
-    padding-top: 34px;
-    padding-bottom: 48px;
-  }
-
-  .login-context h1 {
-    font-size: var(--fs-3xl);
-  }
-
-  .signal-register {
-    height: 125px;
-    margin-top: 29px;
-  }
-
-  .register-heading {
-    padding: 15px 0 13px;
-  }
-
-  .register-lines {
-    gap: 9px;
-  }
-
-  .register-locator {
-    top: 49px;
-    bottom: 12px;
-  }
-
-  .login-tool {
-    padding-top: 31px;
+  .login-card {
+    padding: var(--space-6) var(--space-5) var(--space-5);
   }
 }
 </style>

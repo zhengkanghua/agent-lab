@@ -70,6 +70,10 @@ const visibleSections = computed(() =>
 </template>
 
 <style scoped>
+.settings-nav {
+  container-type: inline-size;
+}
+
 .section-list {
   display: grid;
   gap: 4px;
@@ -130,6 +134,19 @@ const visibleSections = computed(() =>
   margin-top: 1px;
   color: var(--text-tertiary);
   font-size: var(--fs-xs);
+}
+
+/* 浮层里的左导航只有 160px：描述文字放不下，收成图标 + 名称（容器查询，
+   由所在容器宽度决定，与视口断点解耦）。 */
+@container (max-width: 190px) {
+  .section-link {
+    padding: 9px 10px;
+    gap: 9px;
+  }
+
+  .section-description {
+    display: none;
+  }
 }
 
 /* 窄屏：横向滚动条。描述文字撤掉，只留图标 + 名称。 */

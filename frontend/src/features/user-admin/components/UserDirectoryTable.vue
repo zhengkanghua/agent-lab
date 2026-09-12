@@ -172,9 +172,11 @@ function resetPasswordFor(user: UserAdminDto): string | null {
   --user-row-columns: minmax(235px, 1.7fr) minmax(115px, 0.7fr) minmax(125px, 0.8fr)
     minmax(115px, 0.7fr) minmax(220px, 1.3fr);
 
-  border-top: 1px solid var(--text-primary);
+  border-top: 1px solid var(--border-strong);
 }
 
+/* 表头 12/600 三级灰（2026-09 重设计 P4）：不再用等宽大写冒充「表头感」，
+   层级靠字重与颜色。 */
 .user-table-head {
   display: grid;
   grid-template-columns: var(--user-row-columns);
@@ -182,9 +184,8 @@ function resetPasswordFor(user: UserAdminDto): string | null {
   padding: 10px 14px;
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-tertiary);
-  font-family: var(--mono-font);
   font-size: var(--fs-xs);
-  text-transform: uppercase;
+  font-weight: var(--fw-semibold);
 }
 
 .align-right {

@@ -68,16 +68,16 @@ try {
   // 1) 登录页（未登录态）
   authed = false
   await page.goto(`${BASE}/login`, { waitUntil: 'domcontentloaded' })
-  await shot(page, '01-login', '.login-tool')
+  await shot(page, '01-login', '.login-card')
 
   // 2) 检索页 · 待输入
   authed = true
   await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' })
-  await shot(page, '02-search-idle', '.composer')
+  await shot(page, '02-search-idle', '.composer-dock')
 
   // 3) 检索页 · 结果
   await page.fill('textarea', '央行近期是否调整利率？')
-  await page.click('.composer button[type="submit"]')
+  await page.click('.composer-dock button[type="submit"]')
   await page.waitForSelector('.result-card', { timeout: 8000 })
   await page.waitForTimeout(400)
   const file = resolve(OUT, '03-search-results.png')
@@ -121,7 +121,7 @@ try {
   const mobileSearch = await context.newPage()
   await mobileSearch.setViewportSize({ width: 390, height: 844 })
   await mobileSearch.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' })
-  await shot(mobileSearch, '09-search-mobile', '.composer')
+  await shot(mobileSearch, '09-search-mobile', '.composer-dock')
 } finally {
   await browser.close()
 }

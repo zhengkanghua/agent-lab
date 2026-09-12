@@ -60,6 +60,11 @@ function save(): void {
   }, 2500)
 }
 
+/** 草稿退回已保存值。与「清空并恢复默认」不同：它不落盘，只是不保存这次编辑。 */
+function discardDraft(): void {
+  draft.value = preferences.agentSystemPrompt
+}
+
 /** 用服务端默认的那份覆盖草稿，仍需点保存才生效。 */
 function fillDefault(): void {
   if (defaultPrompt.value !== null) draft.value = defaultPrompt.value
@@ -124,6 +129,9 @@ function clearPrompt(): void {
       <div class="editor-actions">
         <BaseButton variant="primary" size="sm" :disabled="!canSave" @click="save">
           保存
+        </BaseButton>
+        <BaseButton variant="ghost" size="sm" :disabled="!isDirty" @click="discardDraft">
+          放弃修改
         </BaseButton>
         <BaseButton
           variant="ghost"
@@ -242,11 +250,20 @@ function clearPrompt(): void {
   color: var(--danger);
 }
 
+/* 底部吸附保存条（2026-09 重设计 P4）：浮层里内容滚动时保存键始终可见，
+   整页形态下吸附文档滚动，同效。负 margin 把这一行拉到卡片边缘并吃掉卡片的
+   底 padding，sticky bottom 才贴得住滚动视口。 */
 .editor-actions {
+  position: sticky;
+  bottom: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
-  margin-top: var(--space-4);
+  margin: var(--space-4) calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
+  padding: var(--space-3) var(--space-5) var(--space-4);
+  background: var(--surface-raised);
+  border-top: 1px solid var(--border-subtle);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 }
 </style>

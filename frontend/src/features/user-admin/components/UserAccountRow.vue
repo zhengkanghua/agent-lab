@@ -72,7 +72,14 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
       </span>
       <span class="user-copy">
         <strong>{{ user.email }}</strong>
-        <small v-if="managed" class="managed-note">由部署 Secret 托管</small>
+        <small
+          v-if="managed"
+          class="managed-badge"
+          title="由部署 Secret 托管，请修改 Secret 后重启服务"
+        >
+          <ShieldCheck :size="11" aria-hidden="true" />
+          环境托管
+        </small>
         <small v-else-if="isCurrentUser">当前账号</small>
         <small v-else>数据库账号</small>
       </span>
@@ -94,7 +101,9 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
         />
         <span aria-hidden="true"></span>
       </label>
-      <small>{{ user.is_active ? '启用' : '停用' }}</small>
+      <span class="status-chip" :class="user.is_active ? 'is-on' : 'is-off'" role="status">
+        {{ user.is_active ? '启用' : '停用' }}
+      </span>
     </div>
 
     <div class="status-cell" role="cell">
@@ -113,7 +122,9 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
         />
         <span aria-hidden="true"></span>
       </label>
-      <small>{{ user.is_superuser ? '超级用户' : '普通用户' }}</small>
+      <span class="status-chip" :class="user.is_superuser ? 'is-on' : 'is-off'" role="status">
+        {{ user.is_superuser ? '超级用户' : '普通用户' }}
+      </span>
     </div>
 
     <div class="created-cell" role="cell">
@@ -134,6 +145,7 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
       </button>
       <button
         type="button"
+        class="action-danger"
         :disabled="busy"
         :data-testid="`sessions-${user.id}`"
         @click="emit('revoke-sessions')"
@@ -169,15 +181,16 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
   grid-template-columns: var(--user-row-columns);
   align-items: center;
   gap: 18px;
-  min-height: 88px;
-  padding: 15px 14px;
+  /* 行高 52（2026-09 重设计 P4 的表格规范）。 */
+  min-height: 52px;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface-raised);
   transition: background-color 200ms ease;
 }
 
 .user-row:hover {
-  background: var(--surface-base);
+  background: var(--surface-sunken);
 }
 
 .environment-row {
@@ -210,8 +223,8 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   border: 1px solid var(--border-subtle);
   border-radius: 50%;
   color: var(--accent);
@@ -245,15 +258,43 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
   font-size: var(--fs-xs);
 }
 
-.managed-note {
-  color: var(--warning);
-  font-family: var(--mono-font);
+/* 环境托管徽章：中性描边 + 小盾牌（2026-09 重设计 P4）。行级的 warning 左条与
+   斜纹仍保留——徽章解释身份，行纹标记「整行改不动」。 */
+.managed-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  padding: 1px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
 }
 
 .status-cell {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* 状态软胶囊：启用/超级用户 = accent-soft 底松绿字，停用/普通 = 灰。
+   开关表达操作，胶囊表达状态——两个说法都在，扫一眼不用猜。 */
+.status-chip {
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+}
+
+.status-chip.is-on {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.status-chip.is-off {
+  color: var(--text-secondary);
+  background: var(--surface-sunken);
 }
 
 .switch-control {
@@ -278,7 +319,7 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-pill);
   background: var(--surface-sunken);
-  transition: background 140ms ease;
+  transition: background 150ms ease;
 }
 
 .switch-control > span::after {
@@ -291,7 +332,7 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
   background: var(--surface-raised);
   box-shadow: var(--shadow-inset-chip);
   content: '';
-  transition: transform 140ms ease;
+  transition: transform 150ms ease;
 }
 
 .switch-control input:checked + span {
@@ -326,28 +367,52 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
   gap: 7px;
 }
 
+/* 行内操作 ghost 小键：透明底、悬停浮色；整行悬停或键盘聚焦时才显现，
+   触屏常驻（同 ThreadListItem 删除键的先例）。危险操作单独 danger 色。 */
 .row-actions button {
   display: inline-flex;
   align-items: center;
   min-height: 32px;
   gap: 6px;
   padding: 0 9px;
-  border: 1px solid var(--border-subtle);
+  border: 0;
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
-  background: var(--surface-raised);
+  background: transparent;
   font-size: var(--fs-xs);
   font-weight: var(--fw-semibold);
+  opacity: 0;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease,
+    opacity 150ms ease;
+}
+
+.user-row:hover .row-actions button:not(:disabled),
+.row-actions button:focus-visible,
+.row-actions button:disabled {
+  opacity: 1;
 }
 
 .row-actions button:hover:not(:disabled) {
-  border-color: var(--accent);
   color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.row-actions button.action-danger:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 
 .row-actions button:disabled {
   cursor: not-allowed;
   opacity: 0.42;
+}
+
+@media (pointer: coarse) {
+  .row-actions button {
+    opacity: 1;
+  }
 }
 
 /* 重置表单与错误行都占满整行：它们属于这一行，不属于某一列。

@@ -352,11 +352,10 @@ function onSubmit(): void {
 </template>
 
 <style scoped>
+/* 挂进 BaseDialog 后容器感（底色、描边、圆角）归对话框面板，这里只留内边距与滚动。 */
 .job-editor {
-  padding: 25px 28px 27px;
-  border-top: 3px solid var(--accent);
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--surface-base);
+  padding: var(--space-5);
+  overflow-y: auto;
 }
 
 .editor-heading {

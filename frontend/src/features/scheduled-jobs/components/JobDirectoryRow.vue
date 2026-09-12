@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { History, Pencil, Play, Trash2 } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
+import BaseDialog from '@/shared/ui/BaseDialog.vue'
 import type { JobRunDto, ScheduledJobDto } from '@/api/scheduled-jobs'
 import { formatBeijingTime, formatLastRunSummary, taskTypeLabel } from '../model/job-copy'
 import JobRunHistory from './JobRunHistory.vue'
@@ -74,6 +75,7 @@ function onDeleteClick(): void {
       <code class="job-cron" role="cell" :title="job.cron_expr">{{ job.cron_expr }}</code>
 
       <label class="job-toggle" role="cell">
+        <!-- 真 checkbox 留在可达性树里，track 只是外观（同账号表的开关）。 -->
         <input
           type="checkbox"
           :checked="job.enabled"
@@ -81,7 +83,10 @@ function onDeleteClick(): void {
           :aria-label="`启用 ${job.key}`"
           @change="toggleEnabled"
         />
-        <span>{{ job.enabled ? '已启用' : '已停用' }}</span>
+        <span class="switch-track" aria-hidden="true"></span>
+        <span class="status-chip" :class="job.enabled ? 'is-on' : 'is-off'" role="status">
+          {{ job.enabled ? '已启用' : '已停用' }}
+        </span>
       </label>
 
       <div class="job-schedule" role="cell">
@@ -142,6 +147,7 @@ function onDeleteClick(): void {
           <BaseButton
             variant="ghost"
             size="xs"
+            class="danger-action"
             :disabled="busy || executionPending"
             :aria-label="`确认删除 ${job.key}`"
             @click="onDeleteClick"
@@ -157,6 +163,7 @@ function onDeleteClick(): void {
           v-else
           variant="ghost"
           size="xs"
+          class="danger-action"
           :disabled="busy || executionPending"
           :aria-label="`删除 ${job.key}`"
           @click="onDeleteClick"
@@ -169,7 +176,15 @@ function onDeleteClick(): void {
 
     <BaseCallout v-if="error" class="job-error" tone="danger" :description="error" />
 
-    <slot v-if="isEditOpen && !job.enabled && !executionPending" name="edit" />
+    <!-- 编辑表单收进统一对话框（2026-09 重设计 P4）：展开状态仍是这一行的，
+         关闭走表单自己的取消键或 Esc，都汇到 toggle-edit。 -->
+    <BaseDialog
+      :open="isEditOpen && !job.enabled && !executionPending"
+      :label="`编辑任务 ${job.key}`"
+      @close="emit('toggle-edit', job)"
+    >
+      <slot v-if="isEditOpen && !job.enabled && !executionPending" name="edit" />
+    </BaseDialog>
 
     <JobRunHistory
       v-if="isHistoryOpen"
@@ -200,12 +215,14 @@ function onDeleteClick(): void {
   );
   align-items: center;
   gap: 18px;
-  padding: 14px 10px;
+  /* 行高 52（2026-09 重设计 P4 的表格规范）。 */
+  min-height: 52px;
+  padding: 8px 10px;
 }
 
 .job-block:focus-within,
 .job-row:hover {
-  background: var(--surface-hover);
+  background: var(--surface-sunken);
 }
 
 .job-identity {
@@ -243,19 +260,83 @@ function onDeleteClick(): void {
 }
 
 .job-toggle {
-  min-width: 0;
-  display: flex;
+  position: relative;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: var(--text-secondary);
-  font-size: var(--fs-xs);
+  min-width: 0;
   cursor: pointer;
 }
 
+/* 真 checkbox 留在 DOM 里、只是看不见：键盘与读屏都还操作它，
+   track 只是它的外观。display:none 会把它从可达性树里摘掉。 */
 .job-toggle input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent);
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.switch-track {
+  position: relative;
+  display: block;
+  width: 32px;
+  height: 18px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunken);
+  transition: background 150ms ease;
+}
+
+.switch-track::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-inset-chip);
+  content: '';
+  transition: transform 150ms ease;
+}
+
+.job-toggle input:checked + .switch-track {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.job-toggle input:checked + .switch-track::after {
+  transform: translateX(14px);
+}
+
+.job-toggle input:focus-visible + .switch-track {
+  outline: 3px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+
+.job-toggle input:disabled + .switch-track {
+  opacity: 0.62;
+}
+
+/* 状态软胶囊：启用 = accent-soft 底松绿字，停用 = 灰（同账号表）。 */
+.status-chip {
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+}
+
+.status-chip.is-on {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.status-chip.is-off {
+  color: var(--text-secondary);
+  background: var(--surface-sunken);
 }
 
 .job-schedule {
@@ -306,6 +387,16 @@ function onDeleteClick(): void {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+/* 删除类是危险操作：ghost 底上换 danger 色（盖过 BaseButton ghost 的 accent 悬停）。 */
+.job-actions button.danger-action {
+  color: var(--danger);
+}
+
+.job-actions button.danger-action:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 
 .job-error {

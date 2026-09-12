@@ -159,8 +159,7 @@ const emit = defineEmits<{
   padding: 10px;
   color: var(--text-tertiary);
   font-size: var(--fs-xs);
-  font-weight: var(--fw-bold);
-  letter-spacing: 0.04em;
+  font-weight: var(--fw-semibold);
 }
 
 .align-right {
