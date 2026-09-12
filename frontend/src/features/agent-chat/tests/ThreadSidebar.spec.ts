@@ -45,6 +45,29 @@ describe('ThreadSidebar', () => {
     expect(items[1]?.classes()).toContain('is-active')
   })
 
+  it('按最近活动分组：今天/昨天/本周/更早，组内保持原顺序', () => {
+    // 锚定「今天零点」构造时刻，不随测试运行时间漂移：今天取零点后 5 分钟，
+    // 昨天取零点前 12 小时，更早取零点前 30 天。
+    const startOfToday = new Date()
+    startOfToday.setHours(0, 0, 0, 0)
+    const iso = (msFromStartOfToday: number) =>
+      new Date(startOfToday.getTime() + msFromStartOfToday).toISOString()
+    const wrapper = render({
+      threads: [
+        { ...thread(1), last_active_at: iso(300_000) },
+        { ...thread(2), last_active_at: iso(-30 * 86_400_000) },
+        { ...thread(3), last_active_at: iso(-12 * 3_600_000) },
+      ],
+    })
+
+    // 组按时间轴顺序出现；「昨天」单独一组，30 天前归「更早」。
+    const labels = wrapper.findAll('.group-label').map((node) => node.text())
+    expect(labels).toEqual(['今天', '昨天', '更早'])
+
+    const titles = wrapper.findAll('.thread-item .title').map((node) => node.text())
+    expect(titles).toEqual(['会话 1', '会话 3', '会话 2'])
+  })
+
   it('把子组件的事件带着会话信息转出去', async () => {
     const wrapper = render()
 
@@ -116,14 +139,6 @@ describe('ThreadSidebar', () => {
 
     expect(withCount.get('.count').text()).toBe('2')
     expect(withoutCount.find('.count').exists()).toBe(false)
-  })
-
-  it('「新对话」按钮转出事件', async () => {
-    const wrapper = render()
-
-    await wrapper.get('.sidebar-head button').trigger('click')
-
-    expect(wrapper.emitted('newConversation')).toHaveLength(1)
   })
 
   it('正在删除的那一行进入忙态', () => {

@@ -158,30 +158,26 @@ describe('AgentChatPage', () => {
     vi.unstubAllGlobals()
   })
 
-  /* 断言 aria-label 而不是图标组件：入口对用户和读屏的可见性由它决定，
+  /* 断言 aria-label/文本而不是图标组件：入口对用户和读屏的可见性由它决定，
      换图标不该让这两条失败。
-     后台入口按新契约收敛：前台顶栏只给超管一枚后台入口，它是通往后台的唯一入口
-     （设置导航里那两条直达链接已撤掉，只覆盖五个分区里的两个）。 */
-  it('超管在本页顶栏看到后台入口，指向 /admin', async () => {
+     后台入口按新契约收敛：它在外壳侧栏底栏，是通往后台的唯一入口。 */
+  it('超管在外壳侧栏看到后台入口，指向 /admin', async () => {
     const { wrapper } = await mountPage()
 
-    const labels = wrapper.findAll('.topbar-nav-link').map((item) => item.attributes('aria-label'))
-    expect(labels).toContain('后台管理')
     expect(wrapper.get('a[aria-label="后台管理"]').attributes('href')).toBe('/admin')
 
-    // 账号与设置入口仍在右上角，两条路径互不替代。
+    // 账号与设置入口仍在侧栏底栏，两条路径互不替代。
     expect(wrapper.get('.account-identity').attributes('href')).toBe('/settings/account')
     wrapper.unmount()
   })
 
-  it('非超管在本页顶栏看不到后台入口', async () => {
+  it('非超管看不到后台入口，主导航也只剩语义检索', async () => {
     auth.user.value = { ...SUPERUSER, is_superuser: false, is_environment_admin: false }
     const { wrapper } = await mountPage()
 
-    const labels = wrapper.findAll('.topbar-nav-link').map((item) => item.attributes('aria-label'))
-
-    expect(labels).not.toContain('后台管理')
-    expect(labels).toContain('语义检索')
+    expect(wrapper.find('a[aria-label="后台管理"]').exists()).toBe(false)
+    const navLabels = wrapper.findAll('.sidebar-nav .nav-item').map((item) => item.text())
+    expect(navLabels).toEqual(['语义检索'])
     wrapper.unmount()
   })
 
@@ -280,7 +276,8 @@ describe('AgentChatPage', () => {
     await wrapper.get('.agent-form').trigger('submit')
     await flushPromises()
 
-    await wrapper.get('.secondary-button').trigger('click')
+    // 「新对话」是外壳侧栏的主操作按钮，整页唯一。
+    await wrapper.get('.primary-button').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('.turn').exists()).toBe(false)
@@ -408,14 +405,6 @@ describe('AgentChatPage', () => {
 
     expect(wrapper.get('.logout-error').text()).toBe('退出失败')
     expect(router.currentRoute.value.name).toBe('agent-chat')
-    wrapper.unmount()
-  })
-
-  it('顶栏文案说明本页会生成答案且只读', async () => {
-    const { wrapper } = await mountPage()
-
-    expect(wrapper.get('.mode-note').text()).toContain('模型生成答案')
-    expect(wrapper.get('.mode-note').text()).toContain('只读检索')
     wrapper.unmount()
   })
 
@@ -709,7 +698,8 @@ describe('AgentChatPage', () => {
       threadsApi.getAgentThreadMessages.mockResolvedValue(REPLAY)
       const { wrapper, router } = await mountThreadPage()
 
-      await wrapper.get('.sidebar-head button').trigger('click')
+      // 「新对话」是外壳侧栏的主操作按钮，整页唯一。
+      await wrapper.get('.primary-button').trigger('click')
       await flushPromises()
 
       expect(router.currentRoute.value.name).toBe('agent-chat')

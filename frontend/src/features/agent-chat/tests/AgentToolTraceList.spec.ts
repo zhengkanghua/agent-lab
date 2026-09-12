@@ -130,7 +130,10 @@ describe('AgentToolTraceList 折叠', () => {
     })
 
     // 折叠后这一行是唯一可见的轨迹信息，只写「2 次调用」的话用户还得展开才知道干了什么。
-    expect(summaryOf(wrapper).get('.disclosure-title').text()).toBe('检索新闻 · 读取全文')
+    // 「思考过程」前缀给这行细条一个名字（2026-09 重设计 P3）。
+    expect(summaryOf(wrapper).get('.disclosure-title').text()).toBe(
+      '思考过程 · 检索新闻 · 读取全文',
+    )
   })
 
   it('同名工具连着调多次时合并计数', () => {
@@ -138,7 +141,7 @@ describe('AgentToolTraceList 折叠', () => {
       props: { traces: [trace(), trace({ id: 't2' }), trace({ id: 't3' })] },
     })
 
-    expect(summaryOf(wrapper).get('.disclosure-title').text()).toBe('检索新闻 ×3')
+    expect(summaryOf(wrapper).get('.disclosure-title').text()).toBe('思考过程 · 检索新闻 ×3')
   })
 
   it('流式中默认展开', () => {

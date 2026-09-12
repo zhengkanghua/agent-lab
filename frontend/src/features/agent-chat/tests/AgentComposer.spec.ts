@@ -25,7 +25,6 @@ function mountComposer(overrides: Partial<ComposerProps> = {}) {
       remainingCharacters: 3996,
       streaming: false,
       canSend: true,
-      hasHistory: false,
       ...overrides,
     },
     global: { plugins: [testRouter()] },
@@ -84,27 +83,11 @@ describe('AgentComposer', () => {
   })
 
   it('流式期间把发送换成停止生成', async () => {
-    const wrapper = mountComposer({ streaming: true, canSend: false, hasHistory: true })
+    const wrapper = mountComposer({ streaming: true, canSend: false })
 
     expect(wrapper.find('.send-button').exists()).toBe(false)
     await wrapper.get('.stop-button').trigger('click')
     expect(wrapper.emitted('cancel')).toHaveLength(1)
-
-    // 流式期间不让开新会话：会把正在写的这一轮丢掉。
-    expect(wrapper.get('.secondary-button').attributes('disabled')).toBeDefined()
-  })
-
-  it('没有历史时不显示新会话按钮', () => {
-    const wrapper = mountComposer({ hasHistory: false })
-    expect(wrapper.find('.secondary-button').exists()).toBe(false)
-  })
-
-  it('有历史时新会话按钮可用并冒泡事件', async () => {
-    const wrapper = mountComposer({ hasHistory: true })
-
-    await wrapper.get('.secondary-button').trigger('click')
-
-    expect(wrapper.emitted('new-conversation')).toHaveLength(1)
   })
 
   it('偏好里存了自定义提示词时亮徽章并链到设置页，默认时不打扰', async () => {

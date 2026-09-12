@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Bot, History, Search, ShieldCheck } from '@lucide/vue'
+import { History, ShieldCheck } from '@lucide/vue'
 import AppShell from '@/layouts/AppShell.vue'
 import { useLogout } from '@/features/auth'
 import { usePreferences } from '@/features/settings'
@@ -75,10 +75,6 @@ const { loggingOut, logoutError, logout } = useLogout({ beforeLogout: chat.cance
 const transcriptEndRef = ref<HTMLElement | null>(null)
 
 const hasHistory = computed(() => chat.turns.value.length > 0)
-
-/* 前台顶栏只放「语义检索」这一功能跳转。后台入口统一收敛到账号设置页，不在前台顶栏
-   重复放图标——能进本页的已是超管，需要管理账号时从右上角账号设置进入。 */
-const navLinks = computed(() => [{ to: { name: 'search' }, label: '语义检索', icon: Search }])
 
 /** 路由参数里的会话 id。`/agent` 上没有这个参数，值为 null。 */
 const routeThreadId = computed(() => {
@@ -164,27 +160,20 @@ async function chooseExample(value: string): Promise<void> {
 </script>
 
 <template>
-  <!-- 这一页不传 footerBrand，所以外壳不渲染页脚。理由是 Q2 定的「底部固定输入区」
-       与页脚互斥：页脚只能落在输入区下方，用户要多滚一屏才能看到一行装饰性文字，
-       而输入区本来就该是这一列的最后一个元素。页脚那句「只读访问」由顶栏的
-       mode-note 承担，「模型生成」由输入区下方的细则行承担，信息没有丢。 -->
+  <!-- 「模型生成、只读检索」的语义不再由顶栏 mode-note 承担：输入区下方的 dock-note
+       （回答由模型生成，可能有误；点击引用核对）说的就是这件事，一处就够。
+       会话列表从正文里挪进外壳侧栏的 #rail——那是导航，不是内容。 -->
   <AppShell
-    brand-title="Signal Desk Agent"
-    brand-subtitle="从知识库中查资料，带着依据回答"
-    brand-label="返回检索工作台"
-    :brand-to="{ name: 'search' }"
+    active="agent"
     main-id="agent-workspace"
     skip-label="跳到对话工作台"
-    :nav-links="navLinks"
-    mode-label="模型生成答案"
-    mode-detail="只读检索"
+    primary-label="新对话"
     :logging-out="loggingOut"
     :logout-error="logoutError"
+    @primary="startNewConversation"
     @logout="logout"
   >
-    <template #brand-icon><Bot :size="19" stroke-width="2.2" /></template>
-
-    <main id="agent-workspace" class="workspace">
+    <template #rail>
       <ThreadSidebar
         class="thread-rail"
         :threads="threadList.threads.value"
@@ -201,11 +190,12 @@ async function chooseExample(value: string): Promise<void> {
         @reload="threadList.load"
         @next-page="threadList.nextPage"
         @previous-page="threadList.previousPage"
-        @new-conversation="startNewConversation"
       />
+    </template>
 
+    <main id="agent-workspace" class="workspace">
       <div class="chat-column">
-        <!-- 空态时这一格靠 justify-content 把内容压到底部，紧贴输入区；
+        <!-- 空态时这一格在剩余高度里居中（问候主角 + 建议卡）；
              有历史时它从顶部开始正常流动。切换在 .is-empty 上。 -->
         <div class="transcript-region" :class="{ 'is-empty': !hasHistory }">
           <p v-if="chat.isLoadingThread.value" class="thread-state" aria-live="polite">
@@ -269,17 +259,6 @@ async function chooseExample(value: string): Promise<void> {
         </div>
 
         <div class="composer-dock" :class="{ 'has-history': hasHistory }">
-          <KnowledgeBaseScopePicker
-            v-if="!chat.isLoadingThread.value"
-            :model-value="chat.selection.value"
-            :knowledge-bases="scope.knowledgeBases.value"
-            :loading="scope.loading.value"
-            :error="scope.error.value || chat.scopeSaveError.value"
-            @update:model-value="chat.updateSelection"
-            @refresh="scope.refresh"
-          />
-          <p v-if="chat.savingScope.value" class="scope-note" role="status">正在保存会话范围…</p>
-          <p v-else-if="chat.isStreaming.value" class="scope-note">现在改选只影响下一次提问。</p>
           <AgentComposer
             v-model="chat.draft.value"
             :custom-prompt-active="preferences.agentSystemPrompt.trim().length > 0"
@@ -287,11 +266,27 @@ async function chooseExample(value: string): Promise<void> {
             :remaining-characters="chat.remainingCharacters.value"
             :streaming="chat.isStreaming.value"
             :can-send="chat.canSend.value"
-            :has-history="hasHistory"
             @submit="chat.send"
             @cancel="chat.cancel"
-            @new-conversation="startNewConversation"
-          />
+          >
+            <template #scope>
+              <KnowledgeBaseScopePicker
+                v-if="!chat.isLoadingThread.value"
+                :model-value="chat.selection.value"
+                :knowledge-bases="scope.knowledgeBases.value"
+                :loading="scope.loading.value"
+                :error="scope.error.value || chat.scopeSaveError.value"
+                @update:model-value="chat.updateSelection"
+                @refresh="scope.refresh"
+              />
+              <span v-if="chat.savingScope.value" class="scope-note" role="status">
+                正在保存会话范围…
+              </span>
+              <span v-else-if="chat.isStreaming.value" class="scope-note">
+                现在改选只影响下一次提问。
+              </span>
+            </template>
+          </AgentComposer>
           <p class="dock-note">
             <ShieldCheck :size="14" aria-hidden="true" />
             回答由模型生成，可能有误；点击引用核对资料与当前原文。
@@ -315,39 +310,27 @@ async function chooseExample(value: string): Promise<void> {
 </template>
 
 <style scoped>
-/* 会话导轨 + 居中阅读列。阅读列的宽度与居中位置保持原样（Q1/Q2 定的单列阅读），
-   导轨挂在它左边而不是挤占它：正文宽度是排版决定，不该因为多了个列表就变窄。 */
+/* 会话列表已挪进外壳侧栏，正文回到单列居中阅读列（Q1/Q2 定的单列阅读）。
+   阅读列按 --reading-width 收窄：单列正文超过 ~76ch 眼睛就要来回扫。 */
 
 .workspace {
-  display: grid;
-  /* 左轨定宽、右侧 1fr，然后整体在页面里居中。用 grid 而不是 flex：
-     导轨要能 sticky 在自己那一列里，flex 子项拉伸后 sticky 的参照高度会变成整列。 */
-  grid-template-columns: 244px minmax(0, 1fr);
-  gap: 20px;
-  width: min(calc(100% - 40px), var(--content-width));
+  display: flex;
+  flex-direction: column;
+  width: min(calc(100% - 40px), var(--reading-width));
   margin: 0 auto;
-  /* 正好占满视口减顶栏：多了会凭空多出一条滚动，少了输入区浮在半空。
-     --app-topbar-height 由 AppShell 提供，两个 compact 断点会改写它。 */
-  min-height: calc(100vh - var(--app-topbar-height, 69px));
+  /* 正好占满视口减汉堡条：多了会凭空多出一条滚动，少了输入区浮在半空。
+     --app-header-offset 由 AppShell 发布（桌面 0px，窄屏 57px）。 */
+  min-height: calc(100vh - var(--app-header-offset, 0px));
   /* 动态视口高度，避开移动端浏览器地址栏收起时 100vh 偏大导致底部被切。
      两条都写，dvh 不支持时退回上面那条。 */
-  min-height: calc(100dvh - var(--app-topbar-height, 69px));
-}
-
-.thread-rail {
-  margin-top: 26px;
-  /* 与 .transcript-region 的 padding-top 对齐，让列表首项和第一轮问答齐头。 */
+  min-height: calc(100dvh - var(--app-header-offset, 0px));
 }
 
 .chat-column {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
-  /* 阅读列比检索页窄得多：--content-width 是 1420px，那是给两栏结果用的。
-     单列正文超过 ~76ch 眼睛就要来回扫，这里按 --reading-width 收窄。 */
-  width: min(100%, var(--reading-width));
   min-height: inherit;
-  /* 在自己那一格里居中，而不是靠外层：外层已经被导轨占掉一列了。 */
-  margin: 0 auto;
 }
 
 .thread-state {
@@ -382,9 +365,11 @@ async function chooseExample(value: string): Promise<void> {
   overflow-wrap: anywhere;
 }
 .scope-note {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 4px;
   color: var(--text-tertiary);
   font-size: var(--fs-xs);
-  margin: 0 2px 8px;
 }
 
 /* flex: 1 是为了空态那条 justify-content: flex-end 能生效——不占满剩余高度，
@@ -396,10 +381,10 @@ async function chooseExample(value: string): Promise<void> {
   padding-top: 26px;
 }
 
-/* 空态把内容推到底部，让标题与建议卡紧贴输入区——那是视线落点。
-   有历史时不这么做：那时第一轮该从顶部开始。 */
+/* 空态在剩余高度里居中（与检索页空态同一形态）：问候是主角，建议卡陪衬。
+   有历史时不居中：第一轮从顶部开始正常流动。 */
 .transcript-region.is-empty {
-  justify-content: flex-end;
+  justify-content: center;
   padding-bottom: 8px;
 }
 
@@ -447,21 +432,9 @@ async function chooseExample(value: string): Promise<void> {
   color: var(--accent);
 }
 
-/* 窄屏收成一列：导轨排到对话上方。放在下面会让人以为它是页脚的一部分，
-   而它是导航——第一屏就该看得见。 */
 @media (max-width: 900px) {
-  .workspace {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto 1fr;
-    gap: 14px;
-  }
-
   .chat-column {
     min-height: 0;
-  }
-
-  .thread-rail {
-    margin-top: 18px;
   }
 }
 

@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { MessageSquarePlus, Send, Settings2, Square } from '@lucide/vue'
+import { Send, Settings2, Square } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import ComposerDock from '@/shared/ui/ComposerDock.vue'
 import { MAX_MESSAGE_CHARACTERS } from '../model/agent-validation'
 
 /* 贴在页面底部的输入区。
  *
- * 形态是一个圆角框：上面是文本域，下面一行控件。它不再是侧栏里的一张卡片，
- * 所以标题「向 Agent 提问」和可见的字段标签都撤掉了——底部就一个输入框，
- * 再给它加标题是重复。字段标签改成 sr-only 保留给读屏。
+ * 视觉外壳是共享的 ComposerDock（与检索输入条同一颗坞）；本组件只管输入行为：
+ * 随内容长高、Enter 发送（输入法组合期间不发送）、流式中换成停止键。
+ * 字段标签改成 sr-only 保留给读屏——底部就一个输入框，再给它加标题是重复。
  *
  * 自定义系统提示词不在这里：它是「改变模型行为」的配置，不是一条消息，归设置中心的
  * 「Agent 偏好」分区（可发现、可持久、可恢复默认）。输入条只在覆盖生效时亮一枚徽章，
@@ -24,14 +25,12 @@ const props = defineProps<{
   remainingCharacters: number
   streaming: boolean
   canSend: boolean
-  hasHistory: boolean
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   submit: []
   cancel: []
-  'new-conversation': []
 }>()
 
 const draft = computed({
@@ -74,8 +73,9 @@ function onEnter(event: KeyboardEvent): void {
 </script>
 
 <template>
-  <section class="agent-composer" aria-label="向 Agent 提问" style="container-type: inline-size">
-    <form class="agent-form" :aria-busy="streaming" @submit.prevent="emit('submit')">
+  <!-- form 包住整颗坞：发送键住在坞的底栏插槽里，type=submit 要求它在表单内。 -->
+  <form class="agent-form" :aria-busy="streaming" @submit.prevent="emit('submit')">
+    <ComposerDock class="agent-composer" label="向 Agent 提问">
       <label class="sr-only" for="agent-message">这一轮的问题</label>
       <textarea
         id="agent-message"
@@ -92,98 +92,75 @@ function onEnter(event: KeyboardEvent): void {
         @keydown.enter="onEnter"
       ></textarea>
 
-      <div class="composer-bar">
-        <div class="bar-left">
-          <!-- 覆盖生效时亮徽章，点它直达设置页。默认状态不打扰：没有可调的东西
-               就不该占一格。 -->
-          <RouterLink
-            v-if="customPromptActive"
-            class="prompt-badge-link"
-            :to="{ name: 'settings', params: { section: 'agent' } }"
-            aria-label="自定义提示词已启用，去设置页调整"
-            title="自定义提示词已启用，去设置页调整"
-          >
-            <span class="prompt-trigger">
-              <Settings2 :size="15" aria-hidden="true" />
-              <span class="prompt-badge" aria-hidden="true"></span>
-            </span>
-            <span class="prompt-badge-text">自定义提示词</span>
-          </RouterLink>
+      <p v-if="inputError" id="agent-message-error" class="field-error" role="alert">
+        {{ inputError }}
+      </p>
 
-          <BaseButton
-            v-if="hasHistory"
-            class="secondary-button"
-            variant="ghost"
-            size="sm"
-            :disabled="streaming"
-            @click="emit('new-conversation')"
-          >
-            <template #icon><MessageSquarePlus :size="16" aria-hidden="true" /></template>
-            新会话
-          </BaseButton>
-        </div>
+      <template #bar-left>
+        <!-- 知识库范围选择器插槽（与 SearchComposer 范式对齐） -->
+        <slot name="scope" />
 
-        <div class="bar-right">
-          <span id="agent-message-count" class="character-count" :class="counterTone">
-            还可输入 {{ remainingCharacters.toLocaleString('zh-CN') }} 个字符
+        <!-- 覆盖生效时亮徽章，点它直达设置页。默认状态不打扰：没有可调的东西
+             就不该占一格。 -->
+        <RouterLink
+          v-if="customPromptActive"
+          class="prompt-badge-link"
+          :to="{ name: 'settings', params: { section: 'agent' } }"
+          aria-label="自定义提示词已启用，去设置页调整"
+          title="自定义提示词已启用，去设置页调整"
+        >
+          <span class="prompt-trigger">
+            <Settings2 :size="15" aria-hidden="true" />
+            <span class="prompt-badge" aria-hidden="true"></span>
           </span>
+          <span class="prompt-badge-text">自定义提示词</span>
+        </RouterLink>
+        <!-- 「新会话」不在这里：它是整页的主操作，唯一的一枚在外壳侧栏顶部。 -->
+      </template>
 
-          <BaseButton
-            v-if="streaming"
-            class="stop-button"
-            variant="danger"
-            size="sm"
-            @click="emit('cancel')"
-          >
-            <template #icon><Square :size="15" aria-hidden="true" /></template>
-            停止生成
-          </BaseButton>
-          <!-- 这个分支是 v-if="streaming" 的 v-else，streaming 恒为假，
-               所以不需要转圈：流式中显示的是上面那个停止键。 -->
-          <BaseButton
-            v-else
-            class="send-button"
-            variant="primary"
-            size="sm"
-            type="submit"
-            :disabled="!canSend"
-          >
-            <template #icon><Send :size="16" stroke-width="2.3" aria-hidden="true" /></template>
-            发送
-          </BaseButton>
-        </div>
-      </div>
-    </form>
+      <template #bar-right>
+        <span id="agent-message-count" class="character-count" :class="counterTone">
+          还可输入 {{ remainingCharacters.toLocaleString('zh-CN') }} 个字符
+        </span>
 
-    <p v-if="inputError" id="agent-message-error" class="field-error" role="alert">
-      {{ inputError }}
-    </p>
-  </section>
+        <BaseButton
+          v-if="streaming"
+          class="stop-button"
+          variant="danger"
+          size="sm"
+          type="button"
+          aria-label="停止生成"
+          title="停止生成"
+          @click="emit('cancel')"
+        >
+          <template #icon><Square :size="15" aria-hidden="true" /></template>
+          <span class="sr-only">停止生成</span>
+        </BaseButton>
+        <!-- 这个分支是 v-if="streaming" 的 v-else，streaming 恒为假，
+             所以不需要转圈：流式中显示的是上面那个停止键。 -->
+        <BaseButton
+          v-else
+          class="send-button"
+          variant="primary"
+          size="sm"
+          type="submit"
+          aria-label="发送消息"
+          title="发送消息"
+          :disabled="!canSend"
+        >
+          <template #icon><Send :size="16" stroke-width="2.3" aria-hidden="true" /></template>
+          <span class="sr-only">发送</span>
+        </BaseButton>
+      </template>
+    </ComposerDock>
+  </form>
 </template>
 
 <style scoped>
-.agent-composer {
-  padding: 10px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-soft);
-  transition:
-    border-color var(--duration-fast) var(--ease-out-smooth),
-    box-shadow var(--duration-fast) var(--ease-out-smooth);
-}
-
-/* 焦点环画在外框上而不是文本域上：视觉上这一整块是一个输入控件。
-   文本域自身的焦点样式随之去掉，否则会出现两层环。 */
-.agent-composer:focus-within {
-  border-color: var(--accent);
-  box-shadow:
-    0 0 0 4px var(--accent-soft),
-    var(--shadow-soft);
-}
-
-.agent-form {
-  display: grid;
+/* 焦点环、圆角、浮起底都由 ComposerDock 提供；class 留在这里只为
+   「失焦时藏起默认字数」这条规则能找到坞的 focus-within 状态。 */
+.agent-composer:not(:focus-within) .character-count {
+  visibility: hidden;
 }
 
 .message-input {
@@ -193,7 +170,7 @@ function onEnter(event: KeyboardEvent): void {
   /* 竖向可拉，但不给横向：横向拉宽会把底部控件行挤出圆角框。 */
   resize: vertical;
   min-height: 62px;
-  padding: 6px 7px;
+  padding: 6px 0;
   border: 0;
   outline: none;
   color: var(--text-primary);
@@ -208,22 +185,6 @@ function onEnter(event: KeyboardEvent): void {
 
 .message-input::placeholder {
   color: var(--text-tertiary);
-}
-
-.composer-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding-top: 4px;
-}
-
-.bar-left,
-.bar-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
 }
 
 .prompt-badge-link {
@@ -274,10 +235,6 @@ function onEnter(event: KeyboardEvent): void {
 
 /* 只有临近与超出上界时才需要被看见,那两档自带语气色。默认那档是纯参考信息,
    --text-tertiary 在这个字号上对比度不足,所以平时不显示,聚焦时才出现。 */
-.agent-composer:not(:focus-within) .character-count {
-  visibility: hidden;
-}
-
 .character-count.is-near {
   color: var(--warning);
   visibility: visible;
@@ -289,10 +246,31 @@ function onEnter(event: KeyboardEvent): void {
 }
 
 .field-error {
-  padding: 7px 7px 2px;
+  margin-top: 6px;
   color: var(--danger);
   font-size: var(--fs-xs);
   font-weight: var(--fw-semibold);
+}
+
+/* 圆形发送键与停止键：与检索页同源规范（38px 圆形纯图标键，移动端触屏 44px 兜底）。 */
+.send-button,
+.stop-button {
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+@media (pointer: coarse) {
+  .send-button,
+  .stop-button {
+    width: var(--tap-target);
+    height: var(--tap-target);
+  }
 }
 
 @container (max-width: 520px) {

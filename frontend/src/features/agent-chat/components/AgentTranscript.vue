@@ -68,22 +68,23 @@ function isLast(index: number): boolean {
 }
 
 /* 空态不再是一张虚线卡片：单列布局里它就是这一列的全部内容，再画个框等于给
-   整页描边。改成无框，靠垂直居中把它托在输入区上方。 */
+   整页描边。居中（2026-09 重设计 P3，与检索页空态同一形态）：问候是主角，
+   说明与建议卡收在阅读宽度内。 */
 .empty-state {
   padding: 28px 12px 12px;
+  text-align: center;
 }
 
 .empty-state h3 {
   color: var(--text-primary);
-  font-size: var(--fs-2xl);
-  font-weight: var(--fw-bold);
-  line-height: 1.2;
-  letter-spacing: -0.01em;
+  font-size: var(--fs-3xl);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-heading);
 }
 
 .empty-lead {
   max-width: 44ch;
-  margin-top: 12px;
+  margin: 12px auto 0;
   color: var(--text-secondary);
   font-size: var(--fs-sm);
   line-height: 1.7;
@@ -94,10 +95,6 @@ function isLast(index: number): boolean {
 }
 
 @container (max-width: 560px) {
-  .empty-state h3 {
-    font-size: var(--fs-2xl);
-  }
-
   .example-list {
     margin-top: 20px;
   }

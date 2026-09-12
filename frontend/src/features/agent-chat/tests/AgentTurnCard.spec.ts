@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import AgentTurnCard from '../components/AgentTurnCard.vue'
 import { createTurn, type AgentTurn } from '../model/conversation'
 import { agentEvidence, agentScope } from '@/api/agent-chat.fixture'
@@ -147,5 +147,26 @@ describe('AgentTurnCard', () => {
 
     const html = wrapper.html()
     expect(html.indexOf('trace-block')).toBeLessThan(html.indexOf('answer-body'))
+  })
+
+  it('回答完成后提供复制键，点击写入剪贴板并就地反馈', async () => {
+    const writeText = vi.fn(() => Promise.resolve())
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    try {
+      const wrapper = mountCard({ answer: '答案正文。', status: 'done' })
+
+      await wrapper.get('.ghost-action').trigger('click')
+
+      expect(writeText).toHaveBeenCalledWith('答案正文。')
+      expect(wrapper.get('.ghost-action').text()).toContain('已复制')
+    } finally {
+      Reflect.deleteProperty(navigator, 'clipboard')
+    }
+  })
+
+  it('流式中的轮次不给悬停操作键', () => {
+    const wrapper = mountCard({ answer: '写到一半', status: 'streaming' })
+
+    expect(wrapper.find('.answer-actions').exists()).toBe(false)
   })
 })

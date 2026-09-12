@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { CircleAlert, Search, Wrench } from '@lucide/vue'
+import { CircleAlert, CircleCheck, Search, Wrench } from '@lucide/vue'
 import BaseDisclosure from '@/shared/ui/BaseDisclosure.vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
 import type { AgentToolTrace } from '../model/conversation'
@@ -48,6 +48,10 @@ const summaryMeta = computed(() => {
   return undefined
 })
 
+/* 方案把这行细条叫「思考过程」：工具调用对用户就是模型在思考的痕迹，
+   前缀给这一行一个名字，后面的合并计数说明它具体做了什么。 */
+const summaryLine = computed(() => `思考过程 · ${summaryText.value}`)
+
 /* 流式中展开、落定收起（Q10）。
  *
  * 用本地 ref 承接，而不是把 open 直接算成 `streaming`：后者会让用户在流式期间的手动收起
@@ -89,7 +93,7 @@ function formatArguments(args: Record<string, unknown>): string {
     v-if="traces.length > 0"
     v-model:open="open"
     class="trace-block"
-    :summary="summaryText"
+    :summary="summaryLine"
     :meta="summaryMeta"
     tone="plain"
     size="sm"
@@ -97,7 +101,7 @@ function formatArguments(args: Record<string, unknown>): string {
     <template #icon>
       <BaseSpinner v-if="runningCount > 0" :size="13" />
       <CircleAlert v-else-if="failedCount > 0" :size="13" />
-      <Wrench v-else :size="13" />
+      <CircleCheck v-else :size="13" />
     </template>
 
     <ol class="trace-list" aria-label="工具调用轨迹">
