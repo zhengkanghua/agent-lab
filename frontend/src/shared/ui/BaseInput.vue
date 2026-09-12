@@ -51,7 +51,7 @@ function onInput(event: Event): void {
   height: 42px;
   padding: 0 12px;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   outline: none;
   color: var(--text-primary);
   background: var(--surface-raised);

@@ -104,7 +104,7 @@ defineExpose({ controlId })
   margin-bottom: 7px;
   color: var(--text-secondary);
   font-size: var(--fs-sm);
-  font-weight: var(--fw-bold);
+  font-weight: var(--fw-semibold);
 }
 
 .required-mark {

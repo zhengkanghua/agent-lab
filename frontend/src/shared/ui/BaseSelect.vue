@@ -39,12 +39,12 @@ function onChange(event: Event): void {
   height: 42px;
   padding: 0 10px;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   outline: none;
   color: var(--text-primary);
   background: var(--surface-raised);
   font-size: var(--fs-sm);
-  font-weight: var(--fw-bold);
+  font-weight: var(--fw-semibold);
   transition:
     border-color var(--duration-fast) var(--ease-out-smooth),
     box-shadow var(--duration-fast) var(--ease-out-smooth);

@@ -86,7 +86,7 @@ const spinnerSize = computed(() => (props.size === 'md' ? 18 : 15))
   align-items: center;
   justify-content: center;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   font-family: inherit;
   text-decoration: none;
   cursor: pointer;
@@ -113,7 +113,7 @@ const spinnerSize = computed(() => (props.size === 'md' ? 18 : 15))
   height: 44px;
   padding: 0 16px;
   font-size: var(--fs-sm);
-  font-weight: var(--fw-bold);
+  font-weight: var(--fw-semibold);
 }
 
 .is-sm {
@@ -121,7 +121,7 @@ const spinnerSize = computed(() => (props.size === 'md' ? 18 : 15))
   min-height: 38px;
   padding: 7px 12px;
   font-size: var(--fs-xs);
-  font-weight: var(--fw-bold);
+  font-weight: var(--fw-semibold);
 }
 
 .is-xs {
@@ -129,7 +129,7 @@ const spinnerSize = computed(() => (props.size === 'md' ? 18 : 15))
   min-height: 28px;
   padding: 0;
   font-size: var(--fs-xs);
-  font-weight: var(--fw-bold);
+  font-weight: var(--fw-semibold);
 }
 
 /* 触屏下把两档小尺寸撑到可点高度（约 44px）。

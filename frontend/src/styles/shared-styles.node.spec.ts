@@ -91,7 +91,7 @@ describe('styles/components/*.css', () => {
  */
 const TOKENS_CSS = 'styles/tokens.css'
 /** 原始色阶的前缀。只允许 tokens.css 自己引用。 */
-const RAW_SCALE = /var\(\s*--(?:neutral|teal|brick|amber)-\d+\s*\)/g
+const RAW_SCALE = /var\(\s*--(?:neutral|pine|brick|amber)-\d+\s*\)/g
 /** 裸色值：十六进制、rgb()/rgba()、hsl()/hsla()、CSS 具名颜色。 */
 const BARE_COLOR =
   /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(|:\s*(?:white|black|red|green|blue|gray|grey|silver|orange|yellow|purple|pink|brown|navy|teal|olive|maroon|lime|aqua|fuchsia)\s*[;!]/g
@@ -126,12 +126,12 @@ describe('颜色 token 分层', () => {
   })
 
   /* 不是设计 token、由组件自己声明并沿 DOM 往下传的自定义属性。
-     它们的值是布局量测结果（顶栏多高、表格分几列），放进 tokens.css 就得把断点也搬过去，
-     那会让同一件事有两个来源。两个都用来让「必须对齐的两处」共用一份数字：顶栏高度给
+     它们的值是布局量测结果（头部偏移多少、表格分几列），放进 tokens.css 就得把断点也搬过去，
+     那会让同一件事有两个来源。两个都用来让「必须对齐的两处」共用一份数字：头部偏移给
      正文算视口余量，列宽给表头与每一行对齐。下面那条用例盯住它们真的有声明，
      所以这里放行不等于放松检查。 */
   const PUBLISHED_BY_COMPONENTS: Readonly<Record<string, string>> = {
-    '--app-topbar-height': 'layouts/AppShell.vue',
+    '--app-header-offset': 'layouts/AppShell.vue',
     '--user-row-columns': 'features/user-admin/components/UserDirectoryTable.vue',
     '--job-row-columns': 'features/scheduled-jobs/components/JobDirectoryTable.vue',
   }

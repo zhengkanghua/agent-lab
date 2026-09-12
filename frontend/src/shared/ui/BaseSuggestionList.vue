@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { ArrowUpRight } from '@lucide/vue'
-
 withDefaults(
   defineProps<{
     examples: readonly string[]
@@ -14,8 +12,8 @@ const emit = defineEmits<{ select: [value: string] }>()
 /**
  * 全站「示例建议卡」的唯一实现，收编检索页空态与 Agent 空态各写一份的同款列表。
  *
- * 整行式而不是胶囊排布：几条文案长度不一时，胶囊会在第二行留下孤儿；整行还给
- * 每条更大的点击区。行尾箭头提示「点了就有动作」。
+ * 2026-09 重设计：整行箭头列表改为安静的 2×2 小卡。建议只是「顺手一点」的入口，
+ * 不该抢输入坞的主角地位；窄容器自然回退单列。
  */
 </script>
 
@@ -24,7 +22,6 @@ const emit = defineEmits<{ select: [value: string] }>()
     <li v-for="example in examples" :key="example">
       <button type="button" class="suggestion-button" @click="emit('select', example)">
         <span>{{ example }}</span>
-        <ArrowUpRight :size="15" aria-hidden="true" />
       </button>
     </li>
   </ul>
@@ -33,6 +30,7 @@ const emit = defineEmits<{ select: [value: string] }>()
 <style scoped>
 .suggestion-list {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin: 0;
   padding: 0;
@@ -42,48 +40,38 @@ const emit = defineEmits<{ select: [value: string] }>()
 .suggestion-button {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
   width: 100%;
-  padding: 14px 15px;
+  min-height: 48px;
+  padding: 12px 14px;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   color: var(--text-secondary);
   background: var(--surface-raised);
   font-size: var(--fs-sm);
+  line-height: var(--lh-ui);
   text-align: left;
   transition:
     border-color var(--duration-fast) var(--ease-out-smooth),
     color var(--duration-fast) var(--ease-out-smooth),
     background-color var(--duration-fast) var(--ease-out-smooth),
-    transform var(--duration-fast) var(--ease-in-out-back);
+    transform var(--duration-fast) var(--ease-out-smooth);
 }
 
 .suggestion-button:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+  background: var(--surface-hover);
   transform: translateY(-1px);
 }
 
 .suggestion-button:active {
-  transform: translateY(0) scale(0.98);
+  transform: translateY(0);
   transition-duration: calc(var(--duration-fast) / 2);
 }
 
-.suggestion-button svg {
-  flex: 0 0 auto;
-  color: var(--text-tertiary);
-  transition: color var(--duration-fast) var(--ease-out-smooth);
-}
-
-.suggestion-button:hover svg {
-  color: var(--accent);
-}
-
 @container (max-width: 560px) {
-  .suggestion-button {
-    padding: 12px 13px;
-    font-size: var(--fs-sm);
+  .suggestion-list {
+    grid-template-columns: 1fr;
   }
 }
 

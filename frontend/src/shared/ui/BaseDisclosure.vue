@@ -79,7 +79,7 @@ function onToggle(event: Event): void {
   align-items: center;
   gap: 7px;
   cursor: pointer;
-  font-weight: var(--fw-bold);
+  font-weight: var(--fw-semibold);
   /* 去掉默认三角，改用可旋转的箭头；list-style 与 ::marker 两条都要写，
      Safari 只认后者。 */
   list-style: none;

@@ -69,7 +69,7 @@ defineExpose({ focus })
   place-items: center;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   color: var(--text-secondary);
   background: transparent;
   cursor: pointer;

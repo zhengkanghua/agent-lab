@@ -42,7 +42,7 @@ function onInput(event: Event): void {
   min-height: 96px;
   padding: 10px 12px;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   outline: none;
   color: var(--text-primary);
   background: var(--surface-raised);

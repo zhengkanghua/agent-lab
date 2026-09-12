@@ -34,6 +34,8 @@ const props = defineProps<{
   streaming?: boolean
   /** 只由服务端已核验的本次引用提供；普通文件阅读不传。 */
   citationIds?: string[]
+  /** 引用 id → hover 摘要（来源 · 标题）。给了它，引用小丸悬停时浮出摘要卡。 */
+  citationSummaries?: Readonly<Record<string, string>>
 }>()
 
 const emit = defineEmits<{ citation: [id: string, trigger: HTMLElement] }>()
@@ -108,9 +110,12 @@ const linkAttrs: CustomAttrs = {
       const id = href.slice('#evidence-'.length)
       const number = citationNumbers.value.get(id)
       if (number === undefined) return { href: undefined }
+      const summary = props.citationSummaries?.[id]
       return {
         class: 'verified-citation',
         title: `查看引用 ${number}`,
+        // 摘要经 data-* 落给 CSS 悬停卡；attr() 只吃纯文本，无注入面。
+        'data-summary': summary,
         onClick: (event: MouseEvent) => {
           event.preventDefault()
           emit('citation', id, event.currentTarget as HTMLElement)
@@ -147,8 +152,8 @@ const linkAttrs: CustomAttrs = {
 
 .markdown-answer {
   color: var(--text-primary);
-  font-size: var(--fs-sm);
-  line-height: 1.75;
+  font-size: var(--fs-base);
+  line-height: var(--lh-reading);
   overflow-wrap: anywhere;
 }
 
@@ -163,18 +168,18 @@ const linkAttrs: CustomAttrs = {
 .markdown-answer :deep(h3),
 .markdown-answer :deep(h4) {
   color: var(--text-primary);
-  font-weight: var(--fw-bold);
-  line-height: 1.35;
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-heading);
 }
 
 /* 答案正文里的标题不该比页面 h1 还大：模型很爱用 `#`，照浏览器默认渲染会盖过页面层级。
    四级压到一个窄区间，靠字重和间距区分，不靠字号。 */
 .markdown-answer :deep(h1) {
-  font-size: var(--fs-lg);
+  font-size: var(--fs-xl);
 }
 
 .markdown-answer :deep(h2) {
-  font-size: var(--fs-base);
+  font-size: var(--fs-lg);
 }
 
 .markdown-answer :deep(h3),
@@ -223,14 +228,54 @@ const linkAttrs: CustomAttrs = {
   color: var(--accent-hover);
 }
 
+/* 引用上标小丸（2026-09 重设计 P3）：11px 只放「[1]」这种数字，不违反中文 12px
+   下限；上标 + accent-soft 底让它像正文里的一枚注脚，不打断阅读流。 */
 .markdown-answer :deep(.verified-citation) {
-  padding: 2px 4px;
-  border-radius: var(--radius-sm);
+  position: relative;
+  margin: 0 1px;
+  padding: 1px 5px;
+  border-radius: var(--radius-pill);
+  color: var(--accent);
   background: var(--accent-soft);
-  font-size: 0.82em;
-  font-weight: var(--fw-bold);
+  font-family: var(--mono-font);
+  font-size: 11px;
+  font-weight: var(--fw-semibold);
+  line-height: 1.4;
   text-decoration: none;
+  vertical-align: super;
   white-space: nowrap;
+}
+
+/* 悬停摘要卡：纯 CSS 的 ::after 浮层（data-summary 提供纯文本，无注入面）。
+   读屏用户不走悬停，点击后的全文阅读层才是完整的引用信息，这条只是鼠标的预览。 */
+.markdown-answer :deep(.verified-citation)::after {
+  content: attr(data-summary);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  z-index: var(--z-local);
+  width: max-content;
+  max-width: min(320px, 72vw);
+  padding: 7px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-soft);
+  font-family: var(--body-font);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: opacity var(--duration-fast) var(--ease-out-smooth);
+  pointer-events: none;
+}
+
+.markdown-answer :deep(.verified-citation:hover)::after {
+  opacity: 1;
 }
 
 /* 行内码与代码块共用等宽字体，但底色不同：行内的要在正文流里可辨认又不打断阅读，
@@ -247,9 +292,9 @@ const linkAttrs: CustomAttrs = {
 .markdown-answer :deep(pre) {
   max-height: 420px;
   overflow: auto;
-  padding: 12px 13px;
+  padding: 12px 14px;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--surface-base);
 }
 
@@ -288,8 +333,13 @@ const linkAttrs: CustomAttrs = {
 .markdown-answer :deep(th) {
   color: var(--text-secondary);
   background: var(--surface-base);
-  font-weight: var(--fw-bold);
+  font-weight: var(--fw-semibold);
   white-space: nowrap;
+}
+
+/* 斑马纹：隔行垫半透凹面，长表扫行不串行（2026-09 重设计 §三.6）。 */
+.markdown-answer :deep(tbody tr:nth-child(even)) {
+  background: color-mix(in srgb, var(--surface-sunken) 50%, transparent);
 }
 
 .markdown-answer :deep(hr) {

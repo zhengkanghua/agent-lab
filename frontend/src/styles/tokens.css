@@ -1,6 +1,6 @@
 /* 设计 token 分两层。
  *
- * 底层是色阶（--neutral-* / --teal-* / --brick-* / --amber-*），只在本文件里出现，
+ * 底层是色阶（--neutral-* / --pine-* / --brick-* / --amber-*），只在本文件里出现，
  * 组件不引用。上层是语义 token（--surface-* / --text-* / --border-* / --accent-* 等），
  * 组件只用这一层。
  *
@@ -8,47 +8,52 @@
  * 模式下要变成浅色，名字会撒谎，于是每个组件的 CSS 都得重读一遍才知道该换成哪个。
  * 语义层的 --text-primary 在两套主题下都名副其实，切主题只改下面那一段映射，
  * 组件 CSS 一行不动。详见 docs/adr/0007-two-layer-color-tokens.md。
+ *
+ * 2026-09 全站重设计（output/design-proposals/frontend-redesign-proposal-2026-09.md）：
+ * 气质定调「安静阅览室」——暖纸表面、墨色正文、一支克制的松绿强调色。
+ * 强调色只出现在主按钮、当前导航态、引用/证据徽标、链接悬停四处，
+ * 全站同时出现的强调色面积不超过 5%。
  */
 
 :root {
-  /* 1、中性色阶：石墨调，略带一点绿灰，接住原来纸墨配色的冷暖。 */
-  --neutral-50: #fbfbfa;
-  --neutral-100: #f4f5f5;
-  --neutral-200: #e9ebea;
-  --neutral-300: #d8dcdb;
-  --neutral-400: #b4bbb9;
-  --neutral-500: #7b8481;
-  --neutral-600: #5c6663;
-  --neutral-700: #4d5654;
-  --neutral-800: #2f3634;
-  --neutral-900: #1f2523;
-  --neutral-950: #14181a;
+  /* 1、中性色阶：暖纸调，不带绿灰。优雅的前提是表面先安静下来。 */
+  --neutral-50: #fafaf7;
+  --neutral-100: #f4f4ef;
+  --neutral-200: #eaeae3;
+  --neutral-300: #dbdbd2;
+  --neutral-400: #b6b6a9;
+  --neutral-500: #8a8a7d;
+  --neutral-600: #6b6b60;
+  --neutral-700: #55554b;
+  --neutral-800: #393932;
+  --neutral-900: #262622;
+  --neutral-950: #171714;
 
-  /* 2、强调色阶：深青。沿用原来「来源/检索」那支绿，升为主操作色。
-        -400 是给深色模式预留的提亮档，浅色模式下不用。 */
-  --teal-100: #e6f1ef;
-  --teal-400: #4fb3a3;
-  --teal-600: #0f6e63;
-  --teal-700: #0b574e;
+  /* 2、强调色阶：松绿。沿用原来「来源/检索」那支绿的血脉，降饱和、压明度，
+        从「工具青」变成「阅览室里的绿墨水」。-400 给深色模式提亮用。 */
+  --pine-100: #e3efe9;
+  --pine-400: #5f9d8a;
+  --pine-600: #0c5f50;
+  --pine-700: #094a3f;
 
-  /* 3、状态色阶：砖红只给错误，琥珀只给提醒。主操作已经是青色，红不再兼任。 */
-  --brick-100: #fae6e4;
-  --brick-600: #a83232;
-  --amber-100: #fdf3e3;
-  --amber-600: #9a6410;
+  /* 3、状态色阶：砖红只给错误，琥珀只给提醒。主操作已经是松绿，红不再兼任。 */
+  --brick-100: #f7e9e6;
+  --brick-600: #b03a2e;
+  --amber-100: #fbf0dc;
+  --amber-600: #96650f;
 }
 
 :root {
   /* 4、语义层——表面。 */
-  --surface-base: #fafbfb;
+  --surface-base: var(--neutral-50);
   --surface-raised: #ffffff;
-  --surface-sunken: var(--neutral-200);
+  --surface-sunken: #f1f1ec;
   /* 次要按钮的悬停底：比 --surface-sunken 再深一档。少了它，静态与悬停会撞成同色。 */
-  --surface-sunken-hover: var(--neutral-300);
-  --surface-overlay: rgb(20 24 26 / 42%);
+  --surface-sunken-hover: #e6e6de;
+  --surface-overlay: rgb(23 23 20 / 42%);
   /* 顶栏与吸附输入坞的底：96% 不透明，只留一丝透意。不再配 backdrop-filter——
      那点模糊不可见，却会在主题切换时闪出一帧黑色矩形（Chromium 伪影）。 */
-  --surface-scrim: rgb(255 255 255 / 96%);
+  --surface-scrim: rgb(250 250 247 / 96%);
   /* 与页面明暗相反的实底（跳转链接、标识块）。深色模式下这一对整体反转，
      不能用 --surface-raised 顶替：那个跟着页面走，反转后就成了深底深字。 */
   --surface-inverse: var(--neutral-900);
@@ -58,7 +63,7 @@
   --surface-tertiary: #ffffff;
   --surface-hover: var(--neutral-100);
   --surface-error: var(--brick-100);
-  --surface-success: var(--teal-100);
+  --surface-success: var(--pine-100);
 
   /* 5、语义层——文字。
      primary: 标题、正文、关键信息（对比度 ≥ 7:1，WCAG AAA）
@@ -67,44 +72,46 @@
      用法：正文内容（paragraph/excerpt/description）只用 primary
           元数据（meta/label/timestamp）用 secondary
           placeholder/disabled 用 tertiary */
-  --text-primary: #1a1d1c;
-  --text-secondary: #3e4745;
-  --text-tertiary: #6b7479;
+  --text-primary: #1b1b18;
+  --text-secondary: #4c4c46;
+  --text-tertiary: #75756c;
   --text-on-accent: #ffffff;
   --text-on-inverse: var(--neutral-50);
   --text-error: var(--brick-600);
-  --text-success: var(--teal-700);
+  --text-success: var(--pine-700);
 
   /* 6、语义层——描边。 */
-  --border-subtle: #e5e7e8;
-  --border-strong: #d1d5d7;
+  --border-subtle: #e7e7e0;
+  --border-strong: #d3d3c8;
 
   /* 7、语义层——强调与状态。 */
-  --accent: var(--teal-600);
+  --accent: var(--pine-600);
   /* 已弃用别名（2026-09，决策见 docs/adr/0007 追加节）：src/ 下已无使用方，
      仅为外部遗留引用保留过渡期，新代码禁止引用，删时连同深浅两个覆盖块一起删。 */
   --accent-primary: var(--accent);
-  --accent-hover: var(--teal-700);
-  --accent-soft: var(--teal-100);
-  --accent-ring: rgb(15 110 99 / 24%);
-  --success: var(--teal-600);
+  --accent-hover: var(--pine-700);
+  --accent-soft: var(--pine-100);
+  --accent-ring: rgb(12 95 80 / 22%);
+  --success: var(--pine-600);
   --danger: var(--brick-600);
   --danger-soft: var(--brick-100);
   --warning: var(--amber-600);
   --warning-soft: var(--amber-100);
 
-  /* 8、阴影带颜色，所以留在语义层：深色模式里投影要换算法（提亮而非压暗）。 */
-  --shadow-soft: 0 14px 34px rgb(20 24 26 / 9%);
-  --shadow-card: 0 6px 20px rgb(20 24 26 / 5%);
-  --shadow-raised: 0 1px 5px rgb(20 24 26 / 12%);
-  --shadow-inset-chip: 0 1px 3px rgb(20 24 26 / 25%);
-  --shadow-drawer: -18px 0 48px rgb(20 24 26 / 22%);
+  /* 8、阴影带颜色，所以留在语义层：深色模式里投影要换算法（提亮而非压暗）。
+     浅色下整体收敛：卡片贴地、只有输入坞与浮层允许明显浮起。 */
+  --shadow-soft: 0 8px 30px rgb(23 23 20 / 8%);
+  --shadow-card: 0 1px 2px rgb(23 23 20 / 4%), 0 4px 12px rgb(23 23 20 / 3%);
+  --shadow-raised: 0 1px 3px rgb(23 23 20 / 8%);
+  --shadow-inset-chip: 0 1px 2px rgb(23 23 20 / 18%);
+  --shadow-drawer: -18px 0 48px rgb(23 23 20 / 18%);
 
   /* 9、非颜色 token 不分层：它们没有主题维度，多一层只是多一次跳转。 */
-  /* 圆角 */
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
+  /* 圆角：2026-09 整体上移一档。方角是「企业工具」观感的主要来源。 */
+  --radius-sm: 6px; /* 徽标、小 chip */
+  --radius-md: 10px; /* 输入框、按钮 */
+  --radius-lg: 16px; /* 卡片、对话框 */
+  --radius-xl: 24px; /* 输入坞、设置浮层 */
   --radius-pill: 999px;
   /* 已弃用别名（2026-09，同 --accent-primary）：与 --radius-pill 完全重名重复。 */
   --radius-full: var(--radius-pill);
@@ -125,22 +132,28 @@
   --space-6: 1.5rem; /* 24px */
   --space-8: 2rem; /* 32px */
 
-  /* 字号阶（8 档，基于 16px 根字号）。前缀用 --fs- 而不是 --text-：--text-* 已经是
+  /* 字号阶（7 档，基于 16px 根字号）。前缀用 --fs- 而不是 --text-：--text-* 已经是
      文字颜色的命名空间，「--text-sm 是字号、--text-primary 是颜色」读代码时分不出，
-     旧的 --text-sm/base/lg/2xl 四档已随本次收敛删除。
+     旧的 --text-sm/base/lg/2xl 四档已随收敛删除。
 
      12px 是硬下限：中文在 12px 以下笔画互相糊在一起，属于不可读而不是「小一号」。
      档位与 Tailwind / Primer 的 --text-xs..2xl 对齐，不自造中间档（曾试过 13px，
      与所有主流规范都不一致，且和 12px 的观感差异小到不足以支撑一档）。
-     16 → 18 → 20 这段跳两档：标题的落差靠留白，不靠堆字号。 */
-  --fs-xs: 0.75rem; /* 12px 角标、时间戳、表头（下限） */
-  --fs-sm: 0.875rem; /* 14px 密集元数据、次级正文与控件 */
-  --fs-base: 1rem; /* 16px 正文 */
-  --fs-lg: 1.125rem; /* 18px 小标题 */
-  --fs-xl: 1.25rem; /* 20px 面板标题 */
-  --fs-2xl: 1.5rem; /* 24px 区块标题 */
-  --fs-3xl: 2rem; /* 32px 页面主标题 */
-  --fs-4xl: 2.625rem; /* 42px 展示标题（登录页） */
+
+     2026-09 重定角色：界面默认落在 fs-sm（14），阅读正文才用 fs-base（16）；
+     标题的落差靠留白与字色，不靠堆字号。42px 展示档随登录页改造取消。 */
+  --fs-xs: 0.75rem; /* 12px 角标、时间戳、表头、score 数值（下限） */
+  --fs-sm: 0.875rem; /* 14px 界面默认：导航、按钮、表单、元数据、表格 */
+  --fs-base: 1rem; /* 16px 阅读正文：回答、文档片段、编辑器 */
+  --fs-lg: 1.125rem; /* 18px 用户提问、卡片标题 */
+  --fs-xl: 1.25rem; /* 20px 面板/分区标题 */
+  --fs-2xl: 1.5rem; /* 24px 页面主标题 */
+  --fs-3xl: 1.75rem; /* 28px 空态问候、登录主标 */
+
+  /* 行高令牌化（2026-09 新增）：中文阅读的「优雅」主要来自己 1.75 的呼吸感。 */
+  --lh-ui: 1.5; /* 界面元素、控件 */
+  --lh-reading: 1.75; /* 阅读正文：回答、片段、文档 */
+  --lh-heading: 1.3; /* 标题 */
 
   /* 字重阶（三档）。
      曾经散着 14 个值（450/560/600/640/650/680/700/710/720/740/760/780），
@@ -156,10 +169,12 @@
      所以这三档的含义是「意图」，在支持的字体的平台上逐档生效，
      在只提供两个字面的平台上 600 会并到 700（雅黑下 600/700 观感一致）。
      收敛后写下的值至少是可解释的；继续散着 14 个值只会让不同平台
-     得到互不一致的结果。档位命名与 Primer 的 normal / semibold / bold 一致。 */
+     得到互不一致的结果。档位命名与 Primer 的 normal / semibold / bold 一致。
+
+     2026-09 纪律：标题一律 600，700 只留给品牌、数字与强调片段。 */
   --fw-normal: 400; /* 正文、辅助说明 */
-  --fw-semibold: 600; /* 强调：标签、导航、表头、次级标题 */
-  --fw-bold: 700; /* 强强调：页面标题、品牌、按钮 */
+  --fw-semibold: 600; /* 强调：标签、导航、表头、标题 */
+  --fw-bold: 700; /* 强强调：品牌、数字、强调片段 */
 
   /* 布局宽度 */
   --content-width: 1420px;
@@ -174,6 +189,9 @@
   --body-font:
     system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', 'Microsoft YaHei',
     sans-serif;
+  /* 展示字体：空态问候、登录主标的可选衬线 accent。默认回退无衬线——
+     不引 webfont（CJK 加载成本太高），只给一处开关，试不好就保持现状。 */
+  --display-font: var(--body-font);
   --mono-font: 'Cascadia Mono', 'SFMono-Regular', Consolas, monospace;
 
   /* 10、告知浏览器当前主题，原生滚动条与表单控件按此渲染。漏了它，深色模式下
@@ -199,9 +217,10 @@
   --z-dock: 8; /* 贴边吸附的输入坞（检索/Agent 输入区） */
   --z-topbar: 10; /* 应用顶栏 */
   --z-admin-topbar: 20; /* 后台页头 */
-  --z-admin-overlay: 35; /* 后台窄屏抽屉遮罩 */
-  --z-admin-sidebar: 40; /* 后台侧栏 */
-  --z-popover: 50; /* Portal 弹层：盖过输入坞与后台侧栏，让位阅读层 */
+  --z-drawer-overlay: 35; /* 窄屏抽屉遮罩（前台外壳与后台共用） */
+  --z-drawer-sidebar: 40; /* 侧栏外壳（前台常驻、窄屏抽屉） */
+  --z-popover: 50; /* Portal 弹层：盖过输入坞与侧栏，让位阅读层 */
+  --z-overlay: 60; /* 居中浮层：设置中心（P4 起用） */
   --z-reader: 80; /* 全屏阅读层 */
   --z-skip: 100; /* 无障碍跳转链接 */
 }
@@ -213,77 +232,77 @@
    因此这里不需要再维护 prefers-color-scheme 的媒体查询副本——那份副本曾是整块
    逐字节重复的 80 行，改一个深色值要同步两处。 */
 [data-theme='dark'] {
-  /* 1、色阶层：同上深色映射 */
-  --neutral-50: #14181a;
-  --neutral-100: #1e2426;
-  --neutral-200: #2b3335;
-  --neutral-300: #394447;
-  --neutral-400: #566467;
-  --neutral-500: #7b8481;
-  --neutral-600: #b4bbb9;
-  --neutral-700: #d8dcdb;
-  --neutral-800: #e9ebea;
-  --neutral-900: #f4f5f5;
-  --neutral-950: #fbfbfa;
+  /* 1、色阶层：暖墨（去掉原来的绿底，深色泛绿会发闷） */
+  --neutral-50: #161615;
+  --neutral-100: #1f1f1d;
+  --neutral-200: #262624;
+  --neutral-300: #33332f;
+  --neutral-400: #4c4c46;
+  --neutral-500: #75756c;
+  --neutral-600: #aaaaa0;
+  --neutral-700: #c9c9bf;
+  --neutral-800: #e0e0d7;
+  --neutral-900: #e9e9e2;
+  --neutral-950: #ecece7;
 
-  /* 2、强调色：深色下需要提亮 */
-  --teal-100: #183f3a;
-  --teal-400: #4fb3a3;
-  --teal-600: #5fc9ba;
-  --teal-700: #7dd4c7;
+  /* 2、强调色：深色下降饱和的灰绿，不再用亮薄荷 */
+  --pine-100: #243730;
+  --pine-400: #8fb8ab;
+  --pine-600: #8fb8ab;
+  --pine-700: #c4dcd2;
 
   /* 3、状态色：深色下提亮 */
-  --brick-100: #5c1f1f;
-  --brick-600: #e86060;
-  --amber-100: #5c4a1f;
-  --amber-600: #d9a43d;
+  --brick-100: #4a2420;
+  --brick-600: #e0705f;
+  --amber-100: #453a1e;
+  --amber-600: #d9a95c;
 
   /* 4、语义层——表面：覆盖写死的浅色代码 */
   --surface-base: var(--neutral-50);
   --surface-raised: var(--neutral-100);
   --surface-sunken: var(--neutral-200);
   --surface-sunken-hover: var(--neutral-300);
-  --surface-overlay: rgb(20 24 26 / 80%);
-  --surface-scrim: rgb(20 24 26 / 96%);
+  --surface-overlay: rgb(0 0 0 / 55%);
+  --surface-scrim: rgb(22 22 21 / 96%);
   --surface-inverse: var(--neutral-900);
   --surface-secondary: var(--neutral-100);
   --surface-tertiary: var(--neutral-200);
   --surface-hover: var(--neutral-200);
   --surface-error: var(--brick-100);
-  --surface-success: var(--teal-100);
+  --surface-success: var(--pine-100);
 
   /* 5、语义层——文字：覆盖写死的浅色代码 */
   --text-primary: var(--neutral-950);
   --text-secondary: var(--neutral-700);
-  --text-tertiary: #9aa7a9;
+  --text-tertiary: #8a8a80;
   --text-on-accent: var(--neutral-50);
   /* 同上：深色下反转块是浅底，字用深色端。 */
   --text-on-inverse: var(--neutral-50);
   --text-error: var(--brick-600);
-  --text-success: var(--teal-700);
+  --text-success: var(--pine-700);
 
   /* 6、语义层——描边：覆盖写死的浅色代码 */
   --border-subtle: var(--neutral-300);
   --border-strong: var(--neutral-400);
 
   /* 7、语义层——强调与状态 */
-  --accent: var(--teal-600);
-  --accent-primary: var(--teal-600);
-  --accent-hover: var(--teal-400);
-  --accent-soft: var(--teal-100);
-  --accent-ring: rgb(95 201 186 / 24%);
-  --success: var(--teal-600);
+  --accent: var(--pine-600);
+  --accent-primary: var(--pine-600);
+  --accent-hover: var(--pine-400);
+  --accent-soft: var(--pine-100);
+  --accent-ring: rgb(143 184 171 / 24%);
+  --success: var(--pine-600);
   --danger: var(--brick-600);
   --danger-soft: var(--brick-100);
   --warning: var(--amber-600);
   --warning-soft: var(--amber-100);
 
   /* 8、阴影：深色模式下投影要提亮边缘 */
-  --shadow-soft: 0 14px 34px rgb(0 0 0 / 50%);
-  --shadow-card: 0 6px 20px rgb(0 0 0 / 30%);
-  --shadow-raised: 0 1px 5px rgb(0 0 0 / 40%);
-  --shadow-inset-chip: 0 1px 3px rgb(0 0 0 / 60%);
-  --shadow-drawer: -18px 0 48px rgb(0 0 0 / 60%);
+  --shadow-soft: 0 8px 30px rgb(0 0 0 / 45%);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 30%), 0 4px 12px rgb(0 0 0 / 25%);
+  --shadow-raised: 0 1px 3px rgb(0 0 0 / 40%);
+  --shadow-inset-chip: 0 1px 2px rgb(0 0 0 / 55%);
+  --shadow-drawer: -18px 0 48px rgb(0 0 0 / 55%);
 
   /* 10、告知浏览器使用深色滚动条 */
   color-scheme: dark;

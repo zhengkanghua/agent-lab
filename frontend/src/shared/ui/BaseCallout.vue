@@ -47,9 +47,9 @@ const slots = defineSlots<{
   display: flex;
   align-items: flex-start;
   gap: 9px;
-  padding: 12px 13px;
+  padding: 12px 14px;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
 }
 
 .callout-icon {
@@ -61,7 +61,7 @@ const slots = defineSlots<{
 .callout-title {
   color: var(--text-primary);
   font-size: var(--fs-sm);
-  font-weight: var(--fw-bold);
+  font-weight: var(--fw-semibold);
 }
 
 .callout-description {
