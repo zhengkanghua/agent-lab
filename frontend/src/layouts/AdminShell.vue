@@ -22,8 +22,9 @@ import ThemeToggle from '@/shared/ui/ThemeToggle.vue'
 /* 后台控制台布局：固定左侧导航 + 右侧内容区。后台只有一条路由（/admin/:section?），
  * 页面（AdminPage）像前台页面嵌 AppShell 一样把本外壳嵌进模板，正文经默认插槽进来。
  *
- * 与 AppShell 的区别是刻意的：AppShell 是前台工作台的单条顶栏，AdminShell 是管理端的
- * 侧边栏布局，二者不互相归并，各自只服务一个领域。
+ * 与 AppShell 的区别是刻意的：两个都是侧栏外壳，但服务不同领域——AppShell 是前台
+ * 工作台（品牌 + 主操作 + 会话列表），AdminShell 是管理控制台（分区菜单 + 分区标题
+ * 顶栏），导航项、信息密度与读者都不同，二者不互相归并。
  *
  * 后台导航在这里集中定义（侧边栏对后台所有分区一致），新增后台分区时：
  *   1) 在 pages/AdminPage.vue 的分区注册表加一条（标题/分区说明）；
@@ -209,8 +210,10 @@ onScopeDispose(() => {
         </BaseIconButton>
 
         <div class="topbar-heading">
-          <p v-if="props.headingSubtitle" class="topbar-subtitle">{{ props.headingSubtitle }}</p>
           <h1 class="topbar-title" :title="props.headingTitle">{{ props.headingTitle }}</h1>
+          <p v-if="props.headingSubtitle" class="topbar-subtitle" :title="props.headingSubtitle">
+            {{ props.headingSubtitle }}
+          </p>
         </div>
 
         <div class="topbar-actions">
@@ -252,10 +255,10 @@ onScopeDispose(() => {
 .admin-sidebar {
   position: fixed;
   inset: 0 auto 0 0;
-  z-index: var(--z-admin-sidebar);
+  z-index: var(--z-drawer-sidebar);
   display: flex;
   flex-direction: column;
-  width: 244px;
+  width: 232px;
   background: var(--surface-raised);
   border-right: 1px solid var(--border-subtle);
 }
@@ -275,10 +278,9 @@ onScopeDispose(() => {
   width: 36px;
   height: 36px;
   flex: 0 0 auto;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   color: var(--text-on-inverse);
   background: var(--surface-inverse);
-  box-shadow: inset 4px 0 var(--accent);
 }
 
 .sidebar-brand-copy {
@@ -318,7 +320,7 @@ onScopeDispose(() => {
   gap: 10px;
   padding: 9px 12px;
   margin-bottom: 6px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   color: var(--text-secondary);
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
@@ -337,7 +339,7 @@ onScopeDispose(() => {
   padding: 16px 12px 7px;
   color: var(--text-tertiary);
   font-size: var(--fs-xs);
-  font-weight: var(--fw-bold);
+  font-weight: var(--fw-semibold);
   letter-spacing: 0;
   text-transform: uppercase;
 }
@@ -347,7 +349,7 @@ onScopeDispose(() => {
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   color: var(--text-secondary);
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
@@ -362,24 +364,24 @@ onScopeDispose(() => {
   background: var(--surface-hover);
 }
 
-/* 激活项：左色条 + 浅青底。router-link-active 由 RouterLink 在命中时自动加上。 */
+/* 激活项：松绿浅底 + 强调色文字（「当前导航态」的强调配额用在这里）。
+   router-link-active 由 RouterLink 在命中时自动加上。图标跟文字同色（currentColor），
+   不再单独染绿——每个菜单图标都染绿会让强调色面积超标。 */
 .menu-item.router-link-active {
   color: var(--accent);
   font-weight: var(--fw-semibold);
   background: var(--accent-soft);
-  box-shadow: inset 3px 0 var(--accent);
 }
 
 .menu-item svg {
   flex: 0 0 auto;
-  color: var(--accent);
 }
 
 /* 窄屏抽屉遮罩 */
 .sidebar-overlay {
   position: fixed;
   inset: 0;
-  z-index: var(--z-admin-overlay);
+  z-index: var(--z-drawer-overlay);
   border: 0;
   background: var(--surface-overlay);
 }
@@ -387,7 +389,7 @@ onScopeDispose(() => {
 .admin-main-wrap {
   flex: 1;
   min-width: 0;
-  margin-left: 244px;
+  margin-left: 232px;
 }
 
 .admin-topbar {
@@ -396,9 +398,11 @@ onScopeDispose(() => {
   z-index: var(--z-admin-topbar);
   display: flex;
   align-items: center;
-  gap: 16px;
-  min-height: 64px;
-  padding: 0 28px;
+  gap: 14px;
+  /* 40px 极薄一条（2026-09 重设计 P4）：分区标题 + 说明占一行，操作全收图标。
+     后台不再有自己的「页面头」，分区标题就是这一条的正文。 */
+  min-height: 40px;
+  padding: 0 20px;
   border-bottom: 1px solid var(--border-subtle);
   /* 同 AppShell 顶栏：scrim 已 96% 不透明，blur 不可见却会在主题切换时闪黑。 */
   background: var(--surface-scrim);
@@ -409,21 +413,28 @@ onScopeDispose(() => {
 }
 
 .topbar-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
   min-width: 0;
 }
 
-.topbar-subtitle {
-  color: var(--text-secondary);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-bold);
+.topbar-title {
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.topbar-title {
-  margin: 1px 0 0;
-  font-size: var(--fs-lg);
-  font-weight: var(--fw-bold);
-  line-height: 1.25;
+.topbar-subtitle {
+  margin: 0;
   overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -437,15 +448,17 @@ onScopeDispose(() => {
   flex-shrink: 0;
 }
 
+/* 账号入口：40px 薄条里放不下长邮箱，恒为图标态，邮箱进 aria-label 与 title；
+   点它去设置中心的账号分区。 */
 .account-identity {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  max-width: 220px;
-  padding: 6px 10px;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
-  font-size: var(--fs-xs);
   text-decoration: none;
   transition:
     color 150ms ease,
@@ -454,7 +467,6 @@ onScopeDispose(() => {
 
 .account-identity svg {
   flex-shrink: 0;
-  color: var(--accent);
 }
 
 .account-identity:hover {
@@ -463,10 +475,7 @@ onScopeDispose(() => {
 }
 
 .account-identity span {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: none;
 }
 
 .logout-error {
@@ -480,7 +489,7 @@ onScopeDispose(() => {
 
 .admin-content {
   width: 100%;
-  max-width: 1280px;
+  max-width: 1100px;
   margin: 0 auto;
   padding: 30px 40px 64px;
 }
@@ -530,17 +539,6 @@ onScopeDispose(() => {
 
   .admin-topbar {
     padding: 0 16px;
-  }
-
-  .account-identity {
-    justify-content: center;
-    width: 40px;
-    height: 40px;
-    padding: 0;
-  }
-
-  .account-identity span {
-    display: none;
   }
 }
 
