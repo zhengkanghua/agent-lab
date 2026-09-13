@@ -1,101 +1,101 @@
-# Agent Lab 后端容器编排。
-#
-# 服务器上的用法：把本文件和填好的 .env 放进同一个目录（约定 /opt/agent-lab/），
-# 不需要复制仓库其余部分。compose 会读同目录的 .env 做两件事——替换下面的 ${...}
-# 占位符，以及通过 env_file 把同一份变量注入容器进程。
-#
-# 这里有 API 与 scheduler 两个服务。前端不在容器里：dist 是静态文件，由 OpenResty 直接发，
-# 理由见 docs/adr/0008-backend-in-image-frontend-as-static-files.md。
-#
-# 迁移刻意不写成 compose 服务，而是部署脚本里显式两条命令，见 docs/container_deployment.md。
-# 原因是迁移失败时要保留旧容器继续服务；写成 depends_on 会让后端直接起不来。
+# 同一后端镜像运行 API、单个 Beat 和 Linux prefork Worker。
+# PostgreSQL 保存受理与结果，Redis 是项目共用中间件；前端由 OpenResty 发布静态文件。
+# 首次切换须先停止旧 scheduler/API/CLI 并核实旧写入，再迁移，见 docs/container_deployment.md。
+x-backend: &backend
+  image: ${BACKEND_IMAGE:?BACKEND_IMAGE 未设置：检查本文件同目录的 .env}
+  restart: unless-stopped
+  stop_grace_period: 360s
+  env_file:
+    - .env
+  environment: &backend-environment
+    TZ: ${TZ:-Asia/Shanghai}
+    # 本地 Python 开发默认连 localhost；容器默认使用内部网络中的共用 Redis。
+    REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  networks:
+    - 1panel-network
+    - middleware
+  volumes:
+    - ./data:/data
+    - ./.env:/app/.env:ro
+  logging: &logging
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 networks:
-    1panel-network:
-        external: true
+  1panel-network:
+    external: true
+  middleware:
+    internal: true
+
+volumes:
+  redis-data:
+
 services:
   backend:
-    # 镜像地址没有默认值，必须由 .env 提供。本仓库是公开的，registry 实例 id 和命名空间
-    # 不写进代码。`:?` 的作用是缺值时让 compose 立刻报错退出——否则 image 会变成空字符串，
-    # docker 报的错跟「镜像不存在」长得一样，会往错的方向查。
-    #
-    # ⚠ 这个值必须和 CI 构建的 tag 完全一致。CI 那边由 GitHub Variables 的
-    # ACR_REGISTRY / ACR_NAMESPACE / ACR_REPOSITORY 拼出来，两处都不在仓库里、无法自动比对；
-    # 不一致的表现是「CI 全绿、容器也重启了，但跑的还是上一版代码」。
-    # 改 registry 的完整清单见 docs/container_deployment.md 的「更换 registry」。
-    image: ${BACKEND_IMAGE:?BACKEND_IMAGE 未设置：检查本文件同目录的 .env}
+    <<: *backend
     container_name: agent-lab-backend
-    restart: unless-stopped
-    # 留出等待、取消及短事务收尾时间；不是任务执行的时长上限。
-    stop_grace_period: 360s
-
-    # 只绑 127.0.0.1：这个端口只给同机的 OpenResty 反代用，不该被公网直接访问。
-    # 写成 "18000:8000" 会绑到 0.0.0.0，且 Docker 直接改 iptables、绕过 ufw
-    # （甲骨文云端安全列表仍然挡得住，但没有理由多开一层）。左边是宿主机端口、
-    # 可在 .env 改；右边 8000 是容器内 uvicorn 监听的端口，不要改。
     ports:
       - "127.0.0.1:${BACKEND_PORT:-18000}:8000"
-
-    # 应用配置全部来自这份文件。注意 env_file 注入的值一律是字符串，所以
-    # LLM_CHECKPOINT_POOL_SIZE 绝对不能写进 .env——它在 config/llm.py 里声明为
-    # strict=True，配上会让进程启动即 ValidationError。要改连接池就改代码默认值。
-    env_file:
-      - .env
-
     environment:
-      # 只影响容器内日志时间戳的显示，不影响数据库时区（那个由 .env 的
-      # DATABASE_TIMEZONE=UTC 决定，两者互不干涉）。
-      TZ: ${TZ:-Asia/Shanghai}
-      # 强制禁用 API worker 的调度器（防止多 worker 环境下任务重复执行）
-      SCHEDULER_ENABLED: "false"
-      # 从 .env 读取 worker 数量，entrypoint.sh 会使用
+      <<: *backend-environment
       WORKER_COUNT: ${WORKER_COUNT:-2}
-    networks:
-    - 1panel-network
-    # Docker 默认的 json-file 驱动不限制日志大小，跑久了能把磁盘写满——那台机器上
-    # 还有其他服务，写满会一起出事。10m × 3 份，总上限 30MB。
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    volumes:
-      - ./data:/data
-      # 挂载 .env 文件到容器内，让 pydantic-settings 能直接读取
-      # 这是额外保险：即使 env_file 注入的环境变量失效，容器内也能读到文件
-      - ./.env:/app/.env:ro
+    # 不依赖 Redis 就绪：消息代理暂不可用时，API 仍可持久受理和查询。
 
-  # 调度器服务（独立进程执行定时任务）
-  scheduler:
-    image: ${BACKEND_IMAGE:?BACKEND_IMAGE 未设置：检查本文件同目录的 .env}
-    container_name: agent-lab-scheduler
+  redis:
+    image: redis:7.4-alpine
     restart: unless-stopped
-    stop_grace_period: 360s
-    env_file:
-      - .env
-    environment:
-      TZ: ${TZ:-Asia/Shanghai}
-      # 调度器进程启用定时任务
-      SCHEDULER_ENABLED: "true"
-    # 调度器不需要暴露端口（无 HTTP 服务）
-    # 不依赖 backend 服务（两者并行启动）
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory-policy
+      - noeviction
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-256mb}
+    # 共用中间件不暴露宿主端口，也不接入共享 1panel 网络。
     networks:
-      - 1panel-network
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+      - middleware
     volumes:
-      - ./data:/data
-      # 挂载 .env 文件到容器内，让 pydantic-settings 能直接读取
-      # 这是额外保险：即使 env_file 注入的环境变量失效，容器内也能读到文件
-      - ./.env:/app/.env:ro
-    # 使用调度器入口启动
-    command: ["python", "-m", "agent_lab.scheduler_main"]
-    # 只读本容器配置刷新状态，不新增远程探测或触发真实任务。
+      - redis-data:/data
+    logging: *logging
     healthcheck:
-      test: ["CMD", "python", "-m", "agent_lab.scheduler_main", "--check"]
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  task-beat:
+    <<: *backend
+    container_name: agent-lab-task-beat
+    command: ["celery", "-A", "agent_lab.tasks.celery_app:app", "beat", "--loglevel=INFO", "--pidfile="]
+    healthcheck:
+      # 只读本进程的调度推进状态，不触发业务。
+      test: ["CMD", "python", "-m", "agent_lab.tasks.status", "--check"]
       interval: 10s
       timeout: 5s
       start_period: 30s
+      retries: 3
+
+  task-worker:
+    <<: *backend
+    # 不固定 container_name，允许 --scale task-worker=N；Beat 始终只有一个实例。
+    command:
+      - celery
+      - -A
+      - agent_lab.tasks.celery_app:app
+      - worker
+      - --loglevel=INFO
+      - --pool=prefork
+      - --concurrency=${TASK_WORKER_CONCURRENCY:-2}
+      - --hostname=worker@%h
+    healthcheck:
+      # 精确指向当前容器的主进程；业务领取/结果仍通过任务详情判断。
+      test: ["CMD-SHELL", "celery -A agent_lab.tasks.celery_app:app inspect ping --destination worker@$$HOSTNAME --timeout 5"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
       retries: 3

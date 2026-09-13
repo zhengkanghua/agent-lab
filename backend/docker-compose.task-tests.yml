@@ -1,0 +1,33 @@
+# 明确授权后使用独立项目运行；没有宿主端口、生产网络或真实凭据。
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tasks_test
+      POSTGRES_PASSWORD: isolated_test_only
+      POSTGRES_DB: tasks_test
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tasks_test -d tasks_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.task-tests
+    environment:
+      DATABASE_URL: postgresql+psycopg://tasks_test:isolated_test_only@postgres:5432/tasks_test
+      TASK_TEST_DATABASE_URL: postgresql+psycopg://tasks_test:isolated_test_only@postgres:5432/tasks_test
+      SCHEDULER_TEST_DATABASE_URL: postgresql+psycopg://tasks_test:isolated_test_only@postgres:5432/tasks_test
+      RUN_TASK_QUEUE_INTEGRATION_TEST: "1"
+      RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST: "1"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./.pytest_cache/task-environment:/workspace/backend/.pytest_cache
+networks:
+  default:
+    internal: true

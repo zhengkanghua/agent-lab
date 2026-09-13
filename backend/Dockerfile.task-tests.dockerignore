@@ -1,0 +1,14 @@
+# 此测试镜像只接收以下源码与依赖清单，绝不带入 .env 或开发虚拟环境。
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+!src/**
+!tests/
+!tests/**
+!alembic/
+!alembic/**
+!alembic.ini
+**/__pycache__/
+**/*.pyc

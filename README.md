@@ -32,7 +32,7 @@ LangGraph checkpointer 存在 PostgreSQL 的四张 `checkpoint*` 表里。Agent 
 Agent 对话、知识库/来源/文件管理与手动 Pipeline 权限，CLI 只保留为恢复入口。
 
 超级用户在 `/admin/files` 上传 `.txt`、`.md`，指定归属知识库，或按 Document ID 替换、删除。
-原件和待办保存成功即返回，独立 scheduler 在后台解析并处理采用；正常结果自动索引，异常留待人工处理。
+原件和待办保存成功即返回，Celery Worker 通过已受理的文档处理批次解析并处理采用；正常结果自动索引，异常留待人工处理。
 `/admin/documents` 统一管理文件和 FreshRSS 资料，可对照原件、编辑正文、检查标题目录与 Chunk、
 采用、拒绝和查看历史。同名上传是独立文档，替换携带正式及管理修订检查并发；新索引准备成功后
 才切换，失败保留旧已采用版本。首次采用前，普通全文、检索和 Agent 均不可读取候选。
@@ -42,10 +42,12 @@ Agent 为每次提问保存实际范围和可核对的引用。点击引用可�
 不再逐条回看，也不作为新回答的证据。链路见 [文件资料](docs/flows/file-document-lifecycle.md)
 和 [Agent 回答与引用](docs/flows/agent-answer-evidence.md)。
 
+`/admin/scheduled-jobs` 是任务管理入口，分周期配置和全部任务执行两个视图。手动 Pipeline、周期触发和文档后台批次共用持久受理与查询；提交后返回执行编号，页面关闭不影响后台工作。PostgreSQL 保存执行事实，Redis 传递消息，单个 Celery Beat 推进周期与补投，Worker 完成业务。部署与恢复依据见 [ADR 0019](docs/adr/0019-scheduled-execution-and-write-coordination.md)。
+
 ## 本地启动
 
 前置：需要一个可连接的 PostgreSQL（独立 Database `news_vector_lc`，表结构由 Alembic 迁移建），
-`DATABASE_URL` 指向它；Qdrant、Ollama 和 MinIO/S3 私有桶的配置见 `backend/README.md` 的「外部依赖」。
+`DATABASE_URL` 指向它；任务消息使用项目共用的 Redis。Qdrant、Ollama、Redis 和 MinIO/S3 私有桶的配置见 `backend/README.md` 的「外部依赖」。已有环境升级先按[任务切换步骤](docs/container_deployment.md#定时任务升级与恢复)停止旧写入口。
 
 先启动后端：
 
@@ -64,14 +66,14 @@ uv run uvicorn agent_lab.main:app --reload --host 127.0.0.1 --port 8000 `
   --loop agent_lab.runtime:selector_loop_factory
 ```
 
-另开终端，在 `backend/` 启动文档待办消费者；仅在这个终端启用调度，API 终端保持关闭：
+Windows 原生可运行页面、API、Beat 和单进程 solo Worker，真实受理、补投、连续执行与正常关停已验证。下面是生产采用的 Linux prefork 启动命令，可在 Linux 主机、Docker 或 WSL 中运行；Windows 本地把 Worker 参数换成 `--pool=solo --concurrency=1`。两条命令各占一个终端，工作目录为 `backend/`，与 API 连接同一个 PostgreSQL 和 Redis：
 
-```powershell
-$env:SCHEDULER_ENABLED="true"
-uv run python -m agent_lab.scheduler_main
+```bash
+uv run celery -A agent_lab.tasks.celery_app:app beat --loglevel=INFO --pidfile=
+uv run celery -A agent_lab.tasks.celery_app:app worker --pool=prefork --concurrency=2 --hostname=worker@%h --loglevel=INFO
 ```
 
-文档消费不依赖新增 cron；只启动 API 时，上传仍会保存，但后台处理不会自动推进。
+`REDIS_URL` 配置项目共用 Redis 的地址，密码单独填 `REDIS_PASSWORD`，留空表示不需要密码。任务队列使用独立键前缀，后续缓存等用途也可复用该连接配置。文档处理不需要额外 cron；只启动 API 时仍可保存受理记录，耗时工作等待 Worker。原 `SCHEDULER_ENABLED` 开关和独立 scheduler 入口已移除。容器编排与容量设置见后端 README 和部署文档。
 
 再启动前端：
 

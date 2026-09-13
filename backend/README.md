@@ -3,7 +3,7 @@
 本服务接收 FreshRSS HTML 与上传的 MD/TXT 原件，使用 MinIO/S3 持久保存，再由 Docling
 解析结构并生成带章节上下文的 Chunk。Ollama `bge-m3:567m` 消费冻结文本生成 Embedding，
 Qdrant 保存候选索引，准备成功后切换 PostgreSQL 中的已采用版本。对外提供受登录保护的只读
-语义检索与超级用户文档审核；独立 scheduler 消费持久待办，CLI、HTTP Pipeline 和定时任务复用同一处理能力。
+语义检索与超级用户文档审核；Celery Worker 执行已受理的文档批次、HTTP Pipeline 和定时任务，CLI 继续复用同一业务能力与写资源协调。
 
 在检索之上还有一条 Agent 对话链路（``POST /agent/chat``，SSE）：一个 LangGraph 工具调用
 Agent 把上面的检索能力当工具用，在本次知识库范围内由生成式 LLM 组织带证据引用的答案。
@@ -43,6 +43,9 @@ Ollama       bge-m3:567m，1024 维。query 与 document 使用同一模型，
              换模型等于换索引空间（必须提升 schema_version 并重建）。
 Qdrant       Point 存储。current Alias 必须由部署预先准备，搜索不会创建它。
 MinIO/S3     私有原件存储。先创建桶并配置后端读写与删除权限；浏览器不直接访问桶。
+Redis        项目共用中间件，任务消息与后续缓存等用途按键前缀区分。
+             启用 AOF、持久数据盘和 noeviction；缓存按 TTL 过期，内存满时拒绝新增写入。
+             PostgreSQL 才是受理、状态与结果的事实来源；没有 Celery result backend。
 生成式 LLM   仅 /agent/* 需要。OpenAI 兼容中转站或 Ollama，二选一由 LLM_PROVIDER 决定。
              和上面的 Ollama Embedding 是两件事：Embedding 产出向量，这个产出文字，
              即使都指向同一台 Ollama 也是两套配置。不配则只有 /agent/* 返回 503。
@@ -62,30 +65,17 @@ Agent 继续使用 LangChain/LangGraph，向量存储使用官方 qdrant-client�
 4. agent-lab init-checkpointer 已完成    （仅用 /agent/* 时需要；启动不建表）
 5. S3 私有桶与原件访问配置可用          （接收文件、FreshRSS 原件和完整删除需要）
 6. tokenizer 资源校验通过               （见「文档处理资源」）
-7. 独立 scheduler 正在运行              （自动消费文档待办，不需要另建 cron）
+7. Redis、单个 Beat 与 prefork Worker 可用（文档批次不需要另建 cron）
 ```
 
 第 1 步不到位时 ``/agent/*`` 会返回 503（``agent_thread_database_unavailable``）而不是崩溃：
 归属记录读不出来就不让对话开始，避免在没有归属的情况下写下一段谁都管不了的历史。
 
-应用启动**只**访问 PostgreSQL（同步环境托管管理员；``SCHEDULER_ENABLED=true`` 时调度器还会
-读一次定时任务清单），不探测 FreshRSS、Ollama、Qdrant 或 S3，也不创建 Collection 或 Alias。
-真正的 Embedding 与 current Alias query 在查询或处理待办时执行；新闻同步由 CLI、
-`POST /pipeline/run-once` 或 cron 触发，独立 scheduler 另外持续消费文档待办（调度器与手动入口共用写 Runtime
-生命周期，取舍见 ``docs/adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md``）。
+API 启动访问 PostgreSQL，同步环境托管管理员并装配受理与查询组件；不在启动时探测业务上游或 Redis，不创建 Collection/Alias。Redis 暂不可用时仍可持久受理，恢复后由 Beat 补投原执行。
 
-**定时任务调度器有两种运行形态**（取舍见 [ADR
-0017](../docs/adr/0017-scheduler-runs-in-a-dedicated-process.md)）：
+API、单个 Beat 和 Worker 使用同一份后端代码、独立进程与数据库连接。Beat 动态读取周期配置并维护补投、恢复及历史；生产 Worker 使用 Linux prefork，子进程在 fork 后建立自己的持久 asyncio 循环和连接池。Windows 原生可开发页面、API 和运行离线测试；生产同模式的多进程验收可用远端 Linux、Docker 或 WSL，原生单进程 Worker 的运行与关停尚待验证。`WORKER_COUNT` 控制 API 进程数，`TASK_WORKER_CONCURRENCY` 控制每个 Worker 容器的子进程数；增加 Worker 实例不增加 Beat。旧进程内调度、独立 scheduler 和常驻文档消费者均已移除。
 
-- 裸进程部署（本地开发）：推荐 API 保持 `SCHEDULER_ENABLED=false`，另起独立 scheduler，
-  同时承载 cron 和文档消费。旧的 `SCHEDULER_ENABLED=true` 进程内形态只启动 cron，
-  不启动文档消费者；此形态必须保持单 uvicorn worker、单实例。
-- 生产容器部署：调度跑在同镜像的独立 ``scheduler`` 容器（``python -m agent_lab.scheduler_main``），
-  backend 容器由 compose 强制 ``SCHEDULER_ENABLED="false"``；``WORKER_COUNT``（默认 2）只影响
-  API worker 数，与调度器无关。``.env`` 里的 ``SCHEDULER_ENABLED`` 在容器部署下被 compose 覆盖，
-  对 backend 容器不生效。
-
-定时任务现在有同步、索引、旧 Document 清理三种类型。配置修改顺序统一为先停用、等当前任务执行结束、保存修改，再单独启用；停用仍允许手动触发。配置默认每 5 秒由独立 scheduler 刷新，错过 cron 不补执行。同任务互斥与清理占用由 PostgreSQL 协调，手动 Pipeline 和 CLI 也参与。
+同步、索引和清理保留周期配置，文档处理和 HTTP Pipeline 也接入公共任务组件。配置启用或执行期间可以编辑、停用和删除，后续受理使用新配置，已有执行沿用旧快照；删除后仍能按执行编号查询。相同配置未结束时，新的人工触发返回冲突，新周期留下跳过记录。错过 cron 不补跑；已受理工作继续推进。同任务约束、写资源等待和清理占用由 PostgreSQL 协调，CLI 也参与。详见 [ADR 0019](../docs/adr/0019-scheduled-execution-and-write-coordination.md)。
 
 清理默认预演，仅选择已采用且超过保留期、没有待处理候选的 Document；待审核、失败和拒绝记录不自动清理。每批 50 连续处理，没有整次上限。失败可能保留删除待办或待核实占用，不能仅因心跳过期就解锁。规则与代价见 [ADR 0019](../docs/adr/0019-scheduled-execution-and-write-coordination.md)，排查和升级顺序见 [部署文档](../docs/container_deployment.md#定时任务升级与恢复)。
 
@@ -112,12 +102,16 @@ S3_ACCESS_KEY / S3_SECRET_KEY  仅配置在服务端；需要读取、条件写�
 S3_REGION / S3_ADDRESSING_STYLE  区域及 path/virtual 寻址方式，按对象存储配置。
 DOCUMENT_TOKENIZER_PATH    已准备并校验的本地 tokenizer 目录。
 DOCUMENT_CHUNK_MAX_TOKENS  包含标题与特殊 token 的文本预算，改变后须重新预览与采用。
-SCHEDULER_ENABLED         默认 false。生产 compose 对 API 强制 false、scheduler 强制 true；
-                          关闭时定时任务管理 API 仍可用（可手动触发），只是不到点自动执行。
 SCHEDULER_TIMEZONE        cron 表达式的解释时区，默认 Asia/Shanghai。只影响「0 9 * * *」
                           翻译成哪个时刻；数据库存储一律 UTC，不受影响。
-SCHEDULER_REFRESH_SECONDS 默认 5，独立 scheduler 读取数据库配置的间隔。
-SCHEDULER_SHUTDOWN_GRACE_SECONDS 默认 10，关闭先等待，再取消并收尾，不限制清理执行时长。
+REDIS_URL                项目共用 Redis 连接；本地默认 redis://127.0.0.1:6379/0，容器默认 redis://redis:6379/0。
+REDIS_PASSWORD           Redis 密码，留空表示不需要密码；独立填写，不放入 URL，无需转义特殊字符。
+REDIS_MAXMEMORY          Compose 自带 Redis 的容量，默认 256mb；自管实例在 Redis 服务端设置。
+TASK_QUEUE_NAME           单个业务队列名，也决定任务键前缀 tasks:<队列名>:，三个进程必须相同。
+TASK_QUEUE_VISIBILITY_TIMEOUT 消息可见性超时，不是业务时长上限；重投仍需数据库领取。
+TASK_QUEUE_PUBLISH_TIMEOUT_SECONDS 单次 Redis 发布/连接超时，失败由数据库待办继续补投。
+TASK_QUEUE_REDELIVERY_SECONDS / TASK_QUEUE_MAINTENANCE_SECONDS 补投间隔与 Beat 维护间隔。
+TASK_WORKER_CONCURRENCY   每个 Worker 容器的 prefork 子进程数，Compose 默认 2。
 QDRANT_DISTANCE         改这个或维度必须新建 Schema/Collection，不能原地改。
 LLM_API_KEY             LLM_PROVIDER=openai_compatible 时必须非空，否则 /agent/* 全部 503；
                         provider=ollama 时允许为空。检索接口不受影响。
@@ -165,14 +159,16 @@ uv run uvicorn agent_lab.main:app --reload --host 127.0.0.1 `
   --loop agent_lab.runtime:selector_loop_factory
 ```
 
-另开终端在 `backend/` 启动文档待办消费者；仅为该终端启用调度，API 终端保持关闭：
+确认 `REDIS_URL` 指向的 Redis 可达后，在 Linux（含 Docker/WSL）的 `backend/` 分别开两个终端，运行一个 Beat 与 prefork Worker。API、Beat、Worker 的数据库、业务配置、Redis 连接与队列名保持一致：
 
-```powershell
-$env:SCHEDULER_ENABLED="true"
-uv run python -m agent_lab.scheduler_main
+```bash
+uv run celery -A agent_lab.tasks.celery_app:app beat --loglevel=INFO --pidfile=
+uv run celery -A agent_lab.tasks.celery_app:app worker --pool=prefork --concurrency=2 --hostname=worker@%h --loglevel=INFO
 ```
 
-只启动 API 不会自动推进文档解析；可用 `index-pending` 显式执行一个处理批次。
+Windows 原生本地联调保留同一 Beat 命令，把 Worker 的 `--pool=prefork --concurrency=2` 换成 `--pool=solo --concurrency=1` 即可。真实受理、补投、连续执行及正常关停已通过本地联调；生产多进程故障恢复仍由 Linux 验收覆盖。
+
+只启动 API 不会自动推进文档解析或 HTTP Pipeline。已有 CLI `index-pending` 仍可显式执行一个处理批次，并遵守同一资源协调。Beat 就绪用 `uv run python -m agent_lab.tasks.status --check`；Worker 连通检查用 `celery ... inspect ping`，业务是否推进仍按执行编号查询。容器入口与停机切换见[部署文档](../docs/container_deployment.md#定时任务升级与恢复)。
 
 ``--loop agent_lab.runtime:selector_loop_factory`` 只为解决 Windows 兼容问题：Uvicorn
 在 Windows 默认用 ProactorEventLoop，而 Psycopg 3 的异步连接要求 SelectorEventLoop。
@@ -290,7 +286,7 @@ Invoke-RestMethod -Method Get `
   -WebSession $session
 ```
 
-手动执行 Pipeline（需要超级用户会话）：
+手动提交 Pipeline（需要超级用户会话，返回 HTTP 202）：
 
 ```powershell
 $pipeline = @{
@@ -299,23 +295,31 @@ $pipeline = @{
   stale_after_minutes = 60
 } | ConvertTo-Json
 
-Invoke-RestMethod -Method Post `
+$pipelineRequestId = [guid]::NewGuid().ToString()
+$receipt = Invoke-RestMethod -Method Post `
   -Uri http://127.0.0.1:8000/pipeline/run-once `
+  -Headers @{ "Idempotency-Key" = $pipelineRequestId } `
   -WebSession $session `
   -ContentType application/json `
   -Body $pipeline
+
+Invoke-RestMethod -Method Get `
+  -Uri "http://127.0.0.1:8000/task-runs/$($receipt.run_id)" `
+  -WebSession $session
 ```
+
+保存请求标识与原始参数后再提交；超时核对时重复同一个 POST 和标识，不重新生成标识。受理成功只代表已持久保存，最终同步与处理统计从执行详情读取。定时任务的立即执行和人工重试同样要求 `Idempotency-Key`；同一标识换内容返回冲突。`GET /task-runs` 列出全部执行，`POST /task-runs/{id}/cancel` 取消尚未开始或等待重试的执行；`POST /task-runs/{id}/retry` 为保留完整参数的失败记录创建关联新执行。默认重试及历史保留通过超级用户 `/task-policy` 管理，已有执行沿用受理时的策略。
 
 ## 知识库升级与索引重建
 
 Docling 采用新文档处理表和 v3 索引规格。旧 v2 Point 缺少候选隔离所需身份，不能直接用于新版检索。
 本期按已确认的开发资料重置方案切换，不建设旧正文回填或双处理路径。执行顺序：
 
-1. 核对目标数据库、当前环境 Collection/Alias 和原件范围；确认旧 API、scheduler、CLI 与远端未决写入已停止。
+1. 核对目标数据库、当前环境 Collection/Alias 和原件范围；确认 API、Beat、Worker、旧 scheduler、CLI 与远端未决写入已停止。
 2. 准备私有 S3 桶、后端配置及锁定 tokenizer，执行 `uv run alembic upgrade head`。
 3. 在已授权范围内清除文档、候选、已采用历史、审核记录和对应索引；仅重置确有必要重新接收的 Source checkpoint。
    保留账号、KnowledgeBase 配置、Source 绑定、任务配置、Agent 会话及其 checkpointer 历史。
-4. 使用 `QDRANT_COLLECTION_SCHEMA_VERSION=v3` 和空的新目标，启动新版 API 与独立 scheduler。
+4. 使用 `QDRANT_COLLECTION_SCHEMA_VERSION=v3` 和空的新目标，启动新版 API、Beat、Worker 并连接项目共用 Redis。
    上传合成 MD/TXT，接收范围内的 FreshRSS 条目，核对原件、预览、采用、检索和删除。
 5. 记录清空和重新导入的数量、实际范围及未完成项。重置 checkpoint 后沿用 FreshRSS 首次有界同步，
    不承诺回灌全部历史；S3 未配置时不能完成该切换。
@@ -414,6 +418,8 @@ uv run pytest -q tests/test_qdrant_remote_integration.py
 uv run pytest -q --tb=short --scheduler-configured-services `
   tests/test_knowledge_postgres_integration.py `
   tests/test_scheduler_postgres_integration.py `
+  tests/test_task_migration_postgres_integration.py `
+  tests/test_task_handoff_postgres_integration.py `
   tests/test_scheduler_retention_integration.py `
   tests/test_file_documents_integration.py `
   tests/test_processing_postgres_integration.py `
@@ -422,7 +428,42 @@ uv run pytest -q --tb=short --scheduler-configured-services `
   tests/test_document_rebuild_integration.py
 ```
 
-这组测试的原件存储仍使用替身，不能作为真实 S3 验收。测试会生成常规 pytest/Python 缓存，不生成新闻导出文件。强制终止测试可能留下带 ``scheduler_test_`` 标识的资源，须先确认测试进程已退出再清理。离线测试不能证明多进程数据库锁、跨库恢复或实际部署；上面的隔离验证也只覆盖合成数据，不等于生产发布验收。
+这组命令启用真实 PostgreSQL 和远程 Qdrant；原件存储与 Embedding 仍使用替身，不能作为真实 S3 或模型验收。文档夹具未启用远程 Qdrant 开关时使用内存实例。测试会生成常规 pytest/Python 缓存，不生成新闻导出文件。强制终止测试可能留下带 ``scheduler_test_`` 标识的资源，须先确认测试进程已退出再清理。离线测试不能证明多进程数据库锁、跨库恢复或实际部署；上面的隔离验证也只覆盖合成数据，不等于生产发布验收。
+
+公共任务的真实队列验收使用 Linux prefork、独立 `redis-server` 和随机 PostgreSQL schema。夹具会停止自己创建的进程、丢弃自己的队列消息、重启自己的 Redis，覆盖 AOF、长任务真实重投、Worker 丢失、重连及动态 Beat；不控制共享 Redis。获得对应环境授权后可在安装 Docker 的环境中运行隔离项目：
+
+```bash
+docker compose -p agent-lab-task-tests -f docker-compose.task-tests.yml up --build --abort-on-container-exit --exit-code-from tests
+docker compose -p agent-lab-task-tests -f docker-compose.task-tests.yml down --volumes
+```
+
+该编排只建立内部测试网络与临时 PostgreSQL，不挂生产 `.env`，没有宿主端口。结果目录为 `.pytest_cache/task-environment/`，Worker/Beat/Redis 日志在其 `task-processes/` 下，先保留失败日志再清理。镜像内同时执行旧结构迁移、多进程 PostgreSQL 与文档事务交接中断验证；交接测试只构造合成待办，验证退出时整体回滚和已知结果重新保存，不调用原件或模型。部署工作流在离线测试之后使用 Linux runner、临时 PostgreSQL 和夹具自己的 Redis 执行这些验收，失败即停止部署，进程日志作为 Actions artifact 保存。有已授权 Linux PostgreSQL 时也可设置 `RUN_TASK_QUEUE_INTEGRATION_TEST=1`、`TASK_TEST_DATABASE_URL` 后运行 `tests/test_task_queue_integration.py`，本机需有 `redis-server`。
+
+已有开发 Redis 时可在 Windows 原生验证 HTTP、真实登录、Beat 和 solo Worker，无需 Docker。以下用例读取 `DATABASE_URL`、`REDIS_URL` 与 `REDIS_PASSWORD`，只创建随机 schema、隔离账号及带随机前缀的任务键；通过空知识库清理预演验证消息丢失补投、取消、连续执行和 Worker 正常关闭。不重启或清空共享 Redis，不调用业务上游。该用例已在 Windows 与真实开发 PostgreSQL／Redis 上通过，并确认测试键和 schema 清理完成：
+
+```powershell
+$env:RUN_TASK_LOCAL_INTEGRATION_TEST="1"
+try {
+  uv run pytest -q --tb=short --basetemp=.pytest_cache/task-local tests/test_task_local_integration.py
+} finally {
+  Remove-Item Env:RUN_TASK_LOCAL_INTEGRATION_TEST
+}
+```
+
+日志与清理报告在 `.pytest_cache/task-local/`，仅该次创建的资源在退出时清理。solo 的单进程验证不能替代前述 Linux prefork 的并发、进程崩溃和 Redis 重启验收。
+
+三存储恢复单独使用真实 PostgreSQL、Qdrant 和已有私有 S3 桶，默认跳过。以下命令只创建随机 schema、Collection/Alias 与 `acceptance/task-recovery/` 对象。五种场景分别覆盖 Qdrant/S3 删除成功后数据库确认未保存、数据库最终收尾失败，以及 Qdrant/S3 实际删除后应用收到异常；最后两种必须保留待核实和写占用，拒绝普通重试，明确核实后才能继续。所有场景均检查配置/普通历史清理后仍可继续业务待办，已经完整删除的目标不重复处理：
+
+```powershell
+$env:RUN_TASK_CROSS_STORAGE_INTEGRATION_TEST="1"
+try {
+  uv run pytest -q --tb=short --scheduler-configured-services tests/test_task_cross_storage_integration.py
+} finally {
+  Remove-Item Env:RUN_TASK_CROSS_STORAGE_INTEGRATION_TEST
+}
+```
+
+该命令需事先配置并授权 `S3_*` 读写删除；`--scheduler-configured-services` 提供开发 PostgreSQL/Qdrant 地址。每种故障的精确资源与远端清理结果记录在 `.pytest_cache/task-cross-storage-*.json`。它验证真实三存储与公共 Worker 业务接缝，消息进程语义由前一组真实队列测试验证；两组都通过仍不能替代生产切换验收。
 
 第二阶段文件验证可只运行 ``tests/test_file_documents_integration.py``：覆盖上传到索引、检索、
 全文和替换，以及不同状态按 ID 删除、Qdrant 确认后数据库失败恢复、定时清理排除人工待办。
@@ -481,7 +522,10 @@ uv run pytest -q tests/test_auth.py tests/test_user_admin.py
 uv run pytest -q tests/test_cli.py tests/test_news_pipeline_execution.py `
   tests/test_pipeline_api.py
 
-# 定时任务：类型注册表与 cron 预览、调度器包装器、管理 API 契约（假 Store/Runtime，不连库）
+# 公共任务：受理、快照、重试、资源等待与 HTTP；内存 SQLite 不能证明 PostgreSQL 并发锁
+uv run pytest -q tests/test_task_execution.py tests/test_task_api.py
+
+# 定时任务：类型注册、cron 预览、动态 Beat、管理 API 与业务资源协调（不连真实服务）
 uv run pytest -q tests/test_scheduled_task_registry.py tests/test_scheduler_runner.py `
   tests/test_scheduled_jobs_api.py tests/test_scheduler_safety.py tests/test_scheduler_lifecycle.py `
   tests/test_document_retention_service.py
@@ -571,5 +615,4 @@ uv venv --clear .venv
 uv sync --all-groups
 ```
 
-以后接入 Redis 或容器编排时，也要分别设置 key 前缀、持久化目录、容器名和宿主机端口，
-避免两个实例共享状态或争用资源。
+Redis 连接由 `config/redis.py` 统一管理，任务队列、后续缓存等使用方各自管理键命名。API、Beat 和 Worker 必须在同一环境内共用 `REDIS_URL` 与 `TASK_QUEUE_NAME`；多个环境复用 Redis 时使用不同队列名，以区分消息及未确认消息等辅助键。Compose 项目名隔离自带 Redis 的网络和持久卷。共享实例的 `noeviction` 作用于全部键，缓存用 TTL 控制保留时间；内存满时新增写入会失败，任务投递由 PostgreSQL 保留依据并补试。Worker 子进程的异步连接只在本进程的持久循环中创建、使用和关闭。

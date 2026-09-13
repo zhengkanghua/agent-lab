@@ -10,15 +10,15 @@ Cloudflare 与账号管理内容收在本文第五节。
   → OpenResty（TLS、反代、限流、静态站）        ← 自行配置，本文不提供配置
       ├─ /        → <WEB_ROOT>   dist 静态文件
       └─ /api/*   → 127.0.0.1:18000（去掉 /api 前缀）        backend 容器
-                                                      scheduler 容器（定时任务与文档待办）
+                                                      task-beat 容器（周期受理与维护）
+                                                      task-worker 容器（后台业务执行）
+                                                      redis 容器（项目共用中间件与持久盘）
                       → 远程 PostgreSQL / Ollama / Qdrant / FreshRSS / MinIO(S3)
 ```
 
-前端没有容器：`dist` 是静态文件，不运行、无依赖、无需隔离。后端是**两个容器**（同镜像）：
-`backend` 服务 HTTP（worker 数由 `WORKER_COUNT` 控制），`scheduler` 运行定时任务和文档待办消费器
-（`python -m agent_lab.scheduler_main`）。文件与 FreshRSS 原件保存后，由该进程完成解析、预览和采用，
-不需要额外创建 cron。API worker 不消费文档待办；独立进程的取舍见
-[ADR 0017](adr/0017-scheduler-runs-in-a-dedicated-process.md)。
+前端由 OpenResty 提供静态文件。`backend`、`task-beat` 和 `task-worker` 使用同一个后端镜像，项目共用的 `redis` 使用 Redis 镜像，也可通过连接配置使用已有实例。API 校验权限、持久受理并查询；单个 Beat 推进周期和补投；Linux prefork Worker 完成三类周期任务、文档处理批次和 HTTP Pipeline。PostgreSQL 保存状态和结果，Redis 当前传递任务消息，后续缓存等用途共用连接并区分键前缀。文件与 FreshRSS 的文档待办不需要额外 cron，进程职责与恢复决策见 [ADR 0019](adr/0019-scheduled-execution-and-write-coordination.md)。
+
+本文描述仓库编排的目标运行方式；本次共享任务切换尚须完成隔离验收及环境操作确认，不能把本地配置修改当作已部署。
 
 ## 与容器化无关的内容
 
@@ -90,8 +90,7 @@ sudo mkdir -p /opt/agent-lab
 sudo chown deploy:deploy /opt/agent-lab
 ```
 
-把仓库里的 `backend/docker-compose.yml` 复制到 `<DEPLOY_DIR>/docker-compose.yml`。
-服务器上不需要仓库其余部分，只要这个文件和 `.env` 在同一个目录里。
+全新环境把仓库 `backend/docker-compose.yml` 复制到 `<DEPLOY_DIR>/docker-compose.yml`，与 `.env` 放在同一目录。已有环境保留旧文件，发布工作流上传 `docker-compose.next.yml`，以旧编排停用旧入口、迁移成功后再替换，避免先覆盖文件导致旧 scheduler 无法识别。该编排继续使用已有外部 `1panel-network`。
 
 照 [`backend/.env.example`](../backend/.env.example) 建 `<DEPLOY_DIR>/.env`：
 
@@ -115,16 +114,17 @@ URL、API Key 后面多一个看不见的字符。这类故障很难查：日志
    邮箱相同。模板里的尖括号是占位符，必须替换。
 4. **不要写 `LLM_CHECKPOINT_POOL_SIZE`**。它在 `config/llm.py` 里声明为 `strict=True`，
    而 compose 的 `env_file` 注入的一律是字符串，配上会让容器启动即 `ValidationError`。
-5. `SCHEDULER_ENABLED` 不用写：容器部署下它由 compose 覆盖——backend 容器强制 false，
-   定时任务由独立的 `scheduler` 容器执行（见
-   [ADR 0017](adr/0017-scheduler-runs-in-a-dedicated-process.md)）。cron 与启停在管理端
-   （`scheduled_jobs` 表）配置。
+5. 删除已失效的 `SCHEDULER_ENABLED`、刷新间隔、关闭宽限及按条数保留历史的旧设置。保留 `SCHEDULER_TIMEZONE=Asia/Shanghai` 与 `DATABASE_TIMEZONE=UTC`；周期、参数和启停仍在任务管理配置，默认重试与历史保留通过网页策略管理。
 6. 文档原件必须配置 `S3_ENDPOINT`、`S3_BUCKET`、`S3_REGION`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`
    和 `S3_ADDRESSING_STYLE`。MinIO endpoint 是后端可达的 API 地址，不是管理控制台地址。
    保持 `S3_REQUIRED=true`；缺少原件存储时上传和 FreshRSS 接收不能成功，不回退旧处理链。
 7. 新版使用 `QDRANT_COLLECTION_SCHEMA_VERSION=v3`。镜像已设置
    `DOCUMENT_TOKENIZER_PATH=/app/resources/tokenizers/bge-m3`，通常无需在 `.env` 重复设置；
    不要用本地开发的 `.cache/...` 路径覆盖它。`DOCUMENT_CHUNK_MAX_TOKENS` 默认 512，包含标题上下文。
+8. 容器默认 `REDIS_URL=redis://redis:6379/0`；不要复制原生开发的 `127.0.0.1` 地址。自管 Redis 时显式设置 URL，密码单独填 `REDIS_PASSWORD`，留空表示不需要密码，不把密码拼入 URL。API、Beat、Worker 的 Redis 配置与 `TASK_QUEUE_NAME` 必须一致；队列名同时决定消息及辅助键的前缀，不同环境须区分。连接凭据只放服务端配置，不放任务参数或前端变量。
+9. `WORKER_COUNT` 是 API 进程数，`TASK_WORKER_CONCURRENCY` 是每个 Worker 的 prefork 子进程数。`docker compose up -d --scale task-worker=2` 可增加 Worker 实例，Beat 保持单个。容器关闭宽限用于等待当前工作，不能据此限制清理整次时长。
+
+编排自带 Redis 只接内部 `middleware` 网络、无宿主端口，启用 AOF/everysec、持久卷 `redis-data` 和 `noeviction`；容量由 `REDIS_MAXMEMORY` 设置，自管实例在 Redis 服务端配置。`REDIS_URL` 为项目公共连接，任务消息和后续缓存按各自前缀区分；`noeviction` 作用于整个实例，缓存用 TTL 过期，内存满时新增写入失败。任务发布失败的依据保留在 PostgreSQL，等待补投。运维监控需关注内存占用/上限、AOF 写入状态、持久卷剩余空间和任务投递错误；在现有监控平台配置告警，具体阈值按批准容量设置。Redis 重启不清卷，不对共享服务执行 FLUSHDB 或故障实验。
 
 原件桶需预先创建并保持私有，按环境隔离。应用凭据只需覆盖本项目对象的读取、条件写入和删除；
 开启桶版本控制时也要允许读取和删除具体对象版本。应用不会创建桶或修改桶配置。不要为原件启用
@@ -278,9 +278,10 @@ docker login <your-acr-registry> -u <your-acr-username>
 # 先让 CI 跑一次，把镜像推上去，再回来执行下面的步骤。
 
 docker compose pull
-docker compose run --rm backend alembic upgrade head
-docker compose run --rm backend agent-lab init-checkpointer
-docker compose up -d
+docker compose config --quiet
+docker compose run --no-deps --rm backend alembic upgrade head
+docker compose run --no-deps --rm backend agent-lab init-checkpointer
+docker compose up -d redis backend task-worker task-beat
 docker compose logs -f backend
 ```
 
@@ -292,14 +293,17 @@ docker compose logs -f backend
 CI 的完整顺序在 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) 里，
 几个顺序约束是有意的，不要调整：
 
-1. **测试在构建之前**：后端先准备锁定 tokenizer，再运行包含真实 Docling 的离线测试；
-   任何步骤失败就不构建、不推送、不部署。
+1. **测试在构建之前**：后端先准备锁定 tokenizer，再运行包含真实 Docling 的离线测试，以及 Linux runner 上的真实 Redis/prefork/Beat、临时 PostgreSQL 迁移与并发验收；
+   任何步骤失败就不构建、不推送、不部署。任务进程日志保存在 Actions artifact 中。
 2. **迁移在 `up -d` 之前**，且 `alembic upgrade head` 在 `agent-lab init-checkpointer`
    之前。理由见 [ADR 0004](adr/0004-checkpointer-tables-outside-alembic.md)。
 3. **后端部署在前端上传之前**：迁移失败时部署中止，前端仍是旧版本，不会出现「新前端调
    老后端」。
 4. **`docker compose pull` 不能省**：tag 恒为 `backend-latest`，`up -d` 认为 tag 没变会
    直接复用本地旧镜像——表现是 CI 全绿、容器也重启了，但跑的还是上一版代码。
+5. 候选编排先校验和拉镜像，再按旧编排停止 scheduler/Beat、API、Worker，保留 Redis 数据盘；成功迁移后替换编排并启动新进程。迁移失败保持停止，不能自动恢复旧协议继续写新版表。旧配置备份为 `docker-compose.previous.yml`。
+
+推送完成后执行 `gh run list --limit 1` 核对最新部署，失败时用 `gh run view <run-id>` 查明原因；修复在本地验证后再推送。Actions 就绪检查覆盖 API、Beat 和 Worker 消息连接，业务验收仍需受控操作与执行编号。
 
 ## 三、排查
 
@@ -311,11 +315,11 @@ CI 的完整顺序在 [`.github/workflows/deploy.yml`](../.github/workflows/depl
 
 1. 准备私有 S3 桶、服务端配置、包含 tokenizer 的 ARM64 新镜像及迁移；先完成随机隔离资源验收。
 2. 核对目标 PostgreSQL、当前项目的 Collection/Alias 与原件引用，列出待清理文档数量和来源范围。
-   停止旧 backend、scheduler 及容器外 CLI，确认远端未决写入结束，避免旧版在迁移后继续写入。
+   停止 backend、Beat、Worker、遗留 scheduler 及容器外 CLI，确认远端未决写入结束，避免旧版在迁移后继续写入。
 3. 用新镜像执行 `alembic upgrade head`，按已核对范围清除文档、处理记录、已采用历史、审核记录、
    相关删除待办及对应索引和原件；只重置重新接收所必需的 Source checkpoint。
    保留账号、KnowledgeBase 配置、Source 绑定、定时任务配置、Agent 会话和 checkpointer 历史。
-4. 使用 v3 的空目标启动新版 API 与 scheduler，上传合成 MD/TXT 并接收范围内的 FreshRSS HTML。
+4. 使用 v3 的空目标启动新版 API、Beat、Worker 并连接项目共用 Redis，上传合成 MD/TXT 并接收范围内的 FreshRSS HTML。
    核对保存回执、原件下载、结构与 Chunk、正常自动采用、异常人工处理、旧版保留、检索和删除。
 5. 记录实际清理与重新导入的数量及失败记录，再恢复日常入口。FreshRSS 沿用首次有界同步规则，
    重置 checkpoint 不保证回灌全部历史。存储或镜像未就绪时先保持切换未完成，不先清空资料。
@@ -332,45 +336,60 @@ docker compose run --rm backend agent-lab recover-index-rebuild --generation <�
 
 ### 定时任务升级与恢复
 
-执行这些命令前仍需确认目标环境与操作授权。新版包含迁移 `f1a8c3d9e602`：新增配置版本、执行快照、执行者和心跳、写资源占用及独立删除待办，不改现有 cron、参数或启停，不创建真实删除任务。
+执行本节操作前确认目标环境、备份和授权。共享任务迁移为 `a91b3c7d5e20 → b6e2f9047a31`，保留周期配置、旧执行身份、快照及业务待办，新增受理、投递、策略和原请求回执。旧记录没有参数快照时明确标记缺失，不用当前配置伪造失败参数；这类历史不能人工重试。旧执行中、已有未确认占用或标记待核实的记录转为待核实；同配置存在多条未确认旧执行时拒绝升级，须核实后处理，不能删历史凑约束。
 
 首次切换的顺序：
 
-1. 先确认定时任务的开发服务隔离验证已通过。验证可以直接使用当前开发 PostgreSQL/Qdrant，每次只创建随机 schema、Collection、Alias 和合成数据，不需要另建测试服务器；离线 mock 通过不能代替这一步，测试入口见 [后端 README](../backend/README.md#测试)。生产数据行为仍需在发布后的受控窗口观察。
-2. 更新服务器的 `docker-compose.yml`，与仓库版本一致。现有 workflow 不上传 compose；仅更新镜像不会带来新增的关闭宽限和 scheduler healthcheck。
-3. 首次从未采用写资源协议的旧版升级前，先在授权的维护窗口停止旧 backend、scheduler 及容器外的 `sync-news`、`index-pending`、`run-once`，并确认远端未决写入均已结束，再发起 workflow。迁移只捕获当时可见的旧 `running` 记录，不能追踪旧 HTTP Pipeline/CLI，也不能保护迁移后旧进程新受理的执行；因此必须完成这一步，不能只依赖迁移后的统一停止。真实清理保持停用，验收完成后再按需启用。
-4. workflow 沿用先增量迁移、再统一停止 backend、scheduler 并启动新版的顺序。后续已采用同一占用协议的版本升级时，迁移失败仍保留原来运行的容器；首次升级前手动停下的旧容器不会因失败自动重启。停写检查或迁移失败时先保持停止，核实数据库状态与兼容性后再由操作者决定恢复旧版。这个切换包含停机，Compose 和 workflow 都留出收尾时间。迁移看到的旧版未结束任务执行会转为保守占用，需人工核实，不按心跳年龄自动解锁。
-5. 分别确认 API 健康和 scheduler 就绪。后者只读取容器内就绪文件中的进程、配置加载及最近刷新状态，不调用新闻同步、索引或清理，不周期探测全部外部服务。
+1. 完成旧结构迁移、多进程 PostgreSQL、真实 Redis/prefork/Beat 与 PostgreSQL/Qdrant/S3 恢复验收，记录实际环境和缺失项。夹具及隔离命令见 [后端 README](../backend/README.md#测试)；普通离线测试、浏览器替身和 Celery eager 不能替代。
+2. 准备新镜像、候选编排、共用 Redis 连接及持久化配置，保留旧编排和切换前数据库备份。原 v3 文档数据无需因共享任务重构而清空；不要把本次任务迁移与上一节 Docling 资料重置混在一起。
+3. 在维护窗口先停止旧 scheduler 与 API 的后台入口，并停止容器外写 CLI，核实旧进程及远端未决写入已结束。工作流会按旧编排停止服务，但不能识别容器外 CLI 或替代远端核实。已经使用新布局时依次停止 Beat、API、Worker；Worker 优先正常退出，强制退出后的记录保留恢复判断。
+4. 用候选编排执行 Alembic 和 checkpointer 初始化。首次从含 `scheduler` 的旧布局切换时，再执行一次 `python -m agent_lab.tasks.bootstrap`，把已有文档待办接到必要批次。交接复用业务回收规则，将已停止旧消费者遗留的解析／预览领取重新排队，无需等待计算超时；索引准备、发布及接收未决写入仍按原规则核实。普通部署不运行它，以免重建已取消或失败的任务。若旧部署未用标准服务名，操作者须在核实后显式执行这一次交接；仅执行 Alembic 不会受理这些旧业务待办。
+5. 迁移和交接成功后才将候选替换为正式编排，启动 Redis、API、Worker 和单个 Beat。失败保持停止，先检查迁移版本及前提再恢复部署，不自动运行旧进程。该切换包含停机；旧已受理工作保留，错过的周期不补执行。
+6. 分别核对 API `/health`、Beat 本地就绪、Worker 消息连接，再在批准范围内从网页受理一次任务并按编号核对结果。旧参数缺失、待核实及部分失败应如实可见，配置删除后仍能查已有执行。
 
 ```bash
-docker compose exec -T scheduler python -m agent_lab.scheduler_main --check
-docker compose exec -T scheduler python -m agent_lab.scheduler_maintenance
+docker compose exec -T task-beat python -m agent_lab.tasks.status --check
+docker compose exec -T task-worker sh -c 'celery -A agent_lab.tasks.celery_app:app inspect ping --destination "worker@$HOSTNAME" --timeout 5'
+docker compose run --no-deps --rm backend python -m agent_lab.scheduler_maintenance
 ```
 
-第二条默认只查看执行者、心跳和占用，输出不含连接串、正文或第三方错误文本。页面的 `needs_attention` 不是允许重新执行的信号。先依据 owner 识别并确认所属进程已经停止，再确认 Qdrant 等远端未决写入已结束；仅确认容器退出或心跳过期还不够。
+第三条默认只查看执行者、心跳和占用，输出不含连接串、正文或第三方错误文本。页面的 `needs_attention` 不是允许重新执行的信号。先依据 owner 识别并确认所属进程已经停止，再确认 Qdrant/S3 等远端未决写入已结束；仅确认容器退出或心跳过期还不够。
 
 人工确认完成后，才在新版容器中执行对应恢复命令：
 
 ```bash
-docker compose exec -T scheduler python -m agent_lab.scheduler_maintenance --run-id <任务执行UUID> --confirm-stopped
-# 没有任务执行记录的手动 Pipeline/CLI，占用通过 operation-id 定位：
-docker compose exec -T scheduler python -m agent_lab.scheduler_maintenance --operation-id <占用UUID> --confirm-stopped
+docker compose run --no-deps --rm backend python -m agent_lab.scheduler_maintenance --run-id <任务执行UUID> --confirm-stopped
+# 没有任务执行记录的 CLI 或遗留手动 Pipeline，占用通过 operation-id 定位：
+docker compose run --no-deps --rm backend python -m agent_lab.scheduler_maintenance --operation-id <占用UUID> --confirm-stopped
 ```
 
 恢复会拒绝近期仍有心跳的执行，关闭失联执行记录、解除相关占用并清除其待核实提示；已经失败的结果和统计继续保留。它不重新执行业务，也不删除 Document 或删除待办。删除待办由下一次正常清理重新核实并继续处理，失败不是“下次一定成功”的保证。
 
 日志用 `job_id`、`run_id`、`operation_id`、`owner` 关联：等待写资源、业务失败、客户端关闭失败、终态未保存是不同问题。业务成功但终态未保存时，不能直接再跑一次当作修复。
 
-回退前必须停止所有相关写入口并核实未决写入。迁移 downgrade 遇到占用或删除待办会拒绝，不能删掉它们来强行降级；代码回退也不能恢复已经删除的新闻。旧 `SCHEDULER_MISFIRE_GRACE_SECONDS` 已移除，遗留值不生效，所有入口均不补执行。
+回退前必须停止所有相关写入口并核实未决写入。公共任务迁移改变了受理与回执契约，拒绝自动 downgrade；不能通过删除执行、回执或业务待办强行降级。若必须回退到旧任务协议，应在确认数据损失范围后恢复切换前的配套备份，而非只回滚代码；已经发生的远端删除不会随数据库恢复自动撤销。
+
+任务不推进时按以下证据区分原因：
+
+| 观察到的现象 | 优先核对 |
+| --- | --- |
+| 未来周期不再受理，Beat 就绪失败 | Beat 进程、数据库配置与最近推进记录 |
+| 已受理但投递错误反复出现 | 详情中的 `dispatch_error_type`、Redis 连接、内存与 AOF 状态 |
+| 已投递但长期未领取 | Worker ping、实际 Worker 数量、繁忙任务与配置的队列名 |
+| 资源等待 | 等待原因、占用者及其任务进展；正常等待不消耗重试 |
+| 待核实 | 原领取、业务完成依据、进程与远端未决写入；不按心跳直接解锁 |
+| 业务已完成但终态未确认 | 条件收尾及业务依据；不能再次执行来“补结果” |
+
+Redis 队列长度只反映消息数量，不能代表持久受理或业务健康。自带实例可只读查看 `docker compose exec -T redis redis-cli info memory` 和 `info persistence`，自管实例使用对应运维入口；内存满、AOF 写入失败、磁盘不足及持续投递错误均应由部署监控告警。`TASK_QUEUE_VISIBILITY_TIMEOUT` 不是任务时长上限，长任务重投由 PostgreSQL 领取保护。
 
 ### 看日志
 
 ```bash
 cd /opt/agent-lab
 docker compose logs --tail 100 backend      # backend 最近 100 行
-docker compose logs --tail 100 scheduler    # 调度器最近 100 行（定时任务不跑先看这里）
+docker compose logs --tail 100 task-beat task-worker redis
 docker compose logs -f backend              # 跟踪
-docker compose ps                           # 容器状态，应有 backend 与 scheduler 两个
+docker compose ps                           # API、Beat、Worker、Redis；Worker 可有多个实例
 ```
 
 日志上限 10MB × 3 份（compose 里配的）。Docker 默认不限大小，那会慢慢写满磁盘。
@@ -447,9 +466,7 @@ LLM 配置缺失或会话记忆连不上时，Agent Runtime 装配失败是**非
 
 ### 回滚
 
-当前只推 `backend-latest`，不打版本 tag，所以没有现成的回滚路径。要回到上一版：把对应
-commit 重新推到 `main`（或在 Actions 页面对旧 commit 手动触发 `workflow_dispatch`），
-重新构建一次。
+当前只推 `backend-latest`，不打版本 tag。仅当数据库与消息协议兼容时，才能对旧 commit 重新构建部署；跨共享任务迁移不能直接运行旧代码，按上面的备份恢复边界处理。操作须先确认目标版本和环境授权。
 
 ## 四、手动运维命令
 
@@ -468,12 +485,11 @@ docker compose run --rm backend agent-lab create-user --email recovery@example.c
 # 重启
 docker compose restart backend
 
-# 改动调度相关配置或代码后重启调度器
-docker compose restart scheduler
+# 部署连接配置变化后重建以重新注入环境；网页周期修改由 Beat 动态读取
+docker compose up -d task-beat task-worker
 
 # 停止（不会被 restart 策略自动拉起）
-docker compose stop backend
-docker compose stop scheduler
+docker compose stop task-beat backend task-worker
 ```
 
 `run --rm` 起的是一次性容器，用完即删，不影响正在服务的那个。

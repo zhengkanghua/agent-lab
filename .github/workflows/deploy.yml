@@ -53,7 +53,23 @@ jobs:
     # @rolldown/binding-linux-arm64-gnu 和 lightningcss-linux-arm64-gnu，
     # 缺了这些 npm ci 会直接失败，所以换 Vite/Tailwind 大版本后要复查一次。
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 45
+
+    # 仅供队列/迁移验收的临时数据库，随 runner 销毁，不连接应用数据库。
+    services:
+      task-postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: tasks_test
+          POSTGRES_PASSWORD: isolated_test_only
+          POSTGRES_DB: tasks_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tasks_test -d tasks_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
 
     steps:
       - name: 取代码
@@ -84,8 +100,7 @@ jobs:
           echo "镜像地址：${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/${{ vars.ACR_REPOSITORY }}:backend-latest"
 
       # ---------- 1. 后端测试 ----------
-      # 测试不连真实数据库和外部服务（fake Embeddings、内存 Qdrant、httpx ASGITransport），
-      # 所以这里不需要起 PostgreSQL 服务容器。见 backend/README.md 的「测试」一节。
+      # 普通回归仍离线；随后单独运行真实 Linux 消息与临时 PostgreSQL 验收。
       # 这个 action 从 v8 起不再发布浮动大版本 tag（v8/v9/v10 都不存在，只有 v10.0.1
       # 这样的精确 tag），所以这里必须钉精确版本。写 @v10 会在 Set up job 阶段就失败：
       # 「Unable to resolve action, unable to find version v10」。
@@ -114,6 +129,35 @@ jobs:
         env:
           DATABASE_URL: postgresql+psycopg://ci:ci@127.0.0.1:5432/ci
         run: uv run --frozen pytest
+
+      - name: 公共任务 Linux 队列与迁移验收
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://tasks_test:isolated_test_only@127.0.0.1:5432/tasks_test
+          TASK_TEST_DATABASE_URL: postgresql+psycopg://tasks_test:isolated_test_only@127.0.0.1:5432/tasks_test
+          SCHEDULER_TEST_DATABASE_URL: postgresql+psycopg://tasks_test:isolated_test_only@127.0.0.1:5432/tasks_test
+          RUN_TASK_QUEUE_INTEGRATION_TEST: "1"
+          RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST: "1"
+        run: |
+          if ! command -v redis-server >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends redis-server
+          fi
+          uv run --frozen pytest -q --tb=short --basetemp=.pytest_cache/task-processes \
+            tests/test_task_queue_integration.py \
+            tests/test_task_migration_postgres_integration.py \
+            tests/test_task_handoff_postgres_integration.py \
+            tests/test_scheduler_postgres_integration.py
+
+      - name: 保存任务验收进程日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-processes-${{ github.run_id }}
+          path: backend/.pytest_cache/task-processes
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
 
       # ---------- 2. 前端检查与测试 ----------
       - name: 装 Node
@@ -194,6 +238,17 @@ jobs:
           # 这两种情况下镜像本身是好的，没有理由不部署。
           cache-to: type=gha,mode=max,ignore-error=true
 
+      # 编排先以候选文件上传，旧文件仍可用来停止旧 scheduler。
+      - name: 上传候选后端编排
+        uses: burnett01/rsync-deployments@v9
+        with:
+          switches: -rlgoDz
+          path: backend/docker-compose.yml
+          remote_path: ${{ vars.DEPLOY_DIR }}/docker-compose.next.yml
+          remote_host: ${{ secrets.SSH_HOST }}
+          remote_user: ${{ secrets.SSH_USER }}
+          remote_key: ${{ secrets.SSH_KEY }}
+
       # ---------- 5. 部署后端 ----------
       # 在传前端之前做，是有意的：迁移失败就中止在这里，前端仍是旧版本，
       # 不会出现「新前端调老后端」。反过来先传前端则做不到这一点。
@@ -215,22 +270,30 @@ jobs:
 
             # 这一步不能省。tag 恒为 backend-latest，up -d 认为 tag 没变就会直接复用
             # 本地旧镜像——表现是本工作流全绿、容器也重启了，但跑的还是上一版代码。
-            docker compose pull
+            docker compose -f docker-compose.next.yml config --quiet
+            docker compose -f docker-compose.next.yml pull
 
-            # 首次从未采用写资源协议的旧版升级，或首次切换 Docling，须先按部署文档
-            # 停写并确认远端写入结束；Docling 的开发资料重置不由本工作流自动执行。
-            # 迁移中的旧执行快照不能替代该步骤，也不能追踪旧 HTTP Pipeline/CLI。
-            # 迁移必须在 up -d 之前，且这两条的顺序不能反：checkpointer 的四张表不由
-            # Alembic 管，见 docs/adr/0004-checkpointer-tables-outside-alembic.md。
-            # 用 run --rm 起一次性容器，不碰正在服务的那个。任一条失败，set -e 会让
-            # 本步骤直接失败并中止后续步骤，原来运行的旧容器保持运行，不重启已停止的容器。
-            docker compose run --rm backend alembic upgrade head
-            docker compose run --rm backend agent-lab init-checkpointer
-
-            # 迁移失败仍保留旧容器；迁移成功后统一停止两个旧写入口，再启新版。
-            # 避免旧 API/CLI 协调协议与新版清理混跑；外部 CLI 须事先停止，见部署文档。
-            docker compose stop --timeout 360 backend scheduler
-            docker compose up -d
+            # 共享任务表升级前停止旧写入口。外部 CLI 和未决远端写入仍须按部署文档先核实。
+            # 迁移失败保持停止，不自动重启已不兼容的旧进程；旧镜像/编排保留作诊断依据。
+            legacy_scheduler=false
+            if [ -f docker-compose.yml ]; then
+              services="$(docker compose config --services)"
+              for service in scheduler task-beat backend task-worker; do
+                if printf '%s\n' "$services" | grep -Fxq "$service"; then
+                  [ "$service" != scheduler ] || legacy_scheduler=true
+                  docker compose stop --timeout 360 "$service"
+                fi
+              done
+              cp docker-compose.yml docker-compose.previous.yml
+            fi
+            docker compose -f docker-compose.next.yml run --no-deps --rm backend alembic upgrade head
+            docker compose -f docker-compose.next.yml run --no-deps --rm backend agent-lab init-checkpointer
+            # 遗留待办只在旧 scheduler 布局首次切换时受理。普通部署不能重建已取消/失败批次。
+            if [ "$legacy_scheduler" = true ]; then
+              docker compose -f docker-compose.next.yml run --no-deps --rm backend python -m agent_lab.tasks.bootstrap
+            fi
+            mv docker-compose.next.yml docker-compose.yml
+            docker compose up -d redis backend task-worker task-beat
 
             # 验证进程真的起来了并且连得上 PostgreSQL。没有这一步，容器崩溃重启循环时
             # 本工作流仍会显示成功。python:3.12-slim 里没有 curl，所以用 Python 自己发请求。
@@ -247,15 +310,16 @@ jobs:
               sleep 3
             done
 
-            # scheduler 就绪检查只读本容器状态，不通过执行同步/索引/清理探测。
+            # Beat 检查只读本容器状态；Worker 检查精确指向本容器主进程，不执行业务。
             for i in $(seq 1 10); do
-              if docker compose exec -T scheduler python -m agent_lab.scheduler_main --check; then
-                echo "scheduler 配置加载与刷新检查通过"
+              if docker compose exec -T task-beat python -m agent_lab.tasks.status --check && \
+                 docker compose exec -T task-worker sh -c 'celery -A agent_lab.tasks.celery_app:app inspect ping --destination "worker@$HOSTNAME" --timeout 5'; then
+                echo "Beat 推进与 Worker 消息连接检查通过"
                 break
               fi
               if [ "$i" -eq 10 ]; then
-                echo "scheduler 就绪检查失败，请检查配置刷新及执行者恢复记录"
-                docker compose logs --tail 50 scheduler
+                echo "任务进程就绪检查失败，请检查调度、消息连接及待核实执行"
+                docker compose logs --tail 50 task-beat task-worker redis
                 exit 1
               fi
               sleep 3

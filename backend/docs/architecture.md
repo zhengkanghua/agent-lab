@@ -39,7 +39,7 @@ GET  /document-management/{document_id}/versions    已采用版本列表（超�
 GET  /document-management/{document_id}/versions/{version_id}  已采用历史详情（超级用户）
 GET  /document-management/{document_id}/reviews     审核结论（超级用户）
 DELETE /document-management/{document_id}          完整删除文档（超级用户）
-POST /pipeline/run-once                   手动、同步、有界的写入流水线（超级用户）
+POST /pipeline/run-once                   持久受理手动 Pipeline，返回 202 和执行编号（超级用户）
 POST /agent/chat                          Agent 对话，SSE 流式（超级用户）
 GET  /agent/default-prompt                默认系统提示词（超级用户）
 GET    /agent/threads                     列出自己的会话，分页（超级用户）
@@ -55,14 +55,23 @@ GET    /scheduled-jobs                    定时任务列表，含下次执行�
 POST   /scheduled-jobs                    创建定时任务（超级用户）
 GET    /scheduled-jobs/{job_id}           单个任务详情（超级用户）
 PATCH  /scheduled-jobs/{job_id}           改 cron、参数或启停（超级用户）
-DELETE /scheduled-jobs/{job_id}           删除任务及其执行历史（超级用户）
-POST   /scheduled-jobs/{job_id}/trigger   手动立即执行一次（超级用户）
+DELETE /scheduled-jobs/{job_id}           删除周期配置，保留已受理执行和历史（超级用户）
+POST   /scheduled-jobs/{job_id}/trigger   持久受理一次当前配置的执行，返回 202（超级用户）
 GET    /scheduled-jobs/{job_id}/runs      任务执行历史（超级用户）
 POST   /scheduled-jobs/validate-cron      校验 cron 并预览未来 3 次执行时间（超级用户）
+GET    /scheduled-jobs/task-types         已注册类型、参数 schema 与周期可配置性（超级用户）
+GET    /task-runs                         周期与一次性执行列表（超级用户）
+POST   /task-runs                         受理一次性任务，返回 202（超级用户）
+GET    /task-runs/{run_id}                 独立执行详情，配置删除后仍可读（超级用户）
+POST   /task-runs/{run_id}/cancel          取消尚未开始或等待重试的执行（超级用户）
+POST   /task-runs/{run_id}/retry           使用原失败参数新建关联执行（超级用户）
+GET    /task-policy                       默认重试与历史保留策略（超级用户）
+PUT    /task-policy                       修改之后受理的默认策略并留痕（超级用户）
+GET    /task-policy/changes               最近的策略修改记录（超级用户）
 ```
 
 除 ``/health`` 和 ``/auth/login`` 外都需要有效登录 Cookie。搜索与全文要求普通启用
-账号，``/pipeline/run-once``、``/admin/users``、``/scheduled-jobs``、``/knowledge-bases``
+账号，``/pipeline/run-once``、``/admin/users``、``/scheduled-jobs``、``/task-runs``、``/task-policy``、``/knowledge-bases``
 的管理写接口、``/sources``、``/file-documents``、``/document-management`` 与 ``/agent`` 要求 ``is_superuser=true``。**没有 ``/auth/register``**，
 账号只能由超级用户或 CLI 创建。
 
@@ -224,7 +233,7 @@ Payload 保存独立 `index_instance_id`、Document/KnowledgeBase 身份、Chunk
 - `DocumentIndexingRuntime` 提供生命周期、候选 Point 存储和 `CandidateIndexer`，消费已冻结输入，
   不解析或重新切分正文。
 - `PipelineWriteRuntime` 编排接收、处理批次与清理，按调用创建、结束关闭；`knowledge/composition.py`
-  选择解析、对象存储、数据库与索引适配器，API、CLI 和 scheduler 复用装配。
+  选择解析、对象存储、数据库与索引适配器，Worker 与 CLI 复用写装配；API 只装配受理与查询。
 
 只读 Runtime 按进程共享，写客户端按工作生命周期创建。各客户端都尝试关闭，并保留首个关闭异常；
 网络调用不占用业务长事务。
@@ -423,8 +432,8 @@ PostgreSQL 单方面掐掉的空闲连接（``idle_session_timeout``、中间代
 
 ## 集中的错误契约：api/error_contract.py
 
-搜索、文档搜索、手动流水线、账号管理和 Agent 五类路由共用一个错误契约层，映射收在有序的
-``ErrorContractRule`` 表里，各路由只负责「catch 什么异常」和「记什么日志」。
+搜索、文档搜索、账号管理和 Agent 路由共用一个错误契约层，映射收在有序的
+``ErrorContractRule`` 表里。Pipeline 的业务错误表继续供 Worker 生成脱敏结果；HTTP 受理及任务操作错误由 `api/task_routes.py` 统一映射，业务执行失败从任务详情读取。
 
 三条必须长期保住的设计约束：
 
@@ -442,7 +451,7 @@ PostgreSQL 单方面掐掉的空闲连接（``idle_session_timeout``、中间代
 原因是 ``documents.py`` / ``health.py`` 用裸 ``HTTPException``、账号管理领域错误按 ``code``
 而非异常类型分支，都进不了类型键控的规则表——历史上 ``health.py`` 就漏过一次句尾句号。
 
-四张表与对应的响应构造器：
+规则表与输出入口：
 
 ```text
 VECTOR_SEARCH_ERROR_RULES   build_vector_search_error_response()
@@ -453,13 +462,13 @@ VECTOR_SEARCH_ERROR_RULES   build_vector_search_error_response()
     qdrant_configuration_invalid 503 / qdrant_response_invalid 502 /
     qdrant_service_error 502
 
-PIPELINE_ERROR_RULES        build_pipeline_error_response()
+PIPELINE_ERROR_RULES        scheduled_tasks.classify_error()（进入任务详情）
     freshrss_authentication_failed 502 / freshrss_unavailable 503 /
     freshrss_timeout 504 / freshrss_response_invalid 502 / freshrss_sync_failed 502 /
     postgresql_unavailable 503 / embedding_* （与读链路共享四条 Ollama 规则）/
     embedding_failed 502 / qdrant_configuration_invalid 503 / qdrant_unavailable 503 /
     qdrant_write_failed 502 / pipeline_configuration_invalid 503 /
-    pipeline_timeout 504 / pipeline_runtime_unavailable 503
+    pipeline_timeout 504
 
 USER_ADMIN_ERROR_RULES      build_user_admin_error_response()
     user_admin_database_unavailable 503
@@ -516,7 +525,7 @@ checkpointer 按 ADR 0004 走独立的 psycopg 池，不经过 SQLAlchemy，所�
 ``user_admin_database_unavailable`` 与流水线的 ``postgresql_unavailable`` 是两个既有契约值。
 
 搜索错误响应固定三字段 ``code``/``detail``/``retryable``（``retryable=true`` 只表示稍后重试
-可能恢复，不代表服务会自动重试）；流水线响应多一个 ``error_type``，只放异常的 Python 类名。
+可能恢复，不代表服务会自动重试）。任务受理错误保留稳定 code、中文说明与适用的执行编号；业务错误只在执行详情记录脱敏统计和 Python 异常类名，不再返回旧同步 Pipeline 结果包装。
 
 两条搜索路由通过共享的 ``SEARCH_UPSTREAM_EXCEPTIONS``（``OllamaEmbeddingError``、
 ``QueryVectorValidationError``、``QdrantVectorSearchError``）捕获已分类上游失败。它不含
@@ -536,9 +545,7 @@ try 接不到，统一由应用级 handler 映射成同一个 503。
 
 ``api/dependencies.py`` 位于 FastAPI 边界层最底部，只从 ``application.state`` 取装配根放进
 去的组件，不构造 Runtime、不做任何 I/O。``get_vector_search_service()`` 取进程级共享
-Service；``get_pipeline_write_runtime_factory()`` 取「能造写 Runtime 的函数」，真正构造发生
-在调用方，每请求一个新 Runtime。取不到就抛 ``VectorSearchRuntimeUnavailableError`` /
-``PipelineWriteRuntimeUnavailableError``，由错误契约层映射成稳定 503。存在的意义是让
+Service，`get_task_service()` 取得公共任务受理与查询组件；API 不取得 Pipeline 写 Runtime。组件缺失分别抛 `VectorSearchRuntimeUnavailableError` 或 `SchedulerRuntimeUnavailableError`，在边界映射成稳定 503。存在的意义是让
 ``vector_search`` 与 ``document_search`` 这类平级路由都依赖公共模块，而不是互相 import。
 
 ``schemas/_query_validators.py`` 提供 ``require_non_whitespace_query()`` 和
@@ -566,9 +573,9 @@ Document 的正式可用性、候选处理阶段和管理修订分开。`documen
 
 ## 手动写入入口
 
-CLI、HTTP Pipeline 和定时索引共用 `DocumentProcessingBatch`，解析、采用、旧索引回收分别有界。
+CLI 与 Worker 中的 Pipeline、定时索引及文档任务共用 `DocumentProcessingBatch`，解析、采用、旧索引回收分别有界。
 `sync-news` 只接收原始资料并确认来源位置，不生成向量；`index-pending` 消费已保存待办；
-`run-once` 和 `POST /pipeline/run-once` 顺序执行一次同步和处理批次。
+CLI `run-once` 直接执行一次同步和处理批次；`POST /pipeline/run-once` 持久受理后返回 202，由 Worker 执行相同业务顺序，结果从 `/task-runs/{run_id}` 读取。
 
 参数边界在 `pipeline/limits.py`。回执区分已解析、待审核、已采用、跳过、失败和清理数量，
 不把待审核当成已完成索引；仅输出安全统计和错误类型，不输出正文、Vector、完整异常或凭据。
@@ -582,34 +589,33 @@ CLI、HTTP Pipeline 和定时索引共用 `DocumentProcessingBatch`，解析、�
 与已准备目标并恢复映射，不重新向量化。写占用仍需先确认旧进程和远端写入已停止后恢复。
 普通候选写入跟随规格匹配的 current 目标；重建不会修改账号、会话、任务配置或 Source 接收位置。
 
-## 定时任务与调度器
+## 公共任务组件
 
-定时任务模块（[ADR 0014](../../docs/adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md)、
-[ADR 0017](../../docs/adr/0017-scheduler-runs-in-a-dedicated-process.md)）
-用 APScheduler 3.x（``AsyncIOScheduler`` + 内存 job store）按 cron 到点
-执行三种任务：``freshrss_sync``（同步）、``index_pending``（索引）和 ``prune_old_documents``（清理已完成索引的旧 Document）。
-当前执行及恢复规则见 [ADR 0019](../../docs/adr/0019-scheduled-execution-and-write-coordination.md)。
-类型注册表直接关联参数模型与业务执行函数，不从数据库加载代码。
+`tasks/` 负责注册、持久受理、cron、投递、领取、状态与策略，`task_assembly.py` 将业务注册项接到公共核心。注册项绑定参数模型、普通处理函数及必要的资源准备、错误分类、完成回调和恢复判断，不从数据库加载代码。`services/scheduled_task_registry.py` 注册三种周期类型，以及文档后台批次和手动 Pipeline；后两种不供用户配置 cron。决策见 [ADR 0019](../../docs/adr/0019-scheduled-execution-and-write-coordination.md)。
 
-职责切分：
+`ScheduledJobService` 管理周期配置；启用或执行期间可修改和删除，配置行锁与 Beat 的版本复核协调生效顺序。每次受理冻结参数、来源配置和执行策略。配置删除只清空可选外键，稳定来源身份、已受理工作和历史保留。数据库唯一约束保护同周期事件、同配置和业务声明的未结束执行名额。
 
-- **配置管理**：``scheduled_job_service.py`` 负责校验及操作前置条件，Repository 的任务行锁覆盖修改、删除和认领。修改 cron/参数前必须已经停用且没有活动执行或未确认占用；保存后保持停用。停用不取消当前执行，仍可手动触发。
-- **触发管理**：``scheduler_runner.py`` 只管理 cron、配置刷新与调度事件。独立 scheduler 默认每 5 秒读一次配置；自动认领再检查启用状态和版本，拒绝旧 cron 回调。错过时间不补执行，允许一秒正常投递误差。
-- **统一执行**：``scheduled_job_executor.py`` 为 cron 和 API 共用受理、参数重验、执行快照、执行者、心跳与收尾。同任务原子认领冲突时，手动返回 409，cron 记已结束的 skipped。任务函数在 ``scheduled_tasks.py``，调度核心没有业务类型分支。
-- **写资源协调**：``write_coordination.py`` 用 PostgreSQL 短事务咨询锁维护持久占用。同步、索引各自串行，彼此可以并行；清理排他取得二者。API Pipeline、CLI、定时任务都经 ``PipelineWriteRuntime`` 的公开写入口参与。等待时不占长事务；心跳过期不自动释放资源。
-- **资源归属**：``pipeline/assembly.py`` 是 API、CLI、scheduler 共用装配。Runtime 按需创建客户端，清理直接使用 ``QdrantDeletionStore``，不读取索引 Service 内部属性。Engine 和工厂归进程，Runtime/client 归本次调用，Session/事务归各工作单元。
-- **收尾与恢复**：关闭先拒绝新受理，等待当前执行，再按关闭宽限取消并等待收尾，最后关闭进程依赖。业务结果、资源关闭错误、终态保存失败分别记录；只重试一次幂等终态保存，不重复业务。强制退出可能来不及收尾，须人工核实旧进程与远端写入停止后释放占用。
-- **清理**：固定本次 UTC 截止时刻，优先发布时间、缺失才用入库时间。仅清理已采用且没有待处理候选的到期资料，保护待审核、失败和拒绝记录。每批连续处理，预演不改文档或远端存储。真实删除通过独立待办依次确认 Qdrant、S3 和数据库收尾，失败目标不在本次原地重试；待办阻挡同步与采用，checkpoint 不能越过未保存来源内容。
-- **API 与前端**：``GET /scheduled-jobs/task-types`` 导出类型默认值及参数 schema；``GET /scheduled-jobs/{job_id}/runs/{run_id}`` 精确查询回执。``active_run`` 表示未释放执行，``needs_attention`` 表示待核实。前端显式适配三种表单，未知类型仍可列出，部分失败不显示全部成功。手动回执按账号保存在当前浏览器标签页，重新进入页面继续查询；请求超时不自动重复提交。
-- **时间与就绪**：cron 解释、预览和注册共用 ``SCHEDULER_TIMEZONE``，记录存 UTC。``next_run_at`` 是数据库配置算出的下次计划时间，API 不开启 cron 时也可计算；它不证明 scheduler 就绪。本地就绪文件记录配置加载与刷新状态，Compose 和发布流程另行检查 scheduler。
+`TaskService` 将执行、原请求回执和投递依据同事务保存。提交主体、操作及 `Idempotency-Key` 共同识别请求，摘要比较原请求内容；重发先查回执，再读取可能已修改或删除的配置。不同请求不因参数相同合并。同配置尚有未结束执行时，人工触发返回冲突编号，周期事件留下跳过记录。HTTP 在数据库提交后返回 202，业务状态由独立执行接口查询。
 
-新增任务类型时，在注册表绑定参数模型与执行函数，实现必要的 Runtime 能力及业务 Service，补接入测试；需要配置界面时增加显式表单适配。无需修改 scheduler 或执行器，不增加通用插件层。
+`TaskDispatcher` 在短事务中领取发布资格，事务外向 Redis 发送执行编号及投递代次；执行行自身保存补投时间和投递错误，无独立消息平台。发布成功后仍核对未领取工作，覆盖提交后退出、发布失败和消息丢失。Redis 不是受理或结果的事实来源。
 
-完整跨进程顺序见 [定时任务执行](../../docs/flows/scheduled-job-execution.md)。持久占用与跨库删除在隔离集成验证通过前，不以 mock 测试代替实测保证。
+Redis 是项目共用中间件，`config/redis.py` 提供统一连接配置；`config/task_queue.py` 只保存任务队列的执行参数。Celery 按队列名隔离消息与未确认消息等辅助键，后续缓存等使用方管理自己的键前缀。共享实例的持久化、内存策略与容量由部署管理，不写入业务策略或任务快照。
 
-独立 scheduler 同时运行 `DocumentProcessingConsumer`，不依赖新增 cron，API worker 不启动该消费者。
-消费者复用有界处理批次，停止时等待当前步骤收尾；远端取消和结果不确定继续由持久协调器保护。
-Docling 解析、切分和 tokenizer 计数由处理应用通过 `asyncio.to_thread` 移出事件循环；S3 同步 SDK 也在线程中执行。
+`PostgresScheduler` 是单个 Celery Beat 的动态适配器，直接读项目周期配置。启动和恢复只推进未来计划；受理复核版本、启用状态及计划时刻，保留原正常投递误差。`tasks/cron.py` 复用 `CronTrigger` 的五段式表达式计算，预览和真实计划使用同一入口，不再启动 APScheduler。Beat 维护还负责到期补投、失联执行核对与历史清理；慢发布不阻塞周期受理。
+
+`TaskWorker` 先核验状态、投递代次及可开始时间，再原子领取。业务资源准备成功后，与取消竞争同一个“开始”条件；准备占用绑定领取 token，取消或未开始失联恢复只清理该次准备。重复、迟到、已取消或已结束消息不再调用业务。正常资源等待保存原因并让出 Worker 位置，不消耗业务尝试次数；待核实的旧占用仍阻止冲突写入。
+
+自动重试由 PostgreSQL 的尝试次数、可开始时间和受理策略决定，沿同一个执行编号；不启用 Celery autoretry 或长期 ETA。人工重试创建关联新执行，保留原参数、采用当前策略。取消仅适用于尚未开始或等待重试的执行。结果按领取 token 条件保存；保存失败只重试收尾，不重做业务。从未开始的失联工作可补投，已开始的仅按业务恢复证据处理；没有足够证据时保留待核实，维护入口继续使用 `scheduler_maintenance`。
+
+`write_coordination.py` 用 PostgreSQL 短事务咨询锁维护持久占用，CLI 与 Worker 共用。同步、索引及清理保持原业务互斥范围；Pipeline 同步阶段只占同步资源，之后释放并按处理批次原边界采用及回收。清理仍覆盖整次执行，只选择满足业务资格的已采用资料，保护待审核、失败和拒绝记录。`document_deletions` 逐项保存 Qdrant、S3 及数据库收尾依据，已完整完成的目标不再选中；远端确认丢失可以核对或再次删除同一剩余目标。
+
+`knowledge/task_intake.py` 将文档业务待办与必要执行受理放在同一事务；正常完成时将本批收尾与必要续批一起提交。没有可处理待办时不续建，失败、取消、待核实不被补投循环重建。`DocumentProcessingBatch` 继续负责有界解析、采用和旧索引回收；原常驻消费者已移除。Docling、tokenizer 计数和同步 S3 SDK 在线程中执行。
+
+API、Beat 和 Worker 不共享异步连接池。生产 Worker 使用 Linux prefork；`tasks/process.py` 在子进程中惰性创建持久事件循环和 Engine，并在同一循环中使用、关闭。业务 Runtime 按执行创建，Session/事务按短工作单元创建。消息完成后确认、预取量保持较小，visibility 超时重投仍受数据库领取保护。页面、API 和离线测试可在 Windows 原生运行；相同 prefork 形态的验收使用 Linux 主机、Docker 或 WSL，Windows 原生单进程 Worker 尚待验证。
+
+任务管理分周期配置和全部执行，按编号独立查询，业务表单与统计显式适配。未知结果保留可识别信息，部分失败单独显示；请求身份和参数在提交前按账号保存，超时后显式确认原请求。默认策略由超级用户修改并留痕；普通终态详情按受理快照到期清理，未结束、待核实及重试原失败受保护，最小去重回执与业务恢复待办不随详情清理。
+
+`tasks.status` 的本地文件反映 Beat 周期推进；Worker ping 反映消息连通。下次计划时刻、进程就绪和业务进展分别查看，不能互相代替。跨进程流程见[任务执行](../../docs/flows/scheduled-job-execution.md)，部署与真实队列、跨存储验证范围见后端 README。离线测试不能代替真实消息及数据库锁验收。
 
 ## 模块边界
 
@@ -625,8 +631,8 @@ Docling 解析、切分和 tokenizer 计数由处理应用通过 `asyncio.to_thr
 `agent/` 只消费 `VectorSearchService` 与 `DocumentRepository` 的正式只读能力，不反向参与索引。
 `agent/checkpointer.py` 与 `agent/errors.py` 保持叶子依赖，避免迁移为表名导入完整 Agent 图。
 
-API、CLI、scheduler 通过装配使用业务能力。平级路由不互相 import，`api/dependencies.py` 和
-`api/error_contract.py` 是共同边界；`main.py` 管 API 进程资源，`pipeline/assembly.py` 复用写入与调度装配。
+API、CLI、Beat、Worker 通过装配使用业务能力。平级路由不互相 import，`api/dependencies.py` 和
+`api/error_contract.py` 是共同边界；`main.py` 管 API 进程资源，`task_assembly.py` 接入公共任务，`pipeline/assembly.py` 复用业务写装配。
 跨层类型仅用于注解时使用 `TYPE_CHECKING`，避免 `dependencies → agent.runtime → middleware → error_contract` 环。
 
 ## 数据库表
@@ -641,9 +647,12 @@ document_review_records     人工或自动审核结论及当时正文依据
 users            内部登录邮箱、Argon2 密码 Hash、启用/超级用户状态和唯一环境托管标记
 access_tokens    浏览器登录产生的可撤销随机 Token、创建时间和所属用户
 agent_threads    Agent 会话的账号归属、选择范围、标题与最后活跃时间；不含任何消息内容
-scheduled_jobs   定时任务配置：key 唯一、任务类型、cron、params、启停和配置版本
-scheduled_job_runs  任务执行历史：触发方式、状态、起止时间、脱敏统计与 error_type；
-                    保存执行快照、执行者和心跳；级联删除，裁剪保护活动和占用中的记录
+scheduled_jobs   周期配置：key 唯一、类型、cron、params、启停、配置版本与下一计划时刻
+scheduled_job_runs  周期及一次性任务执行：受理快照、稳定来源、策略、状态、投递、领取与结果；
+                    删除配置保留执行，普通终态详情到期清理，未结束和恢复依据受保护
+task_requests    最小请求去重回执；详情过期后保留原执行编号与摘要
+task_policy      当前默认重试与任务历史策略
+task_policy_changes  默认策略修改留痕
 write_operations   同步、索引、清理的持久资源占用；失联不自动抢占
 document_deletions  独立删除待办：目标、修订、资格、原件引用、远端确认进度及脱敏错误
 alembic_version  由 Alembic 维护当前迁移版本
