@@ -611,7 +611,7 @@ Redis 是项目共用中间件，`config/redis.py` 提供统一连接配置；`c
 
 `knowledge/task_intake.py` 将文档业务待办与必要执行受理放在同一事务；正常完成时将本批收尾与必要续批一起提交。没有可处理待办时不续建，失败、取消、待核实不被补投循环重建。`DocumentProcessingBatch` 继续负责有界解析、采用和旧索引回收；原常驻消费者已移除。Docling、tokenizer 计数和同步 S3 SDK 在线程中执行。
 
-API、Beat 和 Worker 不共享异步连接池。生产 Worker 使用 Linux prefork；`tasks/process.py` 在子进程中惰性创建持久事件循环和 Engine，并在同一循环中使用、关闭。业务 Runtime 按执行创建，Session/事务按短工作单元创建。消息完成后确认、预取量保持较小，visibility 超时重投仍受数据库领取保护。页面、API 和离线测试可在 Windows 原生运行；相同 prefork 形态的验收使用 Linux 主机、Docker 或 WSL，Windows 原生单进程 Worker 尚待验证。
+API、Beat 和 Worker 不共享异步连接池。生产 Worker 使用 Linux prefork；`tasks/process.py` 在子进程中惰性创建持久事件循环和 Engine，并在同一循环中使用、关闭。业务 Runtime 按执行创建，Session/事务按短工作单元创建。消息完成后确认、预取量保持较小，visibility 超时重投仍受数据库领取保护。Windows 原生可运行页面、API、Beat 和 solo Worker，受理、补投、资源等待、业务处理与正常关停已验证；Linux prefork 的多进程与故障验收范围见后端 README。
 
 任务管理分周期配置和全部执行，按编号独立查询，业务表单与统计显式适配。未知结果保留可识别信息，部分失败单独显示；请求身份和参数在提交前按账号保存，超时后显式确认原请求。默认策略由超级用户修改并留痕；普通终态详情按受理快照到期清理，未结束、待核实及重试原失败受保护，最小去重回执与业务恢复待办不随详情清理。
 

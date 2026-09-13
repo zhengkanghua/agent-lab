@@ -1,5 +1,7 @@
 # KnowledgeBase 从配置切片扩展为通用应用组件
 
+> **后续决策**：[ADR 0022](0022-pluggable-document-processing.md) 与 [ADR 0023](0023-durable-intake-and-document-review.md) 已将下文的 v2 索引与旧文档构建流程升级为 Docling、v3 候选隔离及已采用版本读取；KnowledgeBase 身份、范围与准入规则继续有效。下文阶段记录保留当时实现。
+
 2026-09-06 先交付 KnowledgeBase 配置管理；2026-09-07 随 Source/Document 归属与检索、清理过滤成组接入，扩展到完整知识库应用边界。以下当前决策替代初次切片中“只交付配置、停用搜索检查延期”的临时边界。
 
 ## 决策

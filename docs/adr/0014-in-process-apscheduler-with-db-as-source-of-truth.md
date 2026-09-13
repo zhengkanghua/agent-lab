@@ -1,12 +1,6 @@
 # 定时任务：进程内 APScheduler，数据库为唯一事实来源
 
-> **后续决策**：[ADR 0019](0019-scheduled-execution-and-write-coordination.md) 替代本文的宽限补跑、仅进程内互斥及中断恢复规则；下文保留原决策历史。
-
-> **状态（2026-09）**：部署形态已被 [ADR 0017](0017-scheduler-runs-in-a-dedicated-process.md)
-> 取代——生产容器部署下调度器跑独立进程、backend 已多 worker 化，本文的「单进程硬前提」只对
-> 保留的本地开发进程内模式继续成立，「生产 `.env` 必须写 `SCHEDULER_ENABLED=true`」随之失效
-> （容器部署下由 compose 覆盖）。其余决策（内存 job store、两张表、数据库为唯一事实来源、
-> 任务类型注册、运行策略）仍然有效。
+> **状态（2026-09-13）**：本文保留最初的进程内调度决策；中间阶段见 [ADR 0017](0017-scheduler-runs-in-a-dedicated-process.md)，当前实现以 [ADR 0019](0019-scheduled-execution-and-write-coordination.md) 为准。API 进程内调度、独立 scheduler 和 `SCHEDULER_ENABLED` 均已移除，改为 Celery Beat／Worker 与 Redis。本文的不引入队列、宽限补跑、无自动重试及按条数保留历史规则已被替代；PostgreSQL 事实来源、代码注册和 UTC 存储原则继续保留。
 
 后端需要一个定时任务模块：FreshRSS 增量同步进 PostgreSQL、PostgreSQL 待索引文档写进 Qdrant，
 都要按 cron 周期自动执行；cron 和参数由超级用户在前端管理端配置。此前 `main.py` 明确声明

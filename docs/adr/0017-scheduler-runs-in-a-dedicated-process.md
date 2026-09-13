@@ -1,6 +1,6 @@
 # 调度器跑在独立进程，backend 多 worker 化
 
-> **后续决策**：[ADR 0019](0019-scheduled-execution-and-write-coordination.md) 保留本文的生产进程形态，替代宽限补跑和中断恢复规则，补充跨进程认领与写资源协调；本文记录的装配复制债已由共享按需装配解决。
+> **状态（2026-09-13）**：本文记录从 API 进程内调度迁到独立 scheduler 的历史。当前 [ADR 0019](0019-scheduled-execution-and-write-coordination.md) 已用 Celery Beat／Worker 与 Redis 替代该执行形态；`scheduler_main`、进程内备用路径及 `SCHEDULER_ENABLED` 已移除。宽限补跑、重试和历史策略也已更新，不能按本文旧命令启动服务；调度与 API 分离的原则继续保留，装配复制债已解决。
 
 ## Context
 
