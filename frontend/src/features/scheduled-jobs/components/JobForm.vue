@@ -73,6 +73,19 @@ const cronDraft = computed({
   get: () => props.cronExpr,
   set: (value: string) => emit('update:cronExpr', value),
 })
+const commonSchedules = [
+  { label: '每 10 分钟', value: '*/10 * * * *' },
+  { label: '每小时整点', value: '0 * * * *' },
+  { label: '每天 09:00', value: '0 9 * * *' },
+  { label: '每天 00:30', value: '30 0 * * *' },
+  { label: '每周一 09:00', value: '0 9 * * mon' },
+]
+const commonSchedule = computed({
+  get: () => (commonSchedules.some((item) => item.value === props.cronExpr) ? props.cronExpr : ''),
+  set: (value: string) => {
+    if (value) emit('update:cronExpr', value)
+  },
+})
 const limitDraft = computed({
   get: () => props.limitPerSource,
   set: (value: number) => emit('update:limitPerSource', value),
@@ -178,7 +191,7 @@ function onSubmit(): void {
         <span>任务类型</span>
         <BaseSelect v-if="isCreate" v-model="taskTypeDraft" :disabled="submitting">
           <option
-            v-for="type in taskTypes"
+            v-for="type in taskTypes.filter((item) => item.schedulable)"
             :key="type.task_type"
             :value="type.task_type"
             :disabled="!supportsJobForm(type.task_type)"
@@ -207,6 +220,17 @@ function onSubmit(): void {
       <label v-else class="field-control">
         <span>任务标识</span>
         <BaseInput :model-value="job?.key ?? ''" disabled />
+      </label>
+
+      <label class="field-control">
+        <span>常用周期</span>
+        <BaseSelect v-model="commonSchedule" :disabled="submitting">
+          <option value="">自定义 cron</option>
+          <option v-for="item in commonSchedules" :key="item.value" :value="item.value">
+            {{ item.label }}
+          </option>
+        </BaseSelect>
+        <small>按下方调度时区解释，也可直接修改 cron。</small>
       </label>
 
       <label class="field-control cron-field">
@@ -328,13 +352,17 @@ function onSubmit(): void {
         </label>
       </template>
 
-      <label v-if="isCreate" class="check-control">
+      <label class="check-control">
         <input v-model="enabledDraft" type="checkbox" :disabled="submitting" />
         <span>
           <strong>启用</strong>
-          <small>停用后保留配置，但不再按 cron 执行</small>
+          <small>停用只停止未来周期，已受理执行继续处理</small>
         </span>
       </label>
+
+      <p v-if="!isCreate" class="field-control">
+        修改只用于之后受理的执行；已有执行继续使用原参数。
+      </p>
 
       <BaseButton
         class="submit-command"

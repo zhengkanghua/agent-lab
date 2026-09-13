@@ -2,6 +2,7 @@ import { computed, watch, type Ref } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { listScheduledJobRuns, type JobRunDto } from '@/api/scheduled-jobs'
 import { scheduledJobKeys } from '../constants/query-keys'
+import { isTerminalStatus } from '@/api/tasks'
 
 /** 历史面板一次拉取的条数；后端上限 100，这里取 20 条（Q2 共识）。 */
 export const JOB_RUNS_LIMIT = 20
@@ -40,12 +41,12 @@ export function useJobRuns(options: UseJobRunsOptions) {
 
   pollDecider = (): boolean =>
     options.hasAwaitedRun.value ||
-    (query.data.value?.some((run) => run.status === 'running') ?? false)
+    (query.data.value?.some((run) => !isTerminalStatus(run.status)) ?? false)
 
   watch(query.data, (runs) => {
     if (!runs) return
     for (const run of runs) {
-      if (run.status !== 'running' && options.isAwaited(run.id)) {
+      if (isTerminalStatus(run.status) && options.isAwaited(run.id)) {
         options.onAwaitedFinished(run)
       }
     }

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { makeTaskRun } from './tasks.fixture'
 import {
   createScheduledJob,
   deleteScheduledJob,
@@ -24,7 +25,7 @@ const job = {
   updated_at: '2026-09-02T00:00:00Z',
 }
 
-const run = {
+const run = makeTaskRun({
   id: '50000000-0000-4000-8000-000000000001',
   job_id: job.id,
   trigger_type: 'manual',
@@ -33,7 +34,7 @@ const run = {
   finished_at: '2026-09-02T04:01:00Z',
   stats: { synchronized_document_count: 3, failures: {} },
   error_type: null,
-}
+})
 
 function jsonResponse(body: unknown, status = 200): Response {
   if (body === undefined) return new Response(null, { status })
@@ -62,7 +63,12 @@ describe('scheduled jobs API', () => {
       .fn()
       .mockResolvedValueOnce(jsonResponse(job, 201))
       .mockResolvedValueOnce(jsonResponse({ ...job, enabled: false }))
-      .mockResolvedValueOnce(jsonResponse({ job_id: job.id, run_id: run.id, status: 'running' }))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          { job_id: job.id, run_id: run.id, status: 'queued', details_expired: false },
+          202,
+        ),
+      )
       .mockResolvedValueOnce(jsonResponse([run]))
       .mockResolvedValueOnce(
         jsonResponse({
@@ -80,7 +86,7 @@ describe('scheduled jobs API', () => {
       enabled: true,
     })
     await updateScheduledJob({ jobId: job.id, enabled: false })
-    await triggerScheduledJob(job.id)
+    await triggerScheduledJob(job.id, 'same-request')
     await listScheduledJobRuns(job.id, 20)
     await validateCron({ cronExpr: '0 9 * * *' })
 
@@ -104,6 +110,9 @@ describe('scheduled jobs API', () => {
       JSON.stringify({ enabled: false }),
     )
     expect(fetchMock.mock.calls[2]?.[1]).toEqual(expect.objectContaining({ method: 'POST' }))
+    expect(new Headers(fetchMock.mock.calls[2]?.[1].headers).get('Idempotency-Key')).toBe(
+      'same-request',
+    )
   })
 
   it('deletes with no body and tolerates an empty 204 response', async () => {
@@ -130,7 +139,9 @@ describe('scheduled jobs API', () => {
     await expect(listScheduledJobRuns(job.id, 20)).rejects.toMatchObject({
       code: 'response_invalid',
     })
-    await expect(triggerScheduledJob(job.id)).rejects.toMatchObject({ code: 'response_invalid' })
+    await expect(triggerScheduledJob(job.id, 'invalid-receipt')).rejects.toMatchObject({
+      code: 'response_invalid',
+    })
     await expect(validateCron({ cronExpr: '* * * * *' })).rejects.toMatchObject({
       code: 'response_invalid',
     })
@@ -160,6 +171,7 @@ describe('scheduled jobs API', () => {
     const metadata = [
       {
         task_type: 'prune_old_documents',
+        schedulable: true,
         description: '旧新闻清理',
         defaults: { retention_days: 180, dry_run: true },
         params_schema: { type: 'object' },

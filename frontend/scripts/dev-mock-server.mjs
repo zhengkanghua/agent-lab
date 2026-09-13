@@ -62,6 +62,7 @@ createServer(async (req, res) => {
     hit = await matchApi(`http://localhost/api${req.url}`, authed, {
       method,
       contentType: req.headers['content-type'] ?? '',
+      requestKey: req.headers['idempotency-key'] ?? '',
       body: chunks.length ? Buffer.concat(chunks) : null,
     })
   } catch {

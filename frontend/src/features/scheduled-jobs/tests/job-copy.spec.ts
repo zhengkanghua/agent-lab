@@ -1,7 +1,13 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import type { JobRunDto, ScheduledJobDto } from '@/api/scheduled-jobs'
-import { formatBeijingTime, formatLastRunSummary, formatRunStats } from '../model/job-copy'
+import { makeTaskRun } from '@/api/tasks.fixture'
+import {
+  executionStatusLabel,
+  formatBeijingTime,
+  formatLastRunSummary,
+  formatRunStats,
+} from '../model/job-copy'
 
 const jobBase = {
   id: '40000000-0000-4000-8000-000000000001',
@@ -14,12 +20,10 @@ const jobBase = {
   last_run: null,
   created_at: '2026-09-02T00:00:00Z',
   updated_at: '2026-09-02T00:00:00Z',
-} as unknown as ScheduledJobDto
+} satisfies ScheduledJobDto
 
 function makeRun(overrides: Partial<JobRunDto>): JobRunDto {
-  return {
-    needs_attention: false,
-    id: '50000000-0000-4000-8000-000000000001',
+  return makeTaskRun({
     job_id: jobBase.id,
     trigger_type: 'manual',
     status: 'succeeded',
@@ -28,7 +32,7 @@ function makeRun(overrides: Partial<JobRunDto>): JobRunDto {
     stats: {},
     error_type: null,
     ...overrides,
-  }
+  })
 }
 
 describe('formatBeijingTime', () => {
@@ -55,7 +59,7 @@ describe('formatLastRunSummary', () => {
     const job = {
       ...jobBase,
       last_run: makeRun({ status: 'failed', error_type: 'OllamaTimeoutError' }),
-    } as unknown as ScheduledJobDto
+    } satisfies ScheduledJobDto
     const summary = formatLastRunSummary(job)
     expect(summary).toContain('失败')
     expect(summary).toContain('2026-09-02 12:01:00')
@@ -103,8 +107,28 @@ describe('formatRunStats', () => {
     expect(summary).toContain('回收超时 2')
   })
 
-  it('falls back to 本轮无变更 for empty stats', () => {
-    expect(formatRunStats(makeRun({ stats: {} }))).toBe('本轮无变更')
+  it('keeps empty and unknown results distinguishable from no changes', () => {
+    expect(formatRunStats(makeRun({ stats: {} }))).toContain('未提供可识别')
+    expect(formatRunStats(makeRun({ stats: { future_counter: 12 } }))).not.toContain('无变更')
+  })
+
+  it('reports partial Pipeline failures and separates review from indexed documents', () => {
+    const run = makeRun({
+      stats: {
+        ok: false,
+        sync: { synchronized_document_count: 2 },
+        index: {
+          parsed_document_count: 4,
+          review_document_count: 2,
+          indexed_document_count: 1,
+          failed_document_count: 1,
+        },
+      },
+    })
+    expect(executionStatusLabel(run)).toContain('有失败项')
+    expect(formatRunStats(run)).toContain('同步文档 2')
+    expect(formatRunStats(run)).toContain('待审核 2')
+    expect(formatRunStats(run)).toContain('已索引 1')
   })
 
   it('does not present an accepted execution as having no changes', () => {

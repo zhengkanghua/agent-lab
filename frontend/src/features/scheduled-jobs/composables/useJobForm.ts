@@ -87,7 +87,7 @@ export function useJobForm(options: UseJobFormOptions) {
         key.value = job.key
         taskType.value = job.task_type
         cronExpr.value = job.cron_expr
-        enabled.value = false
+        enabled.value = job.enabled
         applyParams(job.params)
         errors.value = {}
         formError.value = ''
@@ -98,11 +98,6 @@ export function useJobForm(options: UseJobFormOptions) {
 
   async function submit(): Promise<void> {
     if (submitting.value) return
-    const job = toValue(options.job)
-    if (!isCreate && (job?.enabled || job?.active_run)) {
-      formError.value = '请先停用任务，并等待当前任务执行结束。'
-      return
-    }
     const values = {
       key: key.value,
       taskType: taskType.value,
@@ -129,7 +124,7 @@ export function useJobForm(options: UseJobFormOptions) {
         taskType: taskType.value,
         cronExpr: cronExpr.value.trim(),
         params: buildParams(values),
-        enabled: isCreate && enabled.value,
+        enabled: enabled.value,
       })
     } catch (error) {
       formError.value = presentJobError(error, '保存定时任务失败，请稍后重试。')

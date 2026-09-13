@@ -54,7 +54,7 @@ function toggleEnabled(event: Event): void {
 }
 
 function onDeleteClick(): void {
-  if (props.busy || executionPending.value) return
+  if (props.busy) return
   if (!confirmingDelete.value) {
     confirmingDelete.value = true
     return
@@ -119,14 +119,8 @@ function onDeleteClick(): void {
           variant="ghost"
           size="xs"
           :aria-pressed="isEditOpen"
-          :disabled="busy || job.enabled || executionPending || !supportsJobForm(job.task_type)"
-          :title="
-            !supportsJobForm(job.task_type)
-              ? '此类型暂不支持编辑'
-              : job.enabled || job.active_run
-                ? '先停用，并等待当前任务执行结束'
-                : '编辑任务配置'
-          "
+          :disabled="busy || !supportsJobForm(job.task_type)"
+          :title="!supportsJobForm(job.task_type) ? '此类型暂不支持编辑' : '编辑之后受理的任务配置'"
           :aria-label="`编辑 ${job.key}`"
           @click="emit('toggle-edit', job)"
         >
@@ -148,7 +142,7 @@ function onDeleteClick(): void {
             variant="ghost"
             size="xs"
             class="danger-action"
-            :disabled="busy || executionPending"
+            :disabled="busy"
             :aria-label="`确认删除 ${job.key}`"
             @click="onDeleteClick"
           >
@@ -164,7 +158,7 @@ function onDeleteClick(): void {
           variant="ghost"
           size="xs"
           class="danger-action"
-          :disabled="busy || executionPending"
+          :disabled="busy"
           :aria-label="`删除 ${job.key}`"
           @click="onDeleteClick"
         >
@@ -178,12 +172,8 @@ function onDeleteClick(): void {
 
     <!-- 编辑表单收进统一对话框（2026-09 重设计 P4）：展开状态仍是这一行的，
          关闭走表单自己的取消键或 Esc，都汇到 toggle-edit。 -->
-    <BaseDialog
-      :open="isEditOpen && !job.enabled && !executionPending"
-      :label="`编辑任务 ${job.key}`"
-      @close="emit('toggle-edit', job)"
-    >
-      <slot v-if="isEditOpen && !job.enabled && !executionPending" name="edit" />
+    <BaseDialog :open="isEditOpen" :label="`编辑任务 ${job.key}`" @close="emit('toggle-edit', job)">
+      <slot v-if="isEditOpen" name="edit" />
     </BaseDialog>
 
     <JobRunHistory

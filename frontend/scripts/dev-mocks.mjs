@@ -1,6 +1,7 @@
 /* 纯前端 route mock 的共享数据与匹配函数：dev-screenshot.mjs 与 dev-audit.mjs 共用。
  * 字段与后端 openapi.json / src/api/* 契约一致。契约变化时此处要跟着前端 openapi.ts 更新。 */
 import { createHash, randomUUID } from 'node:crypto'
+import { matchTaskApi } from './task-mocks.mjs'
 
 const NEWS_ID = '10000000-0000-4000-8000-000000000010'
 const FILES_ID = '10000000-0000-4000-8000-000000000011'
@@ -80,19 +81,6 @@ const SOURCES = [
     knowledge_base_key: null,
     sync_checkpoint: null,
     sync_checkpoint_updated_at: null,
-  },
-]
-
-/* 可用的定时任务类型。后台的新建/编辑表单靠它取默认值与参数范围。 */
-const SCHEDULED_TASK_TYPES = [
-  {
-    task_type: 'freshrss_sync',
-    description: '从 FreshRSS 拉取订阅内容',
-    defaults: { feed_limit: 50 },
-    params_schema: {
-      type: 'object',
-      properties: { feed_limit: { type: 'integer', minimum: 1, maximum: 500 } },
-    },
   },
 ]
 
@@ -275,6 +263,8 @@ export async function matchApi(url, authed, options = {}) {
   if (suffix === '/auth/login') return { status: 204, contentType: 'text/plain', body: '' }
   if (suffix === '/auth/logout') return { status: 204, contentType: 'text/plain', body: '' }
   if (!authed) return unauth
+  const task = matchTaskApi(suffix, requestUrl.searchParams, method, body, options.requestKey ?? '')
+  if (task) return task
   if (suffix === '/knowledge-bases')
     return json(
       KNOWLEDGE_BASES.filter(
@@ -283,7 +273,6 @@ export async function matchApi(url, authed, options = {}) {
     )
   if (suffix === '/admin/users') return json([ENV_ADMIN, REGULAR_USER])
   if (suffix === '/sources') return json(SOURCES)
-  if (suffix === '/scheduled-jobs/task-types') return json(SCHEDULED_TASK_TYPES)
   if (suffix === '/document-search') {
     const scope = resolveScope(body.scope ?? { mode: 'selected', knowledge_base_ids: [NEWS_ID] })
     const results = searchResults(scope)
@@ -345,21 +334,6 @@ export async function matchApi(url, authed, options = {}) {
     item.processing_status = 'pending'
     return json(item)
   }
-  if (suffix === '/scheduled-jobs')
-    return json([
-      {
-        id: '40000000-0000-4000-8000-000000000001',
-        key: 'sync_news',
-        task_type: 'freshrss_sync',
-        cron_expr: '0 * * * *',
-        params: {},
-        enabled: true,
-        next_run_at: '2026-08-20T09:00:00Z',
-        last_run: null,
-        created_at: '2026-08-17T00:00:00Z',
-        updated_at: '2026-08-17T00:00:00Z',
-      },
-    ])
   if (suffix === '/vector-search') return json([CHUNK_RESULT])
   if (suffix === '/agent/default-prompt')
     return json({ system_prompt: '你是知识库检索助手，请基于本次取得的原文作答并引用。' })

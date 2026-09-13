@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { taskTypes } from '@/api/scheduled-jobs.fixture'
 import { ApiError } from '@/api/client'
+import { makeTaskRun, taskPolicy } from '@/api/tasks.fixture'
 import { newsKnowledgeBase, techKnowledgeBase } from '@/api/knowledge-bases.fixture'
 
 enableAutoUnmount(afterEach)
@@ -20,6 +21,14 @@ const api = vi.hoisted(() => ({
   listScheduledJobRuns: vi.fn(),
   validateCron: vi.fn(),
   listKnowledgeBases: vi.fn(),
+  listTaskRuns: vi.fn(),
+  getTaskRun: vi.fn(),
+  cancelTask: vi.fn(),
+  retryTask: vi.fn(),
+  submitPipeline: vi.fn(),
+  getTaskPolicy: vi.fn(),
+  updateTaskPolicy: vi.fn(),
+  getTaskPolicyChanges: vi.fn(),
 }))
 
 /* 部分替换：类型常量（SCHEDULED_JOB_TASK_TYPES 等）用真模块，只有 7 个网络函数换成替身。
@@ -39,6 +48,18 @@ vi.mock('../api/scheduled-jobs', async (importOriginal) => {
     validateCron: api.validateCron,
   }
 })
+
+vi.mock('@/api/tasks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/tasks')>()),
+  listTaskRuns: api.listTaskRuns,
+  getTaskRun: api.getTaskRun,
+  cancelTask: api.cancelTask,
+  retryTask: api.retryTask,
+  submitPipeline: api.submitPipeline,
+  getTaskPolicy: api.getTaskPolicy,
+  updateTaskPolicy: api.updateTaskPolicy,
+  getTaskPolicyChanges: api.getTaskPolicyChanges,
+}))
 
 const session = vi.hoisted(() => ({
   initialize: vi.fn(),
@@ -73,7 +94,7 @@ const syncJob = {
   params: { limit_per_source: 2 },
   enabled: true,
   next_run_at: '2026-09-03T01:00:00Z',
-  last_run: {
+  last_run: makeTaskRun({
     id: '50000000-0000-4000-8000-000000000001',
     job_id: '40000000-0000-4000-8000-000000000001',
     trigger_type: 'scheduled',
@@ -82,7 +103,7 @@ const syncJob = {
     finished_at: '2026-09-02T04:01:00Z',
     stats: { synchronized_document_count: 3, failures: {} },
     error_type: null,
-  },
+  }),
   created_at: '2026-09-02T00:00:00Z',
   updated_at: '2026-09-02T00:00:00Z',
 }
@@ -143,14 +164,24 @@ beforeEach(() => {
       updated_at: '2026-09-06T00:00:00Z',
     },
   ])
-  api.getScheduledJobRun.mockImplementation(async (jobId: string, runId: string) => ({
-    ...syncJob.last_run,
-    id: runId,
-    job_id: jobId,
-    status: 'running',
-    finished_at: null,
-    needs_attention: false,
-  }))
+  api.getTaskRun.mockImplementation(async (runId: string) =>
+    makeTaskRun({
+      ...syncJob.last_run,
+      id: runId,
+      job_id: syncJob.id,
+      source_job_id: syncJob.id,
+      status: 'running',
+      finished_at: null,
+      needs_attention: false,
+    }),
+  )
+  api.listTaskRuns.mockResolvedValue([])
+  api.getTaskPolicy.mockResolvedValue(taskPolicy)
+  api.getTaskPolicyChanges.mockResolvedValue([])
+  api.updateTaskPolicy.mockImplementation(async (policy) => policy)
+  api.cancelTask.mockReset()
+  api.retryTask.mockReset()
+  api.submitPipeline.mockReset()
   api.listScheduledJobs.mockResolvedValue([syncJob])
   api.createScheduledJob.mockReset()
   api.updateScheduledJob.mockReset()
@@ -322,7 +353,7 @@ describe('ScheduledJobsPage', () => {
     await wrapper.get('button[aria-label="立即执行 freshrss-sync"]').trigger('click')
     await flushPromises()
 
-    expect(api.triggerScheduledJob).toHaveBeenCalledWith(syncJob.id)
+    expect(api.triggerScheduledJob).toHaveBeenCalledWith(syncJob.id, expect.any(String))
     // 历史面板自动展开（Q3：触发后直接纳客）。
     expect(wrapper.text()).toContain('执行历史')
     expect(wrapper.text()).toContain('手动执行：成功')
@@ -363,20 +394,25 @@ describe('ScheduledJobsPage', () => {
     )
   })
 
-  it('blocks editing enabled jobs and deleting active executions', async () => {
+  it('allows editing enabled configurations and deleting configurations with active executions', async () => {
     api.listScheduledJobs.mockResolvedValue([
       { ...syncJob, active_run: { ...syncJob.last_run, status: 'running' } },
     ])
     const wrapper = await mountPage()
     expect(
       wrapper.get('button[aria-label="编辑 freshrss-sync"]').attributes('disabled'),
-    ).toBeDefined()
+    ).toBeUndefined()
     expect(
       wrapper.get('button[aria-label="删除 freshrss-sync"]').attributes('disabled'),
-    ).toBeDefined()
+    ).toBeUndefined()
     expect(
       wrapper.get('input[aria-label="启用 freshrss-sync"]').attributes('disabled'),
     ).toBeUndefined()
+    await wrapper.get('button[aria-label="编辑 freshrss-sync"]').trigger('click')
+    await vi.advanceTimersByTimeAsync(300)
+    await wrapper.get('form.job-form').trigger('submit')
+    await flushPromises()
+    expect(api.updateScheduledJob).toHaveBeenCalledWith(expect.objectContaining({ enabled: true }))
   })
 
   it('edits the existing retention type with backend defaults and a boolean dry run', async () => {
@@ -494,15 +530,15 @@ describe('ScheduledJobsPage', () => {
     await wrapper.get('button[aria-label="查看 freshrss-sync 的执行历史"]').trigger('click')
     wrapper.unmount()
     // 历史列表没有目标记录，重新打开仍用回执中的准确 ID 查询。
-    api.getScheduledJobRun.mockResolvedValue({
+    api.getTaskRun.mockResolvedValue({
       ...syncJob.last_run,
       id: runId,
       status: 'succeeded',
     })
     const reopened = await mountPage()
     await flushPromises()
-    expect(api.getScheduledJobRun).toHaveBeenCalledWith(syncJob.id, runId, expect.any(AbortSignal))
-    expect(reopened.text()).toContain('手动执行：成功')
+    expect(api.getTaskRun).toHaveBeenCalledWith(runId, expect.any(AbortSignal))
+    expect(reopened.text()).toContain('成功')
     expect(api.triggerScheduledJob).toHaveBeenCalledTimes(1)
   })
 
@@ -513,8 +549,189 @@ describe('ScheduledJobsPage', () => {
     const wrapper = await mountPage()
     await wrapper.get('button[aria-label="立即执行 freshrss-sync"]').trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('受理情况待核实')
+    expect(wrapper.text()).toContain('受理情况待确认')
     expect(api.triggerScheduledJob).toHaveBeenCalledTimes(1)
-    expect(api.listScheduledJobRuns).toHaveBeenCalled()
+    expect(wrapper.text()).toContain('确认受理')
+  })
+
+  it('confirms the same timed-out request after leaving and deleting its configuration', async () => {
+    api.triggerScheduledJob.mockRejectedValueOnce(
+      new ApiError({ code: 'request_timeout', message: 'timeout' }),
+    )
+    const wrapper = await mountPage()
+    await wrapper.get('button[aria-label="立即执行 freshrss-sync"]').trigger('click')
+    await flushPromises()
+    const originalArgs = api.triggerScheduledJob.mock.calls[0]
+    wrapper.unmount()
+    api.listScheduledJobs.mockResolvedValue([])
+    const run = makeTaskRun({
+      job_id: null,
+      source_job_id: syncJob.id,
+      status: 'queued',
+      started_at: null,
+    })
+    api.getTaskRun.mockResolvedValue(run)
+    api.triggerScheduledJob.mockResolvedValue({
+      run_id: run.id,
+      job_id: null,
+      status: 'queued',
+      details_expired: false,
+    })
+    const reopened = await mountPage()
+    await reopened
+      .findAll('button')
+      .find((button) => button.text() === '确认受理')!
+      .trigger('click')
+    await flushPromises()
+    expect(api.triggerScheduledJob.mock.calls[1]).toEqual(originalArgs)
+    expect(api.getTaskRun).toHaveBeenCalledWith(run.id, expect.any(AbortSignal))
+    expect(reopened.text()).toContain('排队中')
+    expect(reopened.text()).toContain(`已删除 · ${syncJob.id}`)
+    expect(reopened.find('[aria-label="待确认请求"]').exists()).toBe(false)
+  })
+
+  it('queries an execution outside the list and cancels a resource wait', async () => {
+    const run = makeTaskRun({
+      status: 'waiting_resource',
+      wait_reason: '索引写资源正在使用',
+      attempts: 0,
+      started_at: null,
+    })
+    api.getTaskRun.mockResolvedValue(run)
+    api.cancelTask.mockResolvedValue(
+      makeTaskRun({ ...run, status: 'cancelled', can_cancel: false }),
+    )
+    const wrapper = await mountPage()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '任务执行')!
+      .trigger('click')
+    await wrapper.get('input[placeholder="完整的任务执行编号"]').setValue(run.id)
+    await wrapper.get('form.lookup').trigger('submit')
+    await flushPromises()
+    expect(wrapper.text()).toContain('索引写资源正在使用')
+    expect(wrapper.text()).toContain('0 次（最多 4 次）')
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '取消此次执行')!
+      .trigger('click')
+    await flushPromises()
+    expect(api.cancelTask).toHaveBeenCalledWith(run.id)
+    expect(wrapper.text()).toContain('已取消')
+    expect(wrapper.findAll('button').some((button) => button.text() === '取消此次执行')).toBe(false)
+  })
+
+  it('retains original Pipeline parameters and identity while confirming a timeout', async () => {
+    api.submitPipeline.mockRejectedValueOnce(
+      new ApiError({ code: 'request_timeout', message: 'timeout' }),
+    )
+    const wrapper = await mountPage()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '任务执行')!
+      .trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '手动 Pipeline')!
+      .trigger('click')
+    await wrapper.get('[aria-label="手动 Pipeline"] input').setValue(7)
+    await wrapper.get('[aria-label="手动 Pipeline"] form').trigger('submit')
+    await flushPromises()
+    expect(api.submitPipeline.mock.calls[0]?.[0]).toEqual({
+      limit_per_source: 7,
+      batch_size: 20,
+      stale_after_minutes: 60,
+    })
+    wrapper.unmount()
+    const run = makeTaskRun({ task_type: 'pipeline_run_once', status: 'queued' })
+    api.submitPipeline.mockResolvedValue({
+      run_id: run.id,
+      status: 'queued',
+      details_expired: false,
+    })
+    api.getTaskRun.mockResolvedValue(run)
+    const reopened = await mountPage()
+    await reopened
+      .findAll('button')
+      .find((button) => button.text() === '确认受理')!
+      .trigger('click')
+    await flushPromises()
+    expect(api.submitPipeline.mock.calls[1]).toEqual(api.submitPipeline.mock.calls[0])
+    expect(reopened.text()).toContain(run.id)
+  })
+
+  it('retries the failed execution by identity and follows the new receipt', async () => {
+    const failed = makeTaskRun({ status: 'failed' })
+    const next = makeTaskRun({
+      id: '60000000-0000-4000-8000-000000000055',
+      status: 'queued',
+      retry_of: failed.id,
+    })
+    sessionStorage.setItem('task-selected-run:10000000-0000-4000-8000-000000000001', failed.id)
+    api.getTaskRun.mockImplementation(async (id) => (id === failed.id ? failed : next))
+    api.retryTask.mockResolvedValue({ run_id: next.id, status: 'queued', details_expired: false })
+    const wrapper = await mountPage()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '使用原参数重试')!
+      .trigger('click')
+    await flushPromises()
+    expect(api.retryTask).toHaveBeenCalledWith(failed.id, expect.any(String))
+    expect(wrapper.text()).toContain(next.id)
+    expect(wrapper.text()).toContain('查看原失败执行')
+  })
+
+  it('reports expired details and unknown result fields without presenting success or retry', async () => {
+    const run = makeTaskRun({ task_type: 'future_task', stats: { future_counter: 9 } })
+    sessionStorage.setItem('task-selected-run:10000000-0000-4000-8000-000000000001', run.id)
+    api.getTaskRun.mockResolvedValue(run)
+    const wrapper = await mountPage()
+    expect(wrapper.text()).toContain('future_task')
+    expect(wrapper.text()).toContain('未提供可识别的结果摘要')
+    expect(wrapper.text()).toContain('future_counter')
+    api.getTaskRun.mockRejectedValue(
+      new ApiError({ status: 410, code: 'task_run_expired', message: 'expired' }),
+    )
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '刷新')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('执行详情已过保留期')
+    expect(wrapper.findAll('button').some((button) => button.text() === '使用原参数重试')).toBe(
+      false,
+    )
+  })
+
+  it('uses the same cron value for common schedules and the raw expression', async () => {
+    const wrapper = await mountPage()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '新建任务')!
+      .trigger('click')
+    const select = wrapper.findAll('select').find((item) => item.text().includes('每天 09:00'))!
+    await select.setValue('0 9 * * *')
+    expect(wrapper.get<HTMLInputElement>('input[name="job-cron"]').element.value).toBe('0 9 * * *')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(api.validateCron).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cronExpr: '0 9 * * *' }),
+    )
+    expect(wrapper.get('select').text()).not.toContain('手动 Pipeline')
+  })
+
+  it('loads and saves default policy with a visible change history', async () => {
+    const wrapper = await mountPage()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '默认策略')!
+      .trigger('click')
+    await flushPromises()
+    const panel = wrapper.get('section[aria-label="任务默认策略"]')
+    await panel.get('input').setValue(2)
+    await panel.get('form').trigger('submit')
+    await flushPromises()
+    expect(api.updateTaskPolicy).toHaveBeenCalledWith({ ...taskPolicy, max_retries: 2 })
+    expect(panel.text()).toContain('仅影响之后受理的执行')
+    expect(panel.text()).toContain('最近修改记录')
   })
 })

@@ -32,7 +32,7 @@ type AdminSection = (typeof SECTIONS)[number]
 
 const SECTION_META: Record<AdminSection, { title: string; subtitle: string }> = {
   users: { title: '账号管理', subtitle: '访问控制' },
-  'scheduled-jobs': { title: '定时任务', subtitle: '数据自动化' },
+  'scheduled-jobs': { title: '任务管理', subtitle: '周期配置与任务执行' },
   'knowledge-bases': { title: '知识库', subtitle: '知识管理' },
   sources: { title: '来源管理', subtitle: '订阅绑定' },
   files: { title: '文件资料', subtitle: '知识管理' },

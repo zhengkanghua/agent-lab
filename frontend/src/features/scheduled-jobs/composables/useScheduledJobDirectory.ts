@@ -5,8 +5,6 @@ import {
   deleteScheduledJob,
   listScheduledJobs,
   listScheduledTaskTypes,
-  getScheduledJobRun,
-  triggerScheduledJob,
   updateScheduledJob,
   type JobRunDto,
   type ScheduledJobDto,
@@ -17,6 +15,8 @@ import { executionStatusLabel, formatRunStats } from '../model/job-copy'
 import { ApiError } from '@/api/client'
 import { supportsJobForm } from '../model/job-validation'
 import type { JobSubmitPayload } from './useJobForm'
+import type { TaskSubmissions } from './useTaskSubmissions'
+import { getTaskRun, isTerminalStatus } from '@/api/tasks'
 
 export type ScheduledJobLoadState = 'loading' | 'error' | 'ready'
 
@@ -27,6 +27,7 @@ export interface ExpandedPanel {
 
 export interface UseScheduledJobDirectoryOptions {
   accountId: string
+  submissions: TaskSubmissions
   /**
    * 被跟踪的手动触发进入终态时回调（成功或失败）。反馈归本 composable 写，
    * 这个口子留给页面做额外的跳转或提示。
@@ -96,9 +97,9 @@ export function useScheduledJobDirectory(options: UseScheduledJobDirectoryOption
   })
   const tracked = useQueries({
     queries: computed(() =>
-      [...awaitedRunIds].map(([runId, jobId]) => ({
-        queryKey: [...scheduledJobKeys.runs(jobId), runId],
-        queryFn: ({ signal }: { signal: AbortSignal }) => getScheduledJobRun(jobId, runId, signal),
+      [...awaitedRunIds.keys()].map((runId) => ({
+        queryKey: ['task-runs', options.accountId, 'detail', runId],
+        queryFn: ({ signal }: { signal: AbortSignal }) => getTaskRun(runId, signal),
         refetchInterval: 5000,
         retry: false,
       })),
@@ -109,20 +110,21 @@ export function useScheduledJobDirectory(options: UseScheduledJobDirectoryOption
     const receipts = [...awaitedRunIds]
     for (const [index, result] of results.entries()) {
       const record = result.data
-      if (record && !result.isError && rowErrors.value[record.job_id] === queryFailure) {
-        clearRowError(record.job_id)
+      const jobId = record ? awaitedRunIds.get(record.id) : undefined
+      if (record && jobId && !result.isError && rowErrors.value[jobId] === queryFailure) {
+        clearRowError(jobId)
       }
       if (
         record &&
-        (record.status !== 'running' || record.needs_attention) &&
+        (isTerminalStatus(record.status) || record.needs_attention) &&
         awaitedRunIds.has(record.id)
       ) {
-        handleRunFinished(record.job_id, record)
+        handleRunFinished(jobId ?? record.source_job_id ?? '', record)
       } else if (result.isError) {
         const receipt = receipts[index]
         if (!receipt) continue
         const [runId, jobId] = receipt
-        if (result.error instanceof ApiError && result.error.status === 404) {
+        if (result.error instanceof ApiError && [404, 410].includes(result.error.status)) {
           awaitedRunIds.delete(runId)
           setRowError(jobId, '任务执行记录已不可查询，无法确认执行结果。')
           feedback.value = '任务执行记录已不可查询，无法确认执行结果。'
@@ -180,11 +182,7 @@ export function useScheduledJobDirectory(options: UseScheduledJobDirectoryOption
       return
     }
     const job = jobs.value.find((item) => item.id === jobId)
-    if (
-      kind === 'edit' &&
-      (!job || job.enabled || job.active_run || !supportsJobForm(job.task_type))
-    )
-      return
+    if (kind === 'edit' && (!job || !supportsJobForm(job.task_type))) return
     expanded.value = { jobId, kind }
   }
 
@@ -209,7 +207,7 @@ export function useScheduledJobDirectory(options: UseScheduledJobDirectoryOption
       jobId: job.id,
       cronExpr: payload.cronExpr,
       params: payload.params,
-      enabled: false,
+      enabled: payload.enabled,
     })
     invalidateJobs()
     invalidateRuns(job.id)
@@ -242,13 +240,25 @@ export function useScheduledJobDirectory(options: UseScheduledJobDirectoryOption
     clearRowError(job.id)
     setBusy(job.id, true)
     try {
-      const receipt = await triggerScheduledJob(job.id)
-      awaitedRunIds.set(receipt.run_id, job.id)
+      const receipt = await options.submissions.submit(
+        { kind: 'scheduled', jobId: job.id },
+        `立即执行 ${job.key}`,
+      )
+      if (!receipt) return
+      if (
+        !receipt.details_expired &&
+        receipt.status !== 'expired' &&
+        !isTerminalStatus(receipt.status)
+      ) {
+        awaitedRunIds.set(receipt.run_id, job.id)
+      }
       invalidateJobs()
       invalidateRuns(job.id)
       // 直接纳客：展开这个任务的历史面板，轮询会把它带到终态。
       expanded.value = { jobId: job.id, kind: 'history' }
-      feedback.value = `「${job.key}」已受理，正在后台执行。`
+      feedback.value = receipt.details_expired
+        ? '原执行详情已过期，此次未新建执行。'
+        : `「${job.key}」已受理。`
     } catch (error) {
       const rejected =
         error instanceof ApiError &&
@@ -270,14 +280,14 @@ export function useScheduledJobDirectory(options: UseScheduledJobDirectoryOption
   }
 
   async function removeJob(job: ScheduledJobDto): Promise<void> {
-    if (busyJobIds.value.has(job.id) || job.active_run) return
+    if (busyJobIds.value.has(job.id)) return
     clearRowError(job.id)
     setBusy(job.id, true)
     try {
       await deleteScheduledJob(job.id)
       if (expanded.value?.jobId === job.id) closePanel()
       invalidateJobs()
-      feedback.value = `定时任务「${job.key}」已删除。`
+      feedback.value = `周期配置「${job.key}」已删除，已受理执行和历史仍保留。`
     } catch (error) {
       setRowError(job.id, presentJobError(error, '删除任务失败，请稍后重试。'))
     } finally {

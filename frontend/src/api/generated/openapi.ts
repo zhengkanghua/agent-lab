@@ -564,8 +564,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 手动执行一次新闻增量同步与向量索引
-         * @description 在当前 HTTP 请求内依次执行 FreshRSS 增量同步和一个待索引批次。这是有外部写入副作用的同步手动操作，不会创建后台任务；来源级或单篇失败仍返回 200，并通过 ok=false、失败数量和 error_type 明确报告。
+         * Run Pipeline Once
+         * @description 受理一次同步与文档处理批次，结果从 GET /task-runs/{run_id} 查询。
          */
         post: operations["run_pipeline_once_pipeline_run_once_post"];
         delete?: never;
@@ -667,7 +667,7 @@ export interface paths {
         };
         /**
          * Task Types
-         * @description 返回代码注册的任务类型、参数默认值和约束。
+         * @description 返回注册的类型、参数默认值及约束，标明可配置周期的类型。
          */
         get: operations["task_types_scheduled_jobs_task_types_get"];
         put?: never;
@@ -686,14 +686,14 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 列出全部定时任务
-         * @description 返回任务配置、按数据库配置计算的下次计划时间（UTC；停用为空）与最近一次执行摘要。列表不含任何正文、凭据或异常文本。
+         * List Jobs
+         * @description 列出周期配置及其最近执行和当前未结束执行。
          */
         get: operations["list_jobs_scheduled_jobs_get"];
         put?: never;
         /**
-         * 创建定时任务
-         * @description 校验任务类型、cron 与参数后创建任务；scheduler 周期刷新已提交的配置。key 与已存在任务重复返回 409；类型、cron 或参数不合法返回 422。
+         * Create Job
+         * @description 创建周期配置，之后由 Beat 按 UTC 计划受理。
          */
         post: operations["create_job_scheduled_jobs_post"];
         delete?: never;
@@ -712,8 +712,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 校验 cron 表达式并预览未来执行时间
-         * @description 按服务端解释时区（SCHEDULER_TIMEZONE，默认上海）解析 5 段式 cron，返回未来 3 次执行的 UTC 时刻与本地展示时刻；解析失败返回 422。
+         * Validate Cron
+         * @description 按调度时区校验五段式 cron，并预览未来三次执行时刻。
          */
         post: operations["validate_cron_scheduled_jobs_validate_cron_post"];
         delete?: never;
@@ -730,22 +730,22 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 查询单个定时任务
-         * @description 返回单个任务的完整视图。
+         * Get Job
+         * @description 读取周期配置。
          */
         get: operations["get_job_scheduled_jobs__job_id__get"];
         put?: never;
         post?: never;
         /**
-         * 删除定时任务
-         * @description 删除任务配置；执行历史随数据库级联删除，调度器条目同步摘除。
+         * Delete Job
+         * @description 删除周期配置并停止未来周期，保留已受理执行及历史。
          */
         delete: operations["delete_job_scheduled_jobs__job_id__delete"];
         options?: never;
         head?: never;
         /**
-         * 修改定时任务的 cron、参数或启停状态
-         * @description 只修改请求中出现的字段；key 与任务类型不可修改。修改 cron 或参数前必须停用且当前任务执行已结束；保存后保持停用，重新启用单独操作。scheduler 周期刷新，无需重启。
+         * Update Job
+         * @description 允许启用或执行期间修改配置，新参数只用于之后受理的执行。
          */
         patch: operations["update_job_scheduled_jobs__job_id__patch"];
         trace?: never;
@@ -760,8 +760,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 手动立即执行一次定时任务
-         * @description 在后台按任务当前配置执行一轮（与 cron 到点同一执行包装器），立即返回受理回执；上一轮尚未结束时返回 409，不排队。执行结果通过执行历史查询。
+         * Trigger Job
+         * @description 按当前配置受理一次执行；同请求重发返回原编号，停用配置也允许人工触发。
          */
         post: operations["trigger_job_scheduled_jobs__job_id__trigger_post"];
         delete?: never;
@@ -778,8 +778,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 查询定时任务的执行历史
-         * @description 按开始时间新→旧返回执行记录（含被跳过的记录），默认 20 条、上限 100 条。
+         * List Job Runs
+         * @description 按原配置身份查询历史，配置删除后仍保留执行。
          */
         get: operations["list_job_runs_scheduled_jobs__job_id__runs_get"];
         put?: never;
@@ -799,9 +799,137 @@ export interface paths {
         };
         /**
          * Get Job Run
-         * @description 按任务执行 ID 查询，不受最近历史页大小限制。
+         * @description 按原配置和执行编号读取旧入口的回执。
          */
         get: operations["get_job_run_scheduled_jobs__job_id__runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/task-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Runs
+         * @description 按受理时间从新到旧列出周期和一次性执行，支持状态、类型及原配置筛选。
+         */
+        get: operations["list_runs_task_runs_get"];
+        put?: never;
+        /**
+         * Submit
+         * @description 持久受理一次性任务，同一请求标识重发返回原编号。
+         */
+        post: operations["submit_task_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/task-runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Run
+         * @description 仅凭执行编号查询详情，周期配置删除后仍可查询。
+         */
+        get: operations["get_run_task_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/task-runs/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel
+         * @description 取消尚未开始或等待自动重试的执行，已开始的业务尝试拒绝取消。
+         */
+        post: operations["cancel_task_runs__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/task-runs/{run_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry
+         * @description 用原失败参数和当前默认策略新建执行，并保留原失败关联。
+         */
+        post: operations["retry_task_runs__run_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/task-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Policy
+         * @description 读取之后受理的执行所用默认策略。
+         */
+        get: operations["get_policy_task_policy_get"];
+        /**
+         * Update Policy
+         * @description 更新默认重试和历史保留策略并留痕，不影响已受理执行。
+         */
+        put: operations["update_policy_task_policy_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/task-policy/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Policy Changes
+         * @description 列出最近的默认策略修改记录。
+         */
+        get: operations["policy_changes_task_policy_changes_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1958,6 +2086,30 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /**
+         * ExecutionPolicy
+         * @description 每次受理冻结一份；之后修改默认值不改变已有执行。
+         */
+        ExecutionPolicy: {
+            /**
+             * Max Retries
+             * @description 初次尝试之外允许的自动重试次数。
+             * @default 3
+             */
+            max_retries: number;
+            /**
+             * Retry Delay Seconds
+             * @description 第一次自动重试的间隔秒数，之后逐次翻倍，最长一天。
+             * @default 30
+             */
+            retry_delay_seconds: number;
+            /**
+             * History Retention Days
+             * @description 普通已结束执行从结束时间起保留的天数。
+             * @default 30
+             */
+            history_retention_days: number;
+        };
         /** FileDocumentListResponse */
         FileDocumentListResponse: {
             /** Items */
@@ -2048,61 +2200,82 @@ export interface components {
         };
         /**
          * JobRunResponse
-         * @description 一条任务执行记录：只含脱敏统计，不含正文、身份或异常文本。
+         * @description 一次受理的管理详情，不包含上游异常文本、连接或凭据。
          */
         JobRunResponse: {
             /**
              * Id
              * Format: uuid
-             * @description 执行记录 id。
              */
             id: string;
-            /**
-             * Job Id
-             * Format: uuid
-             * @description 所属定时任务 id。
-             */
-            job_id: string;
-            /**
-             * Trigger Type
-             * @description 触发方式：scheduled（cron 到点）或 manual（手动触发）。
-             */
+            /** Job Id */
+            job_id: string | null;
+            /** Source Job Id */
+            source_job_id: string | null;
+            /** Task Type */
+            task_type: string;
+            /** Task Version */
+            task_version: number;
+            /** Trigger Type */
             trigger_type: string;
+            /** Actor */
+            actor: string;
+            status: components["schemas"]["RunStatus"];
             /**
-             * Status
-             * @description 执行状态：running、succeeded、failed 或 skipped。
-             */
-            status: string;
-            /**
-             * Started At
+             * Accepted At
              * Format: date-time
-             * @description 开始（或跳过判定发生）时刻，UTC。
              */
-            started_at: string;
-            /**
-             * Finished At
-             * @description 结束时刻，UTC；尚未结束时为空，skipped 的起止时刻相同。
-             */
+            accepted_at: string;
+            /** Scheduled For */
+            scheduled_for: string | null;
+            /** Started At */
+            started_at: string | null;
+            /** Finished At */
             finished_at: string | null;
             /**
-             * Stats
-             * @description 脱敏统计：数量与按异常类型的聚合计数；skipped 记录含 reason 字段，批次级失败的记录含 error_reason（稳定失败原因枚举）。
+             * Available At
+             * Format: date-time
              */
+            available_at: string;
+            /** Expires At */
+            expires_at: string | null;
+            /** Attempts */
+            attempts: number;
+            /** Delivery Count */
+            delivery_count: number;
+            /** Last Dispatched At */
+            last_dispatched_at: string | null;
+            /** Dispatch Error Type */
+            dispatch_error_type: string | null;
+            /** Heartbeat At */
+            heartbeat_at: string | null;
+            /** Owner */
+            owner: string | null;
+            /** Wait Reason */
+            wait_reason: string | null;
+            /** Error Type */
+            error_type: string | null;
+            /** Stats */
             stats: {
                 [key: string]: unknown;
             };
-            /**
-             * Error Type
-             * @description 批次级失败的异常类名（只含类型名，无异常文本）；成功与跳过时为空。
-             */
-            error_type: string | null;
-            /** Heartbeat At */
-            heartbeat_at?: string | null;
-            /**
-             * Needs Attention
-             * @description 心跳失联只表示需要核实，不授权抢占或重做业务。
-             */
+            /** Config Snapshot */
+            config_snapshot: {
+                [key: string]: unknown;
+            };
+            policy_snapshot: components["schemas"]["ExecutionPolicy"];
+            /** Recovery */
+            recovery: {
+                [key: string]: unknown;
+            };
+            /** Retry Of */
+            retry_of: string | null;
+            /** Needs Attention */
             readonly needs_attention: boolean;
+            /** Can Cancel */
+            readonly can_cancel: boolean;
+            /** Can Retry */
+            readonly can_retry: boolean;
         };
         /**
          * KnowledgeBaseCreateRequest
@@ -2350,112 +2523,12 @@ export interface components {
             issues: components["schemas"]["ProcessingIssue"][];
         };
         /**
-         * PipelineErrorResponse
-         * @description 批次级失败的稳定、脱敏 HTTP 错误响应。
-         */
-        PipelineErrorResponse: {
-            /**
-             * Code
-             * @description 供调用方分支处理的稳定机器错误码。
-             */
-            code: string;
-            /**
-             * Detail
-             * @description 不含原始异常、正文、Vector、密钥或连接地址的固定说明。
-             */
-            detail: string;
-            /**
-             * Error Type
-             * @description 根异常 Python 类名；不包含 str(exception)，避免异常文本进响应。
-             */
-            error_type: string;
-            /**
-             * Retryable
-             * @description 同样参数稍后重试是否可能成功；配置或认证错误通常为 false。
-             */
-            retryable: boolean;
-        };
-        /**
-         * PipelineFailureType
-         * @description 聚合同一异常类型的安全失败数量。
-         */
-        PipelineFailureType: {
-            /**
-             * Error Type
-             * @description Python 异常类名；不包含异常文本、正文、URL、凭据或第三方响应。
-             */
-            error_type: string;
-            /**
-             * Count
-             * @description 本次结果中该异常类型出现的来源或文档数量。
-             */
-            count: number;
-        };
-        /**
-         * PipelineIndexStatistics
-         * @description 索引阶段（PostgreSQL 待处理文档 → Ollama → Qdrant）的安全统计。
-         *
-         *     candidate → indexed / skipped / failed 是一轮索引批次的三种去向：正常完成、
-         *     因状态竞争被跳过、失败被安全捕获。
-         */
-        PipelineIndexStatistics: {
-            /**
-             * Requeued Stale Document Count
-             * @description 重新排队的超时解析计算数量，不包含远端索引写入。
-             */
-            requeued_stale_document_count: number;
-            /**
-             * Candidate Document Count
-             * @description 本次解析和采用阶段实际处理的不同候选数量。
-             */
-            candidate_document_count: number;
-            /**
-             * Indexed Document Count
-             * @description 完成 Embedding、Point 写入并标记 indexed 的文档数量。
-             */
-            indexed_document_count: number;
-            /**
-             * Skipped Document Count
-             * @description 因 revision 或状态竞争而未领取的候选数量。
-             */
-            skipped_document_count: number;
-            /**
-             * Failed Document Count
-             * @description 单篇索引失败且已安全捕获的文档数量。
-             */
-            failed_document_count: number;
-            /**
-             * Failures
-             * @description 按 error_type 聚合的索引失败，不包含正文、Vector 或异常文本。
-             * @default []
-             */
-            failures: components["schemas"]["PipelineFailureType"][];
-            /**
-             * Parsed Document Count
-             * @description 本次完成解析尝试的候选数量。
-             * @default 0
-             */
-            parsed_document_count: number;
-            /**
-             * Review Document Count
-             * @description 本次进入待人工处理的候选数量。
-             * @default 0
-             */
-            review_document_count: number;
-            /**
-             * Cleaned Index Instance Count
-             * @description 本次确认回收的旧索引实例数量。
-             * @default 0
-             */
-            cleaned_index_instance_count: number;
-        };
-        /**
          * PipelineRunOnceRequest
          * @description 一次手动执行允许调用方控制的三个「有界」参数。
          *
          *     为什么全部要限范围：写操作会影响外部系统，必须让每次调用都是有限工作量，
          *     防止一次请求把来源数量和批次规模推爆。对象生命周期限于单个请求；模型拒绝
-         *     未知字段，避免调用方误以为已经支持自动调度或后台执行选项。
+         *     未知字段，防止未支持的业务参数被静默忽略。
          * @example {
          *       "batch_size": 20,
          *       "limit_per_source": 2,
@@ -2481,70 +2554,6 @@ export interface components {
              * @default 60
              */
             stale_after_minutes: number;
-        };
-        /**
-         * PipelineRunOnceResponse
-         * @description 一次手动执行完成后的类型化响应。
-         *
-         *     ok = 同步和索引都没有「部分失败」；execution_mode 固定为 manual，明确告诉
-         *     调用方本轮有界执行已经结束；未采用待办仍可由独立 scheduler 继续消费。
-         */
-        PipelineRunOnceResponse: {
-            /**
-             * Ok
-             * @description 同步来源和索引文档都没有隔离失败时为 true。
-             */
-            ok: boolean;
-            /**
-             * Execution Mode
-             * @description 固定为 manual，表示本次请求主动触发了一个有界处理批次。
-             * @default manual
-             * @constant
-             */
-            execution_mode: "manual";
-            /** @description FreshRSS 与 PostgreSQL 增量同步阶段统计。 */
-            sync: components["schemas"]["PipelineSyncStatistics"];
-            /** @description PostgreSQL、Ollama 与 Qdrant 索引阶段统计。 */
-            index: components["schemas"]["PipelineIndexStatistics"];
-        };
-        /**
-         * PipelineSyncStatistics
-         * @description 同步阶段（FreshRSS → PostgreSQL）的安全统计。
-         *
-         *     只统计来源级别的成败数字，不暴露具体是哪个来源；失败只按异常类型聚合。
-         */
-        PipelineSyncStatistics: {
-            /**
-             * Source Count
-             * @description FreshRSS 中匹配同步分类白名单的来源数量。
-             */
-            source_count: number;
-            /**
-             * Successful Source Count
-             * @description 本页读取、映射和事务处理成功的来源数量。
-             */
-            successful_source_count: number;
-            /**
-             * Failed Source Count
-             * @description 本页失败且 checkpoint 未推进的来源数量。
-             */
-            failed_source_count: number;
-            /**
-             * Synchronized Document Count
-             * @description 经过幂等 upsert 的新闻数，包含新增、更新和无变化命中。
-             */
-            synchronized_document_count: number;
-            /**
-             * Checkpoint Advanced Count
-             * @description 文档事务成功后实际推进 checkpoint 的来源数量。
-             */
-            checkpoint_advanced_count: number;
-            /**
-             * Failures
-             * @description 按 error_type 聚合的来源失败，不包含来源正文或异常文本。
-             * @default []
-             */
-            failures: components["schemas"]["PipelineFailureType"][];
         };
         /**
          * PreviewChunk
@@ -2793,6 +2802,8 @@ export interface components {
             /** Candidate Revision */
             candidate_revision: number;
         };
+        /** @enum {string} */
+        RunStatus: "queued" | "waiting_resource" | "running" | "retry_wait" | "needs_attention" | "succeeded" | "failed" | "cancelled" | "skipped";
         /** SaveDraftRequest */
         SaveDraftRequest: {
             /** Management Revision */
@@ -2858,6 +2869,11 @@ export interface components {
              * @description 相同请求稍后重试是否可能成功。
              */
             retryable: boolean;
+            /**
+             * Run Id
+             * @description 发生冲突或详情过期时对应的执行编号。
+             */
+            run_id?: string | null;
         };
         /**
          * ScheduledJobResponse
@@ -2920,29 +2936,6 @@ export interface components {
             updated_at: string;
         };
         /**
-         * ScheduledJobTriggerResponse
-         * @description 手动触发的受理回执：执行已在后台开始，结果通过执行历史查询。
-         */
-        ScheduledJobTriggerResponse: {
-            /**
-             * Job Id
-             * Format: uuid
-             * @description 被触发的定时任务 id。
-             */
-            job_id: string;
-            /**
-             * Run Id
-             * Format: uuid
-             * @description 新创建的执行记录 id，可凭它到执行历史里跟踪。
-             */
-            run_id: string;
-            /**
-             * Status
-             * @description 受理时的执行状态，固定为 running。
-             */
-            status: string;
-        };
-        /**
          * ScheduledJobUpdateRequest
          * @description 修改定时任务的请求体；未提供的字段保持不变。key 与任务类型不可修改。
          */
@@ -2979,6 +2972,11 @@ export interface components {
             params_schema: {
                 [key: string]: unknown;
             };
+            /**
+             * Schedulable
+             * @default true
+             */
+            schedulable: boolean;
         };
         /**
          * ScopedDocumentSearchResponse
@@ -3091,6 +3089,50 @@ export interface components {
             columns: number;
             /** Cells */
             cells: components["schemas"]["TableCell"][];
+        };
+        /** TaskAcceptedResponse */
+        TaskAcceptedResponse: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Job Id */
+            job_id?: string | null;
+            /** Status */
+            status: components["schemas"]["RunStatus"] | "expired";
+            /**
+             * Details Expired
+             * @description 原执行详情已过期，编号仍有效；此次没有新建执行。
+             * @default false
+             */
+            details_expired: boolean;
+        };
+        /** TaskPolicyChangeResponse */
+        TaskPolicyChangeResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Actor */
+            actor: string;
+            /**
+             * Changed At
+             * Format: date-time
+             */
+            changed_at: string;
+            previous: components["schemas"]["ExecutionPolicy"];
+            current: components["schemas"]["ExecutionPolicy"];
+        };
+        /** TaskSubmitRequest */
+        TaskSubmitRequest: {
+            /** Task Type */
+            task_type: string;
+            /** Params */
+            params?: {
+                [key: string]: unknown;
+            };
         };
         /**
          * UserAdminCreateRequest
@@ -5375,7 +5417,9 @@ export interface operations {
     run_pipeline_once_pipeline_run_once_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -5385,13 +5429,22 @@ export interface operations {
             };
         };
         responses: {
-            /** @description 本轮同步与索引完成后的脱敏统计。 */
-            200: {
+            /** @description Successful Response */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PipelineRunOnceResponse"];
+                    "application/json": components["schemas"]["TaskAcceptedResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5403,40 +5456,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description 未分类的内部执行或资源关闭错误。 */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PipelineErrorResponse"];
-                };
-            };
-            /** @description FreshRSS、Ollama 或 Qdrant 返回不可接受的上游响应。 */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PipelineErrorResponse"];
-                };
-            };
-            /** @description 配置、PostgreSQL 或写入上游当前不可用。 */
+            /** @description Service Unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PipelineErrorResponse"];
-                };
-            };
-            /** @description FreshRSS、Ollama 或整轮流水线操作超时。 */
-            504: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PipelineErrorResponse"];
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
                 };
             };
         };
@@ -5712,6 +5738,42 @@ export interface operations {
                     "application/json": components["schemas"]["ScheduledTaskTypeResponse"][];
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
         };
     };
     list_jobs_scheduled_jobs_get: {
@@ -5730,6 +5792,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScheduledJobResponse"][];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
                 };
             };
             /** @description Service Unavailable */
@@ -5763,6 +5852,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScheduledJobResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
                 };
             };
             /** @description Conflict */
@@ -5816,8 +5914,35 @@ export interface operations {
                     "application/json": components["schemas"]["CronValidateResponse"];
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5856,13 +5981,22 @@ export interface operations {
                     "application/json": components["schemas"]["ScheduledJobErrorResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
                 };
             };
             /** @description Service Unavailable */
@@ -5912,13 +6046,13 @@ export interface operations {
                     "application/json": components["schemas"]["ScheduledJobErrorResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
                 };
             };
             /** @description Service Unavailable */
@@ -5997,7 +6131,9 @@ export interface operations {
     trigger_job_scheduled_jobs__job_id__trigger_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
             path: {
                 job_id: string;
             };
@@ -6011,7 +6147,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ScheduledJobTriggerResponse"];
+                    "application/json": components["schemas"]["TaskAcceptedResponse"];
                 };
             };
             /** @description Not Found */
@@ -6032,13 +6168,13 @@ export interface operations {
                     "application/json": components["schemas"]["ScheduledJobErrorResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
                 };
             };
             /** @description Service Unavailable */
@@ -6083,13 +6219,22 @@ export interface operations {
                     "application/json": components["schemas"]["ScheduledJobErrorResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
                 };
             };
             /** @description Service Unavailable */
@@ -6133,6 +6278,86 @@ export interface operations {
                     "application/json": components["schemas"]["ScheduledJobErrorResponse"];
                 };
             };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+        };
+    };
+    list_runs_task_runs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                source_job_id?: string | null;
+                status?: components["schemas"]["RunStatus"] | null;
+                task_type?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRunResponse"][];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -6149,6 +6374,353 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+        };
+    };
+    submit_task_runs_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskSubmitRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskAcceptedResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+        };
+    };
+    get_run_task_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRunResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+        };
+    };
+    cancel_task_runs__run_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRunResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+        };
+    };
+    retry_task_runs__run_id__retry_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskAcceptedResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledJobErrorResponse"];
+                };
+            };
+        };
+    };
+    get_policy_task_policy_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionPolicy"];
+                };
+            };
+        };
+    };
+    update_policy_task_policy_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExecutionPolicy"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionPolicy"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    policy_changes_task_policy_changes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskPolicyChangeResponse"][];
                 };
             };
         };

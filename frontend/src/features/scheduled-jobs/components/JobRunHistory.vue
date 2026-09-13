@@ -87,7 +87,8 @@ function refresh(): void {
             {{ executionStatusLabel(run) }}
           </span>
           <span class="run-trigger">{{ triggerTypeLabel(run.trigger_type) }}</span>
-          <time :datetime="run.started_at">{{ formatBeijingTime(run.started_at) }}</time>
+          <time :datetime="run.accepted_at">{{ formatBeijingTime(run.accepted_at) }}</time>
+          <RouterLink :to="{ query: { view: 'executions', run: run.id } }">查看详情</RouterLink>
           <span v-if="run.error_type" class="run-error-type" :title="run.error_type">
             {{ run.error_type }}
           </span>

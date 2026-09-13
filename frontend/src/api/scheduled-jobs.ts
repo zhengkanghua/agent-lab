@@ -1,22 +1,24 @@
 import type { components } from './generated/openapi'
 import { ApiError, requestJson, requestVoid } from './client'
 import { hasText, isRecord, isStringArray, isUuid } from './json-guards'
+import {
+  acceptTask,
+  isJobRunDto,
+  isIsoDateTime,
+  isIsoDateTimeOrNull,
+  type TaskAcceptedDto,
+} from './tasks'
+export { isJobRunDto } from './tasks'
 
 export type ScheduledJobDto = components['schemas']['ScheduledJobResponse']
 export type JobRunDto = components['schemas']['JobRunResponse']
 export type ScheduledJobCreateRequest = components['schemas']['ScheduledJobCreateRequest']
 export type ScheduledJobUpdateRequest = components['schemas']['ScheduledJobUpdateRequest']
 export type CronValidationDto = components['schemas']['CronValidateResponse']
-export type ScheduledJobTriggerDto = components['schemas']['ScheduledJobTriggerResponse']
+export type ScheduledJobTriggerDto = TaskAcceptedDto
 
 export type ScheduledJobTaskType = string
 export type ScheduledTaskTypeDto = components['schemas']['ScheduledTaskTypeResponse']
-
-export const SCHEDULED_JOB_RUN_STATUSES = ['running', 'succeeded', 'failed', 'skipped'] as const
-export type ScheduledJobRunStatus = (typeof SCHEDULED_JOB_RUN_STATUSES)[number]
-
-export const SCHEDULED_JOB_TRIGGER_TYPES = ['scheduled', 'manual'] as const
-export type ScheduledJobTriggerType = (typeof SCHEDULED_JOB_TRIGGER_TYPES)[number]
 
 export interface CreateScheduledJobOptions {
   key: string
@@ -60,7 +62,8 @@ export async function listScheduledTaskTypes(
         hasText(value.task_type) &&
         hasText(value.description) &&
         isRecord(value.defaults) &&
-        isRecord(value.params_schema),
+        isRecord(value.params_schema) &&
+        typeof value.schedulable === 'boolean',
     )
   ) {
     throw invalidSchedulerResponse('定时任务接口返回了无效的任务类型。')
@@ -116,20 +119,11 @@ export async function deleteScheduledJob(jobId: string): Promise<void> {
   await requestVoid(`/scheduled-jobs/${encodeURIComponent(jobId)}`, { method: 'DELETE' })
 }
 
-export async function triggerScheduledJob(jobId: string): Promise<ScheduledJobTriggerDto> {
-  const response = await requestJson<unknown>(
-    `/scheduled-jobs/${encodeURIComponent(jobId)}/trigger`,
-    { method: 'POST' },
-  )
-  if (
-    !isRecord(response) ||
-    !isUuid(response.job_id) ||
-    !isUuid(response.run_id) ||
-    response.status !== 'running'
-  ) {
-    throw invalidSchedulerResponse('定时任务接口返回了无效的触发回执。')
-  }
-  return response as unknown as ScheduledJobTriggerDto
+export function triggerScheduledJob(
+  jobId: string,
+  requestKey: string,
+): Promise<ScheduledJobTriggerDto> {
+  return acceptTask(`/scheduled-jobs/${encodeURIComponent(jobId)}/trigger`, requestKey)
 }
 
 export async function listScheduledJobRuns(
@@ -194,42 +188,6 @@ export function isScheduledJobDto(value: unknown): value is ScheduledJobDto {
     isIsoDateTime(value.created_at) &&
     isIsoDateTime(value.updated_at)
   )
-}
-
-export function isJobRunDto(value: unknown): value is JobRunDto {
-  return (
-    isRecord(value) &&
-    isUuid(value.id) &&
-    isUuid(value.job_id) &&
-    isTriggerType(value.trigger_type) &&
-    isRunStatus(value.status) &&
-    isIsoDateTime(value.started_at) &&
-    isIsoDateTimeOrNull(value.finished_at) &&
-    isRecord(value.stats) &&
-    (value.needs_attention === undefined || typeof value.needs_attention === 'boolean') &&
-    (value.heartbeat_at === undefined || isIsoDateTimeOrNull(value.heartbeat_at)) &&
-    (value.error_type === null || hasText(value.error_type))
-  )
-}
-
-function isRunStatus(value: unknown): value is ScheduledJobRunStatus {
-  return (
-    typeof value === 'string' && (SCHEDULED_JOB_RUN_STATUSES as readonly string[]).includes(value)
-  )
-}
-
-function isTriggerType(value: unknown): value is ScheduledJobTriggerType {
-  return (
-    typeof value === 'string' && (SCHEDULED_JOB_TRIGGER_TYPES as readonly string[]).includes(value)
-  )
-}
-
-function isIsoDateTime(value: unknown): value is string {
-  return typeof value === 'string' && value.trim().length > 0 && !Number.isNaN(Date.parse(value))
-}
-
-function isIsoDateTimeOrNull(value: unknown): value is string | null {
-  return value === null || isIsoDateTime(value)
 }
 
 function invalidSchedulerResponse(message: string): ApiError {

@@ -6,6 +6,7 @@ interface ApiErrorBody {
   code?: unknown
   detail?: unknown
   retryable?: unknown
+  run_id?: unknown
 }
 
 export interface RequestOptions {
@@ -32,12 +33,14 @@ export class ApiError extends Error {
   readonly code: string
   readonly detail: string
   readonly retryable: boolean
+  readonly runId?: string
 
   constructor(options: {
     message: string
     status?: number
     code: string
     retryable?: boolean
+    runId?: string
     cause?: unknown
   }) {
     super(options.message, { cause: options.cause })
@@ -46,6 +49,7 @@ export class ApiError extends Error {
     this.code = options.code
     this.detail = options.message
     this.retryable = options.retryable ?? false
+    this.runId = options.runId
   }
 }
 
@@ -106,6 +110,7 @@ export function toApiError(
               : 'unknown_error',
     retryable:
       typeof errorBody?.retryable === 'boolean' ? errorBody.retryable : response.status >= 500,
+    runId: typeof errorBody?.run_id === 'string' ? errorBody.run_id : undefined,
   })
 }
 

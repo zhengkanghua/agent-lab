@@ -1,4 +1,6 @@
 import type { JobRunDto, ScheduledJobDto, ScheduledJobTaskType } from '@/api/scheduled-jobs'
+import { isRecord } from '@/api/json-guards'
+import { isTerminalStatus } from '@/api/tasks'
 
 /*
  * 定时任务的展示模型：类型/状态/触发方式的中文文案、北京时间格式化、统计摘要。
@@ -10,23 +12,32 @@ export const TASK_TYPE_LABEL: Readonly<Record<ScheduledJobTaskType, string>> = {
   freshrss_sync: 'FreshRSS 同步',
   index_pending: '向量索引',
   prune_old_documents: '旧文档清理',
+  pipeline_run_once: '手动 Pipeline',
+  document_processing: '文档后台处理',
 }
 
 export const RUN_STATUS_LABEL: Readonly<Record<JobRunDto['status'], string>> = {
+  queued: '排队中',
+  waiting_resource: '等待资源',
   running: '执行中',
+  retry_wait: '等待自动重试',
+  needs_attention: '待核实',
   succeeded: '成功',
   failed: '失败',
   skipped: '已跳过',
+  cancelled: '已取消',
 }
 
 export const TRIGGER_TYPE_LABEL: Readonly<Record<JobRunDto['trigger_type'], string>> = {
   scheduled: '定时',
   manual: '手动',
+  direct: '直接提交',
+  business: '业务待办',
+  retry: '人工重试',
 }
 
 /*
- * 后端把 task_type / status / trigger_type 声明为 string（注册表是代码契约，不在
- * OpenAPI 里收敛成枚举），所以展示层用「安全索引」函数兜底：未知值原样展示，
+ * 类型和来源允许业务扩展；状态由 OpenAPI 生成。未知标签原样展示，
  * 后端加类型时前端不至于渲染出 undefined。
  */
 export function taskTypeLabel(taskType: string): string {
@@ -41,13 +52,27 @@ export function executionStatusLabel(run: JobRunDto): string {
   if (run.needs_attention) return '待核实'
   if (
     run.status === 'succeeded' &&
-    ['failed_source_count', 'failed_count', 'failed_batches'].some(
-      (key) => Number(run.stats[key] ?? 0) > 0,
-    )
+    [run.stats, run.stats.sync, run.stats.index].some(hasFailedStats)
   )
     return '已结束，有失败项'
   if (run.status === 'succeeded' && run.stats.resource_close_error) return '业务完成，资源关闭失败'
   return runStatusLabel(run.status)
+}
+
+function hasFailedStats(stats: unknown): boolean {
+  return (
+    isRecord(stats) &&
+    (stats.ok === false ||
+      [
+        'failed_source_count',
+        'failed_count',
+        'failed_batches',
+        'failed_documents',
+        'failed_document_count',
+      ].some((key) => Number(stats[key] ?? 0) > 0) ||
+      (isRecord(stats.failures) &&
+        Object.values(stats.failures).some((count) => typeof count === 'number' && count > 0)))
+  )
 }
 
 export function triggerTypeLabel(triggerType: string): string {
@@ -91,7 +116,7 @@ export function formatLastRunSummary(job: ScheduledJobDto): string {
       ? formatBeijingTime(lastRun.finished_at)
       : lastRun.status === 'running' && !lastRun.needs_attention
         ? '进行中'
-        : formatBeijingTime(lastRun.started_at)
+        : formatBeijingTime(lastRun.started_at ?? lastRun.accepted_at)
   return `${status} · ${finished}`
 }
 
@@ -128,6 +153,7 @@ export function formatRunStats(run: JobRunDto): string {
   if (run.status === 'skipped') {
     const reasons: Record<string, string> = {
       previous_run_still_running: '上一轮尚未结束，本轮按策略跳过',
+      previous_run_unfinished: '上一轮尚未结束，本轮按策略跳过',
       missed_fire_time: '已错过执行时间，本次不补执行',
       trigger_still_pending: '上次触发尚未受理，本次跳过',
     }
@@ -136,6 +162,7 @@ export function formatRunStats(run: JobRunDto): string {
   const stats = run.stats
   const fragments: string[] = []
   if (run.needs_attention) fragments.push('任务执行或写入结果待核实')
+  if (run.wait_reason) fragments.push(run.wait_reason)
 
   if (run.status === 'failed') {
     const reason = stats.error_reason
@@ -145,6 +172,19 @@ export function formatRunStats(run: JobRunDto): string {
     if (fragments.length === 0) fragments.push(`本轮执行失败（${run.error_type ?? '未知原因'}）`)
   }
 
+  fragments.push(...summarizeStats(stats))
+  if (isRecord(stats.sync))
+    fragments.push(`同步：${summarizeStats(stats.sync).join(' · ') || '未提供摘要'}`)
+  if (isRecord(stats.index))
+    fragments.push(`处理：${summarizeStats(stats.index).join(' · ') || '未提供摘要'}`)
+  if (fragments.length > 0) return fragments.join(' · ')
+  if (run.status === 'cancelled') return '已取消后续执行'
+  return isTerminalStatus(run.status) ? '未提供可识别的结果摘要，可查看原始结果' : '等待执行结果'
+}
+
+/** 只翻译已知业务统计；未知结果仍在详情保留原始字段，不推断为没有变更。 */
+function summarizeStats(stats: Record<string, unknown>): string[] {
+  const fragments: string[] = []
   if (typeof stats.synchronized_document_count === 'number') {
     fragments.push(`同步文档 ${stats.synchronized_document_count}`)
   }
@@ -153,6 +193,22 @@ export function formatRunStats(run: JobRunDto): string {
   }
   if (typeof stats.indexed_count === 'number') {
     fragments.push(`已索引 ${stats.indexed_count}`)
+  }
+  const counts: Record<string, string> = {
+    indexed_document_count: '已索引',
+    parsed_count: '已解析',
+    parsed_document_count: '已解析',
+    review_count: '待审核',
+    review_document_count: '待审核',
+    cleaned_count: '已清理旧索引',
+    cleaned_index_instance_count: '已清理旧索引',
+    candidate_document_count: '候选',
+    requeued_stale_document_count: '回收超时',
+    skipped_document_count: '竞争跳过',
+    failed_document_count: '失败文档',
+  }
+  for (const [key, label] of Object.entries(counts)) {
+    if (typeof stats[key] === 'number') fragments.push(`${label} ${stats[key]}`)
   }
   if (typeof stats.failed_count === 'number' && stats.failed_count > 0)
     fragments.push(`失败文档 ${stats.failed_count}`)
@@ -177,6 +233,16 @@ export function formatRunStats(run: JobRunDto): string {
   }
 
   const failures = stats.failures
+  if (Array.isArray(failures)) {
+    const entries = failures.filter(
+      (value) =>
+        isRecord(value) && typeof value.error_type === 'string' && typeof value.count === 'number',
+    )
+    if (entries.length)
+      fragments.push(
+        `失败：${entries.map((value) => `${value.error_type}×${value.count}`).join('、')}`,
+      )
+  }
   if (failures !== null && typeof failures === 'object' && !Array.isArray(failures)) {
     const entries = Object.entries(failures).filter(([, count]) => typeof count === 'number')
     if (entries.length > 0) {
@@ -184,6 +250,5 @@ export function formatRunStats(run: JobRunDto): string {
     }
   }
 
-  if (fragments.length > 0) return fragments.join(' · ')
-  return run.status === 'running' ? '等待执行结果' : '本轮无变更'
+  return fragments
 }

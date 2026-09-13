@@ -114,6 +114,16 @@ MD 和 FreshRSS 正文使用 Markdown 编辑，TXT 保持纯文本。保存使�
 请求集中在 `api/document-review.ts`，工作台状态由 `features/document-review/useDocumentReview.ts`
 维护，跨功能的状态显示函数位于 `shared/model/document-processing.ts`，文件管理与审核功能不互相导入。
 
+## 任务管理的数据边界
+
+`/admin/scheduled-jobs` 保留原路由，页面分为周期配置与全部任务执行，均需超级用户权限。类型元数据提供参数范围，业务表单和统计保持显式适配；一次性 Pipeline 也可在这里提交。常用周期选项和原始 cron 共用一个值及后端预览，页面明确标注调度时区。
+
+配置在启用或执行期间可以编辑、停用和删除，已有执行继续使用受理快照。独立详情通过 `/task-runs/{run_id}` 查询，地址中的 `view=executions&run=<UUID>` 可恢复目标，不依赖配置存在或最近列表包含目标。关闭面板和离页不取消后台执行；当前查询编号按账号保存在本标签页 `sessionStorage`。
+
+提交前保存原请求标识、操作和参数。超时保留为待确认，用户执行“确认受理”时发送完全相同的请求；确认回执或明确拒绝后才清除待确认项。存储不可用时页面提示限制，仍可凭执行编号或服务端列表查询。不同的主动操作使用不同标识，不靠参数相同合并。请求与状态分别集中在 `api/tasks.ts` 和 `features/scheduled-jobs/composables/`。
+
+详情区分排队、正常资源等待、执行、自动重试和待核实，提供适用的取消、人工重试及原失败关联；未知类型和未知结果保留可识别信息，部分失败单独说明。策略管理修改之后受理的默认重试与历史保留，并显示修改记录，已受理执行的策略快照不变。
+
 ## 开发
 
 ```powershell
@@ -145,7 +155,7 @@ Playwright route mock 只用于隔离验证前端状态，不能作为后端已�
 
 ## 验证
 
-定时任务页面通过后端类型元数据取得默认值和参数范围，表单仍是少量显式适配。编辑须先停用并等待当前任务执行结束；手动触发按回执 ID 查询，关闭面板或离开页面不取消服务端执行。回执仅按账号保存在当前标签页的 `sessionStorage`，重新进入页面继续查询；浏览器存储不可用时仍可通过服务端历史查看，不自动重发请求。
+任务页面的公开 HTTP 与交互验证见 `src/api/tasks.spec.ts`、`src/api/scheduled-jobs.spec.ts`、`src/pages/ScheduledJobsPage.spec.ts` 和 `src/features/scheduled-jobs/tests/`。本地页面工具的任务数据位于 `scripts/task-mocks.mjs`，仅使用内存状态，不证明 PostgreSQL、Redis 或 Worker 已运行。
 
 账号与定时任务的启停开关显示服务端已确认的状态，请求中禁用，失败后仍可重试同一个操作。
 后台手机导航关闭时不能被 Tab 选中；打开后约束焦点并锁定背景滚动，支持 Esc 关闭和焦点恢复。

@@ -56,7 +56,7 @@ const adminMenuItems = [
   { to: { name: 'admin', params: { section: 'sources' } }, label: '来源管理', icon: Rss },
   {
     to: { name: 'admin', params: { section: 'scheduled-jobs' } },
-    label: '定时任务',
+    label: '任务管理',
     icon: CalendarClock,
   },
 ]
