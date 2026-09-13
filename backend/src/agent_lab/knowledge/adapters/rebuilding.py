@@ -11,6 +11,7 @@ from agent_lab.knowledge.processing.contracts import DocumentPreview
 from agent_lab.knowledge.processing.indexing import IndexMetadata, IndexTarget, require_preview_compatible
 from agent_lab.knowledge.processing.lifecycle import ProcessingApplicationError
 from agent_lab.knowledge.storage import ObjectReference
+from agent_lab.knowledge.task_intake import ensure_document_processing
 from agent_lab.models.document import DocumentRecord
 from agent_lab.models.document_processing import DocumentProcessingRecord, DocumentVersion
 from agent_lab.models.knowledge_base import KnowledgeBaseRecord
@@ -88,6 +89,7 @@ class PostgresRebuildRepository:
             session.add(record)
             kb.visibility_revision += 1
             snapshot = _snapshot(record, target)
+            await ensure_document_processing(session)
             await session.commit()
             return snapshot, target
 
@@ -157,6 +159,7 @@ class PostgresRebuildRepository:
                     record.state, record.index_cleanup_pending = "superseded", True
             for base in bases:
                 base.visibility_revision += 1
+            await ensure_document_processing(session)
             await session.commit()
 
     async def fail_build(self, documents):
@@ -165,6 +168,7 @@ class PostgresRebuildRepository:
                 DocumentProcessingRecord.id.in_([document.processing_id for document in documents]),
                 DocumentProcessingRecord.state == "rebuilding",
             ).values(state="rebuild_failed", error_code="document_rebuild_failed"))
+            await ensure_document_processing(session)
             await session.commit()
 
     async def pending_publication(self, collection):
@@ -190,4 +194,5 @@ class PostgresRebuildRepository:
                 record.state, record.error_code = "rebuild_failed", "document_rebuild_failed"
             for base in bases:
                 base.visibility_revision += 1
+            await ensure_document_processing(session)
             await session.commit()

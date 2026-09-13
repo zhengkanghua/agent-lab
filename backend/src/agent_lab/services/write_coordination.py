@@ -9,22 +9,53 @@ import logging
 import os
 import socket
 from contextlib import asynccontextmanager
-from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
+from functools import lru_cache
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, select, text, update
 
 from agent_lab.models.write_operation import WriteOperationRecord
+from agent_lab.models.scheduled_job import JobRunRecord
 from agent_lab.services.execution_cleanup import finish_cleanup
+from agent_lab.tasks.context import current_claim, current_run_id
+from agent_lab.tasks.contracts import DELIVERABLE_STATUSES
 from agent_lab.domain.write_scope import (
     WriteRecoveryRequiredError, WriteResourceBusyError, WriteScope, ensure_write_confirmed, write_scope as _scope,
 )
 
 logger = logging.getLogger(__name__)
 WRITE_MUTEX = 714029831
-OWNER = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex}"
-current_run_id: ContextVar[UUID | None] = ContextVar("scheduled_run_id", default=None)
+
+
+@lru_cache
+def _owner_for_process(pid):
+    return f"{socket.gethostname()}:{pid}:{uuid4().hex}"
+
+
+def owner_identity():
+    return _owner_for_process(os.getpid())
+
+
+async def discard_task_preparation(session, run):
+    """调用方已锁定执行且确认尚未开始；撤销 token 后旧执行者不能再开始业务。"""
+    if run.claim_token is None:
+        return
+    await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": WRITE_MUTEX})
+    await session.execute(delete(WriteOperationRecord).where(
+        WriteOperationRecord.run_id == run.id, WriteOperationRecord.claim_token == run.claim_token,
+    ))
+
+
+async def _check_claim(session, claim):
+    """准备占用与取消共用执行行锁，禁止被撤销的领取在清理之后补建占用。"""
+    if claim is None:
+        return
+    run = await session.scalar(select(JobRunRecord).where(
+        JobRunRecord.id == claim.run_id,
+    ).with_for_update())
+    if run is None or run.claim_token != claim.token or run.status not in (*DELIVERABLE_STATUSES, "running"):
+        raise WriteRecoveryRequiredError()
 
 
 class WriteCoordinator:
@@ -46,11 +77,14 @@ class WriteCoordinator:
         scope = WriteScope(tuple(sorted(set(resources))))
         operation_id = uuid4()
         now = datetime.now(UTC)
+        claim = current_claim.get()
         async with self._sessions() as session:
+            await _check_claim(session, claim)
             session.add(WriteOperationRecord(
-                id=operation_id, resources=list(scope.resources), owner=OWNER,
+                id=operation_id, resources=list(scope.resources), owner=owner_identity(),
                 status="waiting", started_at=now, heartbeat_at=now,
                 run_id=current_run_id.get(),
+                claim_token=claim.token if claim else None,
             ))
             await session.commit()
         task = asyncio.current_task()
@@ -59,7 +93,7 @@ class WriteCoordinator:
         acquired = False
         failure = None
         try:
-            logger.info("写操作等待资源 operation_id=%s run_id=%s resources=%s owner=%s", operation_id, current_run_id.get(), scope.resources, OWNER)
+            logger.info("写操作等待资源 operation_id=%s run_id=%s resources=%s owner=%s", operation_id, current_run_id.get(), scope.resources, owner_identity())
             while not await self._acquire(operation_id, scope.resources):
                 if not wait:
                     raise WriteResourceBusyError()
@@ -69,7 +103,8 @@ class WriteCoordinator:
             yield
             ensure_write_confirmed()
         except asyncio.CancelledError:
-            scope.uncertain = scope.uncertain or acquired
+            # 只有资源准备时还没有调用业务，取消可以正常释放；开始后的原有保护不变。
+            scope.uncertain = scope.uncertain or (acquired and (claim is None or claim.started))
             raise
         except Exception as exc:
             failure = exc
@@ -93,13 +128,14 @@ class WriteCoordinator:
                 await session.execute(update(WriteOperationRecord).where(
                     WriteOperationRecord.id == operation_id,
                 ).values(status="uncertain"))
-                logger.error("写操作结果待核实 operation_id=%s owner=%s", operation_id, OWNER)
+                logger.error("写操作结果待核实 operation_id=%s owner=%s", operation_id, owner_identity())
             else:
                 await session.execute(delete(WriteOperationRecord).where(WriteOperationRecord.id == operation_id))
             await session.commit()
 
     async def _acquire(self, operation_id: UUID, resources: tuple[str, ...]) -> bool:
         async with self._sessions() as session:
+            await _check_claim(session, current_claim.get())
             await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": WRITE_MUTEX})
             operations = list((await session.scalars(select(WriteOperationRecord).order_by(
                 WriteOperationRecord.started_at, WriteOperationRecord.id,
@@ -132,6 +168,7 @@ class WriteCoordinator:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            scope.uncertain = True
+            claim = current_claim.get()
+            scope.uncertain = claim is None or claim.started
             logger.error("写操作心跳失败 operation_id=%s error_type=%s", operation_id, type(exc).__name__)
             task.cancel()

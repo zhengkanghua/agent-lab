@@ -16,6 +16,8 @@ from agent_lab.models.document import DocumentRecord
 from agent_lab.models.document_processing import DocumentProcessingRecord, DocumentReviewRecord, DocumentVersion
 from agent_lab.models.knowledge_base import KnowledgeBaseRecord
 from agent_lab.models.write_operation import DocumentDeletionRecord
+from agent_lab.knowledge.adapters.pending_work import adoption_query, cleanup_query
+from agent_lab.knowledge.task_intake import ensure_document_processing
 
 
 async def lock_candidate(session, processing_id: UUID, *, require_active: bool = True):
@@ -100,6 +102,7 @@ class PostgresAdoptionRepository:
             raise ProcessingApplicationError("document_preview_stale")
         target = self._freeze(knowledge_base, document, record, index_spec=index_spec,
                               manual=True, actor_id=actor_id, conclusion=conclusion)
+        await ensure_document_processing(self._session)
         await self._session.commit()
         return ProcessingReceipt(processing_id, document.id, "adopting", target.source.sha256, candidate_revision)
 
@@ -107,13 +110,7 @@ class PostgresAdoptionRepository:
         # 人工释放失联写占用后也不能越过尚未解决的 Alias 发布；先运行重建恢复。
         if await self._session.scalar(select(exists().where(DocumentProcessingRecord.state == "publishing"))):
             raise ProcessingApplicationError("document_write_recovery_required")
-        statement = select(DocumentProcessingRecord.id).join(
-            DocumentRecord, DocumentRecord.id == DocumentProcessingRecord.document_id,
-        ).join(KnowledgeBaseRecord, KnowledgeBaseRecord.id == DocumentRecord.knowledge_base_id).where(
-            DocumentProcessingRecord.state.in_(("ready", "adopting")),
-            DocumentRecord.usage_status != "deleting", KnowledgeBaseRecord.is_active.is_(True),
-            ~exists().where(DocumentDeletionRecord.document_id == DocumentRecord.id),
-        ).order_by(DocumentProcessingRecord.updated_at, DocumentProcessingRecord.id).limit(1)
+        statement = adoption_query().order_by(DocumentProcessingRecord.updated_at, DocumentProcessingRecord.id).limit(1)
         if processing_id is not None:
             statement = statement.where(DocumentProcessingRecord.id == processing_id)
         identity = await self._session.scalar(statement)
@@ -190,6 +187,7 @@ class PostgresAdoptionRepository:
         record.state, record.index_prepared_at, record.error_code = "adopted", now, None
         record.draft_text, record.draft_mime_type = None, None
         knowledge_base.visibility_revision += 1
+        await ensure_document_processing(self._session)
         await self._session.commit()
         return True
 
@@ -202,15 +200,7 @@ class PostgresAdoptionRepository:
         await self._session.commit()
 
     async def next_cleanup(self):
-        row = (await self._session.execute(select(DocumentProcessingRecord.document_id, DocumentProcessingRecord.index_instance_id)
-            .join(DocumentRecord, DocumentRecord.id == DocumentProcessingRecord.document_id).where(
-                DocumentProcessingRecord.index_cleanup_pending.is_(True), DocumentProcessingRecord.index_deleted_at.is_(None),
-                DocumentProcessingRecord.index_instance_id.is_not(None),
-                DocumentProcessingRecord.state != "publishing",
-                ((DocumentRecord.current_index_instance_id.is_distinct_from(DocumentProcessingRecord.index_instance_id))
-                 | (DocumentRecord.usage_status == "rejected")),
-                DocumentRecord.usage_status != "deleting",
-            ).order_by(DocumentProcessingRecord.updated_at).limit(1))).one_or_none()
+        row = (await self._session.execute(cleanup_query().order_by(DocumentProcessingRecord.updated_at).limit(1))).one_or_none()
         return tuple(row) if row else None
 
     async def mark_cleaned(self, document_id, index_instance_id):

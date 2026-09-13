@@ -22,6 +22,7 @@ from agent_lab.models.document import DocumentRecord
 from agent_lab.models.document_processing import DocumentProcessingRecord, DocumentReviewRecord, DocumentVersion
 from agent_lab.models.knowledge_base import KnowledgeBaseRecord
 from agent_lab.models.write_operation import DocumentDeletionRecord
+from agent_lab.knowledge.task_intake import ensure_document_processing
 
 
 def _summary(record):
@@ -137,6 +138,8 @@ class PostgresReviewRepository:
                 raise ProcessingApplicationError("document_processing_busy")
             reviewed = await self._session.scalar(select(exists().where(DocumentReviewRecord.processing_id == existing.id)))
             if existing.index_target is None and not reviewed:
+                if source.index_cleanup_pending:
+                    await ensure_document_processing(self._session)
                 return existing
             if existing.index_instance_id and existing.index_instance_id != document.current_index_instance_id:
                 existing.index_cleanup_pending = existing.index_deleted_at is None
@@ -149,6 +152,8 @@ class PostgresReviewRepository:
         self._session.add(draft)
         await self._session.flush()
         document.draft_processing_id = draft.id
+        if source.index_cleanup_pending or existing is not None and existing.index_cleanup_pending:
+            await ensure_document_processing(self._session)
         return draft
 
     async def start(self, document_id, *, management_revision, processing_id=None, use_latest=False):
@@ -244,6 +249,7 @@ class PostgresReviewRepository:
             document.management_revision += 1
             document.updated_at = record.updated_at = datetime.now(UTC)
         receipt = _receipt(record)
+        await ensure_document_processing(self._session)
         await self._session.commit()
         return receipt
 
@@ -271,6 +277,7 @@ class PostgresReviewRepository:
         document.updated_at = record.updated_at = datetime.now(UTC)
         kb.visibility_revision += 1
         receipt = _receipt(record)
+        await ensure_document_processing(self._session)
         await self._session.commit()
         return receipt
 
@@ -306,6 +313,7 @@ class PostgresReviewRepository:
         document.management_revision += 1
         document.updated_at = record.updated_at = datetime.now(UTC)
         receipt = _receipt(record)
+        await ensure_document_processing(self._session)
         await self._session.commit()
         return receipt
 

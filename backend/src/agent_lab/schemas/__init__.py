@@ -16,9 +16,7 @@ from agent_lab.schemas.vector_search import (
 )
 
 from agent_lab.schemas.pipeline import (
-    PipelineErrorResponse,
     PipelineRunOnceRequest,
-    PipelineRunOnceResponse,
 )
 from agent_lab.schemas.user_admin import (
     UserAdminCreateRequest,
@@ -35,9 +33,7 @@ __all__ = [
     "VectorSearchFilters",
     "VectorSearchRequest",
     "VectorSearchResult",
-    "PipelineErrorResponse",
     "PipelineRunOnceRequest",
-    "PipelineRunOnceResponse",
     "DocumentDetailResponse",
     "DocumentSearchMatch",
     "DocumentSearchRequest",

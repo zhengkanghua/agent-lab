@@ -15,29 +15,25 @@ from sqlalchemy.ext.asyncio import (
 from agent_lab.config.settings import get_settings
 
 
-settings = get_settings()
+def build_database_resources(settings=None):
+    """在所属进程和事件循环中建立独立的连接池；Worker 在 fork 后调用。"""
+    settings = settings or get_settings()
+    engine = create_async_engine(
+        str(settings.database_url),
+        echo=settings.database_echo,
+        connect_args={
+            "connect_timeout": settings.database_connect_timeout,
+            "options": f"-c timezone={settings.database_timezone}",
+        },
+        pool_pre_ping=True,
+        pool_size=settings.database_pool_size,
+        max_overflow=settings.database_max_overflow,
+    )
+    sessions = async_sessionmaker(bind=engine, expire_on_commit=False)
+    return engine, sessions
 
-# 创建 Engine 不会立刻连接数据库；第一次执行 SQL 时才从池中获取连接。
-engine = create_async_engine(
-    str(settings.database_url),
-    echo=settings.database_echo,
-    connect_args={
-        "connect_timeout": settings.database_connect_timeout,
-        # PostgreSQL timestamptz 按 UTC 瞬间存储；会话时区决定读回时的显示偏移。
-        "options": f"-c timezone={settings.database_timezone}",
-    },
-    # 复用连接前先检查连接是否有效，避免拿到已被 PostgreSQL 断开的旧连接。
-    pool_pre_ping=True,
-    pool_size=settings.database_pool_size,
-    max_overflow=settings.database_max_overflow,
-)
 
-# Session 工厂复用同一个 Engine，但每次调用都会产生独立的 AsyncSession。
-async_session_factory = async_sessionmaker(
-    bind=engine,
-    # 提交事务后继续保留对象属性，避免在异步代码中因隐式刷新触发额外 I/O。
-    expire_on_commit=False,
-)
+engine, async_session_factory = build_database_resources()
 
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:

@@ -11,14 +11,12 @@ Ollama/Embedding 或 Qdrant I/O；取不到组件时抛出分类异常，由错�
 (``agent_lab.api.error_contract``) 映射成稳定的 503 响应。
 """
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from fastapi import Request
 
 from agent_lab.agent.errors import AgentRuntimeUnavailableError
 from agent_lab.db.session import async_session_factory
-from agent_lab.pipeline.write_runtime import PipelineWriteRuntime
 from agent_lab.services.agent_thread_service import AgentThreadService
 from agent_lab.services.vector_search_service import VectorSearchService
 
@@ -33,22 +31,15 @@ if TYPE_CHECKING:
     # 一行 import 都没有。
     from agent_lab.agent.runtime import AgentRuntime
 
-    from agent_lab.services.scheduler_runner import ScheduledJobRunner
-
-
-type PipelineWriteRuntimeFactory = Callable[[], PipelineWriteRuntime]
+    from agent_lab.tasks.service import TaskService
 
 
 class VectorSearchRuntimeUnavailableError(RuntimeError):
     """ASGI lifespan 尚未提供进程级只读 Search Runtime。"""
 
 
-class PipelineWriteRuntimeUnavailableError(RuntimeError):
-    """应用没注册写 Runtime 工厂时的内部异常（会被映射成 503）。"""
-
-
 class SchedulerRuntimeUnavailableError(RuntimeError):
-    """应用状态缺少调度器实例时的内部异常（会被映射成 503）。"""
+    """应用状态缺少任务受理服务时的内部异常（会被映射成 503）。"""
 
 
 def get_vector_search_service(request: Request) -> VectorSearchService:
@@ -82,43 +73,6 @@ def get_vector_search_service(request: Request) -> VectorSearchService:
             "向量检索运行时不可用。"
         )
     return service
-
-
-def get_pipeline_write_runtime_factory(
-    request: Request,
-) -> PipelineWriteRuntimeFactory:
-    """从应用 state 取出「写 Runtime 工厂」（只取不建）。
-
-    ``main.py`` 的 ``create_app`` 把工厂函数存进了
-    ``application.state.pipeline_write_runtime_factory``，这里通过 ``request.app.state``
-    取回。取到的是「能造 Runtime 的函数」，不是 Runtime 本身——真正构造发生在调用方，
-    这样每次请求都能拿到一个全新的写 Runtime，请求结束即整体关闭。
-
-    Args:
-        request: 当前 FastAPI 请求。
-
-    Returns:
-        composition root 在创建应用时保存的同步工厂。
-
-    Raises:
-        PipelineWriteRuntimeUnavailableError: 应用状态缺少可调用工厂。
-
-    Notes:
-        读取进程内对象，不构造 Runtime，也不执行任何外部 I/O。
-    """
-
-    runtime_factory = getattr(
-        request.app.state,
-        "pipeline_write_runtime_factory",
-        None,
-    )
-    # 用 callable 而不是 ``is not None``：state 是个可以随便塞东西的命名空间，塞进来的
-    # 要是个非函数值，等调用方 ``factory()`` 时才炸就说不清是谁的问题了。
-    if not callable(runtime_factory):
-        raise PipelineWriteRuntimeUnavailableError(
-            "流水线写入运行时工厂不可用。"
-        )
-    return runtime_factory
 
 
 def get_agent_runtime(request: Request) -> "AgentRuntime":
@@ -174,41 +128,19 @@ def get_agent_thread_service() -> AgentThreadService:
     return AgentThreadService(async_session_factory)
 
 
-def get_scheduler_runner(request: Request) -> "ScheduledJobRunner":
-    """从应用 state 取出进程级定时任务调度器（FastAPI 依赖注入函数）。
-
-    调度器在 ``create_app`` 时构造并存进 ``application.state.scheduler_runner``；无论
-    ``SCHEDULER_ENABLED`` 是否开启，实例都存在——开关只决定 cron 循环是否启动，管理 API
-    和手动触发在关闭状态下依然可用。
-
-    Args:
-        request: 当前 FastAPI 请求，用于访问所属应用的 ``state``。
-
-    Returns:
-        进程级 ``ScheduledJobRunner``。
-
-    Raises:
-        SchedulerRuntimeUnavailableError: 应用未经过 ``create_app`` 正常装配（比如测试
-            直接 new 了裸应用）；错误契约层会把它映射成稳定的 503。
-
-    Notes:
-        只读取进程内对象，不启动调度器，也不执行任何 I/O。
-    """
-
-    runner = getattr(request.app.state, "scheduler_runner", None)
-    if runner is None:
-        raise SchedulerRuntimeUnavailableError("定时任务调度器不可用。")
-    return runner
+def get_task_service(request: Request) -> "TaskService":
+    """只取已经装配的公共任务受理服务，API 不直接执行业务。"""
+    service = getattr(request.app.state, "task_service", None)
+    if service is None:
+        raise SchedulerRuntimeUnavailableError("任务受理组件不可用。")
+    return service
 
 
 __all__ = [
-    "PipelineWriteRuntimeFactory",
-    "PipelineWriteRuntimeUnavailableError",
     "SchedulerRuntimeUnavailableError",
     "VectorSearchRuntimeUnavailableError",
     "get_agent_runtime",
     "get_agent_thread_service",
-    "get_pipeline_write_runtime_factory",
-    "get_scheduler_runner",
+    "get_task_service",
     "get_vector_search_service",
 ]

@@ -7,7 +7,8 @@ RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST=1 与 SCHEDULER_TEST_DATABASE_URL。
 """
 
 import asyncio
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager, nullcontext
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import multiprocessing
 import os
@@ -34,7 +35,7 @@ from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.models.scheduled_job import JobRunRecord, ScheduledJobRecord
 from agent_lab.models.source import SourceRecord
 from agent_lab.models.write_operation import DocumentDeletionRecord, WriteOperationRecord
-from agent_lab.repositories.scheduled_job_repository import ScheduledJobRepository, ScheduledJobStore
+from agent_lab.repositories.scheduled_job_repository import ScheduledJobRepository
 from agent_lab.repositories.document_repository import DocumentRepository
 from agent_lab.knowledge.adapters.importing import PostgresImportDocumentRepository
 from agent_lab.knowledge.processing.lifecycle import ProcessingApplicationError
@@ -42,8 +43,14 @@ from agent_lab.models.document_processing import DocumentProcessingRecord, Docum
 from agent_lab.repositories.document_retention_repository import DocumentRetentionRepository
 from agent_lab.scheduler_maintenance import inspect_or_recover
 from agent_lab.services.scheduled_job_service import ScheduledJobService
-from agent_lab.services.scheduled_task_errors import ScheduledJobAlreadyRunningError, ScheduledJobEditBlockedError
-from agent_lab.services.scheduler_runner import ScheduledJobRunner
+from agent_lab.tasks.service import TaskService
+from agent_lab.tasks.repository import TaskStore
+from agent_lab.tasks.registry import TaskRegistry
+from agent_lab.tasks.worker import TaskWorker
+from agent_lab.tasks.cron import CronSchedule
+from agent_lab.tasks.contracts import TaskError, TaskOverlap, ExecutionPolicy
+from agent_lab.models.scheduled_job import TaskPolicyRecord
+from agent_lab.services.scheduled_task_registry import TASK_TYPE_SPECS
 from agent_lab.services.write_coordination import WriteCoordinator
 
 pytestmark = pytest.mark.skipif(
@@ -63,7 +70,7 @@ def database(dsn, schema):
     assert re.fullmatch(r"scheduler_test_[0-9a-f]{32}", schema)
     engine = create_async_engine(
         dsn, poolclass=NullPool, hide_parameters=True,
-        connect_args={"options": f"-csearch_path={schema} -cstatement_timeout=10000", "connect_timeout": 5},
+        connect_args={"options": f"-csearch_path={schema} -cstatement_timeout=10000 -ctimezone=UTC", "connect_timeout": 5},
     )
     return engine, async_sessionmaker(engine, expire_on_commit=False)
 
@@ -82,6 +89,8 @@ def isolated_database():
             # 循环引用的当前版本、处理记录及审核账号均建在随机 schema 内。
             import agent_lab.models  # noqa: F401
             await connection.run_sync(Base.metadata.create_all)
+            await connection.execute(TaskPolicyRecord.__table__.insert().values(id=1,
+                policy=ExecutionPolicy().model_dump(), updated_at=datetime.now(UTC), updated_by="test"))
             await connection.execute(KnowledgeBaseRecord.__table__.insert().values(
                 id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID, key="news", name="新闻", is_active=True,
             ))
@@ -115,42 +124,33 @@ def child(target, *args):
         assert not process.is_alive()
 
 
-def claim_worker(dsn, schema, job_id, trigger, gate, output):
+async def probe(_runtime, params):
+    return {"value": params["limit_per_source"]}
+
+
+def registry(execute=probe):
+    return TaskRegistry(replace(spec, execute=execute, execution_scope=lambda *_: nullcontext())
+                        for spec in TASK_TYPE_SPECS.values())
+
+
+def service(sessions, *, clock=None):
+    return TaskService(sessions, registry(), clock=clock)
+
+
+def claim_worker(dsn, schema, job_id, request_key, gate, output):
     async def execute():
         engine, sessions = database(dsn, schema)
         try:
             output.put("ready")
-            assert await asyncio.to_thread(gate.wait, 10)
-            result = await ScheduledJobStore(sessions).claim_run(
-                UUID(job_id), trigger_type=trigger, started_at=datetime.now(UTC), owner=f"test:{os.getpid()}", expected_version=1,
-            )
-            output.put("accepted" if result else "ignored")
-        except ScheduledJobAlreadyRunningError:
-            output.put("conflict")
-        except Exception as exc:
-            output.put(type(exc).__name__)
+            assert await asyncio.to_thread(gate.wait, 20)
+            accepted = await service(sessions).trigger(UUID(job_id), actor="test:user",
+                request_key=request_key or f"worker:{os.getpid()}")
+            output.put(("accepted", str(accepted.run_id)))
+        except TaskOverlap as error:
+            output.put(("conflict", str(error.run_id)))
+        except Exception as error:
+            output.put(("error", type(error).__name__))
         finally:
-            await engine.dispose()
-    run(execute())
-
-
-def refresh_worker(dsn, schema, commands, output):
-    async def execute():
-        engine, sessions = database(dsn, schema)
-        runner = ScheduledJobRunner(
-            store_factory=lambda: ScheduledJobStore(sessions), write_runtime_factory=lambda: None,
-            settings=SchedulerSettings(_env_file=None, refresh_seconds=1),
-        )
-        try:
-            await runner.start()
-            output.put("ready")
-            while await asyncio.to_thread(commands.get, True, 15) != "stop":
-                # 不手动 refresh，让真实刷新循环从另一个进程读取已提交配置。
-                output.put({str(job.id): job.args[1] for job in runner._scheduler.get_jobs()})
-        except Exception as exc:
-            output.put(type(exc).__name__)
-        finally:
-            await runner.close()
             await engine.dispose()
     run(execute())
 
@@ -172,56 +172,34 @@ def resource_worker(dsn, schema, resources, output, release, crash=False):
     run(execute())
 
 
-def scheduler_http_app(sessions, runner):
-    """保留真实 HTTP、Service、执行器及存储，只替换无关启动依赖和账号身份。"""
+
+def scheduler_http_app(sessions):
+    """真实路由、受理和查询，只替换身份及无关的启动依赖。"""
     from agent_lab.db.session import get_db_session
-    from tests.app_helpers import create_offline_app
+    from tests.app_helpers import FakeSearchRuntime, create_offline_app
     from tests.auth_helpers import allow_superuser
-
-    app = create_offline_app(scheduler_runner_builder=lambda _: runner)
-
+    app = create_offline_app(runtime_factory=FakeSearchRuntime, task_service_factory=lambda: service(sessions))
     async def session_dependency():
         async with sessions() as session:
             yield session
-
     app.dependency_overrides[get_db_session] = session_dependency
     return allow_superuser(app)
 
 
-def http_trigger_worker(dsn, schema, job_id, gate, release, output):
+def execute_worker(dsn, schema, run_id, gate, release, output):
     async def execute():
-        from agent_lab.services.news_pipeline_execution_service import NewsSyncExecutionResult
-
         engine, sessions = database(dsn, schema)
-
-        class ControlledRuntime:
-            async def sync_only(self, **params):
-                output.put(("business", os.getpid(), params))
-                assert await asyncio.to_thread(release.wait, 60)
-                return NewsSyncExecutionResult(synchronized_count=1)
-
-            async def close(self):
-                pass
-
-        runner = ScheduledJobRunner(
-            store_factory=lambda: ScheduledJobStore(sessions), write_runtime_factory=ControlledRuntime,
-            settings=SchedulerSettings(_env_file=None, shutdown_grace_seconds=60),
-        )
+        async def business(_runtime, params):
+            output.put(("business", params))
+            assert await asyncio.to_thread(release.wait, 30)
+            return {"value": params["limit_per_source"]}
         try:
-            app = scheduler_http_app(sessions, runner)
-            output.put(("ready", os.getpid(), None))
-            assert await asyncio.to_thread(gate.wait, 30)
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
-                response = await client.post(f"/scheduled-jobs/{job_id}/trigger")
-                output.put(("response", response.status_code, response.json()))
-            assert await asyncio.to_thread(release.wait, 60)
-        except Exception as exc:
-            output.put(("error", type(exc).__name__, None))
-            raise RuntimeError(type(exc).__name__) from None
+            output.put(("ready", None))
+            assert await asyncio.to_thread(gate.wait, 20)
+            await TaskWorker(TaskStore(sessions), registry(business), owner=f"test:{os.getpid()}").execute(UUID(run_id), 1)
+            output.put(("done", None))
         finally:
-            await runner.close()
             await engine.dispose()
-            output.put(("closed", os.getpid(), None))
     run(execute())
 
 
@@ -233,7 +211,8 @@ async def create_job(db, *, enabled=True):
         )
 
 
-def test_two_api_workers_and_cron_have_one_claim(isolated_database):
+@pytest.mark.parametrize("same_request", [False, True])
+def test_parallel_intake_uses_database_identity_and_one_active_slot(isolated_database, same_request):
     from contextlib import ExitStack
     db = isolated_database
     job = run(create_job(db))
@@ -241,74 +220,94 @@ def test_two_api_workers_and_cron_have_one_claim(isolated_database):
     gate, output = context.Event(), context.Queue()
     try:
         with ExitStack() as stack:
-            for trigger in ("manual", "manual", "scheduled"):
-                stack.enter_context(child(claim_worker, db.dsn, db.schema, str(job.id), trigger, gate, output))
-            assert [output.get(timeout=15) for _ in range(3)] == ["ready"] * 3
+            for _ in range(3):
+                stack.enter_context(child(claim_worker, db.dsn, db.schema, str(job.id),
+                    "same" if same_request else None, gate, output))
+            assert [output.get(timeout=30) for _ in range(3)] == ["ready"] * 3
             gate.set()
-            assert sorted(output.get(timeout=15) for _ in range(3)) == ["accepted", "conflict", "conflict"]
+            results = [output.get(timeout=30) for _ in range(3)]
+            assert sorted(item[0] for item in results) == (["accepted"] * 3 if same_request else ["accepted", "conflict", "conflict"])
+            assert len({item[1] for item in results}) == 1
+        async def verify():
+            async with db.sessions() as session:
+                records = (await session.scalars(select(JobRunRecord))).all()
+                assert len(records) == 1 and records[0].attempts == 0
+        run(verify())
     finally:
         output.close()
         output.join_thread()
 
-    async def verify():
-        async with db.sessions() as session:
-            records = (await session.scalars(select(JobRunRecord))).all()
-            assert len(records) == 1 and records[0].config_snapshot["config_version"] == 1
-    run(verify())
 
-
-def test_http_workers_conflict_and_cron_skip_preserve_receipt(isolated_database):
+def test_http_receipt_survives_edit_delete_and_duplicate_worker_messages(isolated_database):
     from contextlib import ExitStack
     db = isolated_database
     context = multiprocessing.get_context("spawn")
     gate, release, output = context.Event(), context.Event(), context.Queue()
-
     async def verify():
-        runner = ScheduledJobRunner(
-            store_factory=lambda: ScheduledJobStore(db.sessions), write_runtime_factory=lambda: None,
-            settings=SchedulerSettings(_env_file=None),
-        )
-        app = scheduler_http_app(db.sessions, runner)
+        app = scheduler_http_app(db.sessions)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
-            response = await client.post("/scheduled-jobs", json={
-                "key": f"http-{uuid4().hex}", "task_type": "freshrss_sync",
-                "cron_expr": "0 0 1 1 *", "params": {"limit_per_source": 1}, "enabled": True,
+            created = await client.post("/scheduled-jobs", json={
+                "key": f"http-{uuid4().hex}", "task_type": "freshrss_sync", "cron_expr": "0 0 1 1 *",
+                "params": {"limit_per_source": 1}, "enabled": True,
             })
-            assert response.status_code == 201
-            job_id = response.json()["id"]
+            assert created.status_code == 201
+            job_id = UUID(created.json()["id"])
+            accepted = await client.post(f"/scheduled-jobs/{job_id}/trigger", headers={"Idempotency-Key": "first"})
+            assert accepted.status_code == 202 and accepted.json()["status"] == "queued"
+            identity = accepted.json()["run_id"]
+            conflict = await client.post(f"/scheduled-jobs/{job_id}/trigger", headers={"Idempotency-Key": "second"})
+            assert conflict.status_code == 409 and conflict.json()["run_id"] == identity
+            planned = datetime.now(UTC)
+            async with db.sessions() as session:
+                await session.execute(update(ScheduledJobRecord).where(ScheduledJobRecord.id == job_id).values(next_run_at=planned))
+                await session.commit()
+            skipped = await service(db.sessions, clock=lambda: planned).scheduled(job_id, 1, planned, CronSchedule())
+            assert skipped.status == "skipped"
+            edited = await client.patch(f"/scheduled-jobs/{job_id}", json={"params": {"limit_per_source": 9}, "enabled": False})
+            assert edited.status_code == 200 and edited.json()["active_run"]["id"] == identity
+            assert (await client.delete(f"/scheduled-jobs/{job_id}")).status_code == 204
             with ExitStack() as stack:
                 for _ in range(2):
-                    stack.enter_context(child(http_trigger_worker, db.dsn, db.schema, job_id, gate, release, output))
-                try:
-                    for _ in range(2):
-                        message = await asyncio.to_thread(output.get, True, 30)
-                        assert message[0] == "ready"
-                    gate.set()
-                    messages = [await asyncio.to_thread(output.get, True, 30) for _ in range(3)]
-                    responses = [message for message in messages if message[0] == "response"]
-                    assert sorted(message[1] for message in responses) == [202, 409]
-                    assert sum(message[0] == "business" for message in messages) == 1
-                    receipt = next(message[2] for message in responses if message[1] == 202)
-                    await runner._run_scheduled(UUID(job_id), 1)
-                    response = await client.patch(f"/scheduled-jobs/{job_id}", json={"enabled": False})
-                    assert response.status_code == 200 and response.json()["active_run"]["id"] == receipt["run_id"]
-                    assert (await client.patch(f"/scheduled-jobs/{job_id}", json={"params": {"limit_per_source": 2}})).status_code == 409
-                    assert (await client.delete(f"/scheduled-jobs/{job_id}")).status_code == 409
-                finally:
-                    release.set()
-                for _ in range(2):
-                    message = await asyncio.to_thread(output.get, True, 30)
-                    assert message[0] == "closed"
-            detail = await client.get(f"/scheduled-jobs/{job_id}/runs/{receipt['run_id']}")
-            assert detail.status_code == 200 and detail.json()["status"] == "succeeded"
-            assert detail.json()["stats"]["synchronized_document_count"] == 1
-            runs = (await client.get(f"/scheduled-jobs/{job_id}/runs")).json()
-            assert sorted(record["status"] for record in runs) == ["skipped", "succeeded"]
-            assert all(record["finished_at"] for record in runs)
-            updated = await client.patch(f"/scheduled-jobs/{job_id}", json={"params": {"limit_per_source": 2}})
-            assert updated.status_code == 200 and updated.json()["enabled"] is False
-            assert (await client.delete(f"/scheduled-jobs/{job_id}")).status_code == 204
-        await runner.close()
+                    stack.enter_context(child(execute_worker, db.dsn, db.schema, identity, gate, release, output))
+                assert [await asyncio.to_thread(output.get, True, 30) for _ in range(2)] == [("ready", None)] * 2
+                gate.set()
+                messages = [await asyncio.to_thread(output.get, True, 30) for _ in range(2)]
+                assert sorted(item[0] for item in messages) == ["business", "done"]
+                assert next(item[1] for item in messages if item[0] == "business") == {"limit_per_source": 1}
+                release.set()
+                assert (await asyncio.to_thread(output.get, True, 30))[0] == "done"
+            detail = (await client.get(f"/task-runs/{identity}")).json()
+            assert detail["status"] == "succeeded" and detail["attempts"] == 1
+            assert detail["job_id"] is None and detail["source_job_id"] == str(job_id)
+            assert detail["stats"] == {"value": 1}
+            repeated = await client.post(f"/scheduled-jobs/{job_id}/trigger", headers={"Idempotency-Key": "first"})
+            assert repeated.status_code == 202 and repeated.json()["run_id"] == identity
+    try:
+        run(verify())
+    finally:
+        release.set()
+        output.close()
+        output.join_thread()
+
+
+def test_claim_serializes_with_configuration_edit(isolated_database):
+    db = isolated_database
+    context = multiprocessing.get_context("spawn")
+    gate, output = context.Event(), context.Queue()
+    job = run(create_job(db, enabled=False))
+    async def verify():
+        async with db.sessions() as session:
+            locked = await ScheduledJobRepository(session).lock_job(job.id)
+            with child(claim_worker, db.dsn, db.schema, str(job.id), "edit-race", gate, output):
+                assert await asyncio.to_thread(output.get, True, 30) == "ready"
+                gate.set()
+                locked.params, locked.config_version = {"limit_per_source": 7}, 2
+                await session.commit()
+                result = await asyncio.to_thread(output.get, True, 30)
+                assert result[0] == "accepted"
+        run_record = await service(db.sessions).get_run(UUID(result[1]))
+        assert run_record.config_snapshot["params"] == {"limit_per_source": 7}
+        assert run_record.config_snapshot["config_version"] == 2
     try:
         run(verify())
     finally:
@@ -316,79 +315,150 @@ def test_http_workers_conflict_and_cron_skip_preserve_receipt(isolated_database)
         output.join_thread()
 
 
-def test_configuration_refresh_crosses_process_boundary(isolated_database):
-    import time
+async def change_configuration(session, job_id, action):
+    """通过配置用例修改，保持生产校验、版本推进和提交行为。"""
+    jobs = ScheduledJobService(session, CronSchedule(), registry())
+    if action == "delete":
+        await jobs.delete_job(job_id)
+    elif action == "disable":
+        await jobs.update_job(job_id, enabled=False)
+    else:
+        await jobs.update_job(job_id, params={"limit_per_source": 7}, cron_expr="30 9 * * *")
+
+
+@asynccontextmanager
+async def existing_session(session):
+    """测试外层持有连接，用它确定两个真实事务的先后；不替换 SQL 或提交。"""
+    yield session
+
+
+def scheduled_configuration_worker(dsn, schema, job_id, planned, action, output):
+    async def execute():
+        engine, sessions = database(dsn, schema)
+        try:
+            async with sessions() as session:
+                output.put(await session.scalar(text("SELECT pg_backend_pid()")))
+                if action == "scheduled":
+                    tasks = service(lambda: existing_session(session), clock=lambda: planned)
+                    accepted = await tasks.scheduled(UUID(job_id), 1, planned, CronSchedule())
+                    output.put(("accepted", str(accepted.run_id)) if accepted else ("ignored", None))
+                else:
+                    await change_configuration(session, UUID(job_id), action)
+                    output.put(("changed", None))
+        except Exception as error:
+            output.put(("error", type(error).__name__))
+        finally:
+            await engine.dispose()
+    run(execute())
+
+
+@pytest.mark.parametrize("action", ["edit", "disable", "delete"])
+@pytest.mark.parametrize("scheduled_first", [False, True], ids=["configuration-first", "scheduled-first"])
+def test_scheduled_intake_serializes_with_configuration_changes(isolated_database, action, scheduled_first):
+    """确认另一事务已在数据库等待后才提交，覆盖改／停／删与周期受理的两种先后。"""
     db = isolated_database
     context = multiprocessing.get_context("spawn")
-    commands, output = context.Queue(), context.Queue()
+    output = context.Queue()
+    planned = datetime.now(UTC)
+
+    async def verify():
+        job = await create_job(db)
+        async with db.sessions() as session:
+            await session.execute(update(ScheduledJobRecord).where(ScheduledJobRecord.id == job.id).values(next_run_at=planned))
+            await session.commit()
+            await ScheduledJobRepository(session).lock_job(job.id)
+            blocker = await session.scalar(text("SELECT pg_backend_pid()"))
+            second_action = action if scheduled_first else "scheduled"
+            with child(scheduled_configuration_worker, db.dsn, db.schema, str(job.id), planned, second_action, output):
+                waiting = await asyncio.to_thread(output.get, True, 30)
+                assert isinstance(waiting, int)
+                # 观察 PostgreSQL 的真实锁等待，不靠睡眠猜测另一个请求已经抵达。
+                async with asyncio.timeout(15), db.sessions() as observer:
+                    while not await observer.scalar(text("SELECT :blocker = ANY(pg_blocking_pids(:waiting))"),
+                            {"blocker": blocker, "waiting": waiting}):
+                        await asyncio.sleep(0.02)
+                if scheduled_first:
+                    tasks = service(lambda: existing_session(session), clock=lambda: planned)
+                    accepted = await tasks.scheduled(job.id, 1, planned, CronSchedule())
+                    assert accepted is not None and accepted.status == "queued"
+                else:
+                    await change_configuration(session, job.id, action)
+                assert await asyncio.to_thread(output.get, True, 30) == (
+                    ("changed", None) if scheduled_first else ("ignored", None)
+                )
+
+        tasks = service(db.sessions, clock=lambda: planned)
+        # 两种顺序都不能因旧回调再次出现而增加执行。
+        assert await tasks.scheduled(job.id, 1, planned, CronSchedule()) is None
+        records = await tasks.list_runs(source_job_id=job.id)
+        assert len(records) == (1 if scheduled_first else 0)
+        if scheduled_first:
+            retained = await tasks.get_run(accepted.run_id)
+            assert retained.config_snapshot["params"] == {"limit_per_source": 1}
+            assert retained.config_snapshot["config_version"] == 1
+            assert retained.source_job_id == job.id and retained.scheduled_for == planned
+            assert retained.job_id == (None if action == "delete" else job.id)
+            await TaskWorker(TaskStore(db.sessions), registry(), owner="test:after-config").execute(retained.id, 1)
+            completed = await tasks.get_run(retained.id)
+            assert completed.status == "succeeded" and completed.stats == {"value": 1}
+        async with db.sessions() as session:
+            changed = await session.get(ScheduledJobRecord, job.id)
+            if action == "delete":
+                assert changed is None
+            else:
+                assert changed.config_version == 2
+                if action == "disable":
+                    assert not changed.enabled and changed.next_run_at is None
+                else:
+                    assert changed.params == {"limit_per_source": 7} and changed.cron_expr == "30 9 * * *"
+                    assert changed.next_run_at > planned
     try:
-        with child(refresh_worker, db.dsn, db.schema, commands, output):
-            assert output.get(timeout=15) == "ready"
-            job = run(create_job(db))
-
-            def observed(expected):
-                deadline = time.monotonic() + 8
-                while time.monotonic() < deadline:
-                    commands.put("snapshot")
-                    if output.get(timeout=5) == expected:
-                        return
-                    time.sleep(0.05)
-                pytest.fail("独立 scheduler 未在刷新周期内应用配置")
-
-            observed({str(job.id): 1})
-
-            async def disable():
-                async with db.sessions() as session:
-                    await session.execute(update(ScheduledJobRecord).where(ScheduledJobRecord.id == job.id).values(enabled=False, config_version=2))
-                    await session.commit()
-            run(disable())
-            observed({})
-            commands.put("stop")
+        run(verify())
     finally:
-        for queue in (commands, output):
-            queue.close()
-            queue.join_thread()
+        output.close()
+        output.join_thread()
 
 
-def test_claim_serializes_with_configuration_edit_and_protects_history(isolated_database):
+def start_cancel_worker(dsn, schema, run_id, token, action, gate, output):
+    async def execute():
+        engine, sessions = database(dsn, schema)
+        try:
+            output.put("ready")
+            assert await asyncio.to_thread(gate.wait, 20)
+            if action == "start":
+                started = await TaskStore(sessions).start(UUID(run_id), UUID(token))
+                output.put("started" if started else "not-started")
+            else:
+                try:
+                    await service(sessions).cancel(UUID(run_id))
+                    output.put("cancelled")
+                except TaskError:
+                    output.put("cancel-conflict")
+        finally:
+            await engine.dispose()
+    run(execute())
+
+
+def test_start_and_cancel_compete_for_same_database_state(isolated_database):
+    from contextlib import ExitStack
     db = isolated_database
     context = multiprocessing.get_context("spawn")
     gate, output = context.Event(), context.Queue()
-    job = run(create_job(db, enabled=False))
-
-    async def verify():
-        async with db.sessions() as session:
-            repository = ScheduledJobRepository(session)
-            locked = await repository.lock_job(job.id)
-            with child(claim_worker, db.dsn, db.schema, str(job.id), "manual", gate, output):
-                assert await asyncio.to_thread(output.get, True, 15) == "ready"
-                gate.set()
-                locked.params = {"limit_per_source": 7}
-                locked.config_version = 2
-                await session.commit()
-                assert await asyncio.to_thread(output.get, True, 15) == "accepted"
-        runner = ScheduledJobRunner(store_factory=lambda: ScheduledJobStore(db.sessions), write_runtime_factory=lambda: None, settings=SchedulerSettings(_env_file=None))
-        async with db.sessions() as session:
-            service = ScheduledJobService(session, runner)
-            with pytest.raises(ScheduledJobEditBlockedError):
-                await service.update_job(job.id, params={"limit_per_source": 8})
-            await session.rollback()
-            with pytest.raises(ScheduledJobAlreadyRunningError):
-                await service.delete_job(job.id)
-            await session.rollback()
-            record = await session.scalar(select(JobRunRecord))
-            assert record.config_snapshot["params"] == {"limit_per_source": 7}
-            now = datetime.now(UTC)
-            session.add_all([JobRunRecord(
-                id=uuid4(), job_id=job.id, trigger_type="scheduled", status="skipped",
-                started_at=now, finished_at=now, stats={},
-            ) for _ in range(55)])
-            await session.commit()
-            await ScheduledJobRepository(session).prune_runs(job.id, keep=3)
-            assert await session.get(JobRunRecord, record.id) is not None
-            assert await session.scalar(select(func.count()).select_from(JobRunRecord)) == 4
+    async def accepted_claim():
+        job = await create_job(db)
+        accepted = await service(db.sessions).trigger(job.id, actor="test:user", request_key="cancel")
+        return await TaskStore(db.sessions).claim(accepted.run_id, 1, "preparing")
+    claim = run(accepted_claim())
     try:
-        run(verify())
+        with ExitStack() as stack:
+            for action in ("start", "cancel"):
+                stack.enter_context(child(start_cancel_worker, db.dsn, db.schema, str(claim.id),
+                    str(claim.claim_token), action, gate, output))
+            assert [output.get(timeout=30) for _ in range(2)] == ["ready", "ready"]
+            gate.set()
+            assert set(output.get(timeout=30) for _ in range(2)) in (
+                {"started", "cancel-conflict"}, {"not-started", "cancelled"},
+            )
     finally:
         output.close()
         output.join_thread()

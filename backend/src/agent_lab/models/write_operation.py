@@ -22,6 +22,9 @@ class WriteOperationRecord(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     run_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True, index=True)
+    claim_token: Mapped[UUID | None] = mapped_column(
+        Uuid, nullable=True, comment="任务领取身份；撤销尚未开始的领取时，仅清理该代次的准备占用。",
+    )
 
 
 class DocumentDeletionRecord(Base):

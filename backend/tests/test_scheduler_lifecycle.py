@@ -10,13 +10,15 @@ from uuid import uuid4
 
 import pytest
 
-from agent_lab import scheduler_main
+from agent_lab.tasks import status as scheduler_main
 from agent_lab.domain.write_scope import WriteRecoveryRequiredError
 from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.pipeline.write_runtime import PipelineWriteRuntime
 from agent_lab.scheduler_maintenance import inspect_or_recover
 from agent_lab.services.write_coordination import WriteCoordinator
-from tests.test_scheduler_runner import FakeStore, FakeWriteRuntime, make_job, make_runner
+from tests.task_helpers import task_system
+from agent_lab.models.scheduled_job import JobRunRecord
+from agent_lab.models.write_operation import WriteOperationRecord
 
 
 @asynccontextmanager
@@ -76,29 +78,29 @@ def test_retention_service_creation_failure_still_closes_created_client(monkeypa
 
 @pytest.mark.parametrize("recent", [False, True])
 def test_manual_recovery_clears_attention_only_after_owner_stops(recent):
-    now = datetime.now(UTC)
-    run = SimpleNamespace(id=uuid4(), job_id=uuid4(), status="failed", stats={"needs_attention": True, "documents_deleted": 50}, heartbeat_at=now, error_type="WriteRecoveryRequiredError")
-    operation = SimpleNamespace(heartbeat_at=now if recent else now - timedelta(minutes=1))
-    session = SimpleNamespace(
-        get=AsyncMock(return_value=run), scalar=AsyncMock(), refresh=AsyncMock(), execute=AsyncMock(),
-        scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [operation])), commit=AsyncMock(),
-    )
-
-    @asynccontextmanager
-    async def sessions():
-        yield session
-
     async def verify():
-        if recent:
-            with pytest.raises(ValueError):
-                await inspect_or_recover(sessions, run_id=run.id, confirm_stopped=True)
-            session.commit.assert_not_awaited()
-            assert run.stats["needs_attention"] is True
-        else:
-            result = await inspect_or_recover(sessions, run_id=run.id, confirm_stopped=True)
-            assert result["released_operations"] == 1
-            assert run.status == "failed" and run.stats["documents_deleted"] == 50
-            assert run.stats["needs_attention"] is False
+        async with task_system() as system:
+            accepted = await system.service.submit("test_echo", {}, actor="user:1", request_key="a")
+            heartbeat = datetime.now(UTC) - timedelta(seconds=0 if recent else 60)
+            async with system.sessions() as session:
+                record = await session.get(JobRunRecord, accepted.run_id)
+                record.status, record.heartbeat_at = "needs_attention", heartbeat
+                record.stats = {"documents_deleted": 50}
+                session.add(WriteOperationRecord(id=uuid4(), run_id=record.id, resources=["index"],
+                    owner="stopped-test", status="uncertain", started_at=heartbeat, heartbeat_at=heartbeat))
+                await session.commit()
+            if recent:
+                with pytest.raises(ValueError):
+                    await inspect_or_recover(system.sessions, run_id=accepted.run_id, confirm_stopped=True)
+                assert (await system.service.get_run(accepted.run_id)).status == "needs_attention"
+            else:
+                result = await inspect_or_recover(system.sessions, run_id=accepted.run_id, confirm_stopped=True)
+                assert result["released_operations"] == 1
+                record = await system.service.get_run(accepted.run_id)
+                assert record.status == "failed" and record.stats["documents_deleted"] == 50
+                assert record.expires_at is not None and record.claim_token is None
+                retried = await system.service.retry(record.id, actor="user:1", request_key="retry")
+                assert retried.status == "queued"
     asyncio.run(verify())
 
 
@@ -132,26 +134,9 @@ def test_failed_resource_release_requires_recovery():
         coordinator._release = original
 
 
-def test_terminal_save_failure_never_repeats_business_or_reports_confirmed_success(caplog):
-    async def verify():
-        store, runtime = FakeStore(), FakeWriteRuntime()
-        job = make_job()
-        store.jobs[job.id] = job
-        store.finish_run = AsyncMock(side_effect=RuntimeError("private-database-detail"))
-        runner = make_runner(store, runtime)
-        run_id = await runner.trigger_now(job)
-        await runner.close()
-        assert len(runtime.sync_calls) == 1 and runtime.closed
-        assert store.find(run_id).status == "running"
-        assert store.finish_run.await_count == 2
-    asyncio.run(verify())
-    assert "任务终态仍未确认" in caplog.text
-    assert "private-database-detail" not in caplog.text
-
-
 def test_local_readiness_needs_fresh_success_and_living_process(tmp_path, monkeypatch):
     path = tmp_path / "scheduler.json"
-    monkeypatch.setenv("SCHEDULER_STATUS_PATH", str(path))
+    monkeypatch.setenv("TASK_BEAT_STATUS_PATH", str(path))
     assert not scheduler_main.check_status()
     scheduler_main.write_status(ready=True, jobs=0, max_age_seconds=180)
     assert scheduler_main.check_status()
@@ -169,14 +154,39 @@ def test_local_readiness_needs_fresh_success_and_living_process(tmp_path, monkey
     assert not scheduler_main.check_status()
 
 
-def test_readiness_write_failure_cannot_skip_task_cleanup():
-    async def verify():
-        store, runtime = FakeStore(), FakeWriteRuntime()
-        job = make_job()
-        store.jobs[job.id] = job
-        runner = make_runner(store, runtime)
-        runner._status_writer = Mock(side_effect=OSError("本地目录不可写"))
-        run_id = await runner.trigger_now(job)
-        await runner.close()
-        assert runtime.closed and store.find(run_id).status == "succeeded"
-    asyncio.run(verify())
+def test_readiness_write_failure_cannot_skip_process_cleanup(monkeypatch):
+    from agent_lab.tasks import beat
+    scheduler = beat.PostgresScheduler.__new__(beat.PostgresScheduler)
+    scheduler._controller = None
+    closing = Mock()
+    monkeypatch.setattr(beat, "write_status", Mock(side_effect=OSError("unwritable")))
+    monkeypatch.setattr(beat, "close_process_runtime", closing)
+    with pytest.raises(OSError):
+        scheduler.close()
+    closing.assert_called_once()
+
+
+@pytest.mark.parametrize("shutdown_signal", ["worker_process_shutdown", "worker_shutdown"])
+def test_process_runtime_reuses_one_loop_until_worker_shutdown(monkeypatch, shutdown_signal):
+    from celery import signals
+    from agent_lab.tasks import celery_app, process  # noqa: F401
+
+    # 导入真实信号装配，分别验证 prefork 子进程与 solo 主进程的关闭入口。
+    monkeypatch.setattr(process, "_runtime", None)
+    loops = []
+    async def remember():
+        loops.append(asyncio.get_running_loop())
+    async def opened(self):
+        await remember()
+        self.engine = SimpleNamespace(dispose=remember)
+    monkeypatch.setattr(process.ProcessRuntime, "_open", opened)
+    runtime = process.get_process_runtime()
+    try:
+        runtime.run(remember())
+        runtime.run(remember())
+        getattr(signals, shutdown_signal).send(sender=None)
+        getattr(signals, shutdown_signal).send(sender=None)
+        assert len(loops) == 4 and all(loop is loops[0] for loop in loops)
+        assert loops[0].is_closed()
+    finally:
+        process.close_process_runtime()

@@ -14,6 +14,8 @@ from agent_lab.models.document import DocumentRecord
 from agent_lab.models.document_processing import DocumentProcessingRecord
 from agent_lab.models.knowledge_base import KnowledgeBaseRecord
 from agent_lab.models.write_operation import DocumentDeletionRecord
+from agent_lab.knowledge.adapters.pending_work import pending_query
+from agent_lab.knowledge.task_intake import ensure_document_processing
 
 
 def new_processing_record(intake: SourceIntake, *, requires_review: bool = False) -> DocumentProcessingRecord:
@@ -77,6 +79,8 @@ class PostgresProcessingRepository:
             source_object_version=reference.version_id, source_stored_at=datetime.now(UTC),
             state="pending" if queue_processing else "stored", error_code=None, updated_at=datetime.now(UTC),
         ))
+        if result.rowcount == 1 and queue_processing:
+            await ensure_document_processing(self._session)
         await self._session.commit()
         return result.rowcount == 1
 
@@ -103,16 +107,7 @@ class PostgresProcessingRepository:
         await self._session.commit()
 
     async def claim(self, processing_id: UUID | None = None) -> ProcessingClaim | None:
-        statement = select(DocumentProcessingRecord).where(
-            DocumentProcessingRecord.state == "pending",
-            DocumentProcessingRecord.source_stored_at.is_not(None),
-            _not_deleting(),
-            exists().where(
-                DocumentRecord.id == DocumentProcessingRecord.document_id,
-                KnowledgeBaseRecord.id == DocumentRecord.knowledge_base_id,
-                KnowledgeBaseRecord.is_active.is_(True),
-            ),
-        ).order_by(DocumentProcessingRecord.created_at, DocumentProcessingRecord.id).limit(1).with_for_update(skip_locked=True)
+        statement = pending_query().order_by(DocumentProcessingRecord.created_at, DocumentProcessingRecord.id).limit(1).with_for_update(skip_locked=True)
         if processing_id is not None:
             statement = statement.where(DocumentProcessingRecord.id == processing_id)
         record = await self._session.scalar(statement)
@@ -163,6 +158,8 @@ class PostgresProcessingRepository:
             DocumentProcessingRecord.claimed_at < started_before,
             _not_deleting(),
         ).values(state="pending", claim_token=None, claimed_at=None, updated_at=datetime.now(UTC)))
+        if result.rowcount:
+            await ensure_document_processing(self._session)
         await self._session.commit()
         return result.rowcount
 

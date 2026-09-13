@@ -37,9 +37,10 @@ from agent_lab.models.source import SourceRecord
 from agent_lab.models.scheduled_job import JobRunRecord, ScheduledJobRecord
 from agent_lab.models.write_operation import DocumentDeletionRecord, WriteOperationRecord
 from agent_lab.repositories.document_repository import DocumentRepository
-from agent_lab.repositories.scheduled_job_repository import ScheduledJobStore
+from agent_lab.tasks.cron import CronSchedule
+from agent_lab.tasks.service import TaskService
+from agent_lab.task_assembly import build_task_registry
 from agent_lab.services.scheduled_job_service import ScheduledJobService
-from agent_lab.services.scheduler_runner import ScheduledJobRunner
 from agent_lab.services.source_binding_service import SourceBindingService
 from agent_lab.services.write_coordination import WriteCoordinator
 from tests.app_helpers import create_offline_app
@@ -56,10 +57,8 @@ pytestmark = pytest.mark.skipif(
 def test_retention_params_and_run_snapshot_persist_jsonb(isolated_database):
     async def verify():
         db = isolated_database
-        runner = ScheduledJobRunner(
-            store_factory=lambda: ScheduledJobStore(db.sessions), write_runtime_factory=lambda: None,
-            settings=SchedulerSettings(_env_file=None),
-        )
+        registry = build_task_registry(db.sessions)
+        cron = CronSchedule()
         other = uuid4()
         async with db.sessions() as session:
             session.add(KnowledgeBaseRecord(id=other, key="tech", name="Tech"))
@@ -69,17 +68,18 @@ def test_retention_params_and_run_snapshot_persist_jsonb(isolated_database):
             [str(other), str(DEFAULT_NEWS_KNOWLEDGE_BASE_ID)],
         )]:
             async with db.sessions() as session:
-                view = await ScheduledJobService(session, runner).create_job(
+                view = await ScheduledJobService(session, cron, registry).create_job(
                     key=f"retention-{uuid4().hex}", task_type="prune_old_documents",
                     cron_expr="0 0 * * *", params=params, enabled=False,
                 )
                 job_id = view.record.id
             async with db.sessions() as session:
                 assert (await session.get(ScheduledJobRecord, job_id)).params["knowledge_base_ids"] == expected
-                await ScheduledJobService(session, runner).update_job(job_id, params={**params, "retention_days": 60})
-            _, run_id = await ScheduledJobStore(db.sessions).claim_run(
-                job_id, trigger_type="manual", owner="knowledge-test", started_at=datetime.now(UTC),
+                await ScheduledJobService(session, cron, registry).update_job(job_id, params={**params, "retention_days": 60})
+            accepted = await TaskService(db.sessions, registry).trigger(
+                job_id, actor="test:knowledge", request_key=str(uuid4()),
             )
+            run_id = accepted.run_id
             async with db.sessions() as session:
                 snapshot = (await session.get(JobRunRecord, run_id)).config_snapshot
                 assert snapshot["params"]["knowledge_base_ids"] == expected
@@ -235,16 +235,14 @@ def test_upgrade_from_previous_head_preserves_nonknowledge_records():
                     document_id=deletion_id, revision=1, cutoff_date=None, retention_date=datetime.now(UTC),
                 ))
 
-            # 人工待办不能在降级时失去删除语义；失败的整段 DDL 也须回滚。
-            with pytest.raises(DBAPIError, match="请先完成上传文档的删除待办"):
+            # 公共任务回执无法无损还原为旧模型；禁止自动降级，业务待办保持不变。
+            with pytest.raises(RuntimeError, match="不支持"):
                 async with engine.begin() as connection:
                     await connection.run_sync(downgrade, "b38f9a7c6d21")
             async with engine.begin() as connection:
                 assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == head
-                assert await connection.scalar(scope_query, {"thread_id": new_thread_id}) == {"mode": "all"}
-                await connection.execute(DocumentDeletionRecord.__table__.delete().where(DocumentDeletionRecord.document_id == deletion_id))
-                await connection.run_sync(downgrade, "b38f9a7c6d21")
-                assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "b38f9a7c6d21"
+                assert await connection.scalar(select(DocumentDeletionRecord.document_id).where(
+                    DocumentDeletionRecord.document_id == deletion_id)) == deletion_id
         finally:
             async with engine.begin() as connection:
                 await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))

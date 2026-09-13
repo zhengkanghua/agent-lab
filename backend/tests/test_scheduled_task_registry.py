@@ -7,6 +7,8 @@ cron 解析与未来执行时间预览。不访问 PostgreSQL、APScheduler 不�
 import asyncio
 import json
 from datetime import UTC, datetime
+from contextlib import nullcontext
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -27,8 +29,8 @@ from agent_lab.services.scheduled_task_registry import (
     PruneOldDocumentsTaskParams,
     get_task_type_spec,
 )
-from agent_lab.services.scheduler_runner import ScheduledJobRunner
-from agent_lab.services.scheduled_job_executor import ScheduledJobExecutor
+from agent_lab.tasks.cron import CronSchedule
+from tests.task_helpers import task_system, execute_accepted
 
 
 def run(coroutine: Any) -> Any:
@@ -38,10 +40,13 @@ def run(coroutine: Any) -> Any:
 
 
 class TestTaskTypeRegistry:
-    def test_registry_has_exactly_the_three_v1_types(self) -> None:
-        # 类型清单是代码契约：多一个没实现的类型会让管理端出现「选了就执行失败」的选项，
-        # 少一个则种子任务无法加载。这条测试就是注册表的形状锁。
-        assert set(TASK_TYPE_SPECS) == {"freshrss_sync", "index_pending", "prune_old_documents"}
+    def test_schedulable_and_direct_types_have_implemented_handlers(self) -> None:
+        assert {key for key, spec in TASK_TYPE_SPECS.items() if spec.schedulable} == {
+            "freshrss_sync", "index_pending", "prune_old_documents",
+        }
+        assert all(callable(spec.execute) for spec in TASK_TYPE_SPECS.values())
+        assert not TASK_TYPE_SPECS["pipeline_run_once"].schedulable
+        assert not TASK_TYPE_SPECS["document_processing"].schedulable
 
     def test_get_task_type_spec_returns_none_for_unknown(self) -> None:
         assert get_task_type_spec("no_such_type") is None
@@ -131,46 +136,29 @@ class TestTaskTypeRegistry:
                 prune_old_documents=AsyncMock(return_value=SimpleNamespace(to_job_run_stats=lambda: {})),
                 close=AsyncMock(),
             )
-            store = SimpleNamespace(finish_run=AsyncMock(), prune_runs=AsyncMock())
-            executor = ScheduledJobExecutor(
-                store_factory=lambda: store,
-                runtime_factory=lambda: runtime,
-                settings=SchedulerSettings(),
-            )
-            job = SimpleNamespace(id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID, task_type="prune_old_documents", params=raw)
-            await executor.execute(job, UUID("10000000-0000-4000-8000-000000000011"), "manual")
-            runtime.prune_old_documents.assert_awaited_once_with(
-                retention_days=180, dry_run=True, knowledge_base_ids=[DEFAULT_NEWS_KNOWLEDGE_BASE_ID],
-            )
-            assert store.finish_run.await_args.kwargs["status"] == "succeeded"
-            runtime.close.assert_awaited_once()
+            spec = replace(TASK_TYPE_SPECS["prune_old_documents"], runtime_factory=lambda: runtime,
+                           execution_scope=lambda *_: nullcontext())
+            async with task_system(spec) as system:
+                accepted = await system.service.submit(spec.task_type, raw, actor="user:1", request_key="a")
+                result = await execute_accepted(system, accepted)
+                runtime.prune_old_documents.assert_awaited_once_with(
+                    retention_days=180, dry_run=True, knowledge_base_ids=[DEFAULT_NEWS_KNOWLEDGE_BASE_ID],
+                )
+                assert result.status == "succeeded"
+                runtime.close.assert_awaited_once()
 
         run(verify())
 
 
 class TestCronUtilities:
-    def _runner(self) -> ScheduledJobRunner:
-        settings = SchedulerSettings(timezone="Asia/Shanghai")
-        return ScheduledJobRunner(
-            store_factory=lambda: None,  # type: ignore[arg-type,return-value]
-            write_runtime_factory=lambda: None,  # type: ignore[arg-type,return-value]
-            settings=settings,
-            clock=lambda: datetime(2026, 9, 2, 4, 0, tzinfo=UTC),  # 北京时间 12:00
-        )
-
-    def test_next_run_at_is_none_before_start(self) -> None:
-        # 调度器未启动（SCHEDULER_ENABLED 关闭）时没有「下次执行时间」可言，
-        # 管理 API 必须拿到 None 而不是抛异常。
-        runner = self._runner()
-        from uuid import uuid4
-
-        assert runner.next_run_at(uuid4()) is None
+    def _runner(self) -> CronSchedule:
+        return CronSchedule("Asia/Shanghai", clock=lambda: datetime(2026, 9, 2, 4, 0, tzinfo=UTC))
 
     def test_upcoming_fire_times_interprets_cron_in_configured_timezone(self) -> None:
         runner = self._runner()
         utc_times, local_times = runner.upcoming_fire_times("0 9 * * *")
         assert len(utc_times) == 3
-        # 北京早上 9 点 = UTC 前一天 01:00；注入时钟是北京时间 9/2 12:00，
+        # 北京早上 9 点 = UTC 同一天 01:00；注入时钟是北京时间 9/2 12:00，
         # 所以第一次触发是 9/3 09:00 北京 = 9/3 01:00 UTC。
         assert utc_times[0] == datetime(2026, 9, 3, 1, 0, tzinfo=UTC)
         assert local_times[0].startswith("2026-09-03T09:00:00+08:00")
@@ -180,16 +168,26 @@ class TestCronUtilities:
 
     def test_upcoming_fire_times_supports_step_expressions(self) -> None:
         # 注入时钟落在 04:03，避开整点边界：*/10 的下一次触发是 04:10 而不是当前时刻。
-        runner = ScheduledJobRunner(
-            store_factory=lambda: None,  # type: ignore[arg-type,return-value]
-            write_runtime_factory=lambda: None,  # type: ignore[arg-type,return-value]
-            settings=SchedulerSettings(timezone="Asia/Shanghai"),
-            clock=lambda: datetime(2026, 9, 2, 4, 3, tzinfo=UTC),
-        )
+        runner = CronSchedule("Asia/Shanghai", clock=lambda: datetime(2026, 9, 2, 4, 3, tzinfo=UTC))
         utc_times, _ = runner.upcoming_fire_times("*/10 * * * *")
         assert len(utc_times) == 3
         assert utc_times[0] == datetime(2026, 9, 2, 4, 10, tzinfo=UTC)
         assert utc_times[1] == datetime(2026, 9, 2, 4, 20, tzinfo=UTC)
+
+    @pytest.mark.parametrize(("expression", "expected"), [
+        ("30 0 * * *", datetime(2026, 9, 2, 16, 30, tzinfo=UTC)),
+        ("0 9 * * 0", datetime(2026, 9, 7, 1, 0, tzinfo=UTC)),
+        ("0 9 * * sun", datetime(2026, 9, 6, 1, 0, tzinfo=UTC)),
+        ("15 10 15 10 *", datetime(2026, 10, 15, 2, 15, tzinfo=UTC)),
+        ("0 9 8-15 9 mon", datetime(2026, 9, 14, 1, 0, tzinfo=UTC)),
+    ])
+    def test_historical_calendar_semantics_and_cross_day_preview_match_plan(self, expression, expected) -> None:
+        # 保留原星期编号（0 为周一）及日期与星期同时满足的规则，不换用其他 cron 语义。
+        runner = self._runner()
+        utc_times, local_times = runner.upcoming_fire_times(expression)
+        job = SimpleNamespace(enabled=True, cron_expr=expression)
+        assert utc_times[0] == expected == runner.planned_run_at(job)
+        assert datetime.fromisoformat(local_times[0]).astimezone(UTC) == expected
 
     def test_parse_cron_rejects_invalid_expressions(self) -> None:
         runner = self._runner()

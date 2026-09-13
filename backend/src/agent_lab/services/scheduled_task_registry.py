@@ -8,12 +8,14 @@
 """
 
 from typing import Any
-from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
+from agent_lab.knowledge.task_intake import DOCUMENT_PROCESSING_KEY
 from agent_lab.services import scheduled_tasks
+from agent_lab.tasks.registry import TaskTypeSpec
+from agent_lab.schemas.pipeline import PipelineRunOnceRequest
 
 from agent_lab.pipeline.limits import (
     DEFAULT_INDEX_BATCH_SIZE,
@@ -101,50 +103,6 @@ class PruneOldDocumentsTaskParams(BaseModel):
         return deduplicated
 
 
-class TaskTypeSpec:
-    """一个任务类型的注册项：类型名、给人看的描述和参数模型。
-
-    描述会进入 OpenAPI（管理端下拉框的文案来源）；参数模型同时承担写入校验和
-    执行前重验。``validate_params`` 返回**规范化后**的参数 dict：缺省字段补默认值、
-    未知字段直接拒绝（宁可让提交者当场看到 422，也不静默丢字段制造「配了没生效」的
-    假象），保证库里存的形状总是可执行的。
-    """
-
-    __slots__ = ("description", "params_model", "task_type", "execute")
-
-    def __init__(
-        self,
-        *,
-        task_type: str,
-        description: str,
-        params_model: type[BaseModel],
-        execute: Callable[[Any, dict], Awaitable[dict]],
-    ) -> None:
-        """绑定类型名、描述与参数模型，不做任何 I/O。"""
-
-        self.task_type = task_type
-        self.description = description
-        self.params_model = params_model
-        self.execute = execute
-
-    def validate_params(self, raw: Any) -> dict[str, Any]:
-        """把任意 JSON 收敛成该类型的规范参数 dict。
-
-        Args:
-            raw: 管理端提交的原始参数（可以是 None、缺字段或带未知字段）。
-
-        Returns:
-            补齐默认值后的参数 dict，可直接存库；未知字段报错。
-
-        Raises:
-            pydantic.ValidationError: 参数类型或取值范围不符合 schema。
-        """
-
-        if raw is None:
-            raw = {}
-        return self.params_model.model_validate(raw).model_dump(mode="json")
-
-
 TASK_TYPE_SPECS: dict[str, TaskTypeSpec] = {
     spec.task_type: spec
     for spec in (
@@ -153,18 +111,24 @@ TASK_TYPE_SPECS: dict[str, TaskTypeSpec] = {
             description="FreshRSS 增量同步：把 FreshRSS 里的新新闻拉取入库到 PostgreSQL（不向量化）。",
             params_model=FreshRssSyncTaskParams,
             execute=scheduled_tasks.sync_news,
+            execution_scope=scheduled_tasks.writing_scope(("sync",)),
+            classify_error=scheduled_tasks.classify_error,
         ),
         TaskTypeSpec(
             task_type="index_pending",
             description="向量索引：把 PostgreSQL 里待索引的文档切块、向量化并写入 Qdrant。",
             params_model=IndexPendingTaskParams,
             execute=scheduled_tasks.index_pending,
+            execution_scope=scheduled_tasks.writing_scope(("index",)),
+            classify_error=scheduled_tasks.classify_error,
         ),
         TaskTypeSpec(
             task_type="prune_old_documents",
             description="数据保留策略：删除指定知识库中发布时间超过保留期的旧文档及其向量索引（默认预演模式，缺省只清理新闻库）。",
             params_model=PruneOldDocumentsTaskParams,
             execute=scheduled_tasks.prune_old_documents,
+            execution_scope=scheduled_tasks.writing_scope(("sync", "index")),
+            classify_error=scheduled_tasks.classify_error,
         ),
     )
 }
@@ -184,3 +148,17 @@ __all__ = [
     "TaskTypeSpec",
     "get_task_type_spec",
 ]
+
+TASK_TYPE_SPECS["pipeline_run_once"] = TaskTypeSpec(
+    task_type="pipeline_run_once", description="手动同步与一个文档处理批次。",
+    params_model=PipelineRunOnceRequest, execute=scheduled_tasks.run_pipeline,
+    execution_scope=scheduled_tasks.pipeline_scope,
+    classify_error=scheduled_tasks.classify_error, schedulable=False,
+)
+TASK_TYPE_SPECS["document_processing"] = TaskTypeSpec(
+    task_type="document_processing", description="由文档待办驱动的解析、采用和旧索引回收。",
+    params_model=IndexPendingTaskParams, execute=scheduled_tasks.index_pending,
+    execution_scope=scheduled_tasks.writing_scope(("index",)),
+    classify_error=scheduled_tasks.classify_error, schedulable=False,
+    concurrency_key=DOCUMENT_PROCESSING_KEY,
+)

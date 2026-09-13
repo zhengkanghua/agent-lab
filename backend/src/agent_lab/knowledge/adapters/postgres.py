@@ -65,6 +65,9 @@ class PostgresKnowledgeBaseRepository:
         return _snapshot(record)
 
     async def update(self, knowledge_base: KnowledgeBase) -> KnowledgeBase:
+        was_active = await self._session.scalar(select(KnowledgeBaseRecord.is_active).where(
+            KnowledgeBaseRecord.id == knowledge_base.id,
+        ))
         statement = (
             update(KnowledgeBaseRecord)
             .where(KnowledgeBaseRecord.id == knowledge_base.id)
@@ -77,7 +80,11 @@ class PostgresKnowledgeBaseRepository:
             .returning(KnowledgeBaseRecord)
             .execution_options(populate_existing=True)
         )
-        return _snapshot((await self._session.scalars(statement)).one())
+        record = (await self._session.scalars(statement)).one()
+        if not was_active and record.is_active:
+            from agent_lab.knowledge.task_intake import ensure_document_processing
+            await ensure_document_processing(self._session)
+        return _snapshot(record)
 
 
 class PostgresKnowledgeBaseUnitOfWork:

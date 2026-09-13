@@ -10,7 +10,6 @@ import pytest
 
 from agent_lab.knowledge.document_contracts import SourceImportResult
 from agent_lab.knowledge.processing.batch import DocumentProcessingBatch
-from agent_lab.knowledge.processing.consumer import DocumentProcessingConsumer
 from agent_lab.knowledge.processing.lifecycle import ProcessingReceipt
 from agent_lab.services.news_pipeline_execution_service import NewsPipelineExecutionService
 
@@ -66,24 +65,3 @@ def test_batch_does_not_drain_unbounded_work_or_retry_failures():
 def test_invalid_batch_bounds_do_not_touch_dependencies(batch_size, stale_after):
     with pytest.raises(ValueError):
         asyncio.run(DocumentProcessingBatch(None, None).run(batch_size=batch_size, stale_after=stale_after))
-
-
-def test_consumer_runs_without_cron_and_finishes_current_work_on_close():
-    async def verify():
-        started, finish = asyncio.Event(), asyncio.Event()
-        calls = []
-        async def run(**_kwargs):
-            calls.append("processing")
-            started.set()
-            await finish.wait()
-            return SimpleNamespace(candidate_count=0, cleaned_count=0)
-        consumer = DocumentProcessingConsumer(lambda: SimpleNamespace(run=run), poll_seconds=0.01)
-        await consumer.start()
-        await asyncio.wait_for(started.wait(), 1)
-        closing = asyncio.create_task(consumer.close())
-        await asyncio.sleep(0)
-        assert not closing.done()
-        finish.set()
-        await closing
-        assert calls == ["processing"]
-    asyncio.run(verify())

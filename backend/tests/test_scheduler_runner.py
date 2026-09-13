@@ -1,454 +1,105 @@
-"""定时任务调度器包装器的行为测试：假 Store + 假写 Runtime，完全离线。
-
-覆盖统一执行包装器的外部可见行为：两种任务类型只跑各自的步骤、Runtime 用完即关、
-失败记 error_type、重叠触发记 skipped、历史裁剪按保留条数执行。cron 到点入口
-（``_run_scheduled``）就是 APScheduler 的回调签名，直接调用它等于模拟一次到点触发。
-不访问 PostgreSQL、FreshRSS、Ollama 或 Qdrant，APScheduler 只做注册断言、不等真实到点。
-"""
+"""动态 Beat、配置生效和重叠规则的离线验证；不以 SQLite 证明 PostgreSQL 并发锁。"""
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from types import SimpleNamespace
-from typing import Any
 from unittest.mock import AsyncMock
-from uuid import UUID, uuid4
 
 import pytest
 
-from agent_lab.config.scheduler import SchedulerSettings
-from agent_lab.ingestion.freshrss_client import FreshRSSAuthenticationError
 from agent_lab.models.scheduled_job import ScheduledJobRecord
-from agent_lab.services.scheduled_task_errors import ScheduledJobAlreadyRunningError, ScheduledJobUnknownTypeError
-from agent_lab.services.scheduler_runner import SKIPPED_PREVIOUS_RUNNING_REASON, ScheduledJobRunner
-
-
-def run(coroutine: Any) -> Any:
-    """执行不依赖 pytest asyncio 插件的测试协程。"""
-
-    return asyncio.run(coroutine)
-
-
-def make_job(
-    *,
-    task_type: str = "freshrss_sync",
-    params: dict | None = None,
-    enabled: bool = True,
-) -> ScheduledJobRecord:
-    """构造一条不落库的定时任务记录。"""
-
-    return ScheduledJobRecord(
-        id=uuid4(),
-        key="test-job",
-        task_type=task_type,
-        cron_expr="*/10 * * * *",
-        params=params or {"limit_per_source": 2},
-        enabled=enabled,
-        created_at=datetime.now(UTC),
-        updated_at=datetime.now(UTC),
-        config_version=1,
-    )
-
-
-class FakeStore:
-    """提供 Runner 用例需要的内存记录，不复制生产 Store 的任务类型和参数校验。"""
-
-    def __init__(self) -> None:
-        self.jobs: dict[UUID, ScheduledJobRecord] = {}
-        self.runs: list[SimpleNamespace] = []
-        self.prunes: list[tuple[UUID, int]] = []
-        self.terminal_events: dict[UUID, asyncio.Event] = {}
-
-    async def load_enabled_jobs(self) -> list[ScheduledJobRecord]:
-        return [job for job in self.jobs.values() if job.enabled]
-
-    async def get_job(self, job_id: UUID) -> ScheduledJobRecord | None:
-        return self.jobs.get(job_id)
-
-    async def record_skipped(
-        self, job_id: UUID, *, trigger_type: str, started_at: datetime, stats: dict
-    ) -> UUID:
-        record = SimpleNamespace(
-            id=uuid4(),
-            job_id=job_id,
-            trigger_type=trigger_type,
-            status="skipped",
-            started_at=started_at,
-            finished_at=started_at,
-            stats=stats,
-            error_type=None,
-        )
-        self.runs.append(record)
-        return record.id
-
-    async def start_run(
-        self, job_id: UUID, *, trigger_type: str, started_at: datetime
-    ) -> UUID:
-        record = SimpleNamespace(
-            id=uuid4(),
-            job_id=job_id,
-            trigger_type=trigger_type,
-            status="running",
-            started_at=started_at,
-            finished_at=None,
-            stats={},
-            error_type=None,
-        )
-        self.runs.append(record)
-        self.terminal_events[record.id] = asyncio.Event()
-        return record.id
-
-    async def finish_run(
-        self,
-        run_id: UUID,
-        *,
-        status: str,
-        finished_at: datetime | None,
-        stats: dict,
-        error_type: str | None,
-    ) -> None:
-        for record in self.runs:
-            if record.id == run_id:
-                record.status = status
-                record.finished_at = finished_at
-                record.stats = stats
-                record.error_type = error_type
-                self.terminal_events[run_id].set()
-                return
-
-    async def prune_runs(self, job_id: UUID, *, keep: int) -> None:
-        self.prunes.append((job_id, keep))
-
-    def find(self, run_id: UUID) -> SimpleNamespace | None:
-        for record in self.runs:
-            if record.id == run_id:
-                return record
-        return None
-
-    async def claim_run(self, job_id, *, trigger_type, started_at, owner, expected_version=None):
-        job = self.jobs.get(job_id)
-        if job is None or (trigger_type == "scheduled" and (not job.enabled or (expected_version is not None and job.config_version != expected_version))):
-            return None
-        if any(record.job_id == job_id and record.status == "running" for record in self.runs):
-            raise ScheduledJobAlreadyRunningError(job_id)
-        run_id = await self.start_run(job_id, trigger_type=trigger_type, started_at=started_at)
-        return job, run_id
-
-    async def heartbeat(self, run_id):
-        pass
-
-
-class FakeWriteRuntime:
-    """记录调用并可控失败/阻塞的写 Runtime 替身。"""
-
-    def __init__(
-        self,
-        *,
-        sync_error: Exception | None = None,
-        index_error: Exception | None = None,
-        gate: asyncio.Event | None = None,
-    ) -> None:
-        self.sync_calls: list[dict] = []
-        self.index_calls: list[dict] = []
-        self.closed = False
-        self._sync_error = sync_error
-        self._index_error = index_error
-        self._gate = gate
-
-    async def sync_only(self, *, limit_per_source: int) -> Any:
-        self.sync_calls.append({"limit_per_source": limit_per_source})
-        if self._gate is not None:
-            await self._gate.wait()
-        if self._sync_error is not None:
-            raise self._sync_error
-        return SimpleNamespace(
-            source_count=2,
-            successful_source_count=1,
-            synchronized_count=3,
-            checkpoint_advanced_count=1,
-            failed_source_count=1,
-            failures=(SimpleNamespace(error_type="FreshRSSConnectionError"),),
-        )
-
-    async def index_only(self, *, batch_size: int, stale_after: Any) -> Any:
-        self.index_calls.append({"batch_size": batch_size, "stale_after": stale_after})
-        if self._index_error is not None:
-            raise self._index_error
-        return SimpleNamespace(
-            requeued_stale_count=1,
-            candidate_count=3,
-            parsed_count=3,
-            review_count=1,
-            cleaned_count=1,
-            indexed_count=2,
-            skipped_count=0,
-            failed_count=0,
-            failures=(),
-        )
-
-    async def close(self) -> None:
-        self.closed = True
-
-
-def make_runner(
-    store: FakeStore,
-    runtime: FakeWriteRuntime,
-    *,
-    settings: SchedulerSettings | None = None,
-    clock: Any | None = None,
-) -> ScheduledJobRunner:
-    """组装被测调度器：默认固定时钟，Store/Runtime 都是替身。"""
-
-    return ScheduledJobRunner(
-        store_factory=lambda: store,
-        write_runtime_factory=lambda: runtime,
-        settings=settings or SchedulerSettings(timezone="Asia/Shanghai"),
-        clock=clock or (lambda: datetime(2026, 9, 2, 4, 0, tzinfo=UTC)),
-    )
-
-
-async def wait_for_terminal(store: FakeStore, run_id: UUID, *, timeout: float = 2.0) -> SimpleNamespace:
-    """由终态保存通知唤醒；超时仅用于报告后台执行未完成。"""
-
-    record = store.find(run_id)
-    assert record is not None
-    if record.status == "running":
-        await asyncio.wait_for(store.terminal_events[run_id].wait(), timeout)
-    assert record.status != "running"
-    return record
-
-
-class TestUnifiedExecution:
-    def test_manual_trigger_runs_only_sync_step_and_closes_runtime(self) -> None:
-        store, runtime = FakeStore(), FakeWriteRuntime()
-        runner = make_runner(store, runtime)
-        job = make_job(task_type="freshrss_sync", params={"limit_per_source": 7})
-        store.jobs[job.id] = job
-
-        async def scenario() -> None:
-            run_id = await runner.trigger_now(job)
-            assert isinstance(run_id, UUID)
-            record = await wait_for_terminal(store, run_id)
-            assert record.status == "succeeded"
-            assert record.trigger_type == "manual"
-            assert record.error_type is None
-            assert record.stats["synchronized_document_count"] == 3
-            assert record.stats["failures"] == {"FreshRSSConnectionError": 1}
-            # 只跑了同步这一步，绝不碰索引；Runtime 用完即关。
-            assert runtime.sync_calls == [{"limit_per_source": 7}]
-            assert runtime.index_calls == []
-            assert runtime.closed is True
-
-        run(scenario())
-
-    def test_scheduled_index_task_runs_only_index_step(self) -> None:
-        store, runtime = FakeStore(), FakeWriteRuntime()
-        runner = make_runner(store, runtime)
-        job = make_job(
-            task_type="index_pending",
-            params={"batch_size": 5, "stale_after_minutes": 30},
-        )
-        store.jobs[job.id] = job
-
-        async def scenario() -> None:
-            run_id = await store.start_run(
-                job.id, trigger_type="scheduled", started_at=datetime.now(UTC)
-            )
-            await runner._executor.execute(job, run_id, "scheduled")
-            record = store.find(run_id)
-            assert record is not None and record.status == "succeeded"
-            assert record.stats["candidate_count"] == 3
-            assert record.stats["requeued_stale_count"] == 1
-            assert record.stats["parsed_count"] == 3
-            assert record.stats["review_count"] == 1
-            assert record.stats["cleaned_count"] == 1
-            assert runtime.index_calls == [
-                {"batch_size": 5, "stale_after": timedelta(minutes=30)}
-            ]
-            assert runtime.sync_calls == []
-            assert runtime.closed is True
-
-        run(scenario())
-
-    def test_failure_records_error_type_and_closes_runtime(self) -> None:
-        store, runtime = FakeStore(), FakeWriteRuntime(
-            sync_error=RuntimeError("boom")
-        )
-        runner = make_runner(store, runtime)
-        job = make_job(task_type="freshrss_sync")
-        store.jobs[job.id] = job
-
-        async def scenario() -> None:
-            run_id = await runner.trigger_now(job)
-            record = await wait_for_terminal(store, run_id)
-            assert record.status == "failed"
-            # 历史只记异常类名，不记异常文本（"boom" 不得出现）。
-            assert record.error_type == "RuntimeError"
-            assert record.stats == {"failure_phase": "business"}
-            assert runtime.closed is True
-
-        run(scenario())
-
-    def test_failure_with_reason_persists_error_reason_in_stats(self) -> None:
-        # FreshRSS 认证类异常自带脱敏 reason 枚举（见 FreshRSSError）；
-        # 调度器要把它写进执行记录 stats，管理页不查库也能看到失败阶段。
-        store, runtime = FakeStore(), FakeWriteRuntime(
-            sync_error=FreshRSSAuthenticationError(
-                "FreshRSS 拒绝了 API 凭据。",
-                reason="login_rejected",
-            )
-        )
-        runner = make_runner(store, runtime)
-        job = make_job(task_type="freshrss_sync")
-        store.jobs[job.id] = job
-
-        async def scenario() -> None:
-            run_id = await runner.trigger_now(job)
-            record = await wait_for_terminal(store, run_id)
-            assert record.status == "failed"
-            assert record.error_type == "FreshRSSAuthenticationError"
-            assert record.stats == {"error_reason": "login_rejected", "failure_phase": "business"}
-            assert runtime.closed is True
-
-        run(scenario())
-
-    def test_claim_failure_is_returned_without_starting_business(
-        self, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        store, runtime = FakeStore(), FakeWriteRuntime()
-        runner = make_runner(store, runtime)
-        job = make_job()
-        store.jobs[job.id] = job
-        monkeypatch.setattr(
-            store, "claim_run", AsyncMock(side_effect=ScheduledJobUnknownTypeError())
-        )
-
-        async def scenario() -> None:
-            with pytest.raises(ScheduledJobUnknownTypeError):
-                await runner.trigger_now(job)
-            await runner.close()
-            assert store.runs == []
-            # 未执行任何业务步骤。
-            assert runtime.sync_calls == []
-            assert runtime.index_calls == []
-
-        run(scenario())
-
-    def test_history_pruned_with_configured_retention(self) -> None:
-        store, runtime = FakeStore(), FakeWriteRuntime()
-        runner = make_runner(
-            store, runtime, settings=SchedulerSettings(run_history_retention=3)
-        )
-        job = make_job(task_type="freshrss_sync")
-        store.jobs[job.id] = job
-
-        async def scenario() -> None:
-            run_id = await runner.trigger_now(job)
-            await wait_for_terminal(store, run_id)
-            await runner.close()
-            assert store.prunes == [(job.id, 3)]
-
-        run(scenario())
-
-
-class TestOverlapPolicy:
-    def test_cron_firing_while_running_records_skipped(self) -> None:
-        store, runtime = FakeStore(), FakeWriteRuntime()
-        gate = asyncio.Event()
-        runtime._gate = gate
-        runner = make_runner(store, runtime)
-        job = make_job(task_type="freshrss_sync")
-        store.jobs[job.id] = job
-
-        async def scenario() -> None:
-            # 受理返回时记录已经是 running；gate 保证业务不会提前完成。
-            running_id = await runner.trigger_now(job)
-            # 模拟 cron 到点：上一轮还没结束，必须记 skipped。
-            await runner._run_scheduled(job.id)
-            gate.set()
-            await wait_for_terminal(store, running_id)
-
-            skipped = [r for r in store.runs if r.status == "skipped"]
-            assert len(skipped) == 1
-            assert skipped[0].trigger_type == "scheduled"
-            assert skipped[0].stats == {"reason": SKIPPED_PREVIOUS_RUNNING_REASON}
-            # 跳过的那轮不执行业务步骤，总共只有一次 sync 调用。
-            assert len(runtime.sync_calls) == 1
-
-        run(scenario())
-
-    def test_manual_trigger_conflict_raises_already_running(self) -> None:
-        store, runtime = FakeStore(), FakeWriteRuntime()
-        gate = asyncio.Event()
-        runtime._gate = gate
-        runner = make_runner(store, runtime)
-        job = make_job(task_type="freshrss_sync")
-        store.jobs[job.id] = job
-
-        async def scenario() -> None:
-            first = await runner.trigger_now(job)
-            with pytest.raises(ScheduledJobAlreadyRunningError):
-                await runner.trigger_now(job)
-            gate.set()
-            await wait_for_terminal(store, first)
-
-        run(scenario())
-
-
-class TestSchedulerLifecycle:
-    def test_start_loads_enabled_jobs_and_registers_them(self) -> None:
-        store, runtime = FakeStore(), FakeWriteRuntime()
-        runner = make_runner(store, runtime)
-        enabled = make_job(task_type="freshrss_sync")
-        disabled = make_job(task_type="index_pending", params={}, enabled=False)
-        store.jobs[enabled.id] = enabled
-        store.jobs[disabled.id] = disabled
-
-        async def scenario() -> None:
-            await runner.start()
-            try:
-                # 只有启用的任务被注册；下次执行时间可查询。
-                assert runner.next_run_at(enabled.id) is not None
-                assert runner.next_run_at(disabled.id) is None
-            finally:
-                await runner.close()
-            # 关闭后不再有下次执行时间。
-            assert runner.next_run_at(enabled.id) is None
-
-        run(scenario())
-
-    def test_apply_job_removes_entry_when_disabled(self) -> None:
-        store, runtime = FakeStore(), FakeWriteRuntime()
-        runner = make_runner(store, runtime)
-        job = make_job(task_type="freshrss_sync")
-        store.jobs[job.id] = job
-
-        async def scenario() -> None:
-            await runner.start()
-            try:
-                assert runner.next_run_at(job.id) is not None
-                job.enabled = False
-                runner.apply_job(job)
-                assert runner.next_run_at(job.id) is None
-            finally:
-                await runner.close()
-
-        run(scenario())
-
-    def test_cron_firing_skips_when_job_disabled_in_db(self) -> None:
-        store, runtime = FakeStore(), FakeWriteRuntime()
-        runner = make_runner(store, runtime)
-        job = make_job(task_type="freshrss_sync")
-        store.jobs[job.id] = job
-
-        async def scenario() -> None:
-            # 注册后配置被改停用：到点回调重读数据库后必须安静放弃，不起执行。
-            await runner.start()
-            try:
-                job.enabled = False
-                await runner._run_scheduled(job.id)
-                assert store.runs == []
-                assert runtime.sync_calls == []
-            finally:
-                await runner.close()
-
-        run(scenario())
+from agent_lab.services.scheduled_job_service import ScheduledJobService
+from agent_lab.tasks.beat import BeatController
+from agent_lab.tasks.contracts import TaskOverlap
+from agent_lab.tasks.cron import CronSchedule
+from tests.task_helpers import add_job, execute_accepted, task_system
+
+
+@pytest.mark.parametrize("status", ["queued", "waiting_resource", "running", "retry_wait", "needs_attention"])
+def test_overlap_skips_new_cycle_and_conflicts_new_manual_request(status):
+    async def scenario():
+        async with task_system() as system:
+            job = await add_job(system)
+            first = await system.service.trigger(job.id, actor="user:1", request_key="first")
+            async with system.sessions() as session:
+                from agent_lab.models.scheduled_job import JobRunRecord
+                current = await session.get(JobRunRecord, first.run_id)
+                current.status = status
+                await session.commit()
+            skipped = await system.service.scheduled(job.id, 1, job.next_run_at, CronSchedule())
+            assert skipped.status == "skipped"
+            with pytest.raises(TaskOverlap) as error:
+                await system.service.trigger(job.id, actor="user:1", request_key="second")
+            assert error.value.run_id == first.run_id
+            assert len(await system.service.list_runs()) == 2
+    asyncio.run(scenario())
+
+
+def test_edit_enabled_and_running_job_uses_snapshot_then_delete_preserves_history():
+    async def scenario():
+        async with task_system() as system:
+            job = await add_job(system)
+            accepted = await system.service.trigger(job.id, actor="user:1", request_key="a")
+            async with system.sessions() as session:
+                manager = ScheduledJobService(session, CronSchedule(clock=system.clock), system.registry)
+                changed = await manager.update_job(job.id, params={"value": 33}, cron_expr="*/5 * * * *")
+                assert changed.record.enabled and changed.record.config_version == 2
+                assert changed.active_run.id == accepted.run_id
+                await manager.update_job(job.id, enabled=False)
+                await manager.delete_job(job.id)
+            result = await execute_accepted(system, accepted)
+            assert result.stats == {"value": 7} and result.source_job_id == job.id
+            assert result.job_id is None
+    asyncio.run(scenario())
+
+
+def test_old_version_disabled_and_missed_cycles_do_not_accept():
+    async def scenario():
+        async with task_system() as system:
+            job = await add_job(system)
+            cron = CronSchedule(clock=system.clock)
+            assert await system.service.scheduled(job.id, 0, job.next_run_at, cron) is None
+            async with system.sessions() as session:
+                record = await session.get(ScheduledJobRecord, job.id)
+                record.enabled = False
+                await session.commit()
+            assert await system.service.scheduled(job.id, 1, job.next_run_at, cron) is None
+            manual = await system.service.trigger(job.id, actor="user:1", request_key="a")
+            await execute_accepted(system, manual)
+            async with system.sessions() as session:
+                record = await session.get(ScheduledJobRecord, job.id)
+                record.enabled = True
+                await session.commit()
+            system.clock.advance(61)
+            assert await system.service.scheduled(job.id, 1, job.next_run_at, cron) is None
+            assert len(await system.service.list_runs()) == 1
+            async with system.sessions() as session:
+                assert (await session.get(ScheduledJobRecord, job.id)).next_run_at > system.clock()
+    asyncio.run(scenario())
+
+
+def test_beat_restart_drops_missed_cycles_and_slow_publish_does_not_block_schedule(monkeypatch):
+    monkeypatch.setattr("agent_lab.tasks.beat.write_status", lambda **_: None)
+    async def scenario():
+        async with task_system() as system:
+            job = await add_job(system, cron_expr="* * * * *")
+            accepted = await system.service.submit("test_echo", {}, actor="user:1", request_key="queued")
+            publishing = asyncio.Event()
+            async def delayed_publish(**_):
+                publishing.set()
+                await asyncio.Event().wait()
+            runtime = SimpleNamespace(store=system.store, service=system.service, worker=system.worker,
+                                      dispatcher=SimpleNamespace(publish_due=delayed_publish))
+            controller = BeatController(runtime, cron=CronSchedule(clock=system.clock))
+            system.clock.advance(5 * 60)
+            await controller.start()
+            await controller.tick()
+            await publishing.wait()
+            assert len(await system.service.list_runs()) == 1
+            system.clock.advance(60)
+            await controller.tick()
+            records = await system.service.list_runs()
+            assert len(records) == 2
+            assert (await system.service.get_run(accepted.run_id)).status == "queued"
+            await controller.close()
+    asyncio.run(scenario())

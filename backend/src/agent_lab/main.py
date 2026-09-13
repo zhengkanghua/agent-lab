@@ -1,20 +1,4 @@
-"""把认证、搜索、手动流水线和定时任务组装成 FastAPI 应用，并管理进程级资源生命周期。
-
-本模块是应用的「装配根」(composition root)：所有下层模块在这里被组合成应用。
-它做五件事：
-1. 挂载账号密码 Cookie 登录，并在服务端区分普通有效用户与超级用户；
-2. 创建进程级只读搜索 Runtime（Ollama + Qdrant 客户端），供搜索请求共享；
-3. 注册一个「按请求创建」的写 Runtime 工厂，只有超级用户调用 Pipeline 才真正构造；
-4. 按配置装配进程内定时任务调度器（``SCHEDULER_ENABLED`` 开启时在 lifespan 启动 cron
-   循环；该模式要求单 worker 单实例，生产容器的独立调度进程见
-   docs/adr/0017-scheduler-runs-in-a-dedicated-process.md）；
-5. 应用关闭时统一释放调度器、搜索客户端和 SQLAlchemy 连接池。
-
-启动阶段访问 PostgreSQL（同步环境托管管理员、建 Agent checkpointer 连接、调度器加载
-任务清单），并向生成式模型上游发一次「列模型」的 GET 校验配置的模型名；不探测
-FreshRSS、Ollama Embedding 或 Qdrant。真正的新闻同步、Collection 生命周期和索引发生在
-手动 POST 时，或由调度器到点触发（同一套写 Runtime 生命周期）。
-"""
+"""组装认证、只读检索、Agent 与公共任务 HTTP 入口；后台业务由独立 Worker 执行。"""
 
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -64,9 +48,11 @@ from agent_lab.config.scheduler import get_scheduler_settings
 from agent_lab.config.settings import get_settings
 from agent_lab.db.session import async_session_factory, engine
 from agent_lab.knowledge.domain import KnowledgeBaseError
-from agent_lab.pipeline.write_runtime import PipelineWriteRuntime
 from agent_lab.qdrant.runtime import VectorSearchRuntime
-from agent_lab.services.scheduler_runner import ScheduledJobRunner
+from agent_lab.tasks.service import TaskService
+from agent_lab.tasks.cron import CronSchedule
+from agent_lab.task_assembly import build_task_service
+from agent_lab.api.task_runs import router as task_runs_router, policy_router as task_policy_router
 from agent_lab.services.vector_search_service import VectorSearchService
 
 
@@ -111,14 +97,13 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "pipeline",
         "description": (
-            "手动、有界且同步的写入流水线；会访问 FreshRSS，并写 PostgreSQL 与 Qdrant。"
+            "手动受理一次后台同步与处理批次，最终统计通过任务执行编号查询。"
         ),
     },
     {
-        "name": "scheduler",
+        "name": "tasks",
         "description": (
-            "仅超级用户可访问的定时任务管理：任务配置增删改查、cron 预览、手动触发与"
-            "执行历史。cron 自动执行受 SCHEDULER_ENABLED 总开关控制。"
+            "仅超级用户可访问的任务管理：周期配置、一次性执行、取消、重试及默认策略。"
         ),
     },
     {
@@ -211,64 +196,10 @@ async def verify_configured_llm_models() -> None:
     await verify_configured_models(get_llm_settings())
 
 
-def build_pipeline_write_runtime() -> PipelineWriteRuntime:
-    """从当前配置组装「一次请求独占」的写入 Runtime（只构造对象，不连接服务）。
-
-    为什么写 Runtime 是「每次请求新建」而搜索 Runtime 是「进程级共享」：写流水线
-    会读写 FreshRSS、PostgreSQL、Ollama、Qdrant 四类外部资源，请求结束就整体关闭，
-    避免长连接残留和请求之间状态串扰；搜索只读且高频，共享反而省资源。
-
-    Returns:
-        绑定 FreshRSS、Session factory、Ollama 和 Qdrant 写入组件的 Runtime。
-
-    Raises:
-        pydantic.ValidationError: FreshRSS、Ollama 或 Qdrant 环境配置缺失或不合法。
-        VectorIndexConfigurationError: 模型、维度或索引组件规格不一致。
-
-    Notes:
-        函数在 ``POST /pipeline/run-once`` 请求路径和调度器每次任务执行时被调用。
-        它读取本地配置并构造 client，不执行 PostgreSQL、FreshRSS、Embedding 或
-        Qdrant I/O；startup 不调用。
-    """
-
-    from agent_lab.pipeline.assembly import build_pipeline_write_runtime as build
-    return build()
-
-
-def build_scheduler_runner(
-    pipeline_runtime_factory: Callable[[], PipelineWriteRuntime],
-) -> ScheduledJobRunner:
-    """组装进程级定时任务调度器（只构造对象，不启动 cron 循环）。
-
-    为什么接收写 Runtime 工厂而不是自己建：调度器到点执行和手动流水线必须走**同一套**
-    Runtime 生命周期（按次新建、用完即关），共用工厂才能保证两条入口的行为一致。
-    存储层走短会话 Store（每次操作独立 Session），避免后台任务长期占用连接池。
-
-    Args:
-        pipeline_runtime_factory: 与手动流水线共用的写 Runtime 工厂。
-
-    Returns:
-        尚未启动的 ``ScheduledJobRunner``；``SCHEDULER_ENABLED`` 开启时由 lifespan
-        调 ``start``。
-
-    Notes:
-        构造过程零 I/O：不读数据库、不启动 APScheduler。数据库连接发生在 ``start``
-        （加载任务清单）和每次执行的历史读写。
-    """
-
-    from agent_lab.pipeline.assembly import build_scheduler_runner as build
-    return build(pipeline_runtime_factory)
-
-
 def create_app(
     *,
     runtime_factory: Callable[[], VectorSearchRuntime] = build_vector_search_runtime,
-    pipeline_runtime_factory: Callable[[], PipelineWriteRuntime] = (
-        build_pipeline_write_runtime
-    ),
-    scheduler_runner_builder: Callable[
-        [Callable[[], PipelineWriteRuntime]], ScheduledJobRunner
-    ] = build_scheduler_runner,
+    task_service_factory: Callable[[], TaskService] = build_task_service,
     agent_runtime_factory: Callable[[VectorSearchService], AgentRuntime] = (
         build_agent_runtime
     ),
@@ -277,81 +208,13 @@ def create_app(
     ] = sync_configured_environment_admin,
     model_catalog_check: Callable[[], Awaitable[None]] = verify_configured_llm_models,
 ) -> FastAPI:
-    """创建 Agent Lab 的 FastAPI 应用（ASGI 应用）。
+    """创建应用并显式注入任务受理与只读 Runtime，构造本身不执行外部 I/O。"""
 
-    为什么要接收「工厂函数」而不是直接构造 Runtime：把「怎么建 Runtime」和「建好的
-    应用」解耦。生产用默认工厂读真实环境配置；离线测试注入 fake 工厂，就能证明
-    HTTP 层不碰真实 Ollama/Qdrant/PostgreSQL。这就是依赖注入。
-
-    Args:
-        runtime_factory: 同步构造只读 Runtime 的工厂；生产使用默认配置，离线测试注入
-            fake Runtime 以证明 HTTP 层不访问真实 Ollama、Qdrant 或 PostgreSQL。
-        pipeline_runtime_factory: 按手动请求构造写入 Runtime 的同步工厂；注册时不会
-            调用，离线测试可注入 fake 以验证同步执行、参数传递和资源关闭。
-        scheduler_runner_builder: 用写 Runtime 工厂构造定时任务调度器的同步函数；
-            构造零 I/O，``SCHEDULER_ENABLED`` 开启时由 lifespan 启动 cron 循环。离线
-            测试注入无 I/O 替身，避免替身缺失时真启动调度器访问数据库。
-        agent_runtime_factory: 用已建好的检索 Service 构造 Agent Runtime 的同步工厂；
-            离线测试注入 fake 以证明 HTTP 层不访问真实大模型。
-        environment_admin_sync: 启动时同步环境托管管理员的异步函数；生产使用 PostgreSQL
-            实现，离线 HTTP 测试注入无 I/O fake。
-        model_catalog_check: 启动时校验 ``LLM_MODEL`` 与 ``LLM_FALLBACK_MODEL`` 是否真的存在于
-            上游模型列表的异步函数；生产会发一次 GET，离线测试注入无 I/O fake。它抛异常等于
-            「配置的模型不存在」，和 Agent 装配失败同样处理——只关掉 ``/agent/*``。
-
-    Returns:
-        已挂载登录、健康检查、受保护只读搜索、Agent 对话、受超级用户保护 Pipeline 与
-        定时任务管理的应用。
-
-    Notes:
-        创建应用对象本身不执行外部 I/O。lifespan 先访问 PostgreSQL 同步环境管理员，
-        再按开关启动调度器（从数据库加载启用任务），然后构造 Search Runtime（不
-        ``ensure_ready``），再校验模型名（一次列模型 GET）并装配 Agent Runtime（会建
-        checkpointer 连接）；写 Runtime 首次使用前不调用。
-    """
-
-    # 调度器在装配时构造（零 I/O），存进 state 供管理 API 依赖取用；是否启动 cron
-    # 循环由 lifespan 按配置决定。
-    scheduler_runner = scheduler_runner_builder(pipeline_runtime_factory)
+    task_service = task_service_factory()
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-        """lifespan = FastAPI 的「进程启动/退出钩子」：起来时执行一次、退出前执行一次。
-
-        这里在启动时构造共享 Search Runtime 和 Agent Runtime 存入 application.state，
-        每个请求的依赖函数再通过 request.app.state 取用；关闭时尽力释放两个 Runtime 和
-        数据库连接池。finally 里多层 try 的意义：任何一个资源关闭失败，都要继续尝试释放
-        其余资源，且优先把第一个失败作为根因抛出，后续失败只作为附加说明。
-
-        Agent Runtime 装配失败是**不致命**的：只记类型日志、把 state 留成 ``None``，
-        搜索和流水线照常服务，只有 ``/agent/*`` 返回 503。反过来（启动直接崩）会让一个
-        缺失的模型 API Key 把整个只读系统一起拖下线，那不是合理的失败半径。
-
-        模型名校验（``model_catalog_check``）刻意放在同一个 ``try`` 里，走同一条失败路径：
-        「模型不存在」和「Agent 装配失败」对用户是同一件事——Agent 用不了，别的照用。
-
-        定时任务调度器在环境管理员同步之后启动：它要从数据库加载任务清单，而前一步已经
-        证明数据库可用；``SCHEDULER_ENABLED`` 关闭时跳过启动，管理 API 照常可用。调度器
-        启动失败视为致命——配置说「要自动同步」却起不来，静默降级会让数据悄悄过期，
-        那比启动失败更难排查（见 ADR 0014）。
-
-        Args:
-            application: 当前 FastAPI 实例，用 ``state`` 暴露 Runtime 给依赖函数。
-
-        Yields:
-            ``None``，控制权交给 ASGI Server 处理并发 HTTP 请求。
-
-        Raises:
-            Exception: 某个 Runtime、调度器或 SQLAlchemy Engine 关闭失败；若多者都失败，
-                保留第一个异常为根因并通过 exception note 记录其余的类型。
-
-        Notes:
-            启动为环境管理员执行 PostgreSQL 认证表 I/O、按开关为调度器加载任务清单、
-            为 Agent checkpointer 建 PostgreSQL 连接，并向生成式模型上游发一次「列模型」
-            的 GET（不产生 token 消耗）；不访问新闻表、Ollama Embedding 或 Qdrant；
-            数据库 migration 与 ``init-checkpointer`` 必须先完成。关闭先停调度器
-            （不再发起新的执行），再按「依赖方先关」释放 Runtime 和连接池。
-        """
+        """管理 API 自己的认证、Agent 与搜索资源；不启动调度器或后台消费者。"""
 
         runtime: VectorSearchRuntime | None = None
         agent_runtime: AgentRuntime | None = None
@@ -359,9 +222,6 @@ def create_app(
         try:
             # 1、migration 已由部署步骤完成；先同步唯一环境管理员，再构造只读 Runtime。
             await environment_admin_sync()
-            # 2、调度器只在总开关开启时启动 cron 循环；关闭时跳过，管理 API 照常可用。
-            if get_scheduler_settings().enabled:
-                await scheduler_runner.start()
             runtime = runtime_factory()
             application.state.vector_search_runtime = runtime
             # 3、Agent 复用上面那个检索 Service，所以必须排在它之后。
@@ -379,17 +239,7 @@ def create_app(
             # 4、yield 之后是「运行期」：ASGI Server 在这里处理并发 HTTP 请求。
             yield
         finally:
-            # 5、关闭阶段：先停调度器（不再发起新的任务执行），再按「依赖方先关」的
-            # 顺序释放 Runtime——Agent 依赖检索 Service，所以先关它。
-            try:
-                await scheduler_runner.close()
-            except Exception as exc:
-                if shutdown_error is None:
-                    shutdown_error = exc
-                else:
-                    shutdown_error.add_note(
-                        f"此外关闭 ScheduledJobRunner 也失败：{type(exc).__name__}。"
-                    )
+            # 先释放依赖搜索的 Agent，再释放搜索资源。
             for resource in (agent_runtime, runtime):
                 if resource is None:
                     continue
@@ -425,17 +275,14 @@ def create_app(
         description=(
             "Agent Lab 后端服务。当前提供 FreshRSS 新闻增量同步、Ollama/LangChain "
             "Embedding、Qdrant 索引与只读向量搜索。流水线接口是显式手动写操作；"
-            "定时自动执行由调度器负责，受 SCHEDULER_ENABLED 总开关控制"
-            "（见 docs/adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md）。"
+            "周期由独立 Celery Beat 受理，后台工作由 Celery Worker 执行。"
         ),
         version="0.1.0",
         openapi_tags=OPENAPI_TAGS,
         lifespan=lifespan,
     )
-    # 保存的是无 I/O 工厂而不是写 Runtime；只有显式 POST 才构造并运行写入组件。
-    application.state.pipeline_write_runtime_factory = pipeline_runtime_factory
-    # 进程级调度器实例（无论开关与否都存在）；管理 API 通过依赖取用。
-    application.state.scheduler_runner = scheduler_runner
+    application.state.task_service = task_service
+    application.state.task_cron = CronSchedule(get_scheduler_settings().timezone)
 
     @application.exception_handler(RequestValidationError)
     async def sanitized_request_validation_error(
@@ -573,6 +420,8 @@ def create_app(
         scheduled_jobs_router,
         dependencies=[Depends(current_superuser)],
     )
+    application.include_router(task_runs_router, dependencies=[Depends(current_superuser)])
+    application.include_router(task_policy_router, dependencies=[Depends(current_superuser)])
     # Agent 只读，但限超级用户：每次对话都是真金白银的模型调用，而且自定义系统提示词
     # 等于让调用方直接改模型行为。v1 先按「内部工具」定级，放宽是以后的事、收紧很难。
     application.include_router(

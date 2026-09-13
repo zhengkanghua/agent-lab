@@ -1,95 +1,27 @@
-"""定时任务调度器的进程级配置。
-
-本模块只把 ``SCHEDULER_*`` 环境变量解析为有类型、可校验的设置，不启动调度器、
-不访问数据库。调度器的启停决策发生在应用 lifespan；cron 表达式的解释时区由
-``timezone`` 决定——数据库存储一律 UTC，这里只是「cron 字符串 → 具体时刻」的
-翻译规则（见 docs/adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md）。
-"""
+"""统一 cron 解释时区；API 不提供进程内调度开关。"""
 
 from functools import lru_cache
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, field_validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class SchedulerSettings(BaseSettings):
-    """定时任务调度器的运行配置。
-
-    ``enabled`` 默认 False：开发、测试环境默认不带自动调度。生产容器部署下
-    该值由 docker-compose 覆盖（backend 容器强制 false，调度器容器强制 true），
-    见 docs/adr/0017-scheduler-runs-in-a-dedicated-process.md；它只对非容器的
-    裸进程部署有意义。
-    """
-
-    enabled: bool = Field(
-        default=False,
-        description=(
-            "是否在应用启动时开启 cron 自动调度，来源于 SCHEDULER_ENABLED；"
-            "关闭时管理 API 仍可用（可手动触发），只是不到点自动执行。"
-        ),
-    )
-    timezone: str = Field(
-        default="Asia/Shanghai",
-        min_length=1,
-        description=(
-            "cron 表达式的解释时区（IANA 名称），来源于 SCHEDULER_TIMEZONE；"
-            "只影响「0 9 * * *」这类字符串翻译成哪个时刻，数据库存储仍是 UTC。"
-        ),
-    )
-    refresh_seconds: float = Field(default=5, ge=1, le=60, description="数据库配置刷新间隔秒数。")
-    shutdown_grace_seconds: float = Field(default=10, ge=0, le=300, description="进程关闭时等待任务收尾的秒数，不是清理任务执行上限。")
-    run_history_retention: int = Field(
-        default=50,
-        ge=1,
-        description=(
-            "每个定时任务保留的最近任务执行记录条数，来源于 SCHEDULER_RUN_HISTORY_RETENTION；"
-            "每次执行收尾时裁掉更早的记录。"
-        ),
-    )
+    timezone: str = "Asia/Shanghai"
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", env_prefix="SCHEDULER_", extra="ignore")
 
     @field_validator("timezone")
     @classmethod
-    def validate_timezone(cls, value: str) -> str:
-        """校验时区是可解析的 IANA 名称，拒绝拼错的字符串。
-
-        Args:
-            value: 环境变量中的原始时区名。
-
-        Returns:
-            去除首尾空白后的时区名。
-
-        Raises:
-            ValueError: 名称不能被 zoneinfo 识别（如拼错的 Asia/Shanghai）。
-        """
-
-        from zoneinfo import ZoneInfo
-
+    def validate_timezone(cls, value):
         normalized = value.strip()
         try:
             ZoneInfo(normalized)
-        except Exception as exc:
-            raise ValueError(
-                f"SCHEDULER_TIMEZONE 不是可识别的 IANA 时区名称：{normalized!r}"
-            ) from exc
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError("调度时区必须是有效的 IANA 时区。") from None
         return normalized
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        env_prefix="SCHEDULER_",
-        extra="ignore",
-    )
 
 
 @lru_cache
-def get_scheduler_settings() -> SchedulerSettings:
-    """读取并缓存调度器配置，不执行任何 I/O。
-
-    Returns:
-        已完成时区校验的进程级调度器配置。
-    """
-
+def get_scheduler_settings():
     return SchedulerSettings()
-
-
-__all__ = ["SchedulerSettings", "get_scheduler_settings"]

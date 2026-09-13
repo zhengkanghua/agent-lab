@@ -1,12 +1,9 @@
 """定时任务模块的领域异常：自带稳定 code 与安全中文 detail。
 
-本模块是叶子模块，被调度器（runner）、请求级 Service 和 API 错误映射共同引用，自己
+本模块是叶子模块，被周期配置 Service、cron 校验和 API 错误映射共同引用，自己
 不 import 项目内任何模块。与 ``UserAdminDomainError`` 同一模式：异常携带的是**预写的
 安全文案**，不是 ``str(error)``，因此把这些异常映射进 HTTP 响应不会泄露内部细节。
 """
-
-from uuid import UUID
-
 
 class ScheduledJobDomainError(Exception):
     """定时任务模块预期失败的基类；子类用类属性固定 code 与 detail。"""
@@ -50,37 +47,7 @@ class ScheduledJobUnknownTypeError(ScheduledJobDomainError):
     detail = "未知的任务类型。"
 
 
-class ScheduledJobAlreadyRunningError(ScheduledJobDomainError):
-    """手动触发时上一轮执行尚未结束；按运行策略跳过而不是排队。
-
-    Attributes:
-        job_id: 触发时指定的任务 id，便于日志定位（不含其他身份信息）。
-    """
-
-    code = "scheduled_job_already_running"
-    detail = "任务正在执行中，请等待本轮结束后再触发。"
-
-    def __init__(self, job_id: UUID) -> None:
-        """记录冲突的任务 id，不携带任何异常文本。"""
-
-        super().__init__(job_id)
-        self.job_id = job_id
-
-
-class ScheduledJobEditBlockedError(ScheduledJobDomainError):
-    """修改前必须先停用，并等本次执行结束。"""
-
-    code = "scheduled_job_edit_blocked"
-    detail = "请先停用任务，等待本次执行结束后再修改配置。"
-
-
-class ScheduledJobClosingError(ScheduledJobDomainError):
-    code = "scheduled_job_closing"
-    detail = "服务正在停止，暂不接受新的任务执行。"
-
-
 __all__ = [
-    "ScheduledJobAlreadyRunningError",
     "ScheduledJobDomainError",
     "ScheduledJobInvalidCronError",
     "ScheduledJobInvalidParamsError",

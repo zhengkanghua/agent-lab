@@ -57,7 +57,7 @@ from agent_lab.agent.errors import (
     ModelResponseInvalidError,
 )
 from agent_lab.api.dependencies import (
-    PipelineWriteRuntimeUnavailableError,
+    SchedulerRuntimeUnavailableError,
     VectorSearchRuntimeUnavailableError,
 )
 from agent_lab.ingestion.freshrss_client import (
@@ -101,7 +101,6 @@ from agent_lab.qdrant.search import (
     QdrantVectorSearchError,
 )
 from agent_lab.qdrant.store import QdrantPointStoreError
-from agent_lab.schemas.pipeline import PipelineErrorResponse
 from agent_lab.services.vector_search_service import QueryVectorValidationError
 from agent_lab.knowledge.visibility import SearchVisibilityError
 
@@ -423,13 +422,6 @@ PIPELINE_ERROR_RULES: tuple[ErrorContractRule, ...] = (
         detail="流水线操作超时。",
         retryable=True,
     ),
-    ErrorContractRule(
-        exceptions=(PipelineWriteRuntimeUnavailableError,),
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        code="pipeline_runtime_unavailable",
-        detail="流水线写入运行时不可用。",
-        retryable=False,
-    ),
 )
 
 # 账号管理链路（/admin/users）的错误表。它只有数据库一类「按类型分类」的失败：
@@ -491,6 +483,13 @@ KNOWLEDGE_BASE_ERROR_RULES: tuple[ErrorContractRule, ...] = (
 # code 刻意与 user_admin / pipeline 的数据库不可用都不相同：三张表管的是不同的功能面，
 # 日志和前端文案要能一眼区分是哪条链路的数据库故障。
 SCHEDULED_JOB_ERROR_RULES: tuple[ErrorContractRule, ...] = (
+    ErrorContractRule(
+        exceptions=(SchedulerRuntimeUnavailableError,),
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="task_service_unavailable",
+        detail="任务受理与查询组件当前不可用。",
+        retryable=True,
+    ),
     ErrorContractRule(
         exceptions=(SQLAlchemyError,),
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -857,35 +856,6 @@ def build_agent_chat_error_response(error: BaseException) -> JSONResponse:
     )
 
 
-def build_pipeline_error_response(error: BaseException) -> JSONResponse:
-    """把批次级异常按类型映射成稳定、脱敏的流水线错误响应。
-
-    比搜索响应多一个 ``error_type`` 字段：它只放异常的 Python 类名，方便运维定位是
-    哪类上游失败，而不像 ``str(error)`` 那样可能带出数据库 URL、密钥或正文。
-
-    Args:
-        error: Runtime 构造、执行或关闭阶段捕获的根异常；只读其类型。
-
-    Returns:
-        包含固定 ``code/detail/error_type/retryable`` 的 JSONResponse；未分类异常为 500。
-
-    Notes:
-        不调用 ``str(error)``，不执行任何 I/O。
-    """
-
-    rule = resolve_error_contract(error, PIPELINE_ERROR_RULES)
-    payload = PipelineErrorResponse(
-        code=rule.code,
-        detail=rule.detail,
-        error_type=type(error).__name__,
-        retryable=rule.retryable,
-    )
-    return JSONResponse(
-        status_code=rule.status_code,
-        content=payload.model_dump(mode="json"),
-    )
-
-
 def build_user_admin_error_response(error: BaseException) -> JSONResponse:
     """把账号管理的基础设施异常按类型映射成稳定 503。
 
@@ -1065,7 +1035,6 @@ __all__ = [
     "VectorSearchErrorResponse",
     "build_agent_chat_error_response",
     "build_error_response",
-    "build_pipeline_error_response",
     "build_scheduled_job_error_response",
     "build_user_admin_error_response",
     "build_vector_search_error_response",

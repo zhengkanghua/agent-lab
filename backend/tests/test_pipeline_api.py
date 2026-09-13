@@ -1,345 +1,175 @@
-"""阶段 6 手动流水线 HTTP API 与独立写入 Runtime 的完全离线测试。
-
-测试分别注入只读 Search Runtime 和按请求 Write Runtime，不连接 FreshRSS、PostgreSQL、
-Ollama 或 Qdrant。重点验证参数边界、startup 零写入、Service 复用、部分失败统计、
-错误分类与异常文本脱敏。
-"""
+"""手动 Pipeline 持久受理后由 Worker 执行，HTTP 按编号查询脱敏统计。"""
 
 import asyncio
-from contextlib import nullcontext
+from contextlib import asynccontextmanager, nullcontext
+from dataclasses import replace
 from datetime import timedelta
+from types import SimpleNamespace
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from fastapi import FastAPI
 from pydantic import SecretStr, ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
-from agent_lab.api.pipeline import build_pipeline_error_response
 from agent_lab.config.freshrss import FreshRSSSettings
-from agent_lab.ingestion.freshrss_client import (
-    FreshRSSAuthenticationError,
-    FreshRSSConnectionError,
-    FreshRSSTimeoutError,
-)
+from agent_lab.domain.write_scope import write_scope
+from agent_lab.ingestion.freshrss_client import FreshRSSAuthenticationError, FreshRSSConnectionError, FreshRSSTimeoutError
 from agent_lab.pipeline.ollama_embedding_provider import OllamaTimeoutError
-from agent_lab.pipeline.write_runtime import (
-    PipelineRunOnceExecutionResult,
-    PipelineWriteRuntime,
-)
+from agent_lab.pipeline.write_runtime import PipelineRunOnceExecutionResult, PipelineWriteRuntime
 from agent_lab.qdrant.lifecycle import QdrantLifecycleError
 from agent_lab.knowledge.document_contracts import SourceSyncFailure
-from agent_lab.services.news_pipeline_execution_service import (
-    IndexExecutionFailure,
-    NewsSyncExecutionResult,
-    PendingIndexExecutionResult,
-)
-from tests.app_helpers import create_offline_app
+from agent_lab.services.news_pipeline_execution_service import IndexExecutionFailure, NewsSyncExecutionResult, PendingIndexExecutionResult
+from agent_lab.services.scheduled_task_registry import TASK_TYPE_SPECS
+from agent_lab.services.scheduled_tasks import classify_error
+from tests.app_helpers import FakeSearchRuntime, create_offline_app
 from tests.auth_helpers import allow_superuser
+from tests.task_helpers import task_system
+
+run = asyncio.run
 
 
-def run(coroutine: Any) -> Any:
-    """执行异步 API 测试，不访问外部事件循环。"""
-
-    return asyncio.run(coroutine)
-
-
-def execution_result(
-    *,
-    sync_failures: tuple[SourceSyncFailure, ...] = (),
-    index_failures: tuple[IndexExecutionFailure, ...] = (),
-) -> PipelineRunOnceExecutionResult:
-    """构造不含正文或 Vector 的写 Runtime 结果。"""
-
+def execution_result(*, sync_failures=(), index_failures=()):
     return PipelineRunOnceExecutionResult(
-        sync=NewsSyncExecutionResult(
-            synchronized_count=3,
-            source_count=2,
-            successful_source_count=2 - len(sync_failures),
-            checkpoint_advanced_count=1,
-            failures=sync_failures,
-        ),
-        index=PendingIndexExecutionResult(
-            candidate_count=3,
-            requeued_stale_count=1,
-            indexed_count=2,
-            skipped_count=0,
-            failures=index_failures,
-        ),
+        sync=NewsSyncExecutionResult(synchronized_count=3, source_count=2,
+            successful_source_count=2 - len(sync_failures), checkpoint_advanced_count=1, failures=sync_failures),
+        index=PendingIndexExecutionResult(candidate_count=3, requeued_stale_count=1,
+            indexed_count=2, skipped_count=0, failures=index_failures),
     )
-
-
-class FakeSearchRuntime:
-    """只支持 lifespan close 和 Agent 装配读取的 service；任何写入属性访问都会暴露边界错误。
-
-    ``service`` 必须存在：lifespan 会把它取出来传给 ``agent_runtime_factory``。缺了它，
-    这一步会抛 ``AttributeError`` 并被 lifespan 的 ``except Exception`` 咽掉——本文件的
-    用例照样通过，但「启动装配」这段实际上从没被执行过。
-    """
-
-    def __init__(self) -> None:
-        self.service = object()
-        self.closed = False
-
-    async def close(self) -> None:
-        """记录只读 Runtime 已由 lifespan 关闭。"""
-
-        self.closed = True
 
 
 class FakeWriteRuntime:
-    """记录一次同步调用参数，并返回或抛出预设行为。"""
+    def __init__(self, *, result=None, error=None):
+        self.result, self.error = result or execution_result(), error
+        self.calls, self.closed, self.session_factory = [], False, None
 
-    def __init__(
-        self,
-        *,
-        result: PipelineRunOnceExecutionResult | None = None,
-        error: Exception | None = None,
-    ) -> None:
-        self.result = result or execution_result()
-        self.error = error
-        self.calls: list[dict[str, Any]] = []
-        self.closed = False
-
-    async def run_once(self, **kwargs: Any) -> PipelineRunOnceExecutionResult:
-        """记录参数并执行预设结果，不创建后台 Task。"""
-
+    async def sync_only(self, **kwargs):
+        # 同步阶段不占 index；后续处理阶段已经释放 sync。
+        assert write_scope.get().resources == ("sync",)
         self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
-        return self.result
+        return self.result.sync
 
-    async def close(self) -> None:
-        """记录按请求 Runtime 已关闭。"""
+    async def index_only(self, **kwargs):
+        assert write_scope.get() is None
+        self.calls.append(kwargs)
+        return self.result.index
 
+    async def close(self):
         self.closed = True
 
 
-def app_for(
-    runtime_factory: Any,
-) -> tuple[FastAPI, FakeSearchRuntime]:
-    """创建同时注入只读和写入 fake 的 FastAPI 应用。"""
-
-    search_runtime = FakeSearchRuntime()
-    app = allow_superuser(
-        create_offline_app(
-            runtime_factory=lambda: search_runtime,
-            pipeline_runtime_factory=runtime_factory,
-        )
-    )
-    return app, search_runtime
-
-
-async def request(
-    app: FastAPI,
-    method: str,
-    path: str,
-    **kwargs: Any,
-) -> httpx.Response:
-    """在显式 lifespan 内发送内存 ASGI 请求。"""
-
-    async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(
-            transport=transport,
-            base_url="http://testserver",
-        ) as client:
-            return await client.request(method, path, **kwargs)
-
-
-def test_startup_never_constructs_or_executes_pipeline_write_runtime() -> None:
-    factory_calls = 0
-
-    def factory() -> FakeWriteRuntime:
-        nonlocal factory_calls
-        factory_calls += 1
-        return FakeWriteRuntime()
-
-    app, search_runtime = app_for(factory)
-
-    async def verify() -> None:
+@asynccontextmanager
+async def pipeline_system(runtime):
+    spec = replace(TASK_TYPE_SPECS["pipeline_run_once"], runtime_factory=lambda: runtime)
+    async with task_system(spec) as system:
+        runtime.session_factory = system.sessions
+        app = allow_superuser(create_offline_app(runtime_factory=FakeSearchRuntime,
+            task_service_factory=lambda: system.service))
         async with app.router.lifespan_context(app):
-            assert factory_calls == 0
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+                yield system, client, app
 
+
+def test_intake_returns_202_without_business_then_worker_publishes_result():
+    async def verify():
+        runtime = FakeWriteRuntime()
+        async with pipeline_system(runtime) as (system, client, _app):
+            assert runtime.calls == []
+            response = await client.post("/pipeline/run-once", json={}, headers={"Idempotency-Key": "a"})
+            assert response.status_code == 202
+            accepted = response.json()
+            assert accepted["status"] == "queued" and runtime.calls == []
+            identity = UUID(accepted["run_id"])
+            assert (await client.get(f"/task-runs/{identity}")).json()["status"] == "queued"
+            await system.worker.execute(identity, 1)
+            detail = await client.get(f"/task-runs/{identity}")
+            assert detail.status_code == 200 and detail.json()["status"] == "succeeded"
+            stats = detail.json()["stats"]
+            assert stats["ok"] is True
+            assert stats["sync"]["synchronized_document_count"] == 3
+            assert stats["index"]["indexed_document_count"] == 2
+            assert runtime.calls == [{"limit_per_source": 2}, {"batch_size": 20, "stale_after": timedelta(minutes=60)}]
+            assert runtime.closed
+            repeated = await client.post("/pipeline/run-once", json={}, headers={"Idempotency-Key": "a"})
+            assert repeated.json()["run_id"] == str(identity)
     run(verify())
-    assert factory_calls == 0
-    assert search_runtime.closed is True
 
 
-def test_manual_endpoint_uses_defaults_waits_for_result_and_closes_runtime() -> None:
-    write_runtime = FakeWriteRuntime()
-    factory_calls = 0
-
-    def factory() -> FakeWriteRuntime:
-        nonlocal factory_calls
-        factory_calls += 1
-        return write_runtime
-
-    app, _search_runtime = app_for(factory)
-    response = run(request(app, "POST", "/pipeline/run-once", json={}))
-
-    assert response.status_code == 200
-    assert factory_calls == 1
-    assert write_runtime.calls == [
-        {
-            "limit_per_source": 2,
-            "batch_size": 20,
-            "stale_after": timedelta(minutes=60),
-        }
-    ]
-    assert write_runtime.closed is True
-    assert response.json() == {
-        "ok": True,
-        "execution_mode": "manual",
-        "sync": {
-            "source_count": 2,
-            "successful_source_count": 2,
-            "failed_source_count": 0,
-            "synchronized_document_count": 3,
-            "checkpoint_advanced_count": 1,
-            "failures": [],
-        },
-        "index": {
-            "requeued_stale_document_count": 1,
-            "candidate_document_count": 3,
-            "indexed_document_count": 2,
-            "skipped_document_count": 0,
-            "failed_document_count": 0,
-            "failures": [],
-            "parsed_document_count": 0,
-            "review_document_count": 0,
-            "cleaned_index_instance_count": 0,
-        },
-    }
+@pytest.mark.parametrize("body", [
+    {"limit_per_source": 0}, {"limit_per_source": 101}, {"batch_size": 0}, {"batch_size": 1001},
+    {"stale_after_minutes": 0}, {"stale_after_minutes": 10081}, {"background": True},
+])
+def test_manual_endpoint_rejects_invalid_or_unknown_parameters(body):
+    async def verify():
+        runtime = FakeWriteRuntime()
+        async with pipeline_system(runtime) as (system, client, _app):
+            response = await client.post("/pipeline/run-once", json=body, headers={"Idempotency-Key": "a"})
+            assert response.status_code == 422 and not runtime.calls
+            assert not await system.service.list_runs()
+    run(verify())
 
 
-@pytest.mark.parametrize(
-    "body",
-    [
-        {"limit_per_source": 0},
-        {"limit_per_source": 101},
-        {"batch_size": 0},
-        {"batch_size": 1001},
-        {"stale_after_minutes": 0},
-        {"stale_after_minutes": 10081},
-        {"background": True},
-    ],
-)
-def test_manual_endpoint_rejects_invalid_or_unknown_parameters(
-    body: dict[str, Any],
-) -> None:
-    factory_calls = 0
-
-    def factory() -> FakeWriteRuntime:
-        nonlocal factory_calls
-        factory_calls += 1
-        return FakeWriteRuntime()
-
-    app, _search_runtime = app_for(factory)
-    response = run(request(app, "POST", "/pipeline/run-once", json=body))
-
-    assert response.status_code == 422
-    assert factory_calls == 0
+def test_partial_failures_are_preserved_in_execution_detail():
+    async def verify():
+        runtime = FakeWriteRuntime(result=execution_result(
+            sync_failures=(SourceSyncFailure("feed/1", "FreshRSSConnectionError"), SourceSyncFailure("feed/2", "FreshRSSConnectionError")),
+            index_failures=(IndexExecutionFailure(uuid4(), "OllamaTimeoutError"),),
+        ))
+        async with pipeline_system(runtime) as (system, client, _app):
+            response = await client.post("/pipeline/run-once", json={}, headers={"Idempotency-Key": "a"})
+            identity = UUID(response.json()["run_id"])
+            await system.worker.execute(identity, 1)
+            detail = await client.get(f"/task-runs/{identity}")
+            stats = detail.json()["stats"]
+            assert stats["ok"] is False
+            assert stats["sync"]["failed_source_count"] == 2
+            assert stats["sync"]["failures"] == [{"error_type": "FreshRSSConnectionError", "count": 2}]
+            assert stats["index"]["failed_document_count"] == 1
+            assert stats["index"]["failures"] == [{"error_type": "OllamaTimeoutError", "count": 1}]
+            assert "feed/1" not in detail.text and str(runtime.result.index.failures[0].document_id) not in detail.text
+    run(verify())
 
 
-def test_partial_source_and_document_failures_are_safe_200_statistics() -> None:
-    write_runtime = FakeWriteRuntime(
-        result=execution_result(
-            sync_failures=(
-                SourceSyncFailure("feed/1", "FreshRSSConnectionError"),
-                SourceSyncFailure("feed/2", "FreshRSSConnectionError"),
-            ),
-            index_failures=(
-                IndexExecutionFailure(uuid4(), "OllamaTimeoutError"),
-            ),
-        )
-    )
-    app, _search_runtime = app_for(lambda: write_runtime)
-
-    response = run(request(app, "POST", "/pipeline/run-once", json={}))
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["ok"] is False
-    assert body["sync"]["failed_source_count"] == 2
-    assert body["sync"]["failures"] == [
-        {"error_type": "FreshRSSConnectionError", "count": 2}
-    ]
-    assert body["index"]["failed_document_count"] == 1
-    assert body["index"]["failures"] == [
-        {"error_type": "OllamaTimeoutError", "count": 1}
-    ]
-    assert "feed/1" not in response.text
-    assert str(write_runtime.result.index.failures[0].document_id) not in response.text
+def test_safe_timeout_waits_for_retry_without_echoing_exception():
+    async def verify():
+        runtime = FakeWriteRuntime(error=FreshRSSTimeoutError("secret token and full response body"))
+        async with pipeline_system(runtime) as (system, client, _app):
+            accepted = await client.post("/pipeline/run-once", json={}, headers={"Idempotency-Key": "a"})
+            assert accepted.status_code == 202
+            identity = UUID(accepted.json()["run_id"])
+            await system.worker.execute(identity, 1)
+            response = await client.get(f"/task-runs/{identity}")
+            assert response.json()["status"] == "retry_wait"
+            assert response.json()["stats"]["error_code"] == "freshrss_timeout"
+            assert response.json()["error_type"] == "FreshRSSTimeoutError"
+            assert "secret token" not in response.text and runtime.closed
+    run(verify())
 
 
-def test_batch_error_response_is_classified_and_never_echoes_exception_text() -> None:
-    write_runtime = FakeWriteRuntime(
-        error=FreshRSSTimeoutError("secret token and full response body")
-    )
-    app, _search_runtime = app_for(lambda: write_runtime)
-
-    response = run(request(app, "POST", "/pipeline/run-once", json={}))
-
-    assert response.status_code == 504
-    assert response.json() == {
-        "code": "freshrss_timeout",
-        "detail": "FreshRSS 请求超时。",
-        "error_type": "FreshRSSTimeoutError",
-        "retryable": True,
-    }
-    assert "secret token" not in response.text
-    assert "full response body" not in response.text
-    assert write_runtime.closed is True
-
-
-def configuration_error() -> ValidationError:
-    """构造真实 Pydantic Settings 校验错误，不读取环境配置。"""
-
+def configuration_error():
     with pytest.raises(ValidationError) as error:
-        FreshRSSSettings(
-            provider_key="freshrss_test",
-            api_base_url="https://example.com/api/",
-            username="user",
-            api_password=SecretStr("secret"),
-            sync_categories=(),
-        )
+        FreshRSSSettings(provider_key="freshrss_test", api_base_url="https://example.com/api/",
+            username="user", api_password=SecretStr("secret"), sync_categories=())
     return error.value
 
 
-@pytest.mark.parametrize(
-    ("error", "status_code", "code", "retryable"),
-    [
-        (
-            FreshRSSAuthenticationError("private"),
-            502,
-            "freshrss_authentication_failed",
-            False,
-        ),
-        (FreshRSSConnectionError("private"), 503, "freshrss_unavailable", True),
-        (SQLAlchemyError("postgresql://secret"), 503, "postgresql_unavailable", True),
-        (OllamaTimeoutError("full vector"), 504, "embedding_timeout", True),
-        (QdrantLifecycleError("api-key"), 503, "qdrant_unavailable", True),
-        (configuration_error(), 503, "pipeline_configuration_invalid", False),
-        (TimeoutError("private"), 504, "pipeline_timeout", True),
-    ],
-)
-def test_known_freshrss_postgresql_ollama_qdrant_config_and_timeout_errors(
-    error: Exception,
-    status_code: int,
-    code: str,
-    retryable: bool,
-) -> None:
-    response = build_pipeline_error_response(error)
-
-    assert response.status_code == status_code
-    body = bytes(response.body).decode()
-    assert code in body
-    assert f'"retryable":{str(retryable).lower()}' in body
+@pytest.mark.parametrize("error, code, safe_retry", [
+    (FreshRSSAuthenticationError("private"), "freshrss_authentication_failed", False),
+    (FreshRSSConnectionError("private"), "freshrss_unavailable", True),
+    (SQLAlchemyError("postgresql://secret"), "postgresql_unavailable", False),
+    (OllamaTimeoutError("full vector"), "embedding_timeout", False),
+    (QdrantLifecycleError("api-key"), "qdrant_unavailable", False),
+    (configuration_error(), "pipeline_configuration_invalid", False),
+    (TimeoutError("private"), "pipeline_timeout", False),
+])
+def test_business_error_classification_preserves_safe_codes(error, code, safe_retry):
+    decision = classify_error(error)
+    assert decision.stats["error_code"] == code and decision.retryable is safe_retry
     for sensitive in ("private", "postgresql://secret", "full vector", "api-key"):
-        assert sensitive not in body
+        assert sensitive not in str(decision)
 
 
 def test_pipeline_write_runtime_syncs_then_uses_shared_processing_batch() -> None:
@@ -386,20 +216,11 @@ def test_pipeline_write_runtime_syncs_then_uses_shared_processing_batch() -> Non
     assert result.index is expected.index
 
 
-def test_openapi_exposes_manual_route_without_background_fields() -> None:
-    app, _search_runtime = app_for(lambda: FakeWriteRuntime())
+
+def test_openapi_exposes_async_receipt_and_independent_query():
+    app = create_offline_app(runtime_factory=FakeSearchRuntime)
     schema = app.openapi()
     operation = schema["paths"]["/pipeline/run-once"]["post"]
-
-    assert operation["requestBody"]["content"]["application/json"]["schema"]
-    assert operation["summary"] == "手动执行一次新闻增量同步与向量索引"
-    assert "写入副作用" in operation["description"]
-    assert operation["responses"]["200"]["description"] == "本轮同步与索引完成后的脱敏统计。"
-    assert operation["responses"]["503"]["description"] == "配置、PostgreSQL 或写入上游当前不可用。"
-    assert operation["responses"]["200"]
-    assert "202" not in operation["responses"]
-    tag_descriptions = {item["name"]: item["description"] for item in schema["tags"]}
-    assert "手动、有界且同步" in tag_descriptions["pipeline"]
-
-
-# 错误契约的跨表不变量与 detail 文案守护见 tests/test_error_contract.py。
+    assert "202" in operation["responses"] and "200" not in operation["responses"]
+    assert any(item["name"] == "Idempotency-Key" and item["required"] for item in operation["parameters"])
+    assert "/task-runs/{run_id}" in schema["paths"]

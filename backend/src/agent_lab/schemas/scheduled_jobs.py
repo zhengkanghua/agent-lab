@@ -6,11 +6,13 @@
 所有时刻字段一律 UTC ISO8601，展示时区的换算由前端负责。
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field
+
+from agent_lab.schemas.tasks import JobRunResponse, TaskAcceptedResponse
 
 
 class CronValidateRequest(BaseModel):
@@ -43,6 +45,7 @@ class ScheduledTaskTypeResponse(BaseModel):
     description: str
     defaults: dict[str, Any]
     params_schema: dict[str, Any]
+    schedulable: bool = True
 
 
 class ScheduledJobCreateRequest(BaseModel):
@@ -100,39 +103,6 @@ class ScheduledJobUpdateRequest(BaseModel):
     )
 
 
-class JobRunResponse(BaseModel):
-    """一条任务执行记录：只含脱敏统计，不含正文、身份或异常文本。"""
-
-    model_config = ConfigDict(frozen=True, from_attributes=True)
-
-    id: UUID = Field(description="执行记录 id。")
-    job_id: UUID = Field(description="所属定时任务 id。")
-    trigger_type: str = Field(description="触发方式：scheduled（cron 到点）或 manual（手动触发）。")
-    status: str = Field(description="执行状态：running、succeeded、failed 或 skipped。")
-    started_at: datetime = Field(description="开始（或跳过判定发生）时刻，UTC。")
-    finished_at: datetime | None = Field(
-        description="结束时刻，UTC；尚未结束时为空，skipped 的起止时刻相同。",
-    )
-    stats: dict[str, Any] = Field(
-        description=(
-            "脱敏统计：数量与按异常类型的聚合计数；skipped 记录含 reason 字段，"
-            "批次级失败的记录含 error_reason（稳定失败原因枚举）。"
-        ),
-    )
-    error_type: str | None = Field(
-        description="批次级失败的异常类名（只含类型名，无异常文本）；成功与跳过时为空。",
-    )
-    heartbeat_at: datetime | None = None
-
-    @computed_field
-    @property
-    def needs_attention(self) -> bool:
-        """心跳失联只表示需要核实，不授权抢占或重做业务。"""
-        return self.stats.get("needs_attention") is True or self.status == "running" and (
-            self.heartbeat_at is None or self.heartbeat_at < datetime.now(UTC) - timedelta(seconds=30)
-        )
-
-
 class ScheduledJobResponse(BaseModel):
     """一条定时任务的完整视图：配置 + 调度状态 + 最近一次执行摘要。"""
 
@@ -155,14 +125,7 @@ class ScheduledJobResponse(BaseModel):
     updated_at: datetime = Field(description="最近一次配置修改时间，UTC。")
 
 
-class ScheduledJobTriggerResponse(BaseModel):
-    """手动触发的受理回执：执行已在后台开始，结果通过执行历史查询。"""
-
-    model_config = ConfigDict(frozen=True)
-
-    job_id: UUID = Field(description="被触发的定时任务 id。")
-    run_id: UUID = Field(description="新创建的执行记录 id，可凭它到执行历史里跟踪。")
-    status: str = Field(description="受理时的执行状态，固定为 running。")
+ScheduledJobTriggerResponse = TaskAcceptedResponse
 
 
 class ScheduledJobErrorResponse(BaseModel):
@@ -171,6 +134,7 @@ class ScheduledJobErrorResponse(BaseModel):
     code: str = Field(description="供前端稳定识别的错误代码。")
     detail: str = Field(description="不含异常文本、凭据或内部路径的安全说明。")
     retryable: bool = Field(description="相同请求稍后重试是否可能成功。")
+    run_id: UUID | None = Field(default=None, description="发生冲突或详情过期时对应的执行编号。")
 
 
 __all__ = [

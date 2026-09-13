@@ -1,159 +1,118 @@
-"""定义定时任务及其执行历史的 PostgreSQL ORM 实体。
-
-本模块位于持久层模型边界，只声明 ``scheduled_jobs`` 与 ``scheduled_job_runs`` 两张表的
-列、唯一键和 ORM relationship；它不解析 cron、不启动调度器、不执行 FreshRSS/Qdrant I/O。
-
-两张表的关系：``scheduled_jobs`` 一行是一条「定时任务」（任务类型、cron、参数、启停），
-是调度器配置的唯一事实来源（见 docs/adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md）；
-``scheduled_job_runs`` 一行是一次「任务执行」（到点触发或手动触发各一条），只记脱敏统计，
-不记异常文本。任务删除时执行历史随外键级联删除。
-"""
-
-from __future__ import annotations
+"""周期配置与公共任务执行的持久身份；删除配置不删除已受理工作。"""
 
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, Uuid
+from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint, Uuid, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from agent_lab.db.base import Base, TimestampMixin
 
+ACTIVE_SQL = "status IN ('queued', 'waiting_resource', 'running', 'retry_wait', 'needs_attention')"
+
 
 class ScheduledJobRecord(TimestampMixin, Base):
-    """scheduled_jobs 表：一条「定时任务」配置。
-
-    「业务粒度」= 一行代表一个可独立启停、配置和观察的周期任务。``key`` 是人写的
-    业务唯一键（短横线小写 slug），既是唯一约束也是调度器内部的 job id，所以创建后
-    不允许修改；``task_type`` 决定到点后执行哪段代码，取值清单由代码注册表定义
-    （见 ``scheduled_task_registry``），不是数据库数据。``cron_expr`` 存 5 段 cron
-    字符串原样；解释时区是进程级配置（SCHEDULER_TIMEZONE），不按任务存。
-
-    ``params`` 是该任务类型的执行参数（JSON 对象）；合法形状由注册表里的 pydantic
-    模型在写入前校验，数据库层不做结构约束——参数形状是代码契约，不是数据契约。
-    """
+    """一条周期配置；key 和任务类型不变，版本与下一计划点在同一事务推进。"""
 
     __tablename__ = "scheduled_jobs"
+    __table_args__ = (UniqueConstraint("key", name="uq_scheduled_jobs_key"),)
 
-    __table_args__ = (
-        UniqueConstraint(
-            "key",
-            name="uq_scheduled_jobs_key",
-        ),
-        {"comment": "定时任务配置：调度器加载与任务执行历史的事实来源。"},
-    )
-
-    id: Mapped[UUID] = mapped_column(
-        Uuid,
-        primary_key=True,
-        default=uuid4,
-        comment="Python 服务生成的定时任务主键。",
-    )
-    key: Mapped[str] = mapped_column(
-        String(64),
-        nullable=False,
-        comment="业务唯一键（短横线小写），创建后不可改；同时是调度器 job id。",
-    )
-    task_type: Mapped[str] = mapped_column(
-        String(64),
-        nullable=False,
-        comment="任务类型标识，取值由代码注册表定义，例如 freshrss_sync、index_pending。",
-    )
-    cron_expr: Mapped[str] = mapped_column(
-        String(64),
-        nullable=False,
-        comment="5 段 cron 表达式原样字符串；解释时区由进程级 SCHEDULER_TIMEZONE 决定。",
-    )
-    params: Mapped[dict] = mapped_column(
-        JSONB,
-        nullable=False,
-        comment="任务类型的执行参数（JSON 对象），形状由注册表的 pydantic 模型校验。",
-    )
-    enabled: Mapped[bool] = mapped_column(
-        nullable=False,
-        comment="是否参与 cron 调度；停用的任务保留配置但不到点执行。",
-    )
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    key: Mapped[str] = mapped_column(String(64), nullable=False)
+    task_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    cron_expr: Mapped[str] = mapped_column(String(64), nullable=False)
+    params: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    enabled: Mapped[bool] = mapped_column(nullable=False)
     config_version: Mapped[int] = mapped_column(default=1, server_default="1", nullable=False)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    # 一对多 ORM 导航属性，不是 scheduled_jobs 表里的数组列。实际外键在
-    # scheduled_job_runs.job_id，删除任务时执行历史由数据库级联删除。
-    runs: Mapped[list[JobRunRecord]] = relationship(
-        back_populates="job",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
+    # FK 只用于仍存在的配置；历史中的 source_job_id 和快照不随删除改变。
+    runs: Mapped[list["JobRunRecord"]] = relationship(back_populates="job", passive_deletes="all")
 
 
 class JobRunRecord(Base):
-    """scheduled_job_runs 表：定时任务的一次执行记录。
+    """一次持久受理，共用编号涵盖等待与自动重试；人工重试另建记录。
 
-    「业务粒度」= 一行代表一次到点触发或手动触发的执行尝试。生命周期由调度器包装器
-    维护：开始执行前插入 ``running`` 行，结束后更新成败与统计；上一轮还没跑完时到点的
-    触发只插一条 ``skipped`` 行（只有 started_at，没有 finished_at），不排队。
-
-    ``stats`` 与手动流水线响应同口径脱敏：只有数量和按异常类型聚合计数；批次级失败时
-    会带 ``error_reason``（稳定的失败原因枚举，如 ``login_rejected``，无正文无凭据），
-    skipped 记录只有 reason。历史不无界增长：每次执行收尾会把超出保留条数的旧记录裁掉。
+    config_snapshot 保存受理时的类型、参数和来源配置，policy_snapshot 保存执行策略。
+    claim_token 是数据库领取身份，delivery_generation 使旧消息失效；网络发布成功后
+    仍按 dispatch_after 补投，避免 Redis 丢消息让执行失去去向。
     """
 
     __tablename__ = "scheduled_job_runs"
-
     __table_args__ = (
-        {"comment": "定时任务执行历史：一次触发一条，只记脱敏统计。"},
+        UniqueConstraint("source_job_id", "scheduled_for", name="uq_job_runs_schedule_event"),
+        Index("uq_job_runs_active_job", "source_job_id", unique=True, postgresql_where=text(ACTIVE_SQL)),
+        Index("uq_job_runs_active_business", "concurrency_key", unique=True, postgresql_where=text(ACTIVE_SQL)),
+        Index("ix_job_runs_dispatch", "available_at", "dispatch_after", postgresql_where=text("status IN ('queued', 'waiting_resource', 'retry_wait') AND claim_token IS NULL")),
     )
 
-    id: Mapped[UUID] = mapped_column(
-        Uuid,
-        primary_key=True,
-        default=uuid4,
-        comment="Python 服务生成的任务执行记录主键。",
-    )
-    job_id: Mapped[UUID] = mapped_column(
-        Uuid,
-        ForeignKey("scheduled_jobs.id", ondelete="CASCADE"),
-        nullable=False,
-        comment="所属定时任务 id；任务删除时执行记录级联删除。",
-        index=True,
-    )
-    trigger_type: Mapped[str] = mapped_column(
-        String(16),
-        nullable=False,
-        comment="触发方式：scheduled（cron 到点）或 manual（管理端手动触发）。",
-    )
-    status: Mapped[str] = mapped_column(
-        String(16),
-        nullable=False,
-        comment="执行状态：running、succeeded、failed 或 skipped。",
-    )
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        comment="执行开始（或被跳过判定发生）的 UTC 时刻。",
-    )
-    finished_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-        comment="执行结束的 UTC 时刻；running 与 skipped 状态下为空。",
-    )
-    stats: Mapped[dict] = mapped_column(
-        JSONB,
-        nullable=False,
-        comment="脱敏执行统计（数量与按异常类型的聚合计数，失败记录含 error_reason 枚举），结构与手动流水线同口径。",
-    )
-    error_type: Mapped[str | None] = mapped_column(
-        String(128),
-        nullable=True,
-        comment="批次级失败的异常类名；只存类型名，不存异常文本。成功与跳过时为空。",
-    )
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    job_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("scheduled_jobs.id", ondelete="SET NULL"), index=True)
+    source_job_id: Mapped[UUID | None] = mapped_column(Uuid, comment="原周期配置身份，删除配置后仍保留。")
+    task_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    task_version: Mapped[int] = mapped_column(default=1, server_default="1", nullable=False)
+    trigger_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    actor: Mapped[str] = mapped_column(String(160), nullable=False, comment="受理主体的稳定身份，不保存邮箱或凭据。")
+    concurrency_key: Mapped[str | None] = mapped_column(String(160), comment="业务声明的未结束执行互斥身份，例如文档待办消费者。")
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    dispatch_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    dispatch_error_type: Mapped[str | None] = mapped_column(String(128))
+    delivery_generation: Mapped[int] = mapped_column(default=1, server_default="1", nullable=False)
+    delivery_count: Mapped[int] = mapped_column(default=0, server_default="0", nullable=False)
+    attempts: Mapped[int] = mapped_column(default=0, server_default="0", nullable=False)
+    claim_token: Mapped[UUID | None] = mapped_column(Uuid)
+    owner: Mapped[str | None] = mapped_column(String(160))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    wait_reason: Mapped[str | None] = mapped_column(String(512))
+    recovery: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}", nullable=False)
+    stats: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}", nullable=False)
+    error_type: Mapped[str | None] = mapped_column(String(128))
     config_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}", nullable=False)
-    owner: Mapped[str | None] = mapped_column(String(160), nullable=True)
-    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    policy_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    retry_of: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("scheduled_job_runs.id", ondelete="RESTRICT"), index=True)
 
-    # 多对一 ORM 导航属性；真实外键在本表 job_id 一侧。
-    job: Mapped[ScheduledJobRecord] = relationship(
-        back_populates="runs",
-    )
+    job: Mapped[ScheduledJobRecord | None] = relationship(back_populates="runs")
 
 
-__all__ = ["JobRunRecord", "ScheduledJobRecord"]
+class TaskRequestRecord(Base):
+    """永久保留的小型请求回执；详情过期也不能把旧请求当成新工作。"""
+
+    __tablename__ = "task_requests"
+    actor: Mapped[str] = mapped_column(String(160), primary_key=True)
+    operation: Mapped[str] = mapped_column(String(160), primary_key=True)
+    request_key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    run_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TaskPolicyRecord(Base):
+    """公共默认策略唯一行；修改记录另外保存，不复制周期任务配置。"""
+
+    __tablename__ = "task_policy"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    policy: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(160), nullable=False)
+
+
+class TaskPolicyChangeRecord(Base):
+    """超级用户修改默认策略的留痕，包含修改前后的策略值。"""
+
+    __tablename__ = "task_policy_changes"
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    actor: Mapped[str] = mapped_column(String(160), nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    previous: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    current: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+
+__all__ = ["JobRunRecord", "ScheduledJobRecord", "TaskRequestRecord", "TaskPolicyRecord", "TaskPolicyChangeRecord"]

@@ -19,6 +19,7 @@ from agent_lab.models.document import DocumentRecord
 from agent_lab.models.document_processing import DocumentProcessingRecord
 from agent_lab.models.write_operation import DocumentDeletionRecord
 from agent_lab.repositories.source_repository import SourceRepository
+from agent_lab.knowledge.task_intake import ensure_document_processing
 
 
 def _state(record):
@@ -117,6 +118,7 @@ class PostgresImportDocumentRepository:
                 raise DocumentDeletionPendingError()
             if record.state == "stored":
                 record.state = "pending"
+        await ensure_document_processing(self._session)
 
     async def refresh_source_metadata(self, source_record, source):
         """来源改名也产生候选；原件和人工版本保留，只有采用才更新正式元数据。"""
@@ -142,6 +144,8 @@ class PostgresImportDocumentRepository:
             await self._session.flush()
             document.latest_processing_id = record.id
             document.management_revision += 1
+        if rows:
+            await ensure_document_processing(self._session)
 
 
 class PostgresImportUnitOfWork:

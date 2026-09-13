@@ -19,16 +19,17 @@ from agent_lab.api.scheduled_jobs import get_scheduled_job_service
 from agent_lab.auth.dependencies import current_superuser
 from agent_lab.services.scheduled_job_service import ScheduledJobService, ScheduledJobView
 from agent_lab.services.scheduled_task_errors import (
-    ScheduledJobAlreadyRunningError,
     ScheduledJobInvalidCronError,
     ScheduledJobInvalidParamsError,
     ScheduledJobKeyConflictError,
     ScheduledJobNotFoundError,
     ScheduledJobUnknownTypeError,
-    ScheduledJobClosingError,
-    ScheduledJobEditBlockedError,
 )
-from tests.app_helpers import create_offline_app
+from tests.app_helpers import FakeSearchRuntime, create_offline_app
+from agent_lab.tasks.contracts import TaskOverlap, ExecutionPolicy
+from agent_lab.tasks.repository import Acceptance
+from agent_lab.tasks.registry import TaskRegistry
+from agent_lab.services.scheduled_task_registry import TASK_TYPE_SPECS
 from tests.auth_helpers import allow_reader, allow_superuser
 
 
@@ -58,6 +59,11 @@ def make_view(*, key: str = "freshrss-sync", enabled: bool = True) -> ScheduledJ
         job_id=job_id,
         trigger_type="scheduled",
         status="succeeded",
+        source_job_id=job_id, task_type="freshrss_sync", task_version=1, actor="system:beat",
+        accepted_at=now, scheduled_for=now, available_at=now, expires_at=None,
+        attempts=1, delivery_count=1, last_dispatched_at=now, dispatch_error_type=None,
+        heartbeat_at=now, owner=None, wait_reason=None, recovery={}, retry_of=None,
+        policy_snapshot=ExecutionPolicy().model_dump(), config_snapshot={"params": {"limit_per_source": 2}},
         started_at=now,
         finished_at=now,
         stats={"synchronized_document_count": 1, "failures": {}},
@@ -75,6 +81,7 @@ class FakeScheduledJobService:
     """记录命令、返回 canned 视图或抛指定领域异常的 Service 替身。"""
 
     def __init__(self, *, error: Exception | None = None) -> None:
+        self.registry = TaskRegistry(TASK_TYPE_SPECS.values())
         self.created: list[dict] = []
         self.updated: list[tuple] = []
         self.deleted: list = []
@@ -111,11 +118,11 @@ class FakeScheduledJobService:
             raise self.error
         self.deleted.append(job_id)
 
-    async def trigger(self, job_id) -> Any:
+    async def trigger(self, job_id, **_kwargs) -> Any:
         if self.error is not None:
             raise self.error
         self.triggered.append(job_id)
-        return self.next_run_id
+        return Acceptance(self.next_run_id, "queued", job_id)
 
     async def list_runs(self, job_id, *, limit: int) -> list[Any]:
         if self.error is not None:
@@ -151,7 +158,7 @@ def make_app(
             检查，用来测 403）；``None`` 不覆盖任何鉴权依赖（用来测未登录 401）。
     """
 
-    app = create_offline_app()
+    app = create_offline_app(runtime_factory=FakeSearchRuntime, task_service_factory=lambda: service)
     app.dependency_overrides[get_scheduled_job_service] = lambda: service
     if superuser is True:
         allow_superuser(app)
@@ -171,6 +178,7 @@ def send(app: FastAPI, method: str, path: str, **kwargs: Any) -> httpx.Response:
             ) as client:
                 return await client.request(method, path, **kwargs)
 
+    kwargs["headers"] = {"Idempotency-Key": "test-request", **kwargs.get("headers", {})}
     return run(request())
 
 
@@ -314,7 +322,7 @@ class TestDomainErrorMapping:
         [
             (ScheduledJobNotFoundError(), 404),
             (ScheduledJobKeyConflictError(), 409),
-            (ScheduledJobAlreadyRunningError(uuid4()), 409),
+            (TaskOverlap(run_id=uuid4()), 409),
             (ScheduledJobInvalidCronError(), 422),
             (ScheduledJobInvalidParamsError(), 422),
             (ScheduledJobUnknownTypeError(), 422),
@@ -335,7 +343,8 @@ class TestTriggerAndRuns:
         response = send(make_app(FakeScheduledJobService()), "GET", "/scheduled-jobs/task-types")
         assert response.status_code == 200
         types = {item["task_type"]: item for item in response.json()}
-        assert set(types) == {"freshrss_sync", "index_pending", "prune_old_documents"}
+        assert {key for key, value in types.items() if value["schedulable"]} == {"freshrss_sync", "index_pending", "prune_old_documents"}
+        assert not types["pipeline_run_once"]["schedulable"]
         retention = types["prune_old_documents"]
         assert retention["defaults"] == {
             "retention_days": 180,
@@ -357,15 +366,11 @@ class TestTriggerAndRuns:
         response = send(app, "GET", f"/scheduled-jobs/{uuid4()}/runs/{record.id}")
         assert response.status_code == 404
 
-    @pytest.mark.parametrize("error, method, suffix, expected", [
-        (ScheduledJobClosingError(), "POST", "trigger", 503),
-        (ScheduledJobEditBlockedError(), "PATCH", "", 409),
-    ])
-    def test_edit_and_closing_errors_are_stable_and_safe(self, error, method, suffix, expected):
-        app = make_app(FakeScheduledJobService(error=error))
-        path = f"/scheduled-jobs/{uuid4()}" + (f"/{suffix}" if suffix else "")
-        response = send(app, method, path, json={"params": {}} if method == "PATCH" else None)
-        assert response.status_code == expected and response.json()["code"] == error.code
+    def test_unavailable_intake_returns_safe_503(self):
+        app = make_app(FakeScheduledJobService())
+        app.state.task_service = None
+        response = send(app, "POST", f"/scheduled-jobs/{uuid4()}/trigger")
+        assert response.status_code == 503
 
     def test_trigger_returns_202_with_run_receipt(self) -> None:
         service = FakeScheduledJobService()
@@ -375,12 +380,12 @@ class TestTriggerAndRuns:
         assert response.status_code == 202
         body = response.json()
         assert body["job_id"] == str(job_id)
-        assert body["status"] == "running"
+        assert body["status"] == "queued"
         assert body["run_id"] == str(service.next_run_id)
 
     def test_trigger_conflict_maps_to_409(self) -> None:
         app = make_app(
-            FakeScheduledJobService(error=ScheduledJobAlreadyRunningError(uuid4()))
+            FakeScheduledJobService(error=TaskOverlap(run_id=uuid4()))
         )
         response = send(app, "POST", f"/scheduled-jobs/{uuid4()}/trigger")
         assert response.status_code == 409

@@ -8,7 +8,7 @@ from agent_lab.models.document_processing import (
     DocumentVersion,
 )
 from agent_lab.models.knowledge_base import KnowledgeBaseRecord
-from agent_lab.models.scheduled_job import JobRunRecord, ScheduledJobRecord
+from agent_lab.models.scheduled_job import JobRunRecord, ScheduledJobRecord, TaskRequestRecord, TaskPolicyRecord, TaskPolicyChangeRecord
 from agent_lab.models.source import SourceRecord
 from agent_lab.models.user import AccessTokenRecord, UserRecord
 from agent_lab.models.write_operation import DocumentDeletionRecord, WriteOperationRecord
@@ -25,6 +25,9 @@ __all__ = [
     "JobRunRecord",
     "KnowledgeBaseRecord",
     "ScheduledJobRecord",
+    "TaskRequestRecord",
+    "TaskPolicyRecord",
+    "TaskPolicyChangeRecord",
     "SourceRecord",
     "UserRecord",
 ]

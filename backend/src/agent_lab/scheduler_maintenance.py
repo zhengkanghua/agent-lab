@@ -13,19 +13,24 @@ from uuid import UUID
 
 from sqlalchemy import delete, select, text
 
-from agent_lab.models.scheduled_job import JobRunRecord, ScheduledJobRecord
+from agent_lab.models.scheduled_job import JobRunRecord
 from agent_lab.models.write_operation import WriteOperationRecord
 from agent_lab.services.write_coordination import WRITE_MUTEX
+from agent_lab.tasks.contracts import ACTIVE_STATUSES, ExecutionPolicy
 
 
 async def inspect_or_recover(session_factory, *, run_id=None, operation_id=None, confirm_stopped=False):
     async with session_factory() as session:
         if not confirm_stopped:
             operations = list((await session.scalars(select(WriteOperationRecord))).all())
-            runs = list((await session.scalars(select(JobRunRecord).where(JobRunRecord.status == "running"))).all())
+            runs = list((await session.scalars(select(JobRunRecord).where(
+                JobRunRecord.status.in_(ACTIVE_STATUSES),
+            ))).all())
             return {
                 "operations": [{"id": str(item.id), "run_id": str(item.run_id) if item.run_id else None, "owner": item.owner, "status": item.status, "resources": item.resources, "heartbeat_at": item.heartbeat_at.isoformat()} for item in operations],
-                "runs": [{"id": str(item.id), "job_id": str(item.job_id), "owner": item.owner, "heartbeat_at": item.heartbeat_at.isoformat() if item.heartbeat_at else None} for item in runs],
+                "runs": [{"id": str(item.id), "job_id": str(item.source_job_id) if item.source_job_id else None,
+                          "status": item.status, "owner": item.owner, "wait_reason": item.wait_reason,
+                          "heartbeat_at": item.heartbeat_at.isoformat() if item.heartbeat_at else None} for item in runs],
             }
         if (run_id is None) == (operation_id is None):
             raise ValueError("恢复必须指定一个 run-id 或 operation-id。")
@@ -37,20 +42,24 @@ async def inspect_or_recover(session_factory, *, run_id=None, operation_id=None,
         if run_id and run is None:
             raise ValueError("任务执行不存在。")
         if run:
-            await session.scalar(select(ScheduledJobRecord).where(ScheduledJobRecord.id == run.job_id).with_for_update())
             await session.refresh(run, with_for_update=True)
         await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": WRITE_MUTEX})
         criterion = WriteOperationRecord.run_id == run_id if run_id else WriteOperationRecord.id == operation_id
         operations = list((await session.scalars(select(WriteOperationRecord).where(criterion).with_for_update())).all())
         recent = datetime.now(UTC) - timedelta(seconds=30)
-        if any(item.heartbeat_at >= recent for item in operations) or (run and run.status == "running" and run.heartbeat_at and run.heartbeat_at >= recent):
+        if any(item.heartbeat_at >= recent for item in operations) or (run and run.status in ACTIVE_STATUSES and run.heartbeat_at and run.heartbeat_at >= recent):
             raise ValueError("执行者近期仍有心跳，拒绝恢复。")
-        if run and run.status == "running":
+        if run and run.status in ACTIVE_STATUSES:
             run.status = "failed"
             run.finished_at = datetime.now(UTC)
+            run.expires_at = run.finished_at + timedelta(days=ExecutionPolicy.model_validate(run.policy_snapshot).history_retention_days)
             run.error_type = "OwnerConfirmedStopped"
             run.stats = {**run.stats, "error_reason": "owner_confirmed_stopped", "business_outcome": "unknown"}
         if run:
+            run.claim_token = None
+            run.delivery_generation += 1
+            run.wait_reason = None
+            run.recovery = {"confirmed_stopped_at": datetime.now(UTC).isoformat(), "business_outcome": "unknown"}
             run.stats = {**run.stats, "needs_attention": False, "recovery_confirmed_at": datetime.now(UTC).isoformat()}
         await session.execute(delete(WriteOperationRecord).where(criterion))
         await session.commit()
