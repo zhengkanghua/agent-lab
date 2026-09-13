@@ -43,7 +43,7 @@ Ollama       bge-m3:567m，1024 维。query 与 document 使用同一模型，
              换模型等于换索引空间（必须提升 schema_version 并重建）。
 Qdrant       Point 存储。current Alias 必须由部署预先准备，搜索不会创建它。
 MinIO/S3     私有原件存储。先创建桶并配置后端读写与删除权限；浏览器不直接访问桶。
-Redis        项目共用中间件，任务消息与后续缓存等用途按键前缀区分。
+Redis        使用环境已有实例，生产 Compose 不创建 Redis；任务消息与后续缓存按键前缀区分。
              启用 AOF、持久数据盘和 noeviction；缓存按 TTL 过期，内存满时拒绝新增写入。
              PostgreSQL 才是受理、状态与结果的事实来源；没有 Celery result backend。
 生成式 LLM   仅 /agent/* 需要。OpenAI 兼容中转站或 Ollama，二选一由 LLM_PROVIDER 决定。
@@ -104,9 +104,8 @@ DOCUMENT_TOKENIZER_PATH    已准备并校验的本地 tokenizer 目录。
 DOCUMENT_CHUNK_MAX_TOKENS  包含标题与特殊 token 的文本预算，改变后须重新预览与采用。
 SCHEDULER_TIMEZONE        cron 表达式的解释时区，默认 Asia/Shanghai。只影响「0 9 * * *」
                           翻译成哪个时刻；数据库存储一律 UTC，不受影响。
-REDIS_URL                项目共用 Redis 连接；本地默认 redis://127.0.0.1:6379/0，容器默认 redis://agent-lab-redis:6379/0。
+REDIS_URL                项目共用 Redis 连接；本地默认 redis://127.0.0.1:6379/0，容器部署必须填写已有实例的可达地址。
 REDIS_PASSWORD           Redis 密码，留空表示不需要密码；独立填写，不放入 URL，无需转义特殊字符。
-REDIS_MAXMEMORY          Compose 自带 Redis 的容量，默认 256mb；自管实例在 Redis 服务端设置。
 TASK_QUEUE_NAME           单个业务队列名，也决定任务键前缀 tasks:<队列名>:，三个进程必须相同。
 TASK_QUEUE_VISIBILITY_TIMEOUT 消息可见性超时，不是业务时长上限；重投仍需数据库领取。
 TASK_QUEUE_PUBLISH_TIMEOUT_SECONDS 单次 Redis 发布/连接超时，失败由数据库待办继续补投。
@@ -634,4 +633,4 @@ uv venv --clear .venv
 uv sync --all-groups
 ```
 
-Redis 连接由 `config/redis.py` 统一管理，任务队列、后续缓存等使用方各自管理键命名。API、Beat 和 Worker 必须在同一环境内共用 `REDIS_URL` 与 `TASK_QUEUE_NAME`；多个环境复用 Redis 时使用不同队列名，以区分消息及未确认消息等辅助键。Compose 项目名隔离自带 Redis 的网络和持久卷。共享实例的 `noeviction` 作用于全部键，缓存用 TTL 控制保留时间；内存满时新增写入会失败，任务投递由 PostgreSQL 保留依据并补试。Worker 子进程的异步连接只在本进程的持久循环中创建、使用和关闭。
+Redis 连接由 `config/redis.py` 统一管理，任务队列、后续缓存等使用方各自管理键命名。API、Beat 和 Worker 必须在同一环境内共用 `REDIS_URL` 与 `TASK_QUEUE_NAME`；多个环境复用 Redis 时使用不同队列名，以区分消息及未确认消息等辅助键。生产 Compose 默认只运行这三个应用容器，通过外部 `1panel-network` 连接已有 Redis；实例的持久化、容量和网络由其自身部署管理。共享实例的 `noeviction` 作用于全部键，缓存用 TTL 控制保留时间；内存满时新增写入会失败，任务投递由 PostgreSQL 保留依据并补试。Worker 子进程的异步连接只在本进程的持久循环中创建、使用和关闭。

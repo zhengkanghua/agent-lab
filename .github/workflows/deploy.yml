@@ -434,6 +434,25 @@ jobs:
             docker compose -f docker-compose.next.yml config --quiet
             docker compose -f docker-compose.next.yml pull
 
+            # 仅验证候选网络上的已有 Redis；配置错误时保留当前应用继续运行。
+            # 连接凭据由客户端直接使用，错误只报告类型，不输出 URL、密码或配置。
+            docker compose -f docker-compose.next.yml run --no-deps --rm -T backend python - <<'PY'
+            import sys
+            from redis import Redis
+            from agent_lab.config.redis import get_redis_settings
+
+            try:
+                settings = get_redis_settings()
+                with Redis.from_url(settings.url.get_secret_value(),
+                                    password=settings.password.get_secret_value() or None,
+                                    socket_connect_timeout=5, socket_timeout=5) as client:
+                    client.ping()
+            except Exception as error:
+                print(f"已有 Redis 连接检查失败（{type(error).__name__}）；请核对地址、密码和网络。", file=sys.stderr)
+                raise SystemExit(1)
+            print("已有 Redis 连接检查通过")
+            PY
+
             # 共享任务表升级前停止旧写入口。外部 CLI 和未决远端写入仍须按部署文档先核实。
             # 迁移失败保持停止，不自动重启已不兼容的旧进程；旧镜像/编排保留作诊断依据。
             legacy_scheduler=false
@@ -454,7 +473,7 @@ jobs:
               docker compose -f docker-compose.next.yml run --no-deps --rm backend python -m agent_lab.tasks.bootstrap
             fi
             mv docker-compose.next.yml docker-compose.yml
-            docker compose up -d redis backend task-worker task-beat
+            docker compose up -d backend task-worker task-beat
 
             # 验证进程真的起来了并且连得上 PostgreSQL。没有这一步，容器崩溃重启循环时
             # 本工作流仍会显示成功。python:3.12-slim 里没有 curl，所以用 Python 自己发请求。
@@ -480,10 +499,31 @@ jobs:
               fi
               if [ "$i" -eq 10 ]; then
                 echo "任务进程就绪检查失败，请检查调度、消息连接及待核实执行"
-                docker compose logs --tail 50 task-beat task-worker redis
+                docker compose logs --tail 50 task-beat task-worker
                 exit 1
               fi
               sleep 3
+            done
+
+            # 新进程就绪后只清理本项目遗留的两个服务，不使用会扫到其他服务的 --remove-orphans。
+            # scheduler 必须已经退出；Redis 正常关停后删容器，保留数据卷供核查与回退。
+            compose_project="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' agent-lab-backend)"
+            test -n "$compose_project"
+            for legacy_service in scheduler redis; do
+              legacy_containers="$(docker ps -aq \
+                --filter "label=com.docker.compose.project=$compose_project" \
+                --filter "label=com.docker.compose.service=$legacy_service")"
+              for container in $legacy_containers; do
+                if [ "$legacy_service" = scheduler ]; then
+                  if [ "$(docker inspect --format '{{.State.Running}}' "$container")" = true ]; then
+                    echo "旧 scheduler 仍在运行，需核实旧写入后再清理；未强制删除。"
+                    exit 1
+                  fi
+                else
+                  docker stop --timeout 30 "$container"
+                fi
+                docker rm "$container"
+              done
             done
 
             # 被 backend-latest 覆盖掉的旧镜像会变成无名镜像留在磁盘上，不清理会慢慢吃满。

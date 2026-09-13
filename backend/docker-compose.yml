@@ -1,5 +1,5 @@
 # 同一后端镜像运行 API、单个 Beat 和 Linux prefork Worker。
-# PostgreSQL 保存受理与结果，Redis 是项目共用中间件；前端由 OpenResty 发布静态文件。
+# PostgreSQL 保存受理与结果，Redis 使用环境已有实例；前端由 OpenResty 发布静态文件。
 # 首次切换须先停止旧 scheduler/API/CLI 并核实旧写入，再迁移，见 docs/container_deployment.md。
 x-backend: &backend
   image: ${BACKEND_IMAGE:?BACKEND_IMAGE 未设置：检查本文件同目录的 .env}
@@ -9,15 +9,14 @@ x-backend: &backend
     - .env
   environment: &backend-environment
     TZ: ${TZ:-Asia/Shanghai}
-    # 使用内部网络的项目别名，避免与共享 1panel 网络里名为 redis 的服务冲突。
-    REDIS_URL: ${REDIS_URL:-redis://agent-lab-redis:6379/0}
+    # 容器必须显式连接已有 Redis，避免误用本地地址或另建一套实例。
+    REDIS_URL: ${REDIS_URL:?REDIS_URL 未设置：请在 .env 配置已有 Redis 的容器可达地址}
   networks:
     - 1panel-network
-    - middleware
   volumes:
     - ./data:/data
     - ./.env:/app/.env:ro
-  logging: &logging
+  logging:
     driver: json-file
     options:
       max-size: "10m"
@@ -26,11 +25,6 @@ x-backend: &backend
 networks:
   1panel-network:
     external: true
-  middleware:
-    internal: true
-
-volumes:
-  redis-data:
 
 services:
   backend:
@@ -42,33 +36,6 @@ services:
       <<: *backend-environment
       WORKER_COUNT: ${WORKER_COUNT:-2}
     # 不依赖 Redis 就绪：消息代理暂不可用时，API 仍可持久受理和查询。
-
-  redis:
-    image: redis:7.4-alpine
-    restart: unless-stopped
-    command:
-      - redis-server
-      - --appendonly
-      - "yes"
-      - --appendfsync
-      - everysec
-      - --maxmemory-policy
-      - noeviction
-      - --maxmemory
-      - ${REDIS_MAXMEMORY:-256mb}
-    # 共用中间件不暴露宿主端口，也不接入共享 1panel 网络。
-    networks:
-      middleware:
-        aliases:
-          - agent-lab-redis
-    volumes:
-      - redis-data:/data
-    logging: *logging
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
 
   task-beat:
     <<: *backend

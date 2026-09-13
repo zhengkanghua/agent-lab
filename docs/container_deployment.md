@@ -12,13 +12,12 @@ Cloudflare 与账号管理内容收在本文第五节。
       └─ /api/*   → 127.0.0.1:18000（去掉 /api 前缀）        backend 容器
                                                       task-beat 容器（周期受理与维护）
                                                       task-worker 容器（后台业务执行）
-                                                      redis 容器（项目共用中间件与持久盘）
-                      → 远程 PostgreSQL / Ollama / Qdrant / FreshRSS / MinIO(S3)
+                      → 已有 Redis / PostgreSQL / Ollama / Qdrant / FreshRSS / MinIO(S3)
 ```
 
-前端由 OpenResty 提供静态文件。`backend`、`task-beat` 和 `task-worker` 使用同一个后端镜像，项目共用的 `redis` 使用 Redis 镜像，也可通过连接配置使用已有实例。API 校验权限、持久受理并查询；单个 Beat 推进周期和补投；Linux prefork Worker 完成三类周期任务、文档处理批次和 HTTP Pipeline。PostgreSQL 保存状态和结果，Redis 当前传递任务消息，后续缓存等用途共用连接并区分键前缀。文件与 FreshRSS 的文档待办不需要额外 cron，进程职责与恢复决策见 [ADR 0019](adr/0019-scheduled-execution-and-write-coordination.md)。
+前端由 OpenResty 提供静态文件。生产 Compose 默认只有 `backend`、`task-beat` 和 `task-worker` 三个容器，使用同一个后端镜像；Redis 连接环境已有实例，由其自身部署管理。API 校验权限、持久受理并查询；单个 Beat 推进周期和补投；Linux prefork Worker 完成三类周期任务、文档处理批次和 HTTP Pipeline。PostgreSQL 保存状态和结果，Redis 当前传递任务消息，后续缓存等用途共用连接并区分键前缀。文件与 FreshRSS 的文档待办不需要额外 cron，进程职责与恢复决策见 [ADR 0019](adr/0019-scheduled-execution-and-write-coordination.md)。
 
-发布工作流在切换后检查 API 健康、Beat 推进和 Worker 消息连接，通过后才上传前端。隔离验收在镜像构建和实际切换之前执行。
+发布工作流先从候选容器检查已有 Redis 连通性，失败时不停止当前应用；切换后检查 API 健康、Beat 推进和 Worker 消息连接，通过后才清理本项目旧容器并上传前端。隔离验收在镜像构建和实际切换之前执行。
 
 ## 与容器化无关的内容
 
@@ -123,10 +122,12 @@ URL、API Key 后面多一个看不见的字符。这类故障很难查：日志
 7. 新版使用 `QDRANT_COLLECTION_SCHEMA_VERSION=v3`。镜像已设置
    `DOCUMENT_TOKENIZER_PATH=/app/resources/tokenizers/bge-m3`，通常无需在 `.env` 重复设置；
    不要用本地开发的 `.cache/...` 路径覆盖它。`DOCUMENT_CHUNK_MAX_TOKENS` 默认 512，包含标题上下文。
-8. 容器默认 `REDIS_URL=redis://agent-lab-redis:6379/0`，该别名只属于内部网络，避免与共享 `1panel-network` 中的 `redis` 同名服务冲突；不要复制原生开发的 `127.0.0.1` 地址。自管 Redis 时显式设置 URL，密码单独填 `REDIS_PASSWORD`，留空表示不需要密码，不把密码拼入 URL。API、Beat、Worker 的 Redis 配置与 `TASK_QUEUE_NAME` 必须一致；队列名同时决定消息及辅助键的前缀，不同环境须区分。连接凭据只放服务端配置，不放任务参数或前端变量。
+8. 容器必须显式设置 `REDIS_URL`，指向环境已有 Redis；没有配置时 Compose 直接报错。同在 `1panel-network` 时可用已有 Redis 的唯一容器名，否则使用容器可达的地址与端口。不要复制原生开发的 `127.0.0.1` 或已停用的 `agent-lab-redis` 地址。密码单独填 `REDIS_PASSWORD`，留空表示不需要密码，不把密码拼入 URL。API、Beat、Worker 的 Redis 配置与 `TASK_QUEUE_NAME` 必须一致；队列名同时决定消息及辅助键的前缀，不同环境须区分。连接凭据只放服务端配置，不放任务参数或前端变量。
 9. `WORKER_COUNT` 是 API 进程数，`TASK_WORKER_CONCURRENCY` 是每个 Worker 的 prefork 子进程数。`docker compose up -d --scale task-worker=2` 可增加 Worker 实例，Beat 保持单个。容器关闭宽限用于等待当前工作，不能据此限制清理整次时长。
 
-编排自带 Redis 只接内部 `middleware` 网络、无宿主端口，启用 AOF/everysec、持久卷 `redis-data` 和 `noeviction`；容量由 `REDIS_MAXMEMORY` 设置，自管实例在 Redis 服务端配置。`REDIS_URL` 为项目公共连接，任务消息和后续缓存按各自前缀区分；`noeviction` 作用于整个实例，缓存用 TTL 过期，内存满时新增写入失败。任务发布失败的依据保留在 PostgreSQL，等待补投。运维监控需关注内存占用/上限、AOF 写入状态、持久卷剩余空间和任务投递错误；在现有监控平台配置告警，具体阈值按批准容量设置。Redis 重启不清卷，不对共享服务执行 FLUSHDB 或故障实验。
+已有 Redis 的部署负责 AOF/everysec、持久盘、容量和 `noeviction`，本项目不创建 Redis、专用网络或数据卷，也不修改共享实例配置。旧的 `REDIS_MAXMEMORY` 已不再使用。`REDIS_URL` 为项目公共连接，任务消息和后续缓存按各自前缀区分；`noeviction` 作用于整个实例，缓存用 TTL 过期，内存满时新增写入失败。任务发布失败的依据保留在 PostgreSQL，等待补投。运维监控需关注内存占用/上限、AOF 写入状态、持久盘剩余空间和任务投递错误；在现有监控平台配置告警，具体阈值按批准容量设置。Redis 重启不清卷，不对共享服务执行 FLUSHDB 或故障实验。
+
+已有环境从多建的 Redis 切换时，先在服务器更新连接配置，保持三个应用进程的队列名一致。工作流按 Beat、API、Worker 顺序停用旧进程，等待当前工作正常收尾，再启动连接已有 Redis 的新进程；已持久受理但未送达的任务由 Beat 按原执行编号补投，不搬运或清空 Redis 的键。新进程就绪后，只删除与本项目 Compose 标签一致的旧 `scheduler` 和 `redis` 容器；旧 Redis 先正常关闭，数据卷保留供核查与回退。旧 scheduler 若仍在运行则停止清理并报错，不强制删除。其他项目的 Redis 不在清理范围内，遗留容器的存在也不会触发历史任务交接脚本。
 
 原件桶需预先创建并保持私有，按环境隔离。应用凭据只需覆盖本项目对象的读取、条件写入和删除；
 开启桶版本控制时也要允许读取和删除具体对象版本。应用不会创建桶或修改桶配置。不要为原件启用
@@ -283,7 +284,7 @@ docker compose pull
 docker compose config --quiet
 docker compose run --no-deps --rm backend alembic upgrade head
 docker compose run --no-deps --rm backend agent-lab init-checkpointer
-docker compose up -d redis backend task-worker task-beat
+docker compose up -d backend task-worker task-beat
 docker compose logs -f backend
 ```
 
@@ -303,7 +304,7 @@ CI 的完整顺序在 [`.github/workflows/deploy.yml`](../.github/workflows/depl
    老后端」。
 4. **`docker compose pull` 不能省**：tag 恒为 `backend-latest`，`up -d` 认为 tag 没变会
    直接复用本地旧镜像——表现是 CI 全绿、容器也重启了，但跑的还是上一版代码。
-5. 候选编排先校验和拉镜像，再按旧编排停止 scheduler/Beat、API、Worker，保留 Redis 数据盘；成功迁移后替换编排并启动新进程。迁移失败保持停止，不能自动恢复旧协议继续写新版表。旧配置备份为 `docker-compose.previous.yml`。
+5. 候选编排先校验、拉镜像并检查已有 Redis 连接，再按旧编排停止 scheduler/Beat、API、Worker；成功迁移后替换编排并启动新进程。新进程就绪后清理本项目旧容器并保留旧 Redis 数据卷，已有共享 Redis 始终由其自身部署管理。迁移失败保持停止，不能自动恢复旧协议继续写新版表。旧配置备份为 `docker-compose.previous.yml`。
 
 推送完成后执行 `gh run list --limit 1` 核对最新部署，失败时用 `gh run view <run-id>` 查明原因；修复在本地验证后再推送。Actions 就绪检查覆盖 API、Beat 和 Worker 消息连接，业务验收仍需受控操作与执行编号。
 
@@ -346,7 +347,7 @@ docker compose run --rm backend agent-lab recover-index-rebuild --generation <�
 2. 准备新镜像、候选编排、共用 Redis 连接及持久化配置，保留旧编排和切换前数据库备份。原 v3 文档数据无需因共享任务重构而清空；不要把本次任务迁移与上一节 Docling 资料重置混在一起。
 3. 在维护窗口先停止旧 scheduler 与 API 的后台入口，并停止容器外写 CLI，核实旧进程及远端未决写入已结束。工作流会按旧编排停止服务，但不能识别容器外 CLI 或替代远端核实。已经使用新布局时依次停止 Beat、API、Worker；Worker 优先正常退出，强制退出后的记录保留恢复判断。
 4. 用候选编排执行 Alembic 和 checkpointer 初始化。首次从含 `scheduler` 的旧布局切换时，再执行一次 `python -m agent_lab.tasks.bootstrap`，把已有文档待办接到必要批次。交接复用业务回收规则，将已停止旧消费者遗留的解析／预览领取重新排队，无需等待计算超时；索引准备、发布及接收未决写入仍按原规则核实。普通部署不运行它，以免重建已取消或失败的任务。若旧部署未用标准服务名，操作者须在核实后显式执行这一次交接；仅执行 Alembic 不会受理这些旧业务待办。
-5. 迁移和交接成功后才将候选替换为正式编排，启动 Redis、API、Worker 和单个 Beat。失败保持停止，先检查迁移版本及前提再恢复部署，不自动运行旧进程。该切换包含停机；旧已受理工作保留，错过的周期不补执行。
+5. 迁移和交接成功后才将候选替换为正式编排，启动连接已有 Redis 的 API、Worker 和单个 Beat。失败保持停止，先检查迁移版本及前提再恢复部署，不自动运行旧进程。该切换包含停机；旧已受理工作保留，错过的周期不补执行。
 6. 分别核对 API `/health`、Beat 本地就绪、Worker 消息连接，再在批准范围内从网页受理一次任务并按编号核对结果。旧参数缺失、待核实及部分失败应如实可见，配置删除后仍能查已有执行。
 
 ```bash
@@ -382,16 +383,16 @@ docker compose run --no-deps --rm backend python -m agent_lab.scheduler_maintena
 | 待核实 | 原领取、业务完成依据、进程与远端未决写入；不按心跳直接解锁 |
 | 业务已完成但终态未确认 | 条件收尾及业务依据；不能再次执行来“补结果” |
 
-Redis 队列长度只反映消息数量，不能代表持久受理或业务健康。自带实例可只读查看 `docker compose exec -T redis redis-cli info memory` 和 `info persistence`，自管实例使用对应运维入口；内存满、AOF 写入失败、磁盘不足及持续投递错误均应由部署监控告警。`TASK_QUEUE_VISIBILITY_TIMEOUT` 不是任务时长上限，长任务重投由 PostgreSQL 领取保护。
+Redis 队列长度只反映消息数量，不能代表持久受理或业务健康。通过已有 Redis 的运维入口只读查看内存与持久化状态；内存满、AOF 写入失败、磁盘不足及持续投递错误均应由部署监控告警。`TASK_QUEUE_VISIBILITY_TIMEOUT` 不是任务时长上限，长任务重投由 PostgreSQL 领取保护。
 
 ### 看日志
 
 ```bash
 cd /opt/agent-lab
 docker compose logs --tail 100 backend      # backend 最近 100 行
-docker compose logs --tail 100 task-beat task-worker redis
+docker compose logs --tail 100 task-beat task-worker
 docker compose logs -f backend              # 跟踪
-docker compose ps                           # API、Beat、Worker、Redis；Worker 可有多个实例
+docker compose ps                           # API、Beat、Worker；Worker 可有多个实例
 ```
 
 日志上限 10MB × 3 份（compose 里配的）。Docker 默认不限大小，那会慢慢写满磁盘。
