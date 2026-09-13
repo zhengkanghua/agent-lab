@@ -2,7 +2,7 @@
 
 from docling_core.types.doc import DocItemLabel, DoclingDocument, GroupLabel, TextItem
 
-from agent_lab.ingestion.content_quality import ContentQualityNormalizer
+from agent_lab.ingestion.content_quality import normalize_inline_text, title_comparison_key
 
 
 def normalize_html_document(document: DoclingDocument, *, title: str) -> None:
@@ -17,17 +17,17 @@ def normalize_html_document(document: DoclingDocument, *, title: str) -> None:
         # inline 的 TextItem 只是句内片段，不能按完整段落去重或删除。
         if parent is not None and parent.label == GroupLabel.INLINE:
             continue
-        item.text = ContentQualityNormalizer.normalize_inline_text(item.text)
+        item.text = normalize_inline_text(item.text)
         paragraphs.append(item)
 
     paragraph_ids = {item.self_ref for item in paragraphs}
-    title_key = ContentQualityNormalizer.title_comparison_key(title)
+    title_key = title_comparison_key(title)
     meaningful = [item for item in items if isinstance(item, TextItem) or item.label == DocItemLabel.TABLE]
     removed = []
     if title_key and meaningful:
         for item in (meaningful[0], meaningful[-1]):
             if item.self_ref in paragraph_ids and not item.children and item not in removed:
-                if ContentQualityNormalizer.title_comparison_key(item.text) == title_key:
+                if title_comparison_key(item.text) == title_key:
                     removed.append(item)
 
     previous = None

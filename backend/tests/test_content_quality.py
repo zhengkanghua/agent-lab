@@ -1,10 +1,7 @@
 """FreshRSS 保留原件，真实 Docling 在保存后的阶段规范化正文并保留标题层级。"""
 
-from hashlib import sha256
-
 import pytest
 
-from agent_lab.ingestion.content_quality import ContentQualityNormalizer
 from agent_lab.ingestion.freshrss_mapper import FreshRSSItemMapper
 from agent_lab.knowledge.adapters.docling_parser import DoclingDocumentParser
 from agent_lab.schemas.freshrss import FreshRSSItem, FreshRSSSubscription
@@ -120,14 +117,11 @@ def test_same_paragraph_in_distinct_sections_and_inline_code_are_preserved():
 
 
 def test_legal_repeated_sentence_and_non_adjacent_paragraph_are_preserved() -> None:
-    normalizer = ContentQualityNormalizer(min_content_chars=1)
-    result = normalizer.inspect(
-        title="标题",
-        content_text="重要。重要。\n引用段\n重要。重要。",
-    )
+    parsed = parse_item(item(content="<p>重要。重要。</p><p>引用段</p><p>重要。重要。</p>"))
 
-    assert result.normalized_text == "重要。重要。\n引用段\n重要。重要。"
-    assert result.removed_duplicate_lines == 0
+    assert [block.text for block in parsed.blocks if block.kind == "paragraph"] == [
+        "重要。重要。", "引用段", "重要。重要。",
+    ]
 
 
 @pytest.mark.parametrize("title,html,reason", [
@@ -142,26 +136,17 @@ def test_bad_content_is_received_and_has_stable_processing_issue(title, html, re
 
 
 def test_body_that_is_entirely_adjacent_duplicates_keeps_one_copy() -> None:
-    result = ContentQualityNormalizer(min_content_chars=1).inspect(
-        title="标题",
-        content_text="合法正文段\n合法正文段\n合法正文段",
-    )
+    parsed = parse_item(item(content="<p>合法正文段</p>" * 3))
 
-    assert result.normalized_text == "合法正文段"
-    assert result.removed_duplicate_lines == 2
-    assert result.is_usable is True
+    assert parsed.body == "合法正文段"
+    assert not parsed.issues
 
 
-def test_normalization_and_content_hash_are_idempotent() -> None:
-    normalizer = ContentQualityNormalizer(min_content_chars=1)
-    first = normalizer.inspect(
-        title="标题！",
-        content_text="标题。\nA&nbsp; B\nA  B",
-    ).normalized_text
-    second = normalizer.inspect(title="标题！", content_text=first).normalized_text
+def test_normalized_body_is_stable_when_received_again() -> None:
+    first = parse_item(item(
+        title="标题！", content="<p>标题。</p><p>A&nbsp; B</p><p>A  B</p>",
+    ))
+    second = parse_item(item(title="标题！", content=f"<p>{first.body}</p>"))
 
-    assert first == "A B"
-    assert second == first
-    assert sha256(first.encode("utf-8")).hexdigest() == sha256(
-        second.encode("utf-8")
-    ).hexdigest()
+    assert first.body == "A B"
+    assert second.body == first.body

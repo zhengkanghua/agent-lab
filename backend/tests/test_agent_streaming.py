@@ -94,8 +94,8 @@ def test_a_streaming_provider_emits_incremental_tokens() -> None:
     assert isinstance(events[-1], AgentDoneEvent)
 
 
-def test_a_tool_call_produces_a_call_and_a_result_event() -> None:
-    """调工具时必须同时给出调用事件和结果事件。
+def test_tool_events_are_ordered_and_paired_before_done() -> None:
+    """一次完整工具调用同时验证成对事件、顺序和 ID，避免重复构建并执行同一张图。
 
     两个都要：只有结果的话，前端无法显示「正在检索…」这个中间态；只有调用的话，用户不知道
     检索到底成没成。
@@ -116,49 +116,10 @@ def test_a_tool_call_produces_a_call_and_a_result_event() -> None:
     assert calls[0].arguments == {"text": "央行降息"}
     assert [each.tool for each in results] == ["search_news"]
     assert results[0].failed is False
-    assert isinstance(events[-1], AgentDoneEvent)
-
-
-def test_the_tool_call_event_arrives_before_its_result() -> None:
-    """调用事件必须早于结果事件。
-
-    顺序反了前端就会先显示结果再显示「正在调用」，看起来像是在倒放。
-    """
-
-    counter = CountingTool("search_news")
-    model = ScriptedChatModel(
-        responses=[
-            tool_call_message("search_news", {"text": "央行降息"}),
-            AIMessage(content="好了。"),
-        ]
-    )
-    events = collect(build_offline_graph(model, [counter.build()]))
-
-    kinds = [type(each) for each in events]
-    assert kinds.index(AgentToolCallEvent) < kinds.index(AgentToolResultEvent)
-
-
-def test_tool_call_and_result_events_carry_the_same_tool_call_id() -> None:
-    """调用事件与结果事件必须带同一个 ``tool_call_id``。
-
-    这是前端能精确配对的前提。少了 id，前端只能按工具名先来先配，而同一个工具在一轮里
-    并发调用多次时，结果的到达顺序没有保证——错配的表现是某条轨迹显示的检索词底下挂着
-    另一次调用的结果。
-    """
-
-    counter = CountingTool("search_news", result="检索到 1 篇相关新闻。")
-    model = ScriptedChatModel(
-        responses=[
-            tool_call_message("search_news", {"text": "央行降息"}),
-            AIMessage(content="确实降息了。"),
-        ]
-    )
-    events = collect(build_offline_graph(model, [counter.build()]))
-
-    calls = [each for each in events if isinstance(each, AgentToolCallEvent)]
-    results = [each for each in events if isinstance(each, AgentToolResultEvent)]
     assert calls[0].tool_call_id == "call-search_news"
     assert results[0].tool_call_id == calls[0].tool_call_id
+    assert events.index(calls[0]) < events.index(results[0])
+    assert isinstance(events[-1], AgentDoneEvent)
 
 
 def test_parallel_calls_to_one_tool_get_distinct_ids() -> None:

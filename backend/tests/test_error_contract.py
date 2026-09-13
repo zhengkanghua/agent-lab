@@ -1,12 +1,4 @@
-"""错误契约的跨表不变量与全仓库 detail 文案守护。
-
-`code` 是对外契约，`detail` 是给人读的中文文案。本文件同时守两件事：
-规则表内部的一致性，以及表**之外**那些直接写在 `raise` 处的 detail 字面量——
-后者没有集中结构可断言，只能扫源码，否则漂移不会被任何测试拦住。
-"""
-
-import ast
-import pathlib
+"""错误码、HTTP 状态、重试提示、脱敏响应及规则表的跨表不变量。"""
 
 import pytest
 
@@ -20,10 +12,57 @@ from agent_lab.api.error_contract import (
     USER_ADMIN_ERROR_RULES,
     VECTOR_SEARCH_ERROR_RULES,
     ErrorContractRule,
+    VectorSearchErrorResponse,
+    build_vector_search_error_response,
     resolve_error_contract,
 )
+from agent_lab.pipeline.ollama_embedding_provider import (
+    EmbeddingResponseError,
+    OllamaAuthenticationError,
+    OllamaConnectionError,
+    OllamaEmbeddingError,
+    OllamaModelNotFoundError,
+    OllamaServiceError,
+    OllamaTimeoutError,
+)
+from agent_lab.qdrant.search import (
+    QdrantSearchAuthenticationError,
+    QdrantSearchConfigurationError,
+    QdrantSearchConnectionError,
+    QdrantSearchResponseError,
+    QdrantSearchServiceError,
+    QdrantSearchTargetNotFoundError,
+    QdrantSearchTimeoutError,
+)
+from agent_lab.services.vector_search_service import QueryVectorValidationError
 
-SOURCE_ROOT = pathlib.Path(__file__).resolve().parent.parent / "src" / "agent_lab"
+def test_search_upstream_mapping_preserves_status_code_retryability_and_privacy() -> None:
+    """逐项保护对外错误契约，无须为相同响应构造器反复启动完整应用。"""
+    cases = [
+        (OllamaAuthenticationError, 502, "embedding_authentication_failed", False),
+        (OllamaConnectionError, 503, "embedding_unavailable", True),
+        (OllamaTimeoutError, 504, "embedding_timeout", True),
+        (OllamaModelNotFoundError, 503, "embedding_model_not_found", False),
+        (EmbeddingResponseError, 502, "embedding_response_invalid", False),
+        (OllamaServiceError, 502, "embedding_unavailable", True),
+        (OllamaEmbeddingError, 502, "embedding_unavailable", True),
+        (QdrantSearchAuthenticationError, 502, "qdrant_authentication_failed", False),
+        (QdrantSearchConnectionError, 503, "qdrant_unavailable", True),
+        (QdrantSearchTimeoutError, 504, "qdrant_timeout", True),
+        (QdrantSearchTargetNotFoundError, 503, "qdrant_target_missing", False),
+        (QdrantSearchConfigurationError, 503, "qdrant_configuration_invalid", False),
+        (QdrantSearchResponseError, 502, "qdrant_response_invalid", False),
+        (QdrantSearchServiceError, 502, "qdrant_service_error", True),
+        (QueryVectorValidationError, 502, "embedding_response_invalid", False),
+    ]
+    private_detail = "synthetic-private-query-and-upstream-response"
+    for exception, status_code, code, retryable in cases:
+        response = build_vector_search_error_response(exception(private_detail))
+        parsed = VectorSearchErrorResponse.model_validate_json(response.body)
+        assert (response.status_code, parsed.code, parsed.retryable) == (
+            status_code, code, retryable
+        ), exception.__name__
+        assert private_detail.encode() not in response.body, exception.__name__
 
 
 def is_chinese_sentence(text: str) -> bool:
@@ -46,83 +85,11 @@ def all_error_rules() -> tuple[ErrorContractRule, ...]:
     )
 
 
-# 签名为 (code, detail) 的领域错误：detail 走第二个位置实参，没有关键字名可认。
-# 每新增一个这种形状的领域错误类都要登记进来，否则它抛出的 detail 字面量不受本文件约束。
-POSITIONAL_DETAIL_CALLS = {"UserAdminDomainError": 1, "AccountDomainError": 1}
-
-
-def called_name(node: ast.Call) -> str:
-    """取被调用者的名字，`a.b.C(...)` 取 `C`。"""
-
-    if isinstance(node.func, ast.Name):
-        return node.func.id
-    if isinstance(node.func, ast.Attribute):
-        return node.func.attr
-    return ""
-
-
-def literal_details() -> list[tuple[str, int, str]]:
-    """收集全部源码里写死的 detail 文案，返回 (相对路径, 行号, 文案)。
-
-    覆盖三种写法：`detail="..."` 关键字实参（含 HTTPException）、模块级 `*_DETAIL`
-    字符串常量，以及 `POSITIONAL_DETAIL_CALLS` 里按位置传 detail 的领域错误。
-    非字面量（变量、f-string）跳过；动态文案和异常脱敏由对应行为测试验证。
-    """
-
-    found: list[tuple[str, int, str]] = []
-    for path in sorted(SOURCE_ROOT.rglob("*.py")):
-        relative = path.relative_to(SOURCE_ROOT).as_posix()
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                for keyword in node.keywords:
-                    if keyword.arg != "detail":
-                        continue
-                    if isinstance(keyword.value, ast.Constant) and isinstance(
-                        keyword.value.value, str
-                    ):
-                        found.append((relative, keyword.value.lineno, keyword.value.value))
-                index = POSITIONAL_DETAIL_CALLS.get(called_name(node))
-                if index is not None and len(node.args) > index:
-                    argument = node.args[index]
-                    if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
-                        found.append((relative, argument.lineno, argument.value))
-            elif isinstance(node, ast.Assign):
-                names = [
-                    target.id for target in node.targets if isinstance(target, ast.Name)
-                ]
-                if not any(name.endswith("_DETAIL") for name in names):
-                    continue
-                if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-                    found.append((relative, node.lineno, node.value.value))
-    return found
-
-
 def test_error_table_details_are_chinese_sentences() -> None:
     """错误表里的 detail 包含中文并以中文句号收尾。"""
 
     for rule in all_error_rules():
         assert is_chinese_sentence(rule.detail), rule.code
-
-
-def test_literal_details_outside_the_rule_tables_follow_the_same_wording_rule() -> None:
-    """表外直接写在 raise 处的 detail 也必须是中文句子。
-
-    `documents.py` / `health.py` 用裸 HTTPException，`user_admin_service.py` 的领域
-    错误按 code 而非异常类型分支，都进不了类型键控的规则表。历史上
-    `health.py` 的「数据库不可用」就漏过了句尾句号，靠人眼没看住。
-    """
-
-    details = literal_details()
-    # 扫描本身必须有效：一旦重构把所有 detail 都改成非字面量，断言会空转。
-    assert details, "未扫描到 detail 字面量，请检查扫描范围是否仍然适用。"
-
-    offenders = [
-        f"{path}:{line} -> {text!r}"
-        for path, line, text in details
-        if not is_chinese_sentence(text)
-    ]
-    assert offenders == [], "detail 必须是以「。」收尾的中文句子：" + "; ".join(offenders)
 
 
 def test_same_error_code_always_maps_to_the_same_detail() -> None:

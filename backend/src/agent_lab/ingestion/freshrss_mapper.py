@@ -14,7 +14,7 @@ from agent_lab.domain.source_document import (
     SourceDocument,
     SourceInfo,
 )
-from agent_lab.ingestion.content_quality import ContentQualityNormalizer
+from agent_lab.ingestion.content_quality import normalize_inline_text
 from agent_lab.schemas.freshrss import FreshRSSItem, FreshRSSSubscription
 
 
@@ -60,7 +60,7 @@ class FreshRSSItemMapper:
 
         # 2、标题可规范化；正文保持实际选中的 HTML，不在接收前压平或拒绝。
         title = self._clean_title(item.title)
-        content_html, _ = self._select_body_html(item)
+        content_html = self._select_body_html(item)
         images = self._images_from_html(content_html, article_url)
 
         # 3、抽标签和作者
@@ -92,27 +92,27 @@ class FreshRSSItemMapper:
         )
 
     @staticmethod
-    def _select_body_html(item: FreshRSSItem) -> tuple[str, str]:
+    def _select_body_html(item: FreshRSSItem) -> str:
         """按 FreshRSS content、summary 优先级选择单一正文块。
 
         Args:
             item: 已校验的 FreshRSS 外部文章。
 
         Returns:
-            选中的 HTML 与 ``content``/``summary`` 来源类型；空正文仍保留实际字节。
+            选中的 HTML；空正文仍保留实际字节。
 
         Notes:
             content 与 summary 常是同一正文的两种协议表示，绝不拼接二者。选择一个
-            块可从源头避免整篇重复；块内部重复仍交给统一质量规范化器保守处理。
+            块可从源头避免整篇重复；块内部重复交给 Docling 结构解析保守处理。
         """
 
-        for kind, block in (("content", item.content), ("summary", item.summary)):
+        for block in (item.content, item.summary):
             if block is not None and block.content.strip():
-                return block.content, kind
-        for kind, block in (("content", item.content), ("summary", item.summary)):
+                return block.content
+        for block in (item.content, item.summary):
             if block is not None:
-                return block.content, kind
-        return "", ""
+                return block.content
+        return ""
 
     @staticmethod
     def _clean_title(title_html: str) -> str:
@@ -129,7 +129,7 @@ class FreshRSSItemMapper:
             separator=" ",
             strip=True,
         )
-        return ContentQualityNormalizer.normalize_inline_text(title_text)
+        return normalize_inline_text(title_text)
 
     def _images_from_html(
         self,

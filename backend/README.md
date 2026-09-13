@@ -503,7 +503,7 @@ uv run pytest -q tests/test_vector_search.py tests/test_qdrant_runtime.py
 uv run pytest -q tests/test_vector_search_api.py tests/test_document_search.py `
   tests/test_documents_api.py
 
-# 错误契约的跨表不变量与全仓库 detail 文案（纯静态，不起 app）
+# 错误码、HTTP 状态、重试提示、脱敏及跨表一致性（不起 app）
 uv run pytest -q tests/test_error_contract.py
 
 # Agent 链路：工具、中间件、SSE 事件序列与 /agent/chat 契约（fake 模型，不联网、不连库）

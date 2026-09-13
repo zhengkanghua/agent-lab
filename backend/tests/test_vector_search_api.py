@@ -17,32 +17,19 @@ from fastapi import FastAPI
 from agent_lab.api.error_contract import VectorSearchErrorResponse
 from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.pipeline.ollama_embedding_provider import (
-    EmbeddingResponseError,
-    OllamaAuthenticationError,
-    OllamaConnectionError,
-    OllamaEmbeddingError,
-    OllamaModelNotFoundError,
-    OllamaServiceError,
     OllamaTimeoutError,
 )
 from agent_lab.qdrant.search import (
     QdrantSearchAuthenticationError,
-    QdrantSearchConfigurationError,
-    QdrantSearchConnectionError,
-    QdrantSearchResponseError,
-    QdrantSearchServiceError,
-    QdrantSearchTargetNotFoundError,
-    QdrantSearchTimeoutError,
 )
 from agent_lab.schemas.vector_search import (
-    VectorSearchFilters,
     VectorSearchRequest,
     VectorSearchResult,
 )
 from agent_lab.services.vector_search_service import (
     QueryVectorValidationError,
 )
-from tests.app_helpers import create_offline_app
+from tests.app_helpers import create_offline_app, send as request
 from tests.auth_helpers import allow_reader
 
 
@@ -126,27 +113,11 @@ def app_for(service: FakeSearchService) -> tuple[FastAPI, FakeRuntime]:
     return app, runtime
 
 
-async def request(
-    app: FastAPI,
-    method: str,
-    path: str,
-    **kwargs: Any,
-) -> httpx.Response:
-    """在显式 lifespan 内发送一个 ASGI 请求。"""
-
-    async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(
-            transport=transport,
-            base_url="http://testserver",
-        ) as client:
-            return await client.request(method, path, **kwargs)
-
-
 def test_successful_search_returns_result_array_and_forwards_filters() -> None:
     service = FakeSearchService()
     app, runtime = app_for(service)
     source_id = uuid4()
+    knowledge_base_id = uuid4()
 
     response = run(
         request(
@@ -155,6 +126,7 @@ def test_successful_search_returns_result_array_and_forwards_filters() -> None:
             "/vector-search",
             json={
                 "query": "央行利率",
+                "knowledge_base_id": str(knowledge_base_id),
                 "top_k": 4,
                 "score_threshold": 0.6,
                 "filters": {
@@ -180,27 +152,12 @@ def test_successful_search_returns_result_array_and_forwards_filters() -> None:
     assert forwarded.score_threshold == pytest.approx(0.6)
     assert forwarded.filters.source_id == source_id
     assert forwarded.filters.labels == ("宏观", "利率")
+    assert forwarded.knowledge_base_id == knowledge_base_id
+    assert forwarded.filters.knowledge_base_id == knowledge_base_id
     assert runtime.closed is True
 
 
-def test_empty_results_are_a_successful_empty_array() -> None:
-    service = FakeSearchService(results=[])
-    app, _runtime = app_for(service)
-
-    response = run(
-        request(
-            app,
-            "POST",
-            "/vector-search",
-            json={"query": "没有命中"},
-        )
-    )
-
-    assert response.status_code == 200
-    assert response.json() == []
-
-
-def test_http_search_defaults_missing_scope_to_news_filter() -> None:
+def test_empty_search_defaults_missing_scope_to_news_filter() -> None:
     """旧请求缺少范围时只能命中固定新闻库，不能把共享 Collection 当成全库。"""
 
     service = FakeSearchService(results=[])
@@ -216,31 +173,10 @@ def test_http_search_defaults_missing_scope_to_news_filter() -> None:
     )
 
     assert response.status_code == 200
+    assert response.json() == []
     forwarded = service.requests[0]
     assert forwarded.knowledge_base_id == DEFAULT_NEWS_KNOWLEDGE_BASE_ID
     assert forwarded.filters.knowledge_base_id == DEFAULT_NEWS_KNOWLEDGE_BASE_ID
-
-
-def test_http_search_preserves_explicit_scope() -> None:
-    """显式范围同时进入请求顶层和 Qdrant 过滤器。"""
-
-    service = FakeSearchService(results=[])
-    app, _runtime = app_for(service)
-    knowledge_base_id = uuid4()
-
-    response = run(
-        request(
-            app,
-            "POST",
-            "/vector-search",
-            json={"query": "指定范围", "knowledge_base_id": str(knowledge_base_id)},
-        )
-    )
-
-    assert response.status_code == 200
-    forwarded = service.requests[0]
-    assert forwarded.knowledge_base_id == knowledge_base_id
-    assert forwarded.filters.knowledge_base_id == knowledge_base_id
 
 
 @pytest.mark.parametrize(
@@ -292,31 +228,20 @@ async def request_without_lifespan(
 @pytest.mark.parametrize(
     ("error", "status_code", "code", "retryable"),
     [
-        (OllamaAuthenticationError("secret"), 502, "embedding_authentication_failed", False),
-        (OllamaConnectionError("internal"), 503, "embedding_unavailable", True),
         (OllamaTimeoutError("internal"), 504, "embedding_timeout", True),
-        (OllamaModelNotFoundError("internal"), 503, "embedding_model_not_found", False),
-        (EmbeddingResponseError("internal"), 502, "embedding_response_invalid", False),
-        (OllamaServiceError("internal"), 502, "embedding_unavailable", True),
-        (OllamaEmbeddingError("internal"), 502, "embedding_unavailable", True),
         (QdrantSearchAuthenticationError("secret"), 502, "qdrant_authentication_failed", False),
-        (QdrantSearchConnectionError("internal"), 503, "qdrant_unavailable", True),
-        (QdrantSearchTimeoutError("internal"), 504, "qdrant_timeout", True),
-        (QdrantSearchTargetNotFoundError("internal"), 503, "qdrant_target_missing", False),
-        (QdrantSearchConfigurationError("internal"), 503, "qdrant_configuration_invalid", False),
-        (QdrantSearchResponseError("internal"), 502, "qdrant_response_invalid", False),
-        (QdrantSearchServiceError("internal"), 502, "qdrant_service_error", True),
         (QueryVectorValidationError("full vector must not leak"), 502, "embedding_response_invalid", False),
     ],
 )
-def test_known_upstream_errors_map_to_stable_http_contract(
+def test_upstream_error_families_reach_the_http_contract(
     error: Exception,
     status_code: int,
     code: str,
     retryable: bool,
 ) -> None:
+    """每个捕获分支保留一次 HTTP 验证；完整映射矩阵在 test_error_contract 中检查。"""
     service = FakeSearchService(error=error)
-    app, _runtime = app_for(service)
+    app, runtime = app_for(service)
 
     response = run(
         request(
@@ -334,6 +259,8 @@ def test_known_upstream_errors_map_to_stable_http_contract(
     assert parsed.retryable is retryable
     assert "full vector" not in response.text
     assert "secret" not in response.text
+    assert "internal" not in response.text
+    assert runtime.closed is True
 
 
 def test_unknown_service_exception_is_not_silently_converted_to_empty_results() -> None:

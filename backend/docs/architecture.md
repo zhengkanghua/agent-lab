@@ -152,7 +152,7 @@ FreshRSS 的规范化位于 Docling 结构转换之后，由 `knowledge/adapters
 
 解码或解析失败、无有效正文或 Chunk、内容丢弃警告、无法满足标题与正文预算等结果进入人工处理。
 合法短文、标题跳级和重复标题本身不构成异常。检查只拦截可检测问题，正常结果仍允许主动复核。
-`ingestion/content_quality.py` 的纯文本规范化工具仍可用于诊断，但不再作为 FreshRSS 原件保存前的整页解析门槛。
+`ingestion/content_quality.py` 只提供标题和正文共用的块内文本规范化及标题比较键；正文质量与段落去重统一由 Docling 结构解析判断，不另设纯文本诊断流程或最小长度门槛。
 
 ## 数据对象分层
 
