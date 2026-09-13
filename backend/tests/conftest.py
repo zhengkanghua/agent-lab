@@ -17,6 +17,7 @@ INTEGRATION_SWITCHES = {
     "test_task_handoff_postgres_integration.py": "RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST",
     "test_task_queue_integration.py": "RUN_TASK_QUEUE_INTEGRATION_TEST",
     "test_task_local_integration.py": "RUN_TASK_LOCAL_INTEGRATION_TEST",
+    "test_task_business_integration.py": "RUN_TASK_LOCAL_INTEGRATION_TEST",
     "test_task_cross_storage_integration.py": "RUN_TASK_CROSS_STORAGE_INTEGRATION_TEST",
     "test_knowledge_postgres_integration.py": "RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST",
     "test_file_documents_integration.py": "RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST",

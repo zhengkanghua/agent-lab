@@ -15,6 +15,9 @@ class LocalProcessRuntime(process.ProcessRuntime):
     async def _open(self):
         from agent_lab.task_assembly import build_task_components
 
+        if os.getenv("TASK_TEST_BUSINESS_DIRECTORY"):
+            from tests.task_business_support import install_business_ports
+            install_business_ports()
         self.engine, sessions = database(os.environ["TASK_TEST_DATABASE_URL"], os.environ["TASK_TEST_SCHEMA"])
         self.service, self.worker, self.dispatcher, self.store = build_task_components(
             sessions, owner=f"local-task:{os.getpid()}",

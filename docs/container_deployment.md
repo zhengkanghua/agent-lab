@@ -18,7 +18,7 @@ Cloudflare 与账号管理内容收在本文第五节。
 
 前端由 OpenResty 提供静态文件。`backend`、`task-beat` 和 `task-worker` 使用同一个后端镜像，项目共用的 `redis` 使用 Redis 镜像，也可通过连接配置使用已有实例。API 校验权限、持久受理并查询；单个 Beat 推进周期和补投；Linux prefork Worker 完成三类周期任务、文档处理批次和 HTTP Pipeline。PostgreSQL 保存状态和结果，Redis 当前传递任务消息，后续缓存等用途共用连接并区分键前缀。文件与 FreshRSS 的文档待办不需要额外 cron，进程职责与恢复决策见 [ADR 0019](adr/0019-scheduled-execution-and-write-coordination.md)。
 
-本文描述仓库编排的目标运行方式；本次共享任务切换尚须完成隔离验收及环境操作确认，不能把本地配置修改当作已部署。
+发布工作流在切换后检查 API 健康、Beat 推进和 Worker 消息连接，通过后才上传前端。隔离验收在镜像构建和实际切换之前执行。
 
 ## 与容器化无关的内容
 

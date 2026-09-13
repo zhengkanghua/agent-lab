@@ -1,6 +1,6 @@
 # 公共任务组件与任务管理重构
 
-状态：实施中（P1、P6 已完成；本地实现与离线验证、真实 PostgreSQL 迁移／交接／并发验收、文档 PostgreSQL／Qdrant 回归、三存储故障恢复，以及遗留纯计算的一次性交接修复均已通过验证；开发库已升级且用户数据核对一致。共用 Redis 配置、Windows 原生 HTTP／Beat／solo Worker 和真实页面联调已通过；修复已推送至 `887fc66`，第二次 CI 的 Linux 验收与 Beat 关闭日志通过，部署目录及迁移成功，API 已更新并健康。Worker 连接收到 Redis 认证错误，任务进程未就绪且前端未上传；正在修正默认 Redis 网络地址，并补齐 T09/T12 的进程组合验证）。建立日期：2026-09-11。需求与架构依据为 ADR 0019 的已确认重构方向。
+状态：实施与验收完成（P1 至 P8 已完成；`144a019` 已通过 GitHub Actions 部署，API、Beat、Worker 与前端已切换；Windows 真实页面与业务组合、Linux prefork、迁移／并发／交接及三存储故障验收通过。用户数据保留，其他工作区改动未纳入提交；本 spec 保留至老板确认删除）。建立日期：2026-09-11。需求与架构依据为 ADR 0019 的已确认重构方向。
 
 本 spec 是开发的施工规格与进度记录。准备工作已在 `087b4c3` 提交；2026-09-12 开始实施，期间逐项更新进度、验证结果和剩余问题。
 
@@ -157,7 +157,7 @@
 
 ## 超出范围
 
-- 开发数据库修改及非用户数据处理已获老板授权，用户数据保留；真实服务切换及进程故障实验仍需落实对应环境与授权。
+- 开发数据库修改、非用户数据处理及本次部署已按老板授权执行，用户数据保留；其他环境的操作不自动纳入本次范围。
 - 不同时接入 RabbitMQ 或 RocketMQ，不建设通用事件总线、多业务工作流引擎或动态插件系统。
 - 不新增通用批次进度、批次续执行平台或独立人工恢复页面；不把现有整次资源占用改成按批次释放。
 - 不提供正在进行的业务尝试的取消，不自动补执行错过的周期，不根据心跳过期强制释放旧写资源。
@@ -181,41 +181,47 @@
 - [x] 核对现有 HTTP、页面、数据库并发及文档批次测试接缝，记录替身验证的范围。
 - [x] 生成施工规格，完成模板、编号、本地链接校验和独立范围复核。
 - [x] P1 公共契约与持久模型：类型注册、执行状态、快照、独立执行查询、原请求回执和必要唯一约束已实现。公共契约离线验证、真实旧结构迁移／约束／回滚验证及开发库升级通过；保留历史与恢复依据，覆盖 T01、T02、T04、T14、T17 的本阶段部分。真实消息及页面联调继续在后续阶段收口。
-- [ ] P2 统一受理与投递：接入持久受理、原请求去重、发布和补投、Worker 原子领取与条件收尾。完成条件：提交后故障和重复投递仍只推进原执行，API 不直接调用任务处理函数；验证 T04、T05、T10。
-- [ ] P3 Beat 与 Worker 进程：接入动态 PostgreSQL 调度适配、统一 cron 计算、UTC 转换、Redis 配置及子进程异步依赖生命周期。完成条件：唯一调度来源、真实队列到 Worker 通路成立，漏跑不补且已受理保留；验证 T03、T05、T16。
-- [ ] P4 执行操作与管理策略：实现配置并发生效、自动重试、人工重试、取消、资源等待、待核实和策略快照，接入历史清理及保护。完成条件：操作竞争有唯一结果，重试、恢复和保留策略不相互绕过；验证 T06 至 T10、T14。
-- [ ] P5 现有业务迁移：将三类定时任务、文档后台批次及 HTTP Pipeline 接到 Worker，完成待办与受理、批次完成与续建的持久交接，保留 CLI 共享资源协调。完成条件：全部范围内入口经 Worker 推进，原业务结果与失败边界保持；验证 T01、T02、T09、T11 至 T13。
+- [x] P2 统一受理与投递：持久受理、请求去重、发布补投、原子领取与条件收尾完成；HTTP、PostgreSQL 并发及真实 Redis 丢失消息／重投／Worker 中断验证通过。覆盖 T04、T05、T10。
+- [x] P3 Beat 与 Worker 进程：动态 PostgreSQL 调度、统一 cron/UTC、共用 Redis 配置和子进程异步生命周期完成；真实 Linux 动态 Beat、两个 prefork 子进程、重连、重投和关闭验证通过，Beat 退出修复另有消融与七份进程日志。覆盖 T03、T05、T16。
+- [x] P4 执行操作与管理策略：配置并发、自动／人工重试、取消、资源等待、待核实、策略快照及历史保护完成；数据库竞争、页面策略留痕、真实 Worker 自动重试及资源等待后恢复通过。覆盖 T06 至 T10、T14。
+- [x] P5 现有业务迁移：三类周期任务、文档后台批次及 HTTP Pipeline 全部接入 Worker，持久交接与 CLI 共享协调保留；真实业务组合、文档回归、事务中断和三存储恢复通过。覆盖 T01、T02、T09、T11 至 T13。
 - [x] P6 任务管理界面：两个视图、常用周期及原始 cron、独立详情、等待、取消、重试和策略管理已接入；类型由 OpenAPI 生成，未知及部分失败结果有行为回归。真实登录／API／Redis／Beat／solo Worker 页面联调通过创建、回执丢失确认、离页续查、取消、失败重试、策略留痕、启用时编辑及删除后的独立查询，桌面与 390px 显示通过。覆盖 T02、T03、T06 至 T09、T14、T15 的页面边界，进程故障归 P7/P8。
-- [ ] P7 迁移与部署配套：更新启动配置、就绪与故障说明、契约文档及能力导航，移除旧调度和消费者入口；准备并按授权执行隔离迁移、真实队列和跨存储验收。完成条件：T13、T16、T17 有明确环境及结果记录，未执行的真实切换单独保留待办。
-- [ ] P8 必要回归与消融：按最终影响范围完成离线回归、前端检查与构建、已授权真实环境验收，复核新增分支、抽象和测试断言的独立保护价值。完成条件：T01 至 T17 均有通过或明确待处理记录；仍有必须通过的验收项时不标记重构完成。
+- [x] P7 迁移与部署配套：启动配置、就绪／故障说明、契约及能力导航已同步，旧调度和消费者入口移除；开发库升级、Linux 队列及三存储验收通过，Actions 已停用旧 scheduler、完成迁移交接、新 API/Beat/Worker 就绪及前端发布。覆盖 T13、T16、T17。
+- [x] P8 必要回归与消融：后端、前端及真实环境验收通过；Redis 键前缀、solo 生命周期、遗留计算交接和 Beat 信号处理的消融已记录。T01 至 T17 均有对应结果与边界，保留测试所需的外部端口替身，不新增业务功能或通用抽象。
 
 ### 验收证据与缺口（2026-09-13）
 
-下表的“离线通过”只指本地受控依赖的行为验证。真实 PostgreSQL 的迁移、交接与并发三组 **13 passed**，补充配置竞争 **6 passed**，真实 PostgreSQL／Qdrant／S3 故障恢复 **5 passed**，文档业务 PostgreSQL／Qdrant 回归 **21 passed**，遗留纯计算的一次性交接 **1 passed**；加上 Windows 原生 HTTP／Beat／solo Worker **1 passed**，共 47 项实际通过。另有真实页面联调及数据库回执核对，P1、P6 已完成。Linux prefork 与运行服务切换仍待 CI 实际执行，不能用 solo 代替多进程故障证据。
+下表的“离线通过”只指受控依赖的行为验证。真实 PostgreSQL 的迁移、交接与并发三组 **13 passed**，补充配置竞争 **6 passed**，真实 PostgreSQL／Qdrant／S3 故障恢复 **5 passed**，文档业务 PostgreSQL／Qdrant 回归 **21 passed**，遗留纯计算的一次性交接 **1 passed**；Windows 原生 HTTP／Beat／solo Worker 基础联调及非空业务组合各 **1 passed**，上述本地真实环境验证共 48 项。另有真实页面与数据库回执核对。Linux 队列及数据库组合在 Actions 中 **27 passed**，部署切换已成功；这 27 项含部分本地数据库用例的复验，不与 48 项合并为独立用例总数。
 
-| 编号 | 已有证据 | 尚待实际验证 |
+| 编号 | 已有证据 | 结论与验证边界 |
 | --- | --- | --- |
-| T01 | [公共执行测试](../../backend/tests/test_task_execution.py)的 `test_new_type_executes_from_direct_and_scheduled_intake` 离线通过，覆盖注册新类型后的周期与一次性受理、执行和查询。 | 真实队列与已有业务装配的联合运行。 |
+| T01 | [公共执行测试](../../backend/tests/test_task_execution.py)覆盖新类型周期与一次性受理；Linux 新注册探针经真实队列完成两种入口，[业务组合](../../backend/tests/test_task_business_integration.py)经生产注册、Runtime 和真实 Worker 完成现有业务。 | 已通过；外部业务上游使用替身，三存储恢复另见 T13。 |
 | T02 | [公共 HTTP](../../backend/tests/test_task_api.py)与 [Pipeline HTTP](../../backend/tests/test_pipeline_api.py)离线通过，覆盖 202、按编号查询、超级用户校验、原参数限制、统计及错误脱敏；OpenAPI 已重新生成。[本地真实联调](../../backend/tests/test_task_local_integration.py)与浏览器验证完成真实登录、HTTP → Worker → 执行详情。 | 本项已通过，生产多进程故障另归 T16。 |
-| T03 | [cron 工具](../../backend/tests/test_scheduled_task_registry.py)的日历、星期及跨日用例与 [Beat 规则](../../backend/tests/test_scheduler_runner.py)离线通过，覆盖预览/计划一致、历史组合及不补漏。 | 对照真实 Beat 的配置变更与未来执行时间。 |
+| T03 | [cron 工具](../../backend/tests/test_scheduled_task_registry.py)的日历、星期及跨日用例与 [Beat 规则](../../backend/tests/test_scheduler_runner.py)离线通过，覆盖预览/计划一致、历史组合及不补漏；Linux 动态 Beat 真实推进未来事件及配置变更。 | 已通过；日历／时区采用受控时间，进程推进由真实 Beat 验证。 |
 | T04 | [请求身份测试](../../backend/tests/test_task_execution.py)离线通过，配置变更/删除及详情过期后仍返回原编号，内容冲突被拒绝；[PostgreSQL 并发受理](../../backend/tests/test_scheduler_postgres_integration.py)及[迁移后约束](../../backend/tests/test_task_migration_postgres_integration.py)实际通过，同请求同编号、不同请求竞争一个名额。 | 本项数据库及请求契约证据已通过；真实消息通路归 T05、T16。 |
-| T05 | [提交失败测试](../../backend/tests/test_scheduled_job_store.py)及 [公共执行测试](../../backend/tests/test_task_execution.py)离线通过，失败提交不发布、投递失败/消息丢失补投、重复消息不再执行业务；本地真实 Redis 消息丢失、Beat 补投与取消旧消息处理通过。 | Linux Redis 发布故障、AOF 重启及并行重复投递。 |
-| T06 | [Beat/配置测试](../../backend/tests/test_scheduler_runner.py)离线通过，覆盖全部未结束状态的重叠、旧版本回调、启停编辑删除及原快照保留；[PostgreSQL 配置竞争](../../backend/tests/test_scheduler_postgres_integration.py)实际通过人工受理使用新快照，以及改／停／删分别先于或后于周期受理的六个场景；旧回调失效，已受理执行仍按原快照完成。 | 动态 Beat 真实进程验证。 |
-| T07 | [重试额度与策略测试](../../backend/tests/test_task_execution.py)离线通过，覆盖初次加三次、递增间隔、人工重试关联、新策略及下一正常周期独立执行；真实页面／Worker 验证数据库错误失败后人工重试成功，原参数、原失败关联与新策略保持正确。 | 真实 Worker/Beat 的自动重试到期投递与多次尝试。 |
+| T05 | [提交失败测试](../../backend/tests/test_scheduled_job_store.py)及 [公共执行测试](../../backend/tests/test_task_execution.py)离线通过；Windows 验证真实 Redis 丢失消息及 Beat 补投，Linux 验证发布故障、AOF 重启、并行重复消息及真实可见性重投。 | 已通过；数据库提交与消息失败使用各自真实边界验证。 |
+| T06 | [Beat/配置测试](../../backend/tests/test_scheduler_runner.py)覆盖重叠、旧回调及快照；[PostgreSQL 配置竞争](../../backend/tests/test_scheduler_postgres_integration.py)通过改／停／删先后六个场景，Linux 动态 Beat 通过实际修改配置、执行及删除后保留历史。 | 已通过；配置竞争使用真实数据库，动态推进使用真实进程。 |
+| T07 | [重试额度与策略测试](../../backend/tests/test_task_execution.py)覆盖额度、间隔及快照；真实页面／Worker 验证人工重试、原参数与新策略；Linux Worker/Beat 验证同一编号两次等待自动重试后第三次成功，间隔增加。 | 已通过；默认额度及下一周期独立性由离线行为测试覆盖。 |
 | T08 | [取消与准备清理](../../backend/tests/test_task_execution.py)离线通过，开始后拒绝取消，旧消息/旧结果不能覆盖取消或恢复结论；[PostgreSQL 开始/取消竞争](../../backend/tests/test_scheduler_postgres_integration.py)实际通过，开始与取消只有一方成功；真实页面取消后，solo Worker 消费旧消息仍保持取消且尝试为零。 | 本项已通过，多进程崩溃边界另归 T16。 |
-| T09 | [资源等待测试](../../backend/tests/test_task_execution.py)离线通过，等待原因可见且不消耗尝试；[跨进程写资源互斥](../../backend/tests/test_scheduler_postgres_integration.py)实际通过清理等待索引、后续同步等待清理及明确恢复前不抢占。 | 资源释放后真实 Celery Worker 继续执行。 |
-| T10 | [收尾与恢复测试](../../backend/tests/test_scheduler_safety.py)、[公共执行测试](../../backend/tests/test_task_execution.py)离线通过，完成结果保存重试不重做业务、旧领取不覆盖恢复结论；[真实三存储](../../backend/tests/test_task_cross_storage_integration.py)已通过两个远端删除回执丢失场景，保留待核实与写占用，核实后才继续。 | 真实 Worker 强制中断及完成证据恢复。 |
-| T11 | [批次交接测试](../../backend/tests/test_scheduler_safety.py)离线通过，正常完成才续建，无待办不续建；[PostgreSQL 交接](../../backend/tests/test_task_handoff_postgres_integration.py)两项事务中断及一项遗留计算交接均通过。未提交事务退出整体回滚，重新保存仅有必要续批；旧库仅剩解析／预览领取也能受理首批，草稿与未决写入状态保留，旧计算结果失效。 | 真实消息进程归 T16；实际开发服务切换时的一次性交接归 T17。 |
-| T12 | [文档批次](../../backend/tests/test_news_pipeline_execution.py)离线回归通过；真实 PostgreSQL／Qdrant 的接收、处理、审核、采用、删除、重建与文件 HTTP 回归 **21 passed**，覆盖旧版保留、迟到结果、失败恢复、正式检索与全文可见性。原件和 Embedding 为替身，解析与 tokenizer 为本地真实实现。 | 原业务经真实 Celery Worker 推进的联合运行；本组不能作为真实原件或模型验收，真实三存储删除恢复见 T13。 |
+| T09 | [跨进程写资源互斥](../../backend/tests/test_scheduler_postgres_integration.py)验证互斥与未决占用；[真实业务组合](../../backend/tests/test_task_business_integration.py)在独立进程持有 index 时让清理进入可见等待、尝试为零，同一个 solo Worker 完成同步，释放后 Beat 将原清理推进至成功、尝试为一。 | 已通过；唯一 Worker 排除由另一执行位置掩盖阻塞的可能。 |
+| T10 | [收尾与恢复测试](../../backend/tests/test_scheduler_safety.py)保护结果保存与领取代次；[真实三存储](../../backend/tests/test_task_cross_storage_integration.py)覆盖回执丢失后的待核实；Linux SIGKILL 实验分别按无完成证据进入待核实、有持久完成证据恢复成功。 | 已通过；合成进程故障与真实跨存储不确定结果分别验证。 |
+| T11 | [批次交接测试](../../backend/tests/test_scheduler_safety.py)及 [PostgreSQL 交接](../../backend/tests/test_task_handoff_postgres_integration.py)通过正常续建、事务中断和遗留计算交接；[业务组合](../../backend/tests/test_task_business_integration.py)验证来源待办受理后由真实 Beat/Worker 处理非空批次，完成后不空转。 | 已通过；实际切换与一次性 bootstrap 见 T17。 |
+| T12 | 文档 PostgreSQL／Qdrant 回归 **21 passed**；[业务组合](../../backend/tests/test_task_business_integration.py)通过真实 Celery、生产注册/Runtime/应用及 Docling/tokenizer 完成同步、索引、业务批次和 HTTP Pipeline，核对三份正式文档、版本与向量端口收到的冻结正文。 | 已通过；组合中的来源、原件、Embedding、向量端口为替身，真实存储恢复见 T13，不声称真实模型端到端。 |
 | T13 | [三存储恢复](../../backend/tests/test_task_cross_storage_integration.py) **5 passed**，真实 PostgreSQL／Qdrant／S3 共同验证远端删除后本地确认失败、数据库收尾失败及两个删除回执丢失场景；五份报告均确认远端测试资源清理，schema 随夹具退出清理。 | 本项组合故障验收已通过；Celery 消息进程和实际部署切换分别归 T16、T17。 |
-| T14 | [策略/回执测试](../../backend/tests/test_task_execution.py)与 [失败关联保护](../../backend/tests/test_scheduler_safety.py)离线通过；[真实迁移](../../backend/tests/test_task_migration_postgres_integration.py)验证历史裁剪后回执返回原编号、缺失快照禁止重试、删除配置仍保留占用与删除待办；[三存储恢复](../../backend/tests/test_task_cross_storage_integration.py)验证清理历史不丢恢复依据。 | 真实队列中的策略变更与重试归 T07、T16；原失败关联保护当前只有离线证据。 |
+| T14 | [策略/回执测试](../../backend/tests/test_task_execution.py)与 [失败关联保护](../../backend/tests/test_scheduler_safety.py)通过；[真实迁移](../../backend/tests/test_task_migration_postgres_integration.py)验证回执及历史边界，[三存储恢复](../../backend/tests/test_task_cross_storage_integration.py)保护恢复依据，真实页面/Worker 验证新策略只作用于新受理。 | 已通过；原失败关联的清理保护由离线行为测试验证。 |
 | T15 | [任务管理页面](../../frontend/src/pages/ScheduledJobsPage.spec.ts)、[HTTP 适配](../../frontend/src/api/tasks.spec.ts)与 Feature 测试通过；真实登录、API、Redis、Beat 和 solo Worker 的页面联调通过创建、回执丢失确认、离页续查、取消、失败重试、策略留痕、启用时编辑及删除后按编号查询；1440px／390px 无横向溢出。 | 本项已通过；原件、模型等业务上游未在页面联调中调用。 |
-| T16 | [队列夹具](../../backend/tests/test_task_queue_integration.py)七种场景已准备，含多子进程持久循环、AOF/重连、重复/可见性重投、关停与动态 Beat，默认跳过。 | Linux 上真实 Redis、Beat 与 prefork Worker 的完整运行及进程日志。 |
-| T17 | [隔离迁移](../../backend/tests/test_task_migration_postgres_integration.py) **3 passed**，覆盖旧结构升级、约束与前提不满足时整体回滚；开发库已授权升级至 `b6e2f9047a31`，用户数据摘要及原有配置／执行身份一致。迁移 SQL、两份 Compose、发布脚本静态检查与本地就绪逻辑测试通过。 | 实际 Linux 进程就绪与诊断、旧入口停用、一次性业务待办交接和服务切换；未控制远端旧服务，不能据本机无进程推断远端已停用。 |
+| T16 | [队列夹具](../../backend/tests/test_task_queue_integration.py)七项真实 Linux 场景通过：两个 prefork 子进程持久循环、AOF/重连、重复/可见性重投、SIGKILL、正常关停、动态 Beat 与重试；七份 Beat 日志无关闭异常且最终未就绪。 | 已通过；Linux 故障只操作夹具独立 Redis 与进程，未重启或清空共享开发 Redis。 |
+| T17 | [隔离迁移](../../backend/tests/test_task_migration_postgres_integration.py) **3 passed**，开发库升级后用户数据与身份核对一致；Actions 日志确认旧 `agent-lab-scheduler` 已停止、迁移与一次性交接执行，最终 API 健康、Beat 推进、Worker `pong` 和前端上传均成功。 | 已通过；部署成功运行 [34736293425](https://github.com/zhengkanghua/agent-lab/actions/runs/34736293425)，提交 `144a019`。 |
 
-当前 Windows 环境没有本地 Docker/WSL，已通过原生 HTTP／Beat／solo Worker 和真实页面联调。Redis 当前密码为空，TCP 与 PING 通过。Linux prefork 验收已接入 GitHub Actions 部署前步骤，待推送后实际执行。隔离命令和资源范围见 [后端测试说明](../../backend/README.md#测试)，切换顺序见 [部署手册](../container_deployment.md)。老板已授权开发数据库非用户数据处理、本地测试，以及验证后分批提交、推送与跟踪部署；用户数据保留，共享 Redis 不整体重启或清空。
+Windows 原生 HTTP／Beat／solo Worker、非空业务组合和真实页面联调均已通过，本地不要求 Docker/WSL。开发 Redis 当前密码为空，TCP 与 PING 通过；非空密码已验证进入 Celery 读／写连接，未把空密码服务当作真实认证验收。Linux prefork 在 GitHub Actions 部署前验收通过。隔离命令及资源范围见 [后端测试说明](../../backend/README.md#测试)，切换顺序见 [部署手册](../container_deployment.md)。所有操作遵守老板已有授权；用户数据保留，共享 Redis 不整体重启或清空。
 
 ### 工程记录与完成条件
+
+2026-09-13（实施验收收口）：`144a019` 的 [34736293425](https://github.com/zhengkanghua/agent-lab/actions/runs/34736293425) **全部成功**。后端 **750 passed、63 skipped、1 warning**（47.03 秒），Linux **27 passed**（289.06 秒），前端 **809 passed**，lint 与构建通过；部署日志确认 API 健康、Beat 推进、Worker `pong` 和前端上传成功。内部 Redis 别名修复已通过实际部署，之前的连接认证错误消失。旧 scheduler 停止与首次迁移交接证据来自上一轮服务切换日志，普通发布未重复 bootstrap。
+
+2026-09-13（最后业务组合补验）：[业务组合](../../backend/tests/test_task_business_integration.py) **1 passed**（216.66 秒），使用真实 HTTP/认证、PostgreSQL、共享 Redis、Beat、唯一 solo Worker 和独立 index 占用进程。清理等待期间尝试为零，同 Worker 完成同步，释放后原清理成功且尝试为一；显式索引、事务受理的文档批次及 HTTP Pipeline 分别完成非空资料，核对三份已采用文档、版本和相同 Worker PID 的冻结向量输入。真实 Docling/tokenizer 与业务应用保持原实现，外部端口使用替身。首次尝试被默认离线连接保护阻止，补入该文件的显式环境开关后通过；默认门控和生命周期定向检查 **13 passed、2 skipped**（6.47 秒）。报告确认 Redis 测试键和 schema 清理，进程检查无本次 API/Beat/Worker/占用进程残留。T09/T12 缺口关闭，P1 至 P8 全部标记完成，spec 删除等待老板确认。
+
+收尾文档的 **72 个本地链接目标有效**，四项其他工作文件的 SHA-256 与保留基线一致，差异空白检查通过。新增测试替身仅隔离外部端口；资源等待、业务应用、处理算法和数据库状态不由替身伪造。日志及报告保留在本地 `.pytest_cache`，不提交账号凭据、连接配置或测试数据。
 
 2026-09-13（第二次 CI 与默认 Redis 地址）：修复提交 `887fc66` 的 [34735604065](https://github.com/zhengkanghua/agent-lab/actions/runs/34735604065) 再次通过 Linux 队列验收，下载产物后未再发现 Beat 的关闭异常。部署目录准备、候选上传、迁移和 API 健康检查均通过，但 Worker 连接默认 `redis://redis:6379/0` 时收到 `Authentication required`，任务进程就绪检查失败，前端尚未上传。自带 Redis 启动命令没有配置密码，而业务容器同时连接内部网络和共享 `1panel-network`；改用仅在内部网络声明的 `agent-lab-redis` 项目别名，消除通用服务名的解析冲突。独立离线装配已确认 `REDIS_PASSWORD` 的非空值实际进入 Celery 读／写连接；不会为未知 Redis 实例猜测密码或修改其认证。
 

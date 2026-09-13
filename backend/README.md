@@ -439,12 +439,12 @@ docker compose -p agent-lab-task-tests -f docker-compose.task-tests.yml down --v
 
 该编排只建立内部测试网络与临时 PostgreSQL，不挂生产 `.env`，没有宿主端口。结果目录为 `.pytest_cache/task-environment/`，Worker/Beat/Redis 日志在其 `task-processes/` 下，先保留失败日志再清理。镜像内同时执行旧结构迁移、多进程 PostgreSQL 与文档事务交接中断验证；交接测试只构造合成待办，验证退出时整体回滚和已知结果重新保存，不调用原件或模型。部署工作流在离线测试之后使用 Linux runner、临时 PostgreSQL 和夹具自己的 Redis 执行这些验收，失败即停止部署，进程日志作为 Actions artifact 保存。有已授权 Linux PostgreSQL 时也可设置 `RUN_TASK_QUEUE_INTEGRATION_TEST=1`、`TASK_TEST_DATABASE_URL` 后运行 `tests/test_task_queue_integration.py`，本机需有 `redis-server`。
 
-已有开发 Redis 时可在 Windows 原生验证 HTTP、真实登录、Beat 和 solo Worker，无需 Docker。以下用例读取 `DATABASE_URL`、`REDIS_URL` 与 `REDIS_PASSWORD`，只创建随机 schema、隔离账号及带随机前缀的任务键；通过空知识库清理预演验证消息丢失补投、取消、连续执行和 Worker 正常关闭。不重启或清空共享 Redis，不调用业务上游。该用例已在 Windows 与真实开发 PostgreSQL／Redis 上通过，并确认测试键和 schema 清理完成：
+已有开发 Redis 时可在 Windows 原生验证 HTTP、真实登录、Beat 和 solo Worker，无需 Docker。以下用例读取 `DATABASE_URL`、`REDIS_URL` 与 `REDIS_PASSWORD`，只创建随机 schema、隔离账号及带随机前缀的任务键。基础用例通过空知识库清理预演验证消息丢失补投、取消、连续执行和 Worker 正常关闭；业务组合用例还验证资源等待让出唯一 Worker，以及同步、索引、文档批次和 HTTP Pipeline 对非空资料的处理。后者保留真实 Docling、tokenizer、业务应用及事务，仅替换外部来源、原件、Embedding 和向量端口，不调用真实业务上游。两项已在 Windows 与开发 PostgreSQL／Redis 上通过，测试键、schema 和进程已清理；不重启或清空共享 Redis：
 
 ```powershell
 $env:RUN_TASK_LOCAL_INTEGRATION_TEST="1"
 try {
-  uv run pytest -q --tb=short --basetemp=.pytest_cache/task-local tests/test_task_local_integration.py
+  uv run pytest -q --tb=short --basetemp=.pytest_cache/task-local tests/test_task_local_integration.py tests/test_task_business_integration.py
 } finally {
   Remove-Item Env:RUN_TASK_LOCAL_INTEGRATION_TEST
 }
