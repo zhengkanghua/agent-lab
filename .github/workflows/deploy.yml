@@ -238,6 +238,33 @@ jobs:
           # 这两种情况下镜像本身是好的，没有理由不部署。
           cache-to: type=gha,mode=max,ignore-error=true
 
+      # 旧流程只在目录里执行 Docker；候选编排还要求部署账号能创建和替换文件。
+      - name: 准备编排目录写入权限
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          envs: DEPLOY_DIR
+          script: |
+            set -euo pipefail
+            cd "$DEPLOY_DIR"
+            test -f docker-compose.yml
+            test -f .env
+            if [ ! -w . ]; then
+              # 复用现有镜像，只调整项目目录本身；不递归触碰 .env、数据或其他项目。
+              deploy_path="$(pwd -P)"
+              deploy_image="$(docker compose images -q backend | sort -u)"
+              test -n "$deploy_image"
+              docker run --rm --network none --read-only --user 0 --entrypoint python \
+                --mount "type=bind,src=$deploy_path,dst=/deployment" "$deploy_image" \
+                -c 'import os, sys; os.chown("/deployment", int(sys.argv[1]), int(sys.argv[2]))' \
+                "$(id -u)" "$(id -g)"
+            fi
+            test -w .
+        env:
+          DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
+
       # 编排先以候选文件上传，旧文件仍可用来停止旧 scheduler。
       - name: 上传候选后端编排
         uses: burnett01/rsync-deployments@v9

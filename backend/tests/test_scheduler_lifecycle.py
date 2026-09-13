@@ -4,6 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 import json
+import signal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
@@ -189,4 +190,51 @@ def test_process_runtime_reuses_one_loop_until_worker_shutdown(monkeypatch, shut
         assert len(loops) == 4 and all(loop is loops[0] for loop in loops)
         assert loops[0].is_closed()
     finally:
+        process.close_process_runtime()
+
+
+@pytest.mark.parametrize("stop_signal", [signal.SIGTERM, signal.SIGINT])
+def test_beat_shutdown_finishes_current_tick_and_closes_its_loop(monkeypatch, stop_signal):
+    """沿真实 Celery Service 发出退出请求，异步工作应完成，连接和循环只收尾一次。"""
+    from celery.apps.beat import Beat
+    from celery.beat import Service
+    from agent_lab.tasks import beat, celery_app, process
+
+    monkeypatch.setattr(process, "_runtime", None)
+    monkeypatch.setattr(beat, "write_status", lambda **_: None)
+    loops, disposed, completed = [], [], []
+
+    async def dispose():
+        disposed.append(asyncio.get_running_loop())
+
+    async def opened(self):
+        loops.append(asyncio.get_running_loop())
+        self.engine = SimpleNamespace(dispose=dispose)
+
+    monkeypatch.setattr(process.ProcessRuntime, "_open", opened)
+    runtime = process.get_process_runtime()
+    scheduler = beat.PostgresScheduler(app=celery_app.app)
+    service = Service(app=celery_app.app)
+    service.scheduler = scheduler
+
+    async def tick():
+        try:
+            # 在异步循环内部调用真实注册的信号处理器，覆盖实际重入风险。
+            signal.getsignal(stop_signal)(stop_signal, None)
+            await asyncio.sleep(0)
+            completed.append(True)
+        finally:
+            service.stop()  # 错误实现也不能让本测试无限 tick。
+
+    scheduler._controller = SimpleNamespace(runtime=runtime, tick=tick, close=AsyncMock())
+    original = {name: signal.getsignal(name) for name in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        Beat(app=celery_app.app).install_sync_handler(service)
+        service.start()
+        scheduler.close()
+        assert completed == [True]
+        assert disposed == loops and loops[0].is_closed()
+    finally:
+        for name, handler in original.items():
+            signal.signal(name, handler)
         process.close_process_runtime()

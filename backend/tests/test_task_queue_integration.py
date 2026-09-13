@@ -213,7 +213,7 @@ def queue_environment(tmp_path):
 def test_prefork_reuses_one_loop_per_child_and_ignores_duplicate_delivery(queue_environment):
     env = queue_environment
     env.start_worker()
-    env.start_beat()
+    beat = env.start_beat()
     receipts = [env.submit(value=value, seconds=0.5) for value in range(8)]
     duplicates = []
     for receipt in receipts:
@@ -230,6 +230,8 @@ def test_prefork_reuses_one_loop_per_child_and_ignores_duplicate_delivery(queue_
     for pid in processes:
         handled = [item for item in events if item["process_id"] == pid]
         assert len(handled) >= 2 and len({item["loop_id"] for item in handled}) == 1
+    assert env.stop(beat) == 0
+    assert json.loads((env.directory / "beat.json").read_text())["ready"] is False
 
 
 def test_publish_failure_lost_message_and_redis_aof_restart_preserve_receipts(queue_environment):

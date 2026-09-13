@@ -39,6 +39,19 @@ signals.worker_process_shutdown.connect(close_process_runtime, weak=False)
 signals.worker_shutdown.connect(close_process_runtime, weak=False)
 
 
+@signals.beat_init.connect(weak=False)
+def install_beat_shutdown(sender, **kwargs):
+    """信号只请求停止；当前异步 tick 退出后，再由 Beat 主循环关闭资源。"""
+    from celery.platforms import signals as process_signals
+
+    # Celery 默认信号处理器立即 sync/close，可能重入正在运行的事件循环，
+    # 随后的 Service.start finally 还会再关闭一次。让 Service 自己完成收尾。
+    def stop_after_tick(*_args):
+        sender.stop()
+
+    process_signals.update(SIGTERM=stop_after_tick, SIGINT=stop_after_tick)
+
+
 @app.task(name="agent_lab.execute", ignore_result=True)
 def execute_task(run_id: str, generation: int):
     runtime = get_process_runtime()

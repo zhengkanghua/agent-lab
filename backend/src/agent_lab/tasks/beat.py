@@ -86,11 +86,13 @@ class PostgresScheduler(Scheduler):
         return settings.beat_poll_seconds
 
     def close(self):
+        controller = getattr(self, "_controller", None)
+        # 关闭可以重复调用；后续调用不再使用已经关闭的 Runtime。
+        self._controller = None
         try:
             write_status(ready=False, jobs=0)
         finally:
             try:
-                controller = getattr(self, "_controller", None)
                 if controller is not None:
                     controller.runtime.run(controller.close())
             finally:

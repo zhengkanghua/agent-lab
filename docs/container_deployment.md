@@ -92,6 +92,8 @@ sudo chown deploy:deploy /opt/agent-lab
 
 全新环境把仓库 `backend/docker-compose.yml` 复制到 `<DEPLOY_DIR>/docker-compose.yml`，与 `.env` 放在同一目录。已有环境保留旧文件，发布工作流上传 `docker-compose.next.yml`，以旧编排停用旧入口、迁移成功后再替换，避免先覆盖文件导致旧 scheduler 无法识别。该编排继续使用已有外部 `1panel-network`。
 
+候选文件的上传和替换要求部署账号能写项目目录。工作流先核对目录内已有编排和 `.env`；目录不可写时，复用现有后端镜像启动一个无网络的临时容器，仅将项目目录本身的属主改为部署账号，与上面的建目录步骤一致。不递归修改目录内文件的权限，也不改变上层 1Panel 目录。
+
 照 [`backend/.env.example`](../backend/.env.example) 建 `<DEPLOY_DIR>/.env`：
 
 ```bash
