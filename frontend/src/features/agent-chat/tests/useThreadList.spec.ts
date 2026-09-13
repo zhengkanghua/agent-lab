@@ -6,7 +6,6 @@ import type { AgentThreadSummaryDto } from '@/api/agent-threads'
 const api = vi.hoisted(() => ({
   listAgentThreads: vi.fn(),
   deleteAgentThread: vi.fn(),
-  getAgentThreadMessages: vi.fn(),
 }))
 
 vi.mock('@/api/agent-threads', () => api)
@@ -33,7 +32,7 @@ function page(count: number, total = count) {
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { createApp } from 'vue'
 
-/** 在 effectScope 内构造，让 onScopeDispose 有地方挂，并通过 App 注入 Vue Query。 */
+/** 通过 App 注入 Vue Query，并在每个用例结束后卸载。 */
 function build(options: Partial<Parameters<typeof useThreadList>[0]> = {}) {
   const onActiveThreadDeleted = options.onActiveThreadDeleted ?? vi.fn()
   const activeThreadId = options.activeThreadId ?? (() => null)
@@ -172,7 +171,7 @@ describe('useThreadList', () => {
     scope.stop()
   })
 
-  it('删除中的那一行在结束后解除忙态，无论成败', async () => {
+  it('删除失败后解除忙态并保留错误提示', async () => {
     api.listAgentThreads.mockResolvedValue(page(1))
     api.deleteAgentThread.mockRejectedValue(
       new ApiError({ message: '失败', code: 'agent_thread_database_unavailable', status: 503 }),
@@ -182,8 +181,7 @@ describe('useThreadList', () => {
 
     await list.remove(thread(1))
 
-    // 少了 finally 那一行，这一行会永久停在禁用态，用户只能刷新整页。
-    expect(list.isDeleting(thread(1).thread_id)).toBe(false)
+    expect(list.deletingThreadIds.value.has(thread(1).thread_id)).toBe(false)
     expect(list.listError.value?.title).toBeTruthy()
     scope.stop()
   })

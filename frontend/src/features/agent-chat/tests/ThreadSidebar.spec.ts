@@ -41,8 +41,8 @@ describe('ThreadSidebar', () => {
 
     const items = wrapper.findAll('.thread-item')
     expect(items).toHaveLength(2)
-    expect(items[0]?.classes()).not.toContain('is-active')
-    expect(items[1]?.classes()).toContain('is-active')
+    expect(items[0]?.get('.open-button').attributes('aria-current')).toBeUndefined()
+    expect(items[1]?.get('.open-button').attributes('aria-current')).toBe('true')
   })
 
   it('按最近活动分组：今天/昨天/本周/更早，组内保持原顺序', () => {
@@ -144,7 +144,8 @@ describe('ThreadSidebar', () => {
   it('正在删除的那一行进入忙态', () => {
     const wrapper = render({ deletingThreadIds: new Set([thread(1).thread_id]) })
 
-    expect(wrapper.findAll('.thread-item')[0]?.classes()).toContain('is-deleting')
-    expect(wrapper.findAll('.thread-item')[1]?.classes()).not.toContain('is-deleting')
+    const openButtons = wrapper.findAll('.open-button')
+    expect(openButtons[0]?.attributes('disabled')).toBeDefined()
+    expect(openButtons[1]?.attributes('disabled')).toBeUndefined()
   })
 })

@@ -2,7 +2,6 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import type { UserAdminDto } from '@/api/user-admin'
 import UserDirectoryTable from '../components/UserDirectoryTable.vue'
-import UserAccountRow from '../components/UserAccountRow.vue'
 
 const FIRST_ID = '30000000-0000-4000-8000-000000000001'
 const SECOND_ID = '30000000-0000-4000-8000-000000000002'
@@ -45,7 +44,7 @@ describe('UserDirectoryTable', () => {
     expect(wrapper.get('[role="status"]').text()).toContain('正在读取账号目录')
     expect(wrapper.find('[role="table"]').exists()).toBe(false)
     // 加载中禁用刷新键，避免连点叠出多个请求。
-    expect(wrapper.get('.directory-heading .base-button').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('button').attributes('disabled')).toBeDefined()
   })
 
   it('加载失败显示 alert 并给出重新加载', async () => {
@@ -65,46 +64,69 @@ describe('UserDirectoryTable', () => {
     expect(wrapper.find('[role="table"]').exists()).toBe(false)
   })
 
-  it('就绪后每个账号一行，表头列数与行对齐', () => {
-    const wrapper = mountTable()
-
-    expect(wrapper.findAllComponents(UserAccountRow)).toHaveLength(2)
-    expect(wrapper.findAll('[role="columnheader"]')).toHaveLength(5)
-  })
-
-  it('密码重置表单只发给展开的那一行，其余行拿到 null', () => {
-    // 这是本组件唯一的一处逻辑（resetPasswordFor）。传错的后果是两行同时展开表单，
-    // 或者改密码时改到了别人。
+  it('密码重置表单只在目标账号所在行展开，清空输入不会关闭', async () => {
     const wrapper = mountTable({ resetUserId: SECOND_ID, resetPassword: 'draft' })
-    const rows = wrapper.findAllComponents(UserAccountRow)
 
-    expect(rows[0]?.props('resetPassword')).toBeNull()
-    expect(rows[1]?.props('resetPassword')).toBe('draft')
+    expect(
+      wrapper.get(`[data-user-id="${FIRST_ID}"]`).find('input[name="reset-password"]').exists(),
+    ).toBe(false)
+    expect(
+      wrapper.get<HTMLInputElement>(`[data-user-id="${SECOND_ID}"] input[name="reset-password"]`)
+        .element.value,
+    ).toBe('draft')
+    await wrapper.setProps({ resetPassword: '' })
+    expect(wrapper.get<HTMLInputElement>('input[name="reset-password"]').element.value).toBe('')
+    await wrapper.setProps({ resetUserId: null })
+    expect(wrapper.find('input[name="reset-password"]').exists()).toBe(false)
   })
 
-  it('在途状态和行内错误各自落到对应的行上', () => {
+  it('在途状态和行内错误各自落到对应的行上', async () => {
     const wrapper = mountTable({
       busyUserIds: new Set([SECOND_ID]),
       rowErrors: { [FIRST_ID]: '该账号是最后一个超级用户。' },
     })
-    const rows = wrapper.findAllComponents(UserAccountRow)
+    const first = wrapper.get(`[data-user-id="${FIRST_ID}"]`)
+    const second = wrapper.get(`[data-user-id="${SECOND_ID}"]`)
 
-    expect(rows[0]?.props('busy')).toBe(false)
-    expect(rows[0]?.props('error')).toBe('该账号是最后一个超级用户。')
-    expect(rows[1]?.props('busy')).toBe(true)
-    expect(rows[1]?.props('error')).toBe('')
+    expect(first.find('[disabled]').exists()).toBe(false)
+    expect(first.get('[role="alert"]').text()).toBe('该账号是最后一个超级用户。')
+    for (const control of second.findAll('input, button')) {
+      expect(control.attributes('disabled')).toBeDefined()
+    }
+    expect(second.find('[role="alert"]').exists()).toBe(false)
+    await wrapper.setProps({ rowErrors: {} })
+    expect(first.find('[role="alert"]').exists()).toBe(false)
+  })
+
+  it.each([
+    { field: 'active', event: 'set-active', confirmed: true },
+    { field: 'superuser', event: 'set-superuser', confirmed: false },
+  ])('$field 开关等待确认，失败后仍可重试同一目标状态', async ({ field, event, confirmed }) => {
+    const wrapper = mountTable()
+    const input = wrapper.get<HTMLInputElement>(`[data-testid="${field}-${SECOND_ID}"]`)
+    await input.setValue(!confirmed)
+    expect(input.element.checked).toBe(confirmed)
+    await wrapper.setProps({ busyUserIds: new Set([SECOND_ID]) })
+    await wrapper.setProps({
+      busyUserIds: new Set(),
+      rowErrors: { [SECOND_ID]: '请求失败，请重试。' },
+    })
+    await input.setValue(!confirmed)
+    expect(input.element.checked).toBe(confirmed)
+    expect(wrapper.emitted(event)).toEqual([
+      [expect.objectContaining({ id: SECOND_ID }), !confirmed],
+      [expect.objectContaining({ id: SECOND_ID }), !confirmed],
+    ])
+    wrapper.unmount()
   })
 
   it('行事件往上转时带的是那一行的账号对象', async () => {
     // 转错对象的后果最严重：点第二行的开关，改的是第一行的账号。
     const wrapper = mountTable()
-    const second = wrapper.findAllComponents(UserAccountRow)[1]
-
-    second?.vm.$emit('set-active', false)
-    second?.vm.$emit('set-superuser', true)
-    second?.vm.$emit('open-reset')
-    second?.vm.$emit('revoke-sessions')
-    await wrapper.vm.$nextTick()
+    await wrapper.get(`[data-testid="active-${SECOND_ID}"]`).setValue(false)
+    await wrapper.get(`[data-testid="superuser-${SECOND_ID}"]`).setValue(true)
+    await wrapper.get(`[data-testid="reset-${SECOND_ID}"]`).trigger('click')
+    await wrapper.get(`[data-testid="sessions-${SECOND_ID}"]`).trigger('click')
 
     expect(wrapper.emitted('set-active')?.[0]?.[0]).toMatchObject({ id: SECOND_ID })
     expect(wrapper.emitted('set-active')?.[0]?.[1]).toBe(false)
@@ -119,7 +141,7 @@ describe('UserDirectoryTable', () => {
   it('刷新键发出 refresh', async () => {
     const wrapper = mountTable()
 
-    await wrapper.get('.directory-heading .base-button').trigger('click')
+    await wrapper.get('button').trigger('click')
 
     expect(wrapper.emitted('refresh')).toHaveLength(1)
   })

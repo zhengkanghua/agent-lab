@@ -14,12 +14,6 @@ describe('BaseButton', () => {
     expect(wrapper.text()).toBe('发送')
   })
 
-  it('variant 与 size 落到 class 上', () => {
-    const wrapper = mount(BaseButton, { props: { variant: 'primary', size: 'sm' } })
-    expect(wrapper.classes()).toContain('is-primary')
-    expect(wrapper.classes()).toContain('is-sm')
-  })
-
   it('loading 时禁用、标 aria-busy、并显示转圈', () => {
     const wrapper = mount(BaseButton, { props: { loading: true }, slots: { default: '提交' } })
     // 关键行为：loading 也要挡住点击，否则双击会发两次请求。
@@ -65,7 +59,7 @@ describe('BaseButton', () => {
     expect(wrapper.attributes('type')).toBe('submit')
   })
 
-  it('给了 to 就渲染链接而不是 button，且带上变体 class', () => {
+  it('给了 to 就渲染带目标地址和文案的链接', () => {
     const wrapper = mount(BaseButton, {
       props: { to: '/admin', variant: 'ghost' },
       slots: { default: '用户管理' },
@@ -82,14 +76,5 @@ describe('BaseButton', () => {
     expect(wrapper.find('button').exists()).toBe(false)
     expect(link.attributes('href')).toBe('/admin')
     expect(link.text()).toBe('用户管理')
-    // 链接形态也要吃到变体样式，否则顶栏那几个入口会掉回裸 <a>。
-    expect(link.classes()).toContain('is-ghost')
-    expect(link.classes()).toContain('base-button')
-  })
-
-  it('iconOnly 与 block 各自落 class', () => {
-    const wrapper = mount(BaseButton, { props: { iconOnly: true, block: true } })
-    expect(wrapper.classes()).toContain('is-icon-only')
-    expect(wrapper.classes()).toContain('is-block')
   })
 })

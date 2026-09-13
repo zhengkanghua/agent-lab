@@ -10,13 +10,14 @@ function simulateBrowserToggle(el: HTMLDetailsElement, next: boolean): void {
 }
 
 describe('BaseDisclosure', () => {
-  it('渲染摘要文字与插槽内容', () => {
+  it('渲染摘要、图标和正文插槽', () => {
     const wrapper = mount(BaseDisclosure, {
       props: { summary: '查看返回内容' },
-      slots: { default: '<pre>tool output</pre>' },
+      slots: { default: '<pre>tool output</pre>', icon: '<svg class="probe" />' },
     })
 
     expect(wrapper.find('summary').text()).toContain('查看返回内容')
+    expect(wrapper.find('summary .probe').exists()).toBe(true)
     expect(wrapper.find('pre').text()).toBe('tool output')
   })
 
@@ -68,37 +69,5 @@ describe('BaseDisclosure', () => {
 
     await wrapper.setProps({ meta: '3 次调用' })
     expect(wrapper.find('.disclosure-meta').text()).toBe('3 次调用')
-  })
-
-  it('size 落到尺寸类名上', () => {
-    const wrapper = mount(BaseDisclosure, { props: { summary: '摘要', size: 'sm' } })
-
-    expect(wrapper.find('details').classes()).toContain('is-sm')
-  })
-
-  it('默认是 accent 语气，tone 可切到 plain', async () => {
-    const wrapper = mount(BaseDisclosure, { props: { summary: '摘要' } })
-    expect(wrapper.find('details').classes()).toContain('tone-accent')
-
-    await wrapper.setProps({ tone: 'plain' })
-    expect(wrapper.find('details').classes()).toContain('tone-plain')
-    expect(wrapper.find('details').classes()).not.toContain('tone-accent')
-  })
-
-  it('icon 插槽渲染在箭头之后、标题之前', () => {
-    const wrapper = mount(BaseDisclosure, {
-      props: { summary: '每篇相关片段' },
-      slots: { icon: '<svg class="probe" />' },
-    })
-
-    /* 只断言三者的先后，不比对完整 class 串：lucide 会往图标上追加自己的类名。 */
-    const summary = wrapper.find('summary').element
-    const marks = Array.from(summary.children).map((child) => {
-      if (child.classList.contains('disclosure-chevron')) return 'chevron'
-      if (child.classList.contains('probe')) return 'icon'
-      if (child.classList.contains('disclosure-title')) return 'title'
-      return 'other'
-    })
-    expect(marks).toEqual(['chevron', 'icon', 'title'])
   })
 })

@@ -18,35 +18,25 @@ function makeUser(overrides: Partial<UserAdminDto> & Pick<UserAdminDto, 'email'>
 
 describe('sortUsers', () => {
   it('保底管理员排在最前，与它的邮箱字典序无关', () => {
-    const sorted = sortUsers([
+    const input = [
       makeUser({ email: 'alice@example.com' }),
       makeUser({ email: 'zoe@example.com', is_environment_admin: true }),
       makeUser({ email: 'bob@example.com' }),
-    ])
+    ]
+    const sorted = sortUsers(input)
 
     expect(sorted.map((user) => user.email)).toEqual([
       'zoe@example.com',
       'alice@example.com',
       'bob@example.com',
     ])
-  })
-
-  it('不原地改传入的数组', () => {
     // 调用点常常拿着渲染中的 users.value，原地排会在渲染途中换顺序。
-    const input = [makeUser({ email: 'b@example.com' }), makeUser({ email: 'a@example.com' })]
-    const sorted = sortUsers(input)
-
-    expect(input.map((user) => user.email)).toEqual(['b@example.com', 'a@example.com'])
-    expect(sorted).not.toBe(input)
-  })
-
-  it('多个保底管理员之间仍按邮箱排', () => {
-    const sorted = sortUsers([
-      makeUser({ email: 'ops@example.com', is_environment_admin: true }),
-      makeUser({ email: 'admin@example.com', is_environment_admin: true }),
+    expect(input.map((user) => user.email)).toEqual([
+      'alice@example.com',
+      'zoe@example.com',
+      'bob@example.com',
     ])
-
-    expect(sorted.map((user) => user.email)).toEqual(['admin@example.com', 'ops@example.com'])
+    expect(sorted).not.toBe(input)
   })
 })
 

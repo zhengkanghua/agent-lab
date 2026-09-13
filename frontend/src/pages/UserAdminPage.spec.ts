@@ -105,7 +105,17 @@ describe('UserAdminPage', () => {
     vi.unstubAllGlobals()
   })
 
-  it('renders the deployment-managed administrator with mutation controls disabled', async () => {
+  it('环境管理员操作受限，账号概况随目录刷新', async () => {
+    api.listUsers.mockResolvedValue([
+      environmentAdmin,
+      regularUser,
+      {
+        ...regularUser,
+        id: '30000000-0000-4000-8000-000000000001',
+        email: 'disabled@example.com',
+        is_active: false,
+      },
+    ])
     const wrapper = await mountPage()
 
     expect(wrapper.text()).toContain('admin@example.com')
@@ -122,6 +132,27 @@ describe('UserAdminPage', () => {
     expect(
       wrapper.get(`[data-testid="sessions-${environmentAdmin.id}"]`).attributes(),
     ).not.toHaveProperty('disabled')
+    const summary = wrapper.get('section[aria-label="账号概况"]')
+    const cells = summary.findAll('span')
+    for (const [label, count] of [
+      ['全部账号', '3'],
+      ['启用', '2'],
+      ['超级用户', '1'],
+    ]) {
+      expect(
+        cells
+          .find((cell) => cell.text().includes(label))
+          ?.get('strong')
+          .text(),
+      ).toBe(count)
+    }
+    api.listUsers.mockResolvedValue([])
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '刷新')
+      ?.trigger('click')
+    await flushPromises()
+    expect(summary.findAll('strong').map((node) => node.text())).toEqual(['0', '0', '0'])
     wrapper.unmount()
   })
 
@@ -146,17 +177,29 @@ describe('UserAdminPage', () => {
     }
     api.createUser.mockResolvedValue(created)
     await wrapper.get('input[name="new-password"]').setValue(privatePassword)
+    await wrapper.get('.create-form input[type="checkbox"]').setValue(true)
     await wrapper.get('.create-form').trigger('submit')
     await flushPromises()
 
     expect(api.createUser).toHaveBeenCalledWith({
       email: 'new@example.com',
       password: privatePassword,
-      isSuperuser: false,
+      isSuperuser: true,
     })
     expect(wrapper.find('input[name="new-password"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain(privatePassword)
     expect(wrapper.text()).toContain('已创建账号 new@example.com')
+
+    // 重开是新操作：旧输入与旧成功提示都应清掉，关闭按钮也要真正收起表单。
+    await createButton?.trigger('click')
+    expect(wrapper.get<HTMLInputElement>('input[name="new-email"]').element.value).toBe('')
+    expect(wrapper.get<HTMLInputElement>('input[name="new-password"]').element.value).toBe('')
+    expect(
+      wrapper.get<HTMLInputElement>('.create-form input[type="checkbox"]').element.checked,
+    ).toBe(false)
+    expect(wrapper.text()).not.toContain('已创建账号 new@example.com')
+    await wrapper.get('button[aria-label="关闭创建账号表单"]').trigger('click')
+    expect(wrapper.find('input[name="new-password"]').exists()).toBe(false)
     wrapper.unmount()
   })
 

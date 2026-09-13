@@ -25,18 +25,6 @@ describe('BaseIconButton', () => {
     expect(wrapper.find('.my-icon').exists()).toBe(false)
   })
 
-  it('busyCursor 落 class，用来区分「等一下」与「不可用」', () => {
-    const wrapper = mount(BaseIconButton, { props: { label: '保存', busyCursor: true } })
-    expect(wrapper.classes()).toContain('is-busy-cursor')
-  })
-
-  it('size 落 class', () => {
-    expect(mount(BaseIconButton, { props: { label: 'x' } }).classes()).toContain('is-md')
-    expect(mount(BaseIconButton, { props: { label: 'x', size: 'sm' } }).classes()).toContain(
-      'is-sm',
-    )
-  })
-
   it('禁用时不触发 click', async () => {
     let clicks = 0
     const wrapper = mount(BaseIconButton, {

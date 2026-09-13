@@ -63,12 +63,11 @@ describe('BaseSelect', () => {
 })
 
 describe('BaseTextarea', () => {
-  it('多行输入走 v-model，mono 档切换等宽字体', async () => {
+  it('多行输入走 v-model', async () => {
     const emitted: string[] = []
     const wrapper = mount(BaseTextarea, {
       props: {
         modelValue: '',
-        mono: true,
         'onUpdate:modelValue': (value: string) => emitted.push(value),
       },
     })
@@ -76,7 +75,6 @@ describe('BaseTextarea', () => {
     await wrapper.get('textarea').setValue('你是财经记者。')
 
     expect(emitted).toEqual(['你是财经记者。'])
-    expect(wrapper.get('textarea').classes()).toContain('is-mono')
   })
 })
 

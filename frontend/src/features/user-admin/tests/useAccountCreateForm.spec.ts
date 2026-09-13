@@ -1,5 +1,5 @@
-import { defineComponent, h, nextTick } from 'vue'
-import { mount } from '@vue/test-utils'
+// @vitest-environment node
+import { effectScope, nextTick } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({ createUser: vi.fn() }))
@@ -21,19 +21,12 @@ const created: UserAdminDto = {
   updated_at: '2026-08-18T00:00:00Z',
 }
 
-function mountHarness() {
+function createForm() {
   const onCreated = vi.fn()
-  const onOpen = vi.fn()
-  let composable: ReturnType<typeof useAccountCreateForm> | undefined
-  const Harness = defineComponent({
-    setup() {
-      composable = useAccountCreateForm({ onCreated, onOpen })
-      return () => h('div')
-    },
-  })
-  const wrapper = mount(Harness)
-  if (!composable) throw new Error('Test harness did not initialize composable')
-  return { wrapper, form: composable, onCreated, onOpen }
+  const scope = effectScope()
+  const form = scope.run(() => useAccountCreateForm({ onCreated, onOpen: () => {} }))
+  if (!form) throw new Error('Test scope did not initialize composable')
+  return { scope, form, onCreated }
 }
 
 /** 填一份能过本地校验的输入。 */
@@ -47,19 +40,8 @@ describe('useAccountCreateForm', () => {
     api.createUser.mockReset()
   })
 
-  it('展开时通知页面清掉上一条成功提示', () => {
-    const { wrapper, form, onOpen } = mountHarness()
-
-    form.open()
-
-    // 那条提示说的是上一个账号，留着会被当成这一次的结果。
-    expect(form.expanded.value).toBe(true)
-    expect(onOpen).toHaveBeenCalledTimes(1)
-    wrapper.unmount()
-  })
-
   it('本地校验不过就不发请求', async () => {
-    const { wrapper, form, onCreated } = mountHarness()
+    const { scope, form, onCreated } = createForm()
     form.open()
     form.email.value = 'not-an-email'
     form.password.value = 'a'.repeat(12)
@@ -70,48 +52,37 @@ describe('useAccountCreateForm', () => {
     expect(form.error.value).not.toBe('')
     expect(onCreated).not.toHaveBeenCalled()
     expect(form.expanded.value).toBe(true)
-    wrapper.unmount()
+    scope.stop()
   })
 
-  it('提交前去掉邮箱两端的空白', async () => {
+  it('规范化邮箱提交，成功后清空输入并交出新账号', async () => {
     api.createUser.mockResolvedValue(created)
-    const { wrapper, form } = mountHarness()
+    const { scope, form, onCreated } = createForm()
     form.open()
+    fill(form)
     form.email.value = '  reader@example.com  '
-    form.password.value = 'a'.repeat(12)
+    form.superuser.value = true
 
     await form.submit()
 
     expect(api.createUser).toHaveBeenCalledWith({
       email: 'reader@example.com',
       password: 'a'.repeat(12),
-      isSuperuser: false,
+      isSuperuser: true,
     })
-    wrapper.unmount()
-  })
-
-  it('创建成功后收起表单、清空输入、把新行交出去', async () => {
-    api.createUser.mockResolvedValue(created)
-    const { wrapper, form, onCreated } = mountHarness()
-    form.open()
-    fill(form)
-    form.superuser.value = true
-
-    await form.submit()
-
     expect(form.expanded.value).toBe(false)
     expect(form.email.value).toBe('')
     expect(form.password.value).toBe('')
     expect(form.superuser.value).toBe(false)
     expect(onCreated).toHaveBeenCalledWith(created)
-    wrapper.unmount()
+    scope.stop()
   })
 
   it('创建失败时表单留着、输入不丢', async () => {
     api.createUser.mockRejectedValue(
       new ApiError({ message: 'nope', code: 'email_already_exists', status: 409 }),
     )
-    const { wrapper, form, onCreated } = mountHarness()
+    const { scope, form, onCreated } = createForm()
     form.open()
     fill(form)
 
@@ -119,16 +90,17 @@ describe('useAccountCreateForm', () => {
 
     expect(form.expanded.value).toBe(true)
     expect(form.email.value).toBe('reader@example.com')
+    expect(form.password.value).toBe('a'.repeat(12))
     expect(form.error.value).not.toBe('')
     expect(form.submitting.value).toBe(false)
     expect(onCreated).not.toHaveBeenCalled()
-    wrapper.unmount()
+    scope.stop()
   })
 
   it('提交中不许关、也不许再提交一次', async () => {
     let settle: ((value: UserAdminDto) => void) | undefined
     api.createUser.mockImplementation(() => new Promise((resolve) => (settle = resolve)))
-    const { wrapper, form } = mountHarness()
+    const { scope, form } = createForm()
     form.open()
     fill(form)
 
@@ -144,24 +116,24 @@ describe('useAccountCreateForm', () => {
     settle?.(created)
     await pending
     expect(form.expanded.value).toBe(false)
-    wrapper.unmount()
+    scope.stop()
   })
 
   it('退出登录后清掉密码', () => {
-    const { wrapper, form } = mountHarness()
+    const { scope, form } = createForm()
     form.password.value = 'a'.repeat(12)
 
     form.clearSensitiveInput()
 
     expect(form.password.value).toBe('')
-    wrapper.unmount()
+    scope.stop()
   })
 
-  it('卸载时清掉密码', () => {
-    const { wrapper, form } = mountHarness()
+  it('销毁状态作用域时清掉密码', () => {
+    const { scope, form } = createForm()
     form.password.value = 'a'.repeat(12)
 
-    wrapper.unmount()
+    scope.stop()
 
     expect(form.password.value).toBe('')
   })

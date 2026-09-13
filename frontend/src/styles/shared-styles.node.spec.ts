@@ -33,6 +33,10 @@ const sharedFiles = readdirSync(SHARED_DIR)
 
 const styleCss = read('style.css')
 const mainTs = read('main.ts')
+const sharedStyles: [string, string][] = sharedFiles.map((name) => [
+  name,
+  stripComments(read('styles', 'components', name)),
+])
 
 describe('层序声明', () => {
   it('是 style.css 的首条语句', () => {
@@ -44,9 +48,7 @@ describe('层序声明', () => {
     const layerNames = declared.split(',').map((name) => name.trim())
     expect(layerNames).toEqual(['reset', 'base', 'components'])
 
-    const allCss = [styleCss, ...sharedFiles.map((name) => read('styles', 'components', name))]
-      .map(stripComments)
-      .join('\n')
+    const allCss = [stripComments(styleCss), ...sharedStyles.map(([, css]) => css)].join('\n')
     for (const name of layerNames) {
       expect(allCss).toMatch(new RegExp(`@layer\\s+${name}\\s*\\{`))
     }
@@ -65,23 +67,23 @@ describe('styles/components/*.css', () => {
     }
   })
 
-  it.each(sharedFiles.map((name): [string] => [name]))('%s 的 @keyframes 定义在层外', (name) => {
-    const css = stripComments(read('styles', 'components', name))
-    const layered = /@layer\s+components\s*\{[\s\S]*\}/.exec(css)?.[0]
-    // 名字全局、不随层分层：包进层里会引出「哪一份定义胜出」的歧义。
-    expect(layered ?? '').not.toContain('@keyframes')
+  it('全部共享文件的 @keyframes 定义在层外', () => {
+    for (const [name, css] of sharedStyles) {
+      const layered = /@layer\s+components\s*\{[\s\S]*\}/.exec(css)?.[0]
+      // 名字全局、不随层分层：包进层里会引出「哪一份定义胜出」的歧义。
+      expect(layered ?? '', name).not.toContain('@keyframes')
+    }
   })
 
-  it.each(sharedFiles.map((name): [string] => [name]))(
-    '%s 的每条规则都在 @layer components 内',
-    (name) => {
-      const rest = stripComments(read('styles', 'components', name))
+  it('全部共享规则都在 @layer components 内', () => {
+    for (const [name, css] of sharedStyles) {
+      const rest = css
         .replace(/@layer\s+components\s*\{[\s\S]*\}/, '')
         .replace(/@keyframes\s+[\w-]+\s*\{(?:\s*[^{}]*\{[^{}]*\})*\s*\}/g, '')
         .trim()
-      expect(rest).toBe('')
-    },
-  )
+      expect(rest, name).toBe('')
+    }
+  })
 })
 
 /* 颜色 token 的分层守护，见 docs/adr/0007-two-layer-color-tokens.md。
@@ -103,26 +105,28 @@ function styleBlocks(source: string): string {
     .join('\n')
 }
 
+// 每个源文件只读取、剥注释一次；按规则报告失败，消息仍指出具体文件。
+const vueStyles: [string, string][] = listVueFiles(SRC)
+  .map((path) => path.slice(SRC.length + 1).replace(/\\/g, '/'))
+  .map((relative) => [relative, stripComments(styleBlocks(read(relative)))])
+const styledFiles: [string, string][] = [
+  ...vueStyles,
+  ['style.css', stripComments(styleCss)],
+  ...sharedStyles.map(([name, css]): [string, string] => [`styles/components/${name}`, css]),
+]
+
 describe('颜色 token 分层', () => {
-  const styledFiles: [string, string][] = [
-    ...listVueFiles(SRC)
-      .map((path) => path.slice(SRC.length + 1).replace(/\\/g, '/'))
-      .map((relative): [string, string] => [relative, styleBlocks(read(relative))]),
-    ...['style.css', ...sharedFiles.map((name) => `styles/components/${name}`)].map(
-      (relative): [string, string] => [relative, read(relative)],
-    ),
-  ]
-
-  it('取到了待查文件', () => {
+  it('全部组件与共享样式不写裸色值', () => {
     expect(styledFiles.length).toBeGreaterThan(0)
+    for (const [relative, css] of styledFiles) {
+      expect(css.match(BARE_COLOR) ?? [], relative).toEqual([])
+    }
   })
 
-  it.each(styledFiles)('%s 不写裸色值', (_relative, css) => {
-    expect(stripComments(css).match(BARE_COLOR) ?? []).toEqual([])
-  })
-
-  it.each(styledFiles)('%s 不直接引原始色阶', (_relative, css) => {
-    expect(stripComments(css).match(RAW_SCALE) ?? []).toEqual([])
+  it('全部组件与共享样式不直接引原始色阶', () => {
+    for (const [relative, css] of styledFiles) {
+      expect(css.match(RAW_SCALE) ?? [], relative).toEqual([])
+    }
   })
 
   /* 不是设计 token、由组件自己声明并沿 DOM 往下传的自定义属性。
@@ -145,7 +149,7 @@ describe('颜色 token 分层', () => {
 
     const referenced = new Set(
       styledFiles.flatMap(([, css]) =>
-        [...stripComments(css).matchAll(/var\(\s*(--[\w-]+)/g)].map((match) => match[1]),
+        [...css.matchAll(/var\(\s*(--[\w-]+)/g)].map((match) => match[1]),
       ),
     )
     // 拼错的 token 名不报错、只是静默失效，浏览器里看不出来，只能在这里查。
@@ -156,21 +160,15 @@ describe('颜色 token 分层', () => {
     ).toEqual([])
   })
 
-  it.each(Object.entries(PUBLISHED_BY_COMPONENTS))('%s 由 %s 真的声明了', (name, owner) => {
+  it('组件发布的自定义属性确实在所属文件声明', () => {
     /* 上一条用例给这些名字开了口子，这条把口子收住：声明所在的文件写死在表里，
          哪天 AppShell 不再发布它，引用方会拿到 var() 的兜底值静默偏移，只有这里能拦。 */
-    expect(stripComments(styleBlocks(read(owner)))).toMatch(new RegExp(`${name}\\s*:\\s*[^;]+;`))
+    for (const [name, owner] of Object.entries(PUBLISHED_BY_COMPONENTS)) {
+      const css = vueStyles.find(([relative]) => relative === owner)?.[1] ?? ''
+      expect(css, `${owner}: ${name}`).toMatch(new RegExp(`${name}\\s*:\\s*[^;]+;`))
+    }
   })
 })
-
-/* 共享类在组件 scoped 块里的顶层重声明。
- *
- * 当前没有任何允许的重声明：result-card.css 的最后两个条目（locator-line、score-block）
- * 随该文件折叠回 SearchResultCard 而删除——类不再属于共享层，本地怎么写都不算回退。
- * 以后往 styles/components/ 加共享类时，如果某个组件需要刻意覆盖一条，
- * 在这里登记文件与类名，并补一条「为什么是这一条」的说明。
- */
-const LOCAL_OVERRIDES: Record<string, string[]> = {}
 
 /** 按大括号配对删掉 @media 块：断点覆盖不算回退，两页断点本就不同。 */
 function stripMediaBlocks(css: string): string {
@@ -206,8 +204,7 @@ function listVueFiles(dir: string): string[] {
 }
 
 /** 共享文件里的顶层单类选择器，形如 `  .foo {`；后代与伪类选择器不参与本轮断言。 */
-const sharedClasses: string[] = sharedFiles.flatMap((name) => {
-  const css = stripComments(read('styles', 'components', name))
+const sharedClasses: string[] = sharedStyles.flatMap(([, css]) => {
   const found: string[] = []
   const pattern = /^ {2}\.([\w-]+)\s*\{/gm
   let match = pattern.exec(css)
@@ -219,38 +216,20 @@ const sharedClasses: string[] = sharedFiles.flatMap((name) => {
 })
 
 describe('共享类未被组件重新声明', () => {
-  const vueFiles = listVueFiles(SRC).map((path) => path.slice(SRC.length + 1).replace(/\\/g, '/'))
-  const componentStyles = vueFiles.map((relative) => ({
+  const componentStyles = vueStyles.map(([relative, css]) => ({
     relative,
-    css: stripMediaBlocks(stripComments(styleBlocks(read(relative)))),
+    css: stripMediaBlocks(css),
   }))
 
-  it('取到了共享类与组件清单', () => {
+  it('全部共享类都没有组件内的重复声明', () => {
     expect(sharedClasses.length).toBeGreaterThan(0)
-    expect(vueFiles.length).toBeGreaterThan(0)
-  })
-
-  // 包成一元元组：it.each 对裸数组推不出单参数签名。
-  it.each(sharedClasses.map((name): [string] => [name]))(
-    '.%s 只在允许的组件里保留本地覆盖',
-    (className) => {
-      const allowed = [...(LOCAL_OVERRIDES[className] ?? [])].sort()
+    expect(componentStyles.length).toBeGreaterThan(0)
+    for (const className of sharedClasses) {
       const found = componentStyles
         .filter(({ css }) => new RegExp(`^\\.${className}\\s*\\{`, 'm').test(css))
         .map(({ relative }) => relative)
         .sort()
-      expect(found).toEqual(allowed)
-    },
-  )
-
-  it.each(Object.entries(LOCAL_OVERRIDES))('.%s 的本地覆盖只有一条声明', (className, paths) => {
-    for (const relative of paths) {
-      const body = new RegExp(`^\\.${className}\\s*\\{([^}]*)\\}`, 'm').exec(read(relative))?.[1]
-      const declarations = (body ?? '')
-        .split(';')
-        .map((part) => part.trim())
-        .filter(Boolean)
-      expect(declarations).toHaveLength(1)
+      expect(found, `.${className} 不应在组件内重复声明`).toEqual([])
     }
   })
 })

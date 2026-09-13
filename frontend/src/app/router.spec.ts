@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Router } from 'vue-router'
 
 const auth = vi.hoisted(() => ({
   status: { value: 'anonymous' },
@@ -10,9 +11,22 @@ vi.mock('../features/auth/auth-session', () => ({
   authSession: auth,
 }))
 
+// 本文件验证路由与权限，不挂载页面。页面交互由 pages/*.spec.ts 保护；
+// 用占位视图避免每次 resetModules 都重新装配检索、Markdown 和后台组件。
+const view = vi.hoisted(() => ({ default: { render: () => null } }))
+vi.mock('../pages/LoginPage.vue', () => view)
+vi.mock('../pages/SearchPage.vue', () => view)
+vi.mock('../pages/AgentChatPage.vue', () => view)
+vi.mock('../pages/SettingsPage.vue', () => view)
+vi.mock('../pages/AdminPage.vue', () => view)
+
+const routers: Router[] = []
+
 async function freshRouter() {
   vi.resetModules()
-  return (await import('./router')).default
+  const router = (await import('./router')).default
+  routers.push(router)
+  return router
 }
 
 describe('application router authentication guard', () => {
@@ -25,6 +39,7 @@ describe('application router authentication guard', () => {
   })
 
   afterEach(() => {
+    for (const router of routers.splice(0)) router.options.history.destroy()
     vi.unstubAllGlobals()
   })
 

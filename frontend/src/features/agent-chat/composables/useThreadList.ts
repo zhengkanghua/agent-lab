@@ -54,7 +54,7 @@ export function useThreadList(options: UseThreadListOptions) {
   const threads = computed(() => query.data.value?.items ?? [])
   const total = computed(() => query.data.value?.total ?? 0)
 
-  // 映射回原有的状态定义，兼容现有 UI 组件
+  // 会话侧栏使用统一的加载、可用与失败状态。
   const listState = computed<ThreadListState>(() => {
     if (query.isPending.value) return 'loading'
     if (query.isError.value || listErrorOverride.value) return 'error'
@@ -139,11 +139,7 @@ export function useThreadList(options: UseThreadListOptions) {
     )
   }
 
-  function isDeleting(threadId: string): boolean {
-    return deleteMutation.isPending.value && deleteMutation.variables.value === threadId
-  }
-
-  // 暴露一个 Set 保持和原来 UI 层的兼容
+  // 侧栏按会话身份禁用正在删除的行。
   const deletingThreadIds = computed(() => {
     const set = new Set<string>()
     if (deleteMutation.isPending.value && deleteMutation.variables.value) {
@@ -175,6 +171,5 @@ export function useThreadList(options: UseThreadListOptions) {
     previousPage,
     remove,
     acceptCreatedThread,
-    isDeleting,
   }
 }
