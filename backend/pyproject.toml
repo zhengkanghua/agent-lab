@@ -43,3 +43,8 @@ dev = [
     "aiosqlite>=0.21,<1",
     "pytest>=9.1.1",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "queue_transport: 真实 Redis 重启与自然超时重投；消息组件、依赖或队列配置变化时执行",
+]

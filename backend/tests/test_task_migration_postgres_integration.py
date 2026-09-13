@@ -81,7 +81,7 @@ async def legacy_run(connection, tables, *, status, snapshot=None, stats=None, j
     return identity, job_id
 
 
-def test_upgrade_preserves_snapshots_unconfirmed_writes_and_deletion_evidence(old_database):
+def test_upgrade_preserves_history_recovery_and_new_request_constraints(old_database):
     async def verify():
         env = old_database
         async with env.engine.begin() as connection:
@@ -139,15 +139,7 @@ def test_upgrade_preserves_snapshots_unconfirmed_writes_and_deletion_evidence(ol
             assert await session.get(DocumentDeletionRecord, deletion_id) is not None
             assert await session.get(WriteOperationRecord, operation_id) is not None
             assert (await tasks.get_run(occupied)).status == "needs_attention"
-    run(verify())
-
-
-def test_migrated_constraints_and_expired_request_keep_original_identity(old_database):
-    async def verify():
-        env = old_database
-        async with env.engine.begin() as connection:
-            await connection.run_sync(env.upgrade)
-        tasks = service(env.sessions)
+        # 在同一份成功升级的旧数据上验证新写入，避免为相同升级再建一遍环境。
         received = await tasks.submit("freshrss_sync", {"limit_per_source": 2}, actor="test:migration", request_key="original")
         assert received.status == "queued"
         await tasks.cancel(received.run_id)

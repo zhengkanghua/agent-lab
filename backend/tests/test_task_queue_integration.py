@@ -210,9 +210,10 @@ def queue_environment(tmp_path):
         environment.close()
 
 
-def test_prefork_reuses_one_loop_per_child_and_ignores_duplicate_delivery(queue_environment):
+def test_prefork_delivery_schedule_retry_and_warm_restart(queue_environment):
+    """健康流程共用一套进程；破坏 Redis 或 Worker 的场景仍独立隔离。"""
     env = queue_environment
-    env.start_worker()
+    worker = env.start_worker()
     beat = env.start_beat()
     receipts = [env.submit(value=value, seconds=0.5) for value in range(8)]
     duplicates = []
@@ -230,84 +231,6 @@ def test_prefork_reuses_one_loop_per_child_and_ignores_duplicate_delivery(queue_
     for pid in processes:
         handled = [item for item in events if item["process_id"] == pid]
         assert len(handled) >= 2 and len({item["loop_id"] for item in handled}) == 1
-    assert env.stop(beat) == 0
-    assert json.loads((env.directory / "beat.json").read_text())["ready"] is False
-
-
-def test_publish_failure_lost_message_and_redis_aof_restart_preserve_receipts(queue_environment):
-    env = queue_environment
-    env.stop_redis()
-    pending = env.submit(value=21)
-    assert env.detail(pending.run_id).status == "queued"
-    assert env.detail(pending.run_id).dispatch_error_type
-    env.start_redis()
-    def published():
-        env.run(env.dispatcher.publish_due())
-        return env.redis.llen(env.schema + ":" + env.queue) > 0
-    env.wait(published)
-    env.stop_redis()
-    env.start_redis()
-    assert env.redis.llen(env.schema + ":" + env.queue) > 0  # AOF 中的消息仍在。
-    env.redis.delete(env.schema + ":" + env.queue)  # 只丢弃本测试专用队列消息。
-    env.start_worker()
-    env.start_beat()
-    completed = env.wait_status(pending.run_id, "succeeded")
-    assert completed.attempts == 1 and len(env.events(pending.run_id)) == 1
-
-    # 保持同一 Worker 主进程，验证它跨 Redis 断线重连后还能完成原任务和领取新任务。
-    working = env.submit(wait_for_release=True)
-    env.wait(lambda: env.events(working.run_id))
-    env.stop_redis()
-    env.start_redis()
-    env.release(working.run_id)
-    assert env.wait_status(working.run_id, "succeeded").attempts == 1
-    after_restart = env.submit(value=22)
-    assert env.wait_status(after_restart.run_id, "succeeded").stats["value"] == 22
-    assert len(env.events(working.run_id)) == 1
-
-
-def test_visibility_redelivery_and_worker_warm_restart_do_not_restart_business(queue_environment):
-    env = queue_environment
-    worker = env.start_worker()
-    env.start_beat()
-    long = env.submit(wait_for_release=True)
-    env.wait(lambda: env.events(long.run_id))
-    # Kombu 默认实际恢复扫描约百秒一次；不改生产轮询，只缩短可见性并等待真实证据。
-    env.wait(lambda: f"queue_probe_delivery run_id={long.run_id} redelivered=True" in env.worker_log(), timeout=130)
-    env.release(long.run_id)
-    env.wait_status(long.run_id, "succeeded")
-    assert len(env.events(long.run_id)) == 1
-    warm = env.submit(seconds=2)
-    env.wait(lambda: env.events(warm.run_id))
-    assert env.stop(worker) == 0
-    assert env.detail(warm.run_id).status == "succeeded"
-    accepted = env.submit(value=99)
-    env.start_worker()
-    assert env.wait_status(accepted.run_id, "succeeded").stats["value"] == 99
-
-
-@pytest.mark.parametrize("completed", [False, True])
-def test_forced_worker_loss_uses_business_evidence_or_requires_verification(queue_environment, completed):
-    env = queue_environment
-    worker = env.start_worker()
-    env.start_beat()
-    receipt = env.submit(seconds=0.1 if completed else 120, after_completion_seconds=120 if completed else 0)
-    def evidence():
-        rows = env.events(receipt.run_id)
-        return rows[0] if rows and (not completed or rows[0]["completed_at"] is not None) else None
-    row = env.wait(evidence)
-    # PID 来自本随机 schema，并核实仍属于本次 Worker 进程组，避免误伤其他进程。
-    assert os.getpgid(row["process_id"]) == worker.pid
-    os.kill(row["process_id"], signal.SIGKILL)
-    final = env.wait_status(receipt.run_id, "succeeded" if completed else "needs_attention", timeout=65)
-    assert final.attempts == 1 and len(env.events(receipt.run_id)) == 1
-    assert final.claim_token is None
-
-
-def test_dynamic_beat_accepts_future_event_once_with_latest_configuration(queue_environment):
-    env = queue_environment
-    env.start_worker()
-    env.start_beat()
     async def create():
         async with env.sessions() as session:
             manager = ScheduledJobService(session, CronSchedule(), env.service.registry)
@@ -347,14 +270,85 @@ def test_dynamic_beat_accepts_future_event_once_with_latest_configuration(queue_
     assert retained.config_snapshot["params"]["value"] == 13
     assert env.detail(second.id).source_job_id == job_id
 
-
-def test_database_automatic_retry_has_one_identity_and_new_attempts(queue_environment):
-    env = queue_environment
-    env.start_worker()
-    env.start_beat()
     receipt = env.submit(failures=2)
     result = env.wait_status(receipt.run_id, "succeeded")
     events = sorted(env.events(receipt.run_id), key=lambda row: row["attempt"])
     assert result.attempts == 3 and [item["attempt"] for item in events] == [1, 2, 3]
     assert events[1]["started_at"] - events[0]["started_at"] >= timedelta(seconds=1)
     assert events[2]["started_at"] - events[1]["started_at"] >= timedelta(seconds=2)
+
+    # 正常关停与重启续办属于核心行为，不随耗时的消息兼容性检查一起跳过。
+    warm = env.submit(seconds=2)
+    env.wait(lambda: env.events(warm.run_id))
+    assert env.stop(worker) == 0
+    assert env.detail(warm.run_id).status == "succeeded"
+    accepted_after_stop = env.submit(value=99)
+    env.start_worker()
+    assert env.wait_status(accepted_after_stop.run_id, "succeeded").stats["value"] == 99
+    assert env.stop(beat) == 0
+    assert json.loads((env.directory / "beat.json").read_text())["ready"] is False
+
+
+@pytest.mark.queue_transport
+def test_publish_failure_lost_message_and_redis_aof_restart_preserve_receipts(queue_environment):
+    env = queue_environment
+    env.stop_redis()
+    pending = env.submit(value=21)
+    assert env.detail(pending.run_id).status == "queued"
+    assert env.detail(pending.run_id).dispatch_error_type
+    env.start_redis()
+    def published():
+        env.run(env.dispatcher.publish_due())
+        return env.redis.llen(env.schema + ":" + env.queue) > 0
+    env.wait(published)
+    env.stop_redis()
+    env.start_redis()
+    assert env.redis.llen(env.schema + ":" + env.queue) > 0  # AOF 中的消息仍在。
+    env.redis.delete(env.schema + ":" + env.queue)  # 只丢弃本测试专用队列消息。
+    env.start_worker()
+    env.start_beat()
+    completed = env.wait_status(pending.run_id, "succeeded")
+    assert completed.attempts == 1 and len(env.events(pending.run_id)) == 1
+
+    # 保持同一 Worker 主进程，验证它跨 Redis 断线重连后还能完成原任务和领取新任务。
+    working = env.submit(wait_for_release=True)
+    env.wait(lambda: env.events(working.run_id))
+    env.stop_redis()
+    env.start_redis()
+    env.release(working.run_id)
+    assert env.wait_status(working.run_id, "succeeded").attempts == 1
+    after_restart = env.submit(value=22)
+    assert env.wait_status(after_restart.run_id, "succeeded").stats["value"] == 22
+    assert len(env.events(working.run_id)) == 1
+
+
+@pytest.mark.queue_transport
+def test_visibility_redelivery_does_not_restart_business(queue_environment):
+    env = queue_environment
+    env.start_worker()
+    env.start_beat()
+    long = env.submit(wait_for_release=True)
+    env.wait(lambda: env.events(long.run_id))
+    # Kombu 默认实际恢复扫描约百秒一次；不改生产轮询，只缩短可见性并等待真实证据。
+    env.wait(lambda: f"queue_probe_delivery run_id={long.run_id} redelivered=True" in env.worker_log(), timeout=130)
+    env.release(long.run_id)
+    env.wait_status(long.run_id, "succeeded")
+    assert len(env.events(long.run_id)) == 1
+
+
+@pytest.mark.parametrize("completed", [False, True])
+def test_forced_worker_loss_uses_business_evidence_or_requires_verification(queue_environment, completed):
+    env = queue_environment
+    worker = env.start_worker()
+    env.start_beat()
+    receipt = env.submit(seconds=0.1 if completed else 120, after_completion_seconds=120 if completed else 0)
+    def evidence():
+        rows = env.events(receipt.run_id)
+        return rows[0] if rows and (not completed or rows[0]["completed_at"] is not None) else None
+    row = env.wait(evidence)
+    # PID 来自本随机 schema，并核实仍属于本次 Worker 进程组，避免误伤其他进程。
+    assert os.getpgid(row["process_id"]) == worker.pid
+    os.kill(row["process_id"], signal.SIGKILL)
+    final = env.wait_status(receipt.run_id, "succeeded" if completed else "needs_attention", timeout=65)
+    assert final.attempts == 1 and len(env.events(receipt.run_id)) == 1
+    assert final.claim_token is None

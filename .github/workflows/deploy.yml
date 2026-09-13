@@ -21,6 +21,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   # 镜像地址来自 GitHub Variables（仓库 Settings → Secrets and variables → Actions →
@@ -74,6 +75,101 @@ jobs:
     steps:
       - name: 取代码
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: 按上次成功部署选择测试范围
+        id: tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from fnmatch import fnmatchcase
+
+          # 不能只比较 event.before：它可能来自被取消或失败、尚未验证的推送。
+          base, changed, deleted = "", [], []
+          full = os.environ["GITHUB_EVENT_NAME"] != "push"
+          if not full:
+              try:
+                  runs = json.loads(subprocess.check_output([
+                      "gh", "run", "list", "--workflow", "deploy.yml",
+                      "--branch", os.environ["GITHUB_REF_NAME"], "--status", "success",
+                      "--limit", "1", "--json", "headSha",
+                  ], stderr=subprocess.PIPE))
+                  base = runs[0]["headSha"] if runs else ""
+                  if not re.fullmatch(r"[0-9a-f]{40}", base):
+                      raise ValueError("没有可比较的成功部署")
+                  subprocess.run(["git", "merge-base", "--is-ancestor", base, "HEAD"],
+                                 check=True, capture_output=True)
+                  def paths(*options):
+                      result = subprocess.check_output([
+                          "git", "diff", "--name-only", "--no-renames", "-z",
+                          *options, base, "HEAD",
+                      ])
+                      return [path for path in result.decode().split("\0") if path]
+                  # 重命名按旧路径删除、新路径新增处理；测试资料也参与范围判断。
+                  changed = [path for path in paths()
+                             if not path.endswith(".md") or "/tests/" in path]
+                  deleted = paths("--diff-filter=D")
+              except (subprocess.SubprocessError, OSError, ValueError, KeyError, TypeError):
+                  full = True
+
+          def touches(*patterns):
+              return any(fnmatchcase(path, pattern) for path in changed for pattern in patterns)
+
+          full = full or touches(".github/workflows/*")
+          backend = full or touches("backend/*")
+          infrastructure = touches(
+              "backend/pyproject.toml", "backend/uv.lock", "backend/.python-version",
+              "backend/Dockerfile*", "backend/docker-compose*", "backend/.env*",
+          )
+          migration = full or infrastructure or touches(
+              "backend/alembic*", "backend/src/agent_lab/models/*", "backend/src/agent_lab/db/*",
+              "backend/tests/test_task_migration_postgres_integration.py",
+              "backend/tests/test_scheduler_postgres_integration.py", "backend/tests/conftest.py",
+          )
+          queue_transport = full or infrastructure or touches(
+              "backend/src/agent_lab/config/redis.py", "backend/src/agent_lab/config/task_queue.py",
+              "backend/src/agent_lab/config/settings.py", "backend/src/agent_lab/task_assembly.py",
+              "backend/src/agent_lab/tasks/celery_app.py", "backend/src/agent_lab/tasks/process.py",
+              "backend/src/agent_lab/tasks/dispatch.py", "backend/src/agent_lab/tasks/beat.py",
+              "backend/src/agent_lab/tasks/worker.py", "backend/tests/*task_queue*",
+              "backend/tests/conftest.py",
+          )
+          queue = migration or queue_transport or touches(
+              "backend/src/agent_lab/tasks/*", "backend/src/agent_lab/scheduler_maintenance.py",
+              "backend/src/agent_lab/config/scheduler.py", "backend/src/agent_lab/runtime.py",
+              "backend/src/agent_lab/main.py", "backend/src/agent_lab/domain/*",
+              "backend/src/agent_lab/knowledge/*", "backend/src/agent_lab/repositories/*",
+              "backend/src/agent_lab/services/scheduled_*", "backend/src/agent_lab/services/write_coordination.py",
+              "backend/src/agent_lab/services/document_retention_service.py",
+              "backend/src/agent_lab/services/execution_cleanup.py",
+              "backend/src/agent_lab/api/task*", "backend/src/agent_lab/api/scheduled_jobs.py",
+              "backend/src/agent_lab/schemas/tasks.py", "backend/src/agent_lab/schemas/scheduled_jobs.py",
+              "backend/tests/*task_*", "backend/tests/*scheduler*", "backend/tests/*scheduled*",
+              "backend/tests/app_helpers.py",
+          )
+          frontend_full = full or touches(
+              "frontend/package*.json", "frontend/*config*", "frontend/.npmrc",
+              "frontend/src/api/*", "frontend/src/main.ts", "frontend/src/App.vue",
+              "frontend/src/app/router.ts",
+              "backend/src/agent_lab/api/*", "backend/src/agent_lab/schemas/*",
+          ) or any(path.startswith("frontend/") and (not path.endswith(".md") or "/tests/" in path)
+                   for path in deleted)
+          frontend = frontend_full or touches("frontend/*")
+          outputs = dict(backend=backend, queue=queue, queue_transport=queue_transport,
+                         migration=migration, frontend=frontend, frontend_full=frontend_full)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"base={base}\n")
+              for name, enabled in outputs.items():
+                  output.write(f"{name}={str(enabled).lower()}\n")
+          print("验证基线：" + ("完整验证（手动执行、基线不可用或工作流变化）" if full else base))
+          print("测试范围：" + json.dumps(outputs, ensure_ascii=False))
+          PY
 
       # 未配置的 Variables 会静默变成空字符串，镜像名就成了 "/agent-lab:backend-latest"，
       # 报错发生在几分钟后的 push 步骤且信息含糊。这一步把它变成第一秒就失败、且说清缺哪个。
@@ -106,18 +202,21 @@ jobs:
       # 「Unable to resolve action, unable to find version v10」。
       # 升级时去 releases 页面取最新的精确 tag，不要照其他 action 的样子写大版本号。
       - name: 装 uv
+        if: steps.tests.outputs.backend == 'true'
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
 
       - name: 装后端依赖
+        if: steps.tests.outputs.backend == 'true'
         working-directory: backend
         run: uv sync --frozen --all-groups
 
       # 真实 Docling 结构测试依赖锁定的 BGE-M3 tokenizer；缺失时会跳过。
       # 在测试前下载并核验资源，避免 CI 通过却没有执行结构与预算验证。
       - name: 准备文档 tokenizer 资源
+        if: steps.tests.outputs.backend == 'true'
         working-directory: backend
         run: uv run --frozen python -m agent_lab.prepare_document_resources
 
@@ -125,12 +224,14 @@ jobs:
       # 默认值，而 runner 上没有 .env——缺了它 pytest 在**收集阶段**就 ValidationError，
       # 一个用例都跑不到。这个值必须是假的：填真实连接串等于把生产库暴露给 CI 日志。
       - name: 后端测试
+        if: steps.tests.outputs.backend == 'true'
         working-directory: backend
         env:
           DATABASE_URL: postgresql+psycopg://ci:ci@127.0.0.1:5432/ci
         run: uv run --frozen pytest
 
       - name: 公共任务 Linux 队列与迁移验收
+        if: steps.tests.outputs.queue == 'true' || steps.tests.outputs.migration == 'true'
         working-directory: backend
         env:
           DATABASE_URL: postgresql+psycopg://tasks_test:isolated_test_only@127.0.0.1:5432/tasks_test
@@ -138,19 +239,32 @@ jobs:
           SCHEDULER_TEST_DATABASE_URL: postgresql+psycopg://tasks_test:isolated_test_only@127.0.0.1:5432/tasks_test
           RUN_TASK_QUEUE_INTEGRATION_TEST: "1"
           RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST: "1"
+          TEST_QUEUE: ${{ steps.tests.outputs.queue }}
+          TEST_QUEUE_TRANSPORT: ${{ steps.tests.outputs.queue_transport }}
+          TEST_MIGRATION: ${{ steps.tests.outputs.migration }}
         run: |
-          if ! command -v redis-server >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends redis-server
+          tests=()
+          selection=()
+          if [ "$TEST_QUEUE" = true ]; then
+            if ! command -v redis-server >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y --no-install-recommends redis-server
+            fi
+            tests+=(tests/test_task_queue_integration.py
+                    tests/test_task_handoff_postgres_integration.py
+                    tests/test_scheduler_postgres_integration.py)
+          fi
+          if [ "$TEST_MIGRATION" = true ]; then
+            tests+=(tests/test_task_migration_postgres_integration.py)
+          fi
+          if [ "$TEST_QUEUE_TRANSPORT" != true ]; then
+            selection+=(-m "not queue_transport")
           fi
           uv run --frozen pytest -q --tb=short --basetemp=.pytest_cache/task-processes \
-            tests/test_task_queue_integration.py \
-            tests/test_task_migration_postgres_integration.py \
-            tests/test_task_handoff_postgres_integration.py \
-            tests/test_scheduler_postgres_integration.py
+            "${tests[@]}" "${selection[@]}"
 
       - name: 保存任务验收进程日志
-        if: always()
+        if: always() && (steps.tests.outputs.queue == 'true' || steps.tests.outputs.migration == 'true')
         uses: actions/upload-artifact@v4
         with:
           name: task-processes-${{ github.run_id }}
@@ -176,8 +290,28 @@ jobs:
         run: npm run lint
 
       - name: 前端测试
+        if: steps.tests.outputs.frontend == 'true'
         working-directory: frontend
-        run: npm run test:run
+        env:
+          TEST_ALL: ${{ steps.tests.outputs.frontend_full }}
+          TEST_BASE: ${{ steps.tests.outputs.base }}
+        run: |
+          if [ "$TEST_ALL" = true ]; then
+            npm run test:run
+          else
+            python3 - <<'PY'
+          import os
+          import subprocess
+
+          changed = subprocess.check_output([
+              "git", "diff", "--name-only", "--no-renames", "--relative", "-z",
+              os.environ["TEST_BASE"], "HEAD", "--", ".",
+          ]).decode().split("\0")
+          # 源码扫描直接读文件，不能由 import 图追踪；每次前端改动都带上这项契约。
+          sources = sorted({path for path in changed if path} | {"src/styles/shared-styles.node.spec.ts"})
+          subprocess.run(["npm", "exec", "--", "vitest", "related", "--run", *sources], check=True)
+          PY
+          fi
 
       # ---------- 3. 前端构建 ----------
       # build 已包含 vue-tsc -b，类型检查失败时同样在发布前停止。

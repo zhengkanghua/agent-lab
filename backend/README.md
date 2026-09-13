@@ -369,6 +369,8 @@ uv run pytest -q tests/test_scheduler_runner.py
 uv run pytest -q
 ```
 
+CI 仅在后端代码、测试、依赖或配置变化时运行完整离线回归；纯文档和仅前端改动跳过后端测试。比较基线是同分支上一次成功部署，包含其后失败或被取消运行留下的改动。手动触发、工作流修改、基线缺失或无法查询时执行完整验证，范围规则见 [部署工作流](../.github/workflows/deploy.yml)。
+
 写 HTTP 测试时用 ``tests/app_helpers.py`` 的 ``create_offline_app`` 建应用，别直接调
 ``create_app``：后者每个工厂参数都有生产默认值，漏掉一个，lifespan 就会拿真实的那个去连真实
 服务。这已经发生过一次——``agent_runtime_factory`` 被 5 个文件集体漏掉，每次进 lifespan 白等
@@ -437,7 +439,24 @@ docker compose -p agent-lab-task-tests -f docker-compose.task-tests.yml up --bui
 docker compose -p agent-lab-task-tests -f docker-compose.task-tests.yml down --volumes
 ```
 
-该编排只建立内部测试网络与临时 PostgreSQL，不挂生产 `.env`，没有宿主端口。结果目录为 `.pytest_cache/task-environment/`，Worker/Beat/Redis 日志在其 `task-processes/` 下，先保留失败日志再清理。镜像内同时执行旧结构迁移、多进程 PostgreSQL 与文档事务交接中断验证；交接测试只构造合成待办，验证退出时整体回滚和已知结果重新保存，不调用原件或模型。部署工作流在离线测试之后使用 Linux runner、临时 PostgreSQL 和夹具自己的 Redis 执行这些验收，失败即停止部署，进程日志作为 Actions artifact 保存。有已授权 Linux PostgreSQL 时也可设置 `RUN_TASK_QUEUE_INTEGRATION_TEST=1`、`TASK_TEST_DATABASE_URL` 后运行 `tests/test_task_queue_integration.py`，本机需有 `redis-server`。
+该编排只建立内部测试网络与临时 PostgreSQL，不挂生产 `.env`，没有宿主端口。结果目录为 `.pytest_cache/task-environment/`，Worker/Beat/Redis 日志在其 `task-processes/` 下，先保留失败日志再清理。镜像内同时执行旧结构迁移、多进程 PostgreSQL 与文档事务交接中断验证；交接测试只构造合成待办，验证退出时整体回滚和已知结果重新保存，不调用原件或模型。有已授权 Linux PostgreSQL 时也可设置 `RUN_TASK_QUEUE_INTEGRATION_TEST=1`、`TASK_TEST_DATABASE_URL` 后运行 `tests/test_task_queue_integration.py`，本机需有 `redis-server`。
+
+CI 的 Linux 验收按风险选择，失败即停止部署，进程日志保存为 Actions artifact：
+
+- 任务核心、持久交接及相关业务存储变化时，验证真实请求去重、取消竞争、进程故障恢复和正常关停后续办；健康流程共用一次隔离环境，破坏进程或 Redis 的场景各自隔离。
+- 消息组件、队列配置或后端依赖及容器配置变化时，追加 `queue_transport`：Redis AOF 重启、断线重连与自然可见性超时重投。自然重投必须等待真实消息证据，不缩短生产扫描行为来制造通过。
+- 迁移、模型、数据库基础设施或迁移夹具变化时，追加历史升级验收。成功升级中的历史保留和新写入约束共用一次升级；拒绝升级及完整回滚独立验证。
+
+在已授权且设置好上述队列开关，以及 `RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST=1`、`SCHEDULER_TEST_DATABASE_URL` 的 Linux 测试环境，日常任务核心改动可只运行：
+
+```bash
+uv run pytest -q --tb=short -m "not queue_transport" \
+  tests/test_task_queue_integration.py \
+  tests/test_task_handoff_postgres_integration.py \
+  tests/test_scheduler_postgres_integration.py
+```
+
+完整隔离编排保留全部验收。权限、跨存储恢复和用户数据保护测试继续按各自风险与环境授权执行。
 
 已有开发 Redis 时可在 Windows 原生验证 HTTP、真实登录、Beat 和 solo Worker，无需 Docker。以下用例读取 `DATABASE_URL`、`REDIS_URL` 与 `REDIS_PASSWORD`，只创建随机 schema、隔离账号及带随机前缀的任务键。基础用例通过空知识库清理预演验证消息丢失补投、取消、连续执行和 Worker 正常关闭；业务组合用例还验证资源等待让出唯一 Worker，以及同步、索引、文档批次和 HTTP Pipeline 对非空资料的处理。后者保留真实 Docling、tokenizer、业务应用及事务，仅替换外部来源、原件、Embedding 和向量端口，不调用真实业务上游。两项已在 Windows 与开发 PostgreSQL／Redis 上通过，测试键、schema 和进程已清理；不重启或清空共享 Redis：
 

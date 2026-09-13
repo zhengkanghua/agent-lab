@@ -169,9 +169,14 @@ Playwright route mock 只用于隔离验证前端状态，不能作为后端已�
 ```powershell
 npm run test:run -- src/features/semantic-search/tests/SearchResultCard.spec.ts
 npm test -- src/features/semantic-search/tests
+npx vitest related src/features/semantic-search/components/SearchResultCard.vue src/styles/shared-styles.node.spec.ts --run
 npx eslint src/features/semantic-search/tests/SearchResultCard.spec.ts --max-warnings 0
 npx prettier --check src/features/semantic-search/tests/SearchResultCard.spec.ts
 ```
+
+`vitest related` 按源文件的 import 关系选择受影响测试，适合改动一个组件或状态逻辑时使用。共享样式检查通过文件读取扫描源码，需要显式带上 `shared-styles.node.spec.ts`；它按规则检查全部当前文件，失败消息会指出具体文件。
+
+CI 使用同分支上一次成功部署作为基线，普通前端改动交给 `vitest related`，并带上共享样式检查。前端依赖、公共配置、HTTP/类型契约或入口变化，以及文件删除和重命名时运行完整前端测试；手动触发、工作流修改或无法取得可靠基线时也执行完整验证。纯文档或无关后端改动跳过前端测试。具体范围见 [部署工作流](../.github/workflows/deploy.yml)。
 
 类型变化时可单独运行 `npm run typecheck`。需要完整回归或发布时执行：
 

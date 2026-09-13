@@ -295,8 +295,8 @@ docker compose logs -f backend
 CI 的完整顺序在 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) 里，
 几个顺序约束是有意的，不要调整：
 
-1. **测试在构建之前**：后端先准备锁定 tokenizer，再运行包含真实 Docling 的离线测试，以及 Linux runner 上的真实 Redis/prefork/Beat、临时 PostgreSQL 迁移与并发验收；
-   任何步骤失败就不构建、不推送、不部署。任务进程日志保存在 Actions artifact 中。
+1. **测试在构建之前**：先以上次成功部署为基线选择受影响的检查；后端改动准备锁定 tokenizer 并运行离线回归，任务相关改动运行 Linux 核心验收，消息组件和迁移变化分别追加耗时兼容性与历史升级验收，前端使用 Vitest 选择受影响测试。范围与本地命令见 [后端 README](../backend/README.md#测试) 和 [前端 README](../frontend/README.md#验证)。手动触发或没有可靠基线时完整验证；
+   所选检查失败就不构建、不推送、不部署。任务进程日志保存在 Actions artifact 中。
 2. **迁移在 `up -d` 之前**，且 `alembic upgrade head` 在 `agent-lab init-checkpointer`
    之前。理由见 [ADR 0004](adr/0004-checkpointer-tables-outside-alembic.md)。
 3. **后端部署在前端上传之前**：迁移失败时部署中止，前端仍是旧版本，不会出现「新前端调
