@@ -123,7 +123,7 @@ URL、API Key 后面多一个看不见的字符。这类故障很难查：日志
 7. 新版使用 `QDRANT_COLLECTION_SCHEMA_VERSION=v3`。镜像已设置
    `DOCUMENT_TOKENIZER_PATH=/app/resources/tokenizers/bge-m3`，通常无需在 `.env` 重复设置；
    不要用本地开发的 `.cache/...` 路径覆盖它。`DOCUMENT_CHUNK_MAX_TOKENS` 默认 512，包含标题上下文。
-8. 容器默认 `REDIS_URL=redis://redis:6379/0`；不要复制原生开发的 `127.0.0.1` 地址。自管 Redis 时显式设置 URL，密码单独填 `REDIS_PASSWORD`，留空表示不需要密码，不把密码拼入 URL。API、Beat、Worker 的 Redis 配置与 `TASK_QUEUE_NAME` 必须一致；队列名同时决定消息及辅助键的前缀，不同环境须区分。连接凭据只放服务端配置，不放任务参数或前端变量。
+8. 容器默认 `REDIS_URL=redis://agent-lab-redis:6379/0`，该别名只属于内部网络，避免与共享 `1panel-network` 中的 `redis` 同名服务冲突；不要复制原生开发的 `127.0.0.1` 地址。自管 Redis 时显式设置 URL，密码单独填 `REDIS_PASSWORD`，留空表示不需要密码，不把密码拼入 URL。API、Beat、Worker 的 Redis 配置与 `TASK_QUEUE_NAME` 必须一致；队列名同时决定消息及辅助键的前缀，不同环境须区分。连接凭据只放服务端配置，不放任务参数或前端变量。
 9. `WORKER_COUNT` 是 API 进程数，`TASK_WORKER_CONCURRENCY` 是每个 Worker 的 prefork 子进程数。`docker compose up -d --scale task-worker=2` 可增加 Worker 实例，Beat 保持单个。容器关闭宽限用于等待当前工作，不能据此限制清理整次时长。
 
 编排自带 Redis 只接内部 `middleware` 网络、无宿主端口，启用 AOF/everysec、持久卷 `redis-data` 和 `noeviction`；容量由 `REDIS_MAXMEMORY` 设置，自管实例在 Redis 服务端配置。`REDIS_URL` 为项目公共连接，任务消息和后续缓存按各自前缀区分；`noeviction` 作用于整个实例，缓存用 TTL 过期，内存满时新增写入失败。任务发布失败的依据保留在 PostgreSQL，等待补投。运维监控需关注内存占用/上限、AOF 写入状态、持久卷剩余空间和任务投递错误；在现有监控平台配置告警，具体阈值按批准容量设置。Redis 重启不清卷，不对共享服务执行 FLUSHDB 或故障实验。

@@ -104,7 +104,7 @@ DOCUMENT_TOKENIZER_PATH    已准备并校验的本地 tokenizer 目录。
 DOCUMENT_CHUNK_MAX_TOKENS  包含标题与特殊 token 的文本预算，改变后须重新预览与采用。
 SCHEDULER_TIMEZONE        cron 表达式的解释时区，默认 Asia/Shanghai。只影响「0 9 * * *」
                           翻译成哪个时刻；数据库存储一律 UTC，不受影响。
-REDIS_URL                项目共用 Redis 连接；本地默认 redis://127.0.0.1:6379/0，容器默认 redis://redis:6379/0。
+REDIS_URL                项目共用 Redis 连接；本地默认 redis://127.0.0.1:6379/0，容器默认 redis://agent-lab-redis:6379/0。
 REDIS_PASSWORD           Redis 密码，留空表示不需要密码；独立填写，不放入 URL，无需转义特殊字符。
 REDIS_MAXMEMORY          Compose 自带 Redis 的容量，默认 256mb；自管实例在 Redis 服务端设置。
 TASK_QUEUE_NAME           单个业务队列名，也决定任务键前缀 tasks:<队列名>:，三个进程必须相同。

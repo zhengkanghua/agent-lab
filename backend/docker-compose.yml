@@ -9,8 +9,8 @@ x-backend: &backend
     - .env
   environment: &backend-environment
     TZ: ${TZ:-Asia/Shanghai}
-    # 本地 Python 开发默认连 localhost；容器默认使用内部网络中的共用 Redis。
-    REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    # 使用内部网络的项目别名，避免与共享 1panel 网络里名为 redis 的服务冲突。
+    REDIS_URL: ${REDIS_URL:-redis://agent-lab-redis:6379/0}
   networks:
     - 1panel-network
     - middleware
@@ -58,7 +58,9 @@ services:
       - ${REDIS_MAXMEMORY:-256mb}
     # 共用中间件不暴露宿主端口，也不接入共享 1panel 网络。
     networks:
-      - middleware
+      middleware:
+        aliases:
+          - agent-lab-redis
     volumes:
       - redis-data:/data
     logging: *logging
