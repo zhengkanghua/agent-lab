@@ -50,6 +50,8 @@
 **安全边界不变。** localStorage 里只有数量参数与提示词文本，密码与 Token 仍然只存在于
 HttpOnly Cookie；Agent 提示词分区只对超级用户可见（路由守卫 + 页面兜底），因为
 `/agent/*` 本来就只放行超级用户。前端的条件渲染是体验，不是鉴权。
+（提示词将来迁入 `user_preferences` 后，它作为账号数据受 `user_id` 归属约束；删账号时由业务层
+清理，库上不建级联，见 [ADR 0028](0028-drop-database-foreign-keys.md)。）
 
 **契约常量上收到 api 层。** 数量参数边界与提示词上界是请求契约的一部分，从 feature 的
 validation 模块移到 `api/document-search.ts` 与 `api/agent-chat.ts`——设置中心是它们的

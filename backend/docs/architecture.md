@@ -49,6 +49,7 @@ DELETE /agent/threads/{thread_id}         删除会话及其历史（超级用�
 GET    /admin/users                       账号列表（超级用户）
 POST   /admin/users                       创建账号（超级用户）
 PATCH  /admin/users/{user_id}             改启用状态与超级用户位（超级用户）
+DELETE /admin/users/{user_id}             删除账号，连带清会话归属与登录 Token（超级用户）
 POST   /admin/users/{user_id}/password    重置密码（超级用户）
 DELETE /admin/users/{user_id}/sessions    撤销该账号全部登录会话（超级用户）
 GET    /scheduled-jobs                    定时任务列表，含下次执行时间与最近一次执行（超级用户）
@@ -81,7 +82,7 @@ GET    /task-policy/changes               最近的策略修改记录（超级�
 ## KnowledgeBase 范围
 
 `knowledge_bases` 表按稳定业务键管理多个逻辑知识库，Source 与 Document 通过
-`knowledge_base_id` 外键归属，Qdrant 每个 Point 的 Payload 保存同一个 ID，共享
+`knowledge_base_id` 逻辑外键归属（库上无约束，见 [ADR 0028](../../docs/adr/0028-drop-database-foreign-keys.md)），Qdrant 每个 Point 的 Payload 保存同一个 ID，共享
 Collection 靠它过滤隔离。知识库用例的契约、端口和适配器组织在 `knowledge/`，
 导入与重建应用在其中，索引、搜索、清理和 Source 配置复用 `services/` 中的端口用例；HTTP 与任务入口从 composition 装配取服务，
 领域层不依赖 FastAPI、SQLAlchemy 或 Qdrant。
@@ -593,7 +594,7 @@ CLI `run-once` 直接执行一次同步和处理批次；`POST /pipeline/run-onc
 
 `tasks/` 负责注册、持久受理、cron、投递、领取、状态与策略，`task_assembly.py` 将业务注册项接到公共核心。注册项绑定参数模型、普通处理函数及必要的资源准备、错误分类、完成回调和恢复判断，不从数据库加载代码。`services/scheduled_task_registry.py` 注册三种周期类型，以及文档后台批次和手动 Pipeline；后两种不供用户配置 cron。决策见 [ADR 0019](../../docs/adr/0019-scheduled-execution-and-write-coordination.md)。
 
-`ScheduledJobService` 管理周期配置；启用或执行期间可修改和删除，配置行锁与 Beat 的版本复核协调生效顺序。每次受理冻结参数、来源配置和执行策略。配置删除只清空可选外键，稳定来源身份、已受理工作和历史保留。数据库唯一约束保护同周期事件、同配置和业务声明的未结束执行名额。
+`ScheduledJobService` 管理周期配置；启用或执行期间可修改和删除，配置行锁与 Beat 的版本复核协调生效顺序。每次受理冻结参数、来源配置和执行策略。配置删除由 `ScheduledJobRepository.delete_job` 在同一事务里把历史执行的 `job_id` 置空；稳定来源身份、已受理工作和历史保留。数据库唯一约束保护同周期事件、同配置和业务声明的未结束执行名额。
 
 `TaskService` 将执行、原请求回执和投递依据同事务保存。提交主体、操作及 `Idempotency-Key` 共同识别请求，摘要比较原请求内容；重发先查回执，再读取可能已修改或删除的配置。不同请求不因参数相同合并。同配置尚有未结束执行时，人工触发返回冲突编号，周期事件留下跳过记录。HTTP 在数据库提交后返回 202，业务状态由独立执行接口查询。
 
@@ -667,7 +668,9 @@ Chunk 清单与结构作为预览和已采用快照保存在 PostgreSQL，向量
 
 Agent 的会话数据分在两处，边界是「内容 / 归属」：四张 ``checkpoint*`` 表存消息内容，
 ``agent_threads`` 存归属、展示元信息和下一次运行的选择范围。前者由第三方库管、不由 Alembic 管；后者是普通业务表，
-有指向 ``users`` 的外键（``ON DELETE CASCADE``）和 ``(user_id, last_active_at DESC)`` 索引。
+``user_id`` 是指向 ``users`` 的**逻辑外键**（库上无约束，连带清理由
+``UserAdminService.delete_user`` 在同一事务内显式完成，见
+[ADR 0028](../../docs/adr/0028-drop-database-foreign-keys.md)），并有 ``(user_id, last_active_at DESC)`` 索引。
 分开的理由见 [ADR 0009](../../docs/adr/0009-agent-thread-ownership-in-own-table.md)。
 
 **归属校验是访问控制，不是凭据检查。** 每条 ``/agent/*`` 路由先经
