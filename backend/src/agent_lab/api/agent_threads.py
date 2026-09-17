@@ -25,7 +25,7 @@ from agent_lab.agent.replay import build_replay_turns
 from agent_lab.agent.runtime import AgentRuntime
 from agent_lab.api.dependencies import get_agent_runtime, get_agent_thread_service, get_vector_search_service
 from agent_lab.api.error_contract import build_agent_chat_error_response
-from agent_lab.auth.dependencies import current_superuser
+from agent_lab.auth.dependencies import current_active_user
 from agent_lab.models.user import UserRecord
 from agent_lab.schemas.agent_chat import AgentChatErrorResponse
 from agent_lab.schemas.agent_thread import (
@@ -57,7 +57,7 @@ router = APIRouter(prefix="/agent/threads", tags=["agent"])
     ),
 )
 async def list_agent_threads(
-    user: Annotated[UserRecord, Depends(current_superuser)],
+    user: Annotated[UserRecord, Depends(current_active_user)],
     threads: Annotated[AgentThreadService, Depends(get_agent_thread_service)],
     limit: Annotated[
         int,
@@ -123,7 +123,7 @@ async def list_agent_threads(
 )
 async def get_agent_thread_messages(
     thread_id: UUID,
-    user: Annotated[UserRecord, Depends(current_superuser)],
+    user: Annotated[UserRecord, Depends(current_active_user)],
     threads: Annotated[AgentThreadService, Depends(get_agent_thread_service)],
     runtime: Annotated[AgentRuntime, Depends(get_agent_runtime)],
 ) -> AgentThreadMessagesResponse | JSONResponse:
@@ -173,7 +173,7 @@ async def get_agent_thread_messages(
 async def update_agent_thread_scope(
     thread_id: UUID,
     selection: KnowledgeBaseSelection,
-    user: Annotated[UserRecord, Depends(current_superuser)],
+    user: Annotated[UserRecord, Depends(current_active_user)],
     threads: Annotated[AgentThreadService, Depends(get_agent_thread_service)],
     search: Annotated[VectorSearchService, Depends(get_vector_search_service)],
 ) -> KnowledgeBaseSelection | JSONResponse:
@@ -202,7 +202,7 @@ async def update_agent_thread_scope(
 )
 async def delete_agent_thread(
     thread_id: UUID,
-    user: Annotated[UserRecord, Depends(current_superuser)],
+    user: Annotated[UserRecord, Depends(current_active_user)],
     threads: Annotated[AgentThreadService, Depends(get_agent_thread_service)],
     runtime: Annotated[AgentRuntime, Depends(get_agent_runtime)],
 ) -> AgentThreadDeletionResponse | JSONResponse:

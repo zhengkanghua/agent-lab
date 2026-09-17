@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from agent_lab.agent.errors import AgentThreadNotFoundError
 from agent_lab.models.agent_thread import AgentThreadRecord
 from agent_lab.knowledge.scope import KnowledgeBaseSelection
+from agent_lab.services.user_preference_service import UserPreferenceService
 
 
 logger = logging.getLogger(__name__)
@@ -87,19 +88,26 @@ class AgentThreadService:
         thread_id: UUID | None,
         first_message: str,
         scope: KnowledgeBaseSelection | None = None,
-    ) -> UUID:
+    ) -> tuple[UUID, str | None]:
         """确定本轮提问所属的会话 id，并保证它归当前账号所有。
 
-        ``thread_id`` 为 ``None`` 表示新建会话：服务端生成 id、用首条提问当标题插入一行。
-        非 ``None`` 表示续聊：校验归属，通过则把 ``last_active_at`` 推到当前时间。
+        ``thread_id`` 为 ``None`` 表示新建会话：服务端生成 id、用首条提问当标题插入一行，
+        并把该账号当前配置的提示词**快照**进这一行。非 ``None`` 表示续聊：校验归属，通过则把
+        ``last_active_at`` 推到当前时间，提示词沿用会话里已存的那份。
+
+        **提示词在建立时定下、续聊不重读偏好表，这是有意的**：用户在设置页改了提示词只该影响
+        新开的会话，否则会话内的约束会中途变化，前后回答不再可比。注意这与同表 ``scope`` 列的
+        语义相反（scope 续聊时可改），不要顺手把两处「修」成一致——理由见 ADR 0029。
 
         Args:
             user_id: 当前登录账号 id。
             thread_id: 前端要续聊的会话 id；``None`` 表示新建。
             first_message: 本轮提问原文，只在新建时用来取标题。
+            scope: 本次提交的知识库选择；``None`` 表示沿用/默认。
 
         Returns:
-            确定可用、且已确认归属的会话 id。
+            ``(会话 id, 该会话的系统提示词)``。提示词为 ``None`` 表示这个会话用服务端内置
+            默认提示词。返回它而不是让调用方再查一次，是为了让「取用会话值」只有一处实现。
 
         Raises:
             AgentThreadNotFoundError: ``thread_id`` 在库里没有，或者存在但属于别的账号。
@@ -118,22 +126,28 @@ class AgentThreadService:
         async with self._session_factory() as session:
             if thread_id is None:
                 created_id = uuid4()
+                # 建会话时从该账号的个人偏好拍一份提示词快照。取值为 None 表示没配过，
+                # 运行时会回落到内置默认提示词（那段回落逻辑在 middleware 里，本次不改）。
+                system_prompt = await UserPreferenceService(session).system_prompt_for(user_id)
                 session.add(
                     AgentThreadRecord(
                         thread_id=created_id,
                         user_id=user_id,
                         title=derive_thread_title(first_message),
                         scope=(scope or KnowledgeBaseSelection(mode="all")).model_dump(mode="json"),
+                        system_prompt=system_prompt,
                         created_at=now,
                         last_active_at=now,
                     )
                 )
                 await session.commit()
-                return created_id
+                return created_id, system_prompt
 
-            # 用带 user_id 条件的 UPDATE 一次搞定「校验 + 续活」：先 SELECT 再 UPDATE 需要两次
-            # 往返，而且中间存在窗口。rowcount 为 0 同时覆盖「id 不存在」和「id 属于别人」，
-            # 正好对应合并成 404 的决定（见 AgentThreadNotFoundError 的 docstring）。
+            # 用带 user_id 条件的 UPDATE 一次搞定「校验 + 续活 + 取回提示词」：先 SELECT 再
+            # UPDATE 需要两次往返，而且中间存在窗口。rowcount 为 0 同时覆盖「id 不存在」和
+            # 「id 属于别人」，正好对应合并成 404 的决定（见 AgentThreadNotFoundError 的 docstring）。
+            # 用 RETURNING 取回提示词，而不是另发一条 SELECT——那会多一次往返，也把「会话值
+            # 从哪读」拆成两处。
             result = await session.execute(
                 update(AgentThreadRecord)
                 .where(
@@ -141,8 +155,10 @@ class AgentThreadService:
                     AgentThreadRecord.user_id == user_id,
                 )
                 .values(last_active_at=now, **({"scope": scope.model_dump(mode="json")} if scope is not None else {}))
+                .returning(AgentThreadRecord.system_prompt)
             )
-            if result.rowcount == 0:
+            row = result.first()
+            if row is None:
                 await session.rollback()
                 # 只记 id 和账号，不记提问内容。id 是我们自己生成的 UUID，不是用户输入。
                 logger.warning(
@@ -152,7 +168,7 @@ class AgentThreadService:
                 )
                 raise AgentThreadNotFoundError
             await session.commit()
-            return thread_id
+            return thread_id, row[0]
 
     async def update_scope(self, *, user_id: UUID, thread_id: UUID, scope: KnowledgeBaseSelection) -> None:
         """保存经应用校验的选择；不改正在执行的运行快照，不刷新最近提问时间。"""

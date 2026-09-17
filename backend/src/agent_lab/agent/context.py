@@ -23,9 +23,13 @@ class AgentContext:
     的就是被改过的值，「这次运行用的是哪个提示词」会变得依赖中间件顺序。
 
     Attributes:
-        system_prompt: 本次运行使用的系统提示词；``None`` 表示用
+        system_prompt: **本次运行所属会话**的系统提示词，由 ``agent_threads.system_prompt``
+            给出（建立会话时从该账号个人偏好拍下的快照）；``None`` 表示该会话用
             ``prompts.DEFAULT_SYSTEM_PROMPT``。非 ``None`` 时**整体替换**默认提示词，
             不拼接，理由见 ``agent.prompts`` 的模块说明。
+
+            注意它的来源是会话而非请求体：同一次运行的多次模型调用拿到的是同一份值，
+            而会话内不同轮次之间也保持一致。
     """
 
     system_prompt: str | None = None

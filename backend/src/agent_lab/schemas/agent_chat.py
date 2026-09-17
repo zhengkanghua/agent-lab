@@ -19,7 +19,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Discriminator, Field, RootModel, field_validator
 
-from agent_lab.agent.limits import MAX_SYSTEM_PROMPT_CHARS, MAX_USER_MESSAGE_CHARS
+from agent_lab.agent.limits import MAX_USER_MESSAGE_CHARS
 from agent_lab.schemas._query_validators import require_non_whitespace_query
 from agent_lab.agent.evidence import DocumentEvidence
 from agent_lab.knowledge.scope import KnowledgeBaseSelection, ResolvedKnowledgeBaseScope, require_explicit_scope
@@ -51,15 +51,6 @@ class AgentChatRequest(BaseModel):
             "省略表示新建会话，新 id 通过 done 事件返回。"
         ),
     )
-    system_prompt: str | None = Field(
-        default=None,
-        max_length=MAX_SYSTEM_PROMPT_CHARS,
-        repr=False,
-        description=(
-            "覆盖本次运行的系统提示词；省略则使用服务端内置的默认提示词。"
-            "只影响本次请求，不会被持久化。"
-        ),
-    )
 
     model_config = ConfigDict(frozen=True)
 
@@ -86,25 +77,6 @@ class AgentChatRequest(BaseModel):
         """
 
         return require_non_whitespace_query(value)
-
-    @field_validator("system_prompt")
-    @classmethod
-    def _validate_system_prompt(cls, value: str | None) -> str | None:
-        """把纯空白的自定义提示词当作「没给」，回落到默认提示词。
-
-        为什么不报错：前端清空输入框后提交的是空串，那语义就是「用默认的」，而不是
-        「用一份空提示词」——真用空提示词会让模型完全失去角色约束和引用要求。
-
-        Args:
-            value: 调用方提交的自定义系统提示词，可能为 ``None`` 或空白。
-
-        Returns:
-            去掉首尾空白后的提示词，或 ``None`` 表示使用默认提示词。
-        """
-
-        if value is None or not value.strip():
-            return None
-        return value.strip()
 
 
 class AgentTokenEvent(BaseModel):

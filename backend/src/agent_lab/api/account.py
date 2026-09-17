@@ -1,11 +1,11 @@
-"""提供当前登录账号对自己的自助 HTTP API（目前只有改密码一项）。
+"""提供当前登录账号对自己的自助 HTTP API：改密码与读写个人偏好。
 
 本层和 ``api/user_admin.py`` 的关键差别是权限与操作对象：那一族要求超级用户、按 id 改别人；
 这一族只要求「已登录且启用」，操作对象恒为调用者自己，路径和请求体里都没有账号 id。
 
-请求体含两个明文密码，所以路由挂 ``SanitizedValidationRoute``，把校验失败换成固定
-``invalid_request``，绝不回显原始输入。成功返回 204：改密不需要回传任何账号字段，前端要刷新
-身份的话读 ``GET /auth/me`` 就够了，而把用户对象顺手带回来只会多一条能泄露字段的路径。
+改密码的请求体含两个明文密码，所以那条路由挂 ``SanitizedValidationRoute``，把校验失败换成固定
+``invalid_request``，绝不回显原始输入；它成功返回 204——改密不需要回传任何账号字段，前端要刷新
+身份的话读 ``GET /auth/me`` 就够了。偏好那两条不含密码，读写都需要往返，因此返回完整对象。
 """
 
 from typing import Annotated
@@ -20,14 +20,19 @@ from agent_lab.api.error_contract import (
     build_error_response,
     build_user_admin_error_response,
 )
-from agent_lab.auth.dependencies import current_active_user_token
+from agent_lab.auth.dependencies import current_active_user, current_active_user_token
 from agent_lab.db.session import get_db_session
 from agent_lab.models.user import UserRecord
 from agent_lab.schemas.account import (
     AccountErrorResponse,
     AccountPasswordChangeRequest,
 )
+from agent_lab.schemas.user_preference import (
+    UserPreferenceResponse,
+    UserPreferenceUpdateRequest,
+)
 from agent_lab.services.account_service import AccountDomainError, AccountService
+from agent_lab.services.user_preference_service import UserPreferenceService
 
 
 router = APIRouter(
@@ -85,6 +90,95 @@ async def change_own_password(
     except SQLAlchemyError as error:
         return _database_error(error)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def get_user_preference_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> UserPreferenceService:
+    """用当前请求数据库 Session 构造个人偏好 Service。"""
+
+    return UserPreferenceService(session)
+
+
+@router.get(
+    "/preferences",
+    response_model=UserPreferenceResponse,
+    status_code=status.HTTP_200_OK,
+    responses={503: {"model": AccountErrorResponse}},
+    summary="读取当前账号的个人偏好",
+    description=(
+        "返回当前登录账号的个人偏好。从未配置过的账号拿到的是契约默认值，"
+        "而不是 404——「还没配过」是一个正常状态，不是错误。"
+    ),
+)
+async def read_own_preferences(
+    user: Annotated[UserRecord, Depends(current_active_user)],
+    preferences: Annotated[UserPreferenceService, Depends(get_user_preference_service)],
+) -> UserPreferenceResponse | JSONResponse:
+    """读取当前登录账号的个人偏好。
+
+    权限门是 ``current_active_user``（普通登录账号即可），不是 ``current_superuser``：
+    Agent 对话已对所有登录账号开放，提示词不再是超级用户专有。
+
+    路径里不带账号 id——取值域由登录态决定，从形态上排除「读别人配置」的可能。
+
+    Args:
+        user: 当前登录账号。
+        preferences: 个人偏好 Service。
+
+    Returns:
+        该账号的偏好；未配置时各项取契约默认值；数据库故障时稳定的 503 JSON。
+
+    Notes:
+        一次 PostgreSQL 只读查询。
+    """
+
+    try:
+        return await preferences.get(user.id)
+    except SQLAlchemyError as error:
+        return _database_error(error)
+
+
+@router.put(
+    "/preferences",
+    response_model=UserPreferenceResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        422: {"model": AccountErrorResponse},
+        503: {"model": AccountErrorResponse},
+    },
+    summary="保存当前账号的个人偏好",
+    description=(
+        "整体覆盖当前登录账号的个人偏好，不存在则新建。设置页是「草稿 + 显式保存」的形态，"
+        "提交的就是完整一份，所以这里不做部分更新。\n\n"
+        "系统提示词作为**新会话**的初始提示词，已经开始的会话不受影响。"
+    ),
+)
+async def replace_own_preferences(
+    body: UserPreferenceUpdateRequest,
+    user: Annotated[UserRecord, Depends(current_active_user)],
+    preferences: Annotated[UserPreferenceService, Depends(get_user_preference_service)],
+) -> UserPreferenceResponse | JSONResponse:
+    """整体覆盖当前登录账号的个人偏好。
+
+    Args:
+        body: 完整的一份偏好，已在 schema 层过边界校验与空白归一化。
+        user: 当前登录账号。
+        preferences: 个人偏好 Service。
+
+    Returns:
+        落库后重新读出的偏好；数据库故障时稳定的 503 JSON。
+
+    Notes:
+        一次 PostgreSQL 写入事务。提示词长度上限由 ``UserPreferenceUpdateRequest`` 上的
+        ``max_length`` 把关——那道约束原先挂在请求体的 ``system_prompt`` 字段上，随本次改动
+        删除了，不在这里补回来服务端就没有真边界。
+    """
+
+    try:
+        return await preferences.replace(user.id, body)
+    except SQLAlchemyError as error:
+        return _database_error(error)
 
 
 def _domain_error(error: AccountDomainError) -> JSONResponse:

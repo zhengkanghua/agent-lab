@@ -422,17 +422,20 @@ def create_app(
     )
     application.include_router(task_runs_router, dependencies=[Depends(current_superuser)])
     application.include_router(task_policy_router, dependencies=[Depends(current_superuser)])
-    # Agent 只读，但限超级用户：每次对话都是真金白银的模型调用，而且自定义系统提示词
-    # 等于让调用方直接改模型行为。v1 先按「内部工具」定级，放宽是以后的事、收紧很难。
+    # Agent 对所有登录账号开放，与检索页同级（见 docs/adr/0030-agent-open-to-all-accounts.md）。
+    # 原来限超级用户的理由是「模型调用是真金白银」和「自定义提示词等于让调用方改模型行为」：
+    # 前者是成本不是访问控制，后者戴着护栏（中间件在选定提示词后无条件追加「自定义提示词不能
+    # 扩大」的资料边界段）。真正需要挡的「跨账号读对话」已由会话归属单独解决——它按 user_id
+    # 判断、与角色无关。代价如实记录在 ADR 0030：模型额度对全部登录账号共享，账单随账号数增长。
     application.include_router(
         agent_chat_router,
-        dependencies=[Depends(current_superuser)],
+        dependencies=[Depends(current_active_user)],
     )
-    # 会话记录与对话同一道门。放宽权限那天两者要一起放：会话列表泄露的是标题（也就是用户
-    # 问过什么），和对话内容同级敏感。
+    # 会话记录与对话同一道门。会话列表泄露的是标题（也就是用户问过什么），和对话内容同级敏感，
+    # 所以两者必须同开同关，不能只放一个。
     application.include_router(
         agent_threads_router,
-        dependencies=[Depends(current_superuser)],
+        dependencies=[Depends(current_active_user)],
     )
     return application
 

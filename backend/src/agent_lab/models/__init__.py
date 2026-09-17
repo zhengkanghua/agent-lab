@@ -11,6 +11,7 @@ from agent_lab.models.knowledge_base import KnowledgeBaseRecord
 from agent_lab.models.scheduled_job import JobRunRecord, ScheduledJobRecord, TaskRequestRecord, TaskPolicyRecord, TaskPolicyChangeRecord
 from agent_lab.models.source import SourceRecord
 from agent_lab.models.user import AccessTokenRecord, UserRecord
+from agent_lab.models.user_preference import UserPreferenceRecord
 from agent_lab.models.write_operation import DocumentDeletionRecord, WriteOperationRecord
 
 __all__ = [
@@ -29,5 +30,6 @@ __all__ = [
     "TaskPolicyRecord",
     "TaskPolicyChangeRecord",
     "SourceRecord",
+    "UserPreferenceRecord",
     "UserRecord",
 ]

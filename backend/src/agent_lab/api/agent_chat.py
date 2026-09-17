@@ -29,7 +29,7 @@ from agent_lab.agent.prompts import DEFAULT_SYSTEM_PROMPT
 from agent_lab.agent.runtime import AgentRuntime
 from agent_lab.agent.streaming import stream_agent_events
 from agent_lab.api.dependencies import get_agent_runtime, get_agent_thread_service, get_vector_search_service
-from agent_lab.auth.dependencies import current_superuser
+from agent_lab.auth.dependencies import current_active_user
 from agent_lab.config.llm import LangSmithSettings, get_langsmith_settings
 from agent_lab.models.user import UserRecord
 from agent_lab.services.agent_thread_service import AgentThreadService
@@ -191,7 +191,7 @@ async def agent_chat(
     chat_request: AgentChatRequest,
     runtime: Annotated[AgentRuntime, Depends(get_agent_runtime)],
     langsmith_settings: Annotated[LangSmithSettings, Depends(get_langsmith_settings)],
-    user: Annotated[UserRecord, Depends(current_superuser)],
+    user: Annotated[UserRecord, Depends(current_active_user)],
     threads: Annotated[AgentThreadService, Depends(get_agent_thread_service)],
     search: Annotated[VectorSearchService, Depends(get_vector_search_service)],
 ) -> ServerSentEventResponse:
@@ -201,11 +201,14 @@ async def agent_chat(
     所以归属由 ``AgentThreadService`` 在这里挡住。缺省时由服务端生成新 id 并落一行归属记录，
     新 id 通过 ``done`` 事件返回。
 
-    权限门在 ``main.py`` 的 ``include_router`` 上已经挂了一道，这里再声明一次 ``current_superuser``
-    不是重复：那道只做「拦住没权限的人」，这里要的是**当前账号对象**本身，用来判定会话归属。
+    权限门在 ``main.py`` 的 ``include_router`` 上已经挂了一道，这里再声明一次 ``current_active_user``
+    不是重复：那道只做「拦住没登录的人」，这里要的是**当前账号对象**本身，用来判定会话归属。
+
+    系统提示词不再由请求体携带：它取自会话（新建时由 ``ensure_thread`` 从该账号个人偏好拍快照，
+    续聊时沿用会话里那份），因此同一会话内前后一致，且用户在设置页改提示词只影响新开的会话。
 
     Args:
-        chat_request: 提问、可选会话 id 和可选自定义系统提示词。
+        chat_request: 提问、可选会话 id 与可选会话范围。
         runtime: 进程级 Agent Runtime，由 lifespan 装配。
         langsmith_settings: 追踪配置，进程级缓存。
         user: 当前登录账号，用于会话归属。
@@ -234,19 +237,21 @@ async def agent_chat(
             selection = KnowledgeBaseSelection.model_validate(owned.scope)
     selection = selection or KnowledgeBaseSelection(mode="all")
     resolved_scope = await search.resolve_scope(selection)
-    thread_id = await threads.ensure_thread(
+    # 提示词取自**会话**而不是请求体：新建的会话刚用账号偏好拍下快照，续聊的用会话里那份。
+    # 值仍在 ensure_thread 一处取，调用方不再自己读偏好表，免得出现第二个取值点。
+    thread_id, session_prompt = await threads.ensure_thread(
         user_id=user.id,
         thread_id=chat_request.thread_id,
         first_message=chat_request.message,
         scope=selection,
     )
-    # 2、把自定义提示词装进本次运行的上下文；为 None 时中间件会用默认那份。
-    context = AgentContext(system_prompt=chat_request.system_prompt, scope=resolved_scope)
+    # 2、把会话提示词装进本次运行的上下文；为 None 时中间件会用默认那份。
+    context = AgentContext(system_prompt=session_prompt, scope=resolved_scope)
     # 3、只记 id 和「有没有自定义提示词」，不记提问原文——日志里不该有用户输入。
     logger.info(
         "Agent 对话开始 thread_id=%s custom_prompt=%s",
         thread_id,
-        chat_request.system_prompt is not None,
+        session_prompt is not None,
     )
     # 4、交出流式响应。注意此刻流还没开始跑，第一次迭代发生在 ASGI 服务器读生成器时。
     return ServerSentEventResponse(

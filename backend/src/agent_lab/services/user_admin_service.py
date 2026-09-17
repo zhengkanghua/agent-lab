@@ -21,6 +21,7 @@ from agent_lab.auth.manager import validate_password_strength
 from agent_lab.models.agent_thread import AgentThreadRecord
 from agent_lab.models.document_processing import DocumentReviewRecord
 from agent_lab.models.user import AccessTokenRecord, UserRecord
+from agent_lab.services.user_preference_service import UserPreferenceService
 from agent_lab.schemas.user_admin import (
     UserAdminCreateRequest,
     UserAdminPasswordRequest,
@@ -271,9 +272,11 @@ class UserAdminService:
         2. ``access_tokens``：删掉登录 Token，否则已签发的 Cookie 还能继续通过认证。
         3. ``document_review_records.actor_id``：**置空**，不是删行。换版决策记录是客观
            事实，不因为操作者账号消失而失效；只是「是谁拍的板」不再可回溯。
-        4. 最后才删 ``users`` 这一行。
+        4. ``user_preferences``：删掉该账号的偏好行。配置没有对应的运维清理命令——会话有
+           ``prune-orphan-threads``，配置没有，所以它只能靠这条路径清干净。
+        5. 最后才删 ``users`` 这一行。
 
-        第 3 条是这四步里最容易漏的：它不是级联删除而是置空，方向正好相反。
+        第 3 条是这几步里最容易漏的：它不是级联删除而是置空，方向正好相反。
 
         Args:
             user_id: 目标账号 id。
@@ -324,6 +327,9 @@ class UserAdminService:
             .where(DocumentReviewRecord.actor_id == user_id)
             .values(actor_id=None)
         )
+        # 5、删掉个人偏好。这一步不能省：库里没有外键，删账号不会带走这一行，而配置又没有
+        #    运维清理命令可兜底，漏了就是一条永远清不掉的孤儿配置。
+        await UserPreferenceService(self._session).delete_for(user_id)
         await self._session.delete(user)
         await self._session.commit()
 
