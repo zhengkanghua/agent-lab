@@ -40,12 +40,14 @@ GET  /document-management/{document_id}/versions/{version_id}  已采用历史�
 GET  /document-management/{document_id}/reviews     审核结论（超级用户）
 DELETE /document-management/{document_id}          完整删除文档（超级用户）
 POST /pipeline/run-once                   持久受理手动 Pipeline，返回 202 和执行编号（超级用户）
-POST /agent/chat                          Agent 对话，SSE 流式（超级用户）
-GET  /agent/default-prompt                默认系统提示词（超级用户）
-GET    /agent/threads                     列出自己的会话，分页（超级用户）
-GET    /agent/threads/{thread_id}/messages 回放一个会话的历史问答（超级用户）
-PATCH  /agent/threads/{thread_id}/scope    保存会话知识库选择（超级用户）
-DELETE /agent/threads/{thread_id}         删除会话及其历史（超级用户）
+POST /agent/chat                          Agent 对话，SSE 流式
+GET  /agent/default-prompt                默认系统提示词
+GET    /agent/threads                     列出自己的会话，分页
+GET    /agent/threads/{thread_id}/messages 回放一个会话的历史问答
+PATCH  /agent/threads/{thread_id}/scope    保存会话知识库选择
+DELETE /agent/threads/{thread_id}         删除会话及其历史
+GET  /auth/me/preferences                 读取当前账号的个人偏好
+PUT  /auth/me/preferences                 整体覆盖当前账号的个人偏好
 GET    /admin/users                       账号列表（超级用户）
 POST   /admin/users                       创建账号（超级用户）
 PATCH  /admin/users/{user_id}             改启用状态与超级用户位（超级用户）
@@ -71,13 +73,17 @@ PUT    /task-policy                       修改之后受理的默认策略并�
 GET    /task-policy/changes               最近的策略修改记录（超级用户）
 ```
 
-除 ``/health`` 和 ``/auth/login`` 外都需要有效登录 Cookie。搜索与全文要求普通启用
-账号，``/pipeline/run-once``、``/admin/users``、``/scheduled-jobs``、``/task-runs``、``/task-policy``、``/knowledge-bases``
-的管理写接口、``/sources``、``/file-documents``、``/document-management`` 与 ``/agent`` 要求 ``is_superuser=true``。**没有 ``/auth/register``**，
+除 ``/health`` 和 ``/auth/login`` 外都需要有效登录 Cookie。搜索、全文、``/auth/me/*``
+与 ``/agent/*`` 要求普通启用账号；``/pipeline/run-once``、``/admin/users``、``/scheduled-jobs``、
+``/task-runs``、``/task-policy``、``/knowledge-bases`` 的管理写接口、``/sources``、
+``/file-documents``、``/document-management`` 要求 ``is_superuser=true``。**没有 ``/auth/register``**，
 账号只能由超级用户或 CLI 创建。
 
-``/agent`` 定成超级用户不是因为它有写权限（它没有，见 ADR 0003），而是因为每次对话都是
-真金白银的模型调用，且自定义系统提示词等于让调用方直接改模型行为。放宽容易、收紧难。
+``/agent/*`` 曾经也限超级用户，理由是「每次对话是真金白银的模型调用」和「自定义提示词等于
+让调用方改模型行为」。两者都已不成立：前者是成本不是访问控制，后者戴着护栏（中间件在选定
+提示词后无条件追加「自定义提示词不能扩大」的资料边界段）；而真正需要挡的「跨账号读对话」由
+会话归属单独解决，它按 ``user_id`` 判断、与角色无关。代价如实记录在
+[ADR 0030](../../docs/adr/0030-agent-open-to-all-accounts.md)：模型额度对全部登录账号共享。
 
 ## KnowledgeBase 范围
 
