@@ -712,18 +712,18 @@ describe('useAgentChat', () => {
     wrapper.unmount()
   })
 
-  it('把注入的系统提示词交给流', async () => {
+  it('不再向流传系统提示词——它由服务端从会话取', async () => {
+    // 提示词改为会话级快照（ADR 0029）：客户端每轮不再携带它，取值点收在服务端。
+    // 这条挡住「有人把注入点加回来」，那会让客户端重新获得改模型行为的能力。
     const stream = scriptedStream([agentDone()])
-    // 提示词来自设置中心的偏好 store，由调用方注入 getter；这里验证 send 时刻的取值会进流。
-    const { wrapper, chat } = mountHarness(stream, undefined, {
-      getSystemPrompt: () => '你是财经记者。',
-    })
+    const { wrapper, chat } = mountHarness(stream)
     chat.draft.value = '问题'
 
     await chat.send()
     await flushPromises()
 
-    expect(stream.calls[0]?.systemPrompt).toBe('你是财经记者。')
+    const payload = stream.calls[0] as unknown as Record<string, unknown>
+    expect(payload).not.toHaveProperty('systemPrompt')
     wrapper.unmount()
   })
 

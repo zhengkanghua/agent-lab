@@ -51,10 +51,21 @@ def compiled(statement: Any) -> str:
 
 
 class FakeResult:
-    """只带 ``rowcount`` 的假执行结果。"""
+    """带 ``rowcount`` 与 ``returning`` 行集的假执行结果。
 
-    def __init__(self, rowcount: int) -> None:
+    ``first`` 是 ``ensure_thread`` 取回会话提示词用的：它走 ``UPDATE ... RETURNING``，
+    一次往返同时完成「校验 + 续活 + 取值」。这里返回的行由 ``returning_row`` 预置，
+    ``None`` 表示没更新到任何行（等价于 rowcount 为 0）。
+    """
+
+    def __init__(self, rowcount: int, returning_row: tuple[Any, ...] | None = None) -> None:
         self.rowcount = rowcount
+        self._returning_row = returning_row
+
+    def first(self) -> tuple[Any, ...] | None:
+        """返回预置的 RETURNING 行；没有则返回 ``None``。"""
+
+        return self._returning_row
 
 
 class FakeScalars:
@@ -85,20 +96,22 @@ class FakeSession:
         rowcount: int = 1,
         scalar_result: Any = None,
         scalars_result: list[Any] | None = None,
+        returning_row: tuple[Any, ...] | None = None,
     ) -> None:
         self._rowcount = rowcount
         self._scalar_result = scalar_result
         self._scalars_result = scalars_result or []
+        self._returning_row = returning_row
         self.statements: list[Any] = []
         self.added: list[Any] = []
         self.commits = 0
         self.rollbacks = 0
 
     async def execute(self, statement: Any) -> FakeResult:
-        """记下语句并返回预置 rowcount。"""
+        """记下语句并返回预置 rowcount 与 RETURNING 行。"""
 
         self.statements.append(statement)
-        return FakeResult(self._rowcount)
+        return FakeResult(self._rowcount, self._returning_row)
 
     async def scalar(self, statement: Any) -> Any:
         """记下语句并返回预置标量。"""
@@ -156,7 +169,7 @@ def test_new_thread_is_inserted_with_the_calling_account_as_owner() -> None:
     session = FakeSession()
     user_id = uuid4()
 
-    created = run(
+    created, prompt = run(
         service_with(session).ensure_thread(
             user_id=user_id,
             thread_id=None,
@@ -169,9 +182,34 @@ def test_new_thread_is_inserted_with_the_calling_account_as_owner() -> None:
     assert record.thread_id == created
     assert record.user_id == user_id
     assert record.title == "央行降息了吗"
+    # 没配过偏好的账号：快照为空，本轮由运行时回落到内置默认提示词。
+    assert prompt is None
+    assert record.system_prompt is None
     # 新建路径不该跑 UPDATE：跑了说明「新建」和「续聊」两条分支缠在一起了。
-    assert session.statements == []
+    # 唯一那条 SELECT 是读该账号的个人偏好，用来给会话拍快照。
+    assert len(session.statements) == 1
+    assert compiled(session.statements[0]).lstrip().upper().startswith("SELECT")
     assert (session.commits, session.rollbacks) == (1, 0)
+
+
+def test_new_thread_snapshots_the_account_preference_prompt() -> None:
+    """建会话时把该账号配的提示词写进会话行，并原样返回给调用方。
+
+    「快照」的含义就在这里：会话行存下建立那一刻的值，之后续聊不再回读偏好表。
+    """
+
+    session = FakeSession(scalar_result="只用一句话回答。")
+    user_id = uuid4()
+
+    created, prompt = run(
+        service_with(session).ensure_thread(
+            user_id=user_id, thread_id=None, first_message="问题"
+        )
+    )
+
+    assert prompt == "只用一句话回答。"
+    assert session.added[0].system_prompt == "只用一句话回答。"
+    assert session.added[0].thread_id == created
 
 
 def test_new_thread_id_is_generated_server_side_not_taken_from_input() -> None:
@@ -181,12 +219,12 @@ def test_new_thread_id_is_generated_server_side_not_taken_from_input() -> None:
     归属校验就成了摆设。
     """
 
-    first = run(
+    first, _ = run(
         service_with(FakeSession()).ensure_thread(
             user_id=uuid4(), thread_id=None, first_message="问题"
         )
     )
-    second = run(
+    second, _ = run(
         service_with(FakeSession()).ensure_thread(
             user_id=uuid4(), thread_id=None, first_message="问题"
         )
@@ -202,11 +240,11 @@ def test_continuing_a_thread_filters_by_both_thread_id_and_user_id() -> None:
     正是本次改动要修的漏洞。
     """
 
-    session = FakeSession(rowcount=1)
+    session = FakeSession(rowcount=1, returning_row=("会话里存的那份提示词。",))
     user_id = uuid4()
     thread_id = uuid4()
 
-    returned = run(
+    returned, prompt = run(
         service_with(session).ensure_thread(
             user_id=user_id,
             thread_id=thread_id,
@@ -215,12 +253,35 @@ def test_continuing_a_thread_filters_by_both_thread_id_and_user_id() -> None:
     )
 
     assert returned == thread_id
+    # 续聊的提示词来自会话行，不是偏好表——UPDATE 上没有第二条 SELECT 就是证据。
+    assert prompt == "会话里存的那份提示词。"
     assert len(session.statements) == 1
     sql = compiled(session.statements[0])
     assert sql.lstrip().upper().startswith("UPDATE")
     assert str(thread_id) in sql
     assert str(user_id) in sql
     assert (session.commits, session.rollbacks) == (1, 0)
+
+
+def test_continuing_a_thread_does_not_read_the_preference_table() -> None:
+    """续聊时**不**回读个人偏好——这正是「会话级快照」的核心。
+
+    如果哪天有人为了「让设置改动立刻生效」在这里加一条偏好查询，用户在设置页改一次提示词
+    就会把正在进行的会话换掉，会话内前后回答不再可比。这条断言把那个改动挡回去：
+    续聊只跑一条 UPDATE。
+    """
+
+    session = FakeSession(rowcount=1, returning_row=(None,))
+    user_id, thread_id = uuid4(), uuid4()
+
+    run(
+        service_with(session).ensure_thread(
+            user_id=user_id, thread_id=thread_id, first_message="继续"
+        )
+    )
+
+    assert len(session.statements) == 1
+    assert compiled(session.statements[0]).lstrip().upper().startswith("UPDATE")
 
 
 def test_continuing_someone_elses_thread_rolls_back_and_raises() -> None:

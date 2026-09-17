@@ -26,6 +26,7 @@ from langchain_core.messages import AIMessage
 
 from tests.agent_helpers import ScriptedChatModel
 from tests.app_helpers import create_agent_app, seed_owned_thread, send
+from tests.auth_helpers import READER_ID
 
 
 def run(coroutine: Any) -> Any:
@@ -423,11 +424,14 @@ def test_a_deleted_thread_cannot_be_continued() -> None:
 def test_all_three_routes_require_credentials() -> None:
     """三条路由都要凭据。逐条验证，不假定「挂在同一个路由器上就都被守住了」。
 
-    路由器级依赖确实是一次性生效的，但 ``@router.get`` 上也各自写了一个
-    ``Depends(current_superuser)``，将来有人清理「重复」的守卫时，这条能告出哪条路由被清漏了。
+    路由器级依赖确实是一次性生效的，但每条路由上也各自写了一个认证依赖，将来有人清理
+    「重复」的守卫时，这条能告出哪条路由被清漏了。
+
+    用 ``anonymous`` 而不是 ``superuser=False``：权限已对所有登录账号放开，后者拿到的是
+    200，拿它测「要凭据」会变成一条恒假的断言。
     """
 
-    app, _search = create_agent_app(scripted("答案"), superuser=False)
+    app, _search = create_agent_app(scripted("答案"), anonymous=True)
     thread_id = uuid4()
     seed_owned_thread(app, thread_id)
 
@@ -438,6 +442,23 @@ def test_all_three_routes_require_credentials() -> None:
     assert run(send(app, "DELETE", f"/agent/threads/{thread_id}")).status_code == 401
     # 拒绝发生在动手之前：归属记录必须还在。
     assert thread_id in app.state.offline_threads.threads
+
+
+def test_thread_routes_are_open_to_a_regular_account() -> None:
+    """普通登录账号能读自己的会话列表——与对话同一道门，两者必须同开。
+
+    会话列表泄露的是标题（也就是用户问过什么），和对话内容同级敏感，所以「放开对话但
+    收紧列表」这种半开状态是不允许的。
+    """
+
+    app, _search = create_agent_app(scripted("答案"), superuser=False)
+    thread_id = uuid4()
+    seed_owned_thread(app, thread_id, user_id=READER_ID)
+
+    listed = run(send(app, "GET", "/agent/threads"))
+
+    assert listed.status_code == 200
+    assert [item["thread_id"] for item in listed.json()["items"]] == [str(thread_id)]
 
 
 def test_openapi_declares_the_error_contract_for_every_thread_route() -> None:

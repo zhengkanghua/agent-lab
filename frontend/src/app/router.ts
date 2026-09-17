@@ -16,12 +16,12 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
-      // 与后端一致地限超级用户：/agent/* 的路由级依赖是 current_superuser，
-      // 非超级用户进来只会看到 403。前端提前挡住，避免让用户走到一个必然失败的页面。
+      // 登录即可用，与后端 /agent/* 的路由级依赖（current_active_user）一致。
+      // 跨账号读对话由会话归属挡住，那道判断按账号、不按角色（见 ADR 0030）。
       path: '/agent',
       name: 'agent-chat',
       component: () => import('../pages/AgentChatPage.vue'),
-      meta: { requiresAuth: true, requiresSuperuser: true },
+      meta: { requiresAuth: true },
     },
     {
       /*
@@ -38,7 +38,7 @@ const router = createRouter({
       path: '/agent/:threadId',
       name: 'agent-thread',
       component: () => import('../pages/AgentChatPage.vue'),
-      meta: { requiresAuth: true, requiresSuperuser: true },
+      meta: { requiresAuth: true },
     },
     {
       /*
@@ -47,8 +47,8 @@ const router = createRouter({
        * 可收藏、可刷新。参数不收窄成枚举：非法值由 SettingsPage 重定向到 account，
        * 前端再拦一道校验属于重复实现。
        *
-       * Agent 偏好分区只对超级用户有意义（/agent/* 的后端依赖是 current_superuser），
-       * 守卫在下面统一拦。
+       * 三个分区都对所有登录账号开放：Agent 对话已对所有登录账号可用，它的偏好
+       * （自定义提示词）也就不再是超级用户专有（见 ADR 0030）。
        */
       path: '/settings/:section?',
       name: 'settings',
@@ -94,15 +94,6 @@ router.beforeEach(async (to) => {
 
   if (to.meta.requiresSuperuser && !authSession.user.value?.is_superuser) {
     return { name: 'search' }
-  }
-
-  // 设置中心里的 Agent 偏好分区与 /agent 同权：改的是模型行为，只有超管该看到它。
-  if (
-    to.name === 'settings' &&
-    to.params.section === 'agent' &&
-    !authSession.user.value?.is_superuser
-  ) {
-    return { name: 'settings', params: { section: 'account' }, replace: true }
   }
 
   if (to.name === 'login' && authSession.status.value === 'authenticated') {

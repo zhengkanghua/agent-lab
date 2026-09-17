@@ -66,9 +66,12 @@ const RESPONSE_INVALID_COPY: AgentErrorCopy = {
   description: '返回的数据不符合当前契约，请稍后重试。',
 }
 
+// Agent 对话已对所有登录账号开放（ADR 0030），所以 403 不再意味着「你的角色不够」。
+// 它现在只可能来自「账号被停用」这类认证层判断，文案因此不能承诺角色，只说清「这个账号
+// 现在用不了」并给出下一步。保留这条映射而不是删掉：403 仍然会发生，删了它会落到兜底文案。
 const PERMISSION_COPY: AgentErrorCopy = {
-  title: '没有使用 Agent 的权限',
-  description: 'Agent 对话目前只对管理员开放，请联系管理员开通。',
+  title: '当前账号无法使用 Agent',
+  description: '这个账号现在没有对话权限，可能是已被停用。请联系管理员确认账号状态。',
   retryable: false,
 }
 

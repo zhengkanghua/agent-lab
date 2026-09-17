@@ -42,6 +42,7 @@ from agent_lab.models.document import DocumentRecord
 from agent_lab.models.document_processing import DocumentReviewRecord
 from agent_lab.models.scheduled_job import JobRunRecord, ScheduledJobRecord
 from agent_lab.models.user import AccessTokenRecord, UserRecord
+from agent_lab.models.user_preference import UserPreferenceRecord
 from agent_lab.services.scheduled_job_service import ScheduledJobService
 from agent_lab.services.scheduled_task_registry import TASK_TYPE_SPECS
 from agent_lab.services.user_admin_service import UserAdminService
@@ -53,10 +54,14 @@ pytestmark = pytest.mark.skipif(
     reason="需要显式授权并设置开发 PostgreSQL DSN。",
 )
 
-# 拆外键之前的那一版。本迁移就是从它接续的。
+# 拆外键之前的那一版。本次拆外键的迁移就是从它接续的。
 PREVIOUS = "b6e2f9047a31"
-# 本迁移自己的 revision，与 ``alembic/versions/d4b7c1e93a58_*.py`` 保持一致。
+# 拆外键那条迁移自己的 revision。拆约束的验收条件针对它，所以断言「16 处都已拆」时必须停在
+# 这一版上，不能跟着 head 走——那会把别的迁移的改动混进来。
 CURRENT = "d4b7c1e93a58"
+# 当前 head。升级到这个版本之后才能跑删除路径：``agent_threads.system_prompt`` 是后续迁移
+# 加的列，停在 CURRENT 上跑 ORM 会报「列不存在」。
+HEAD = "e2c8f14b7a30"
 
 
 def run(coroutine):
@@ -101,9 +106,9 @@ def migrated_database():
     async def create():
         async with engine.begin() as connection:
             await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
-            # 升到旧 head，再往上走到本迁移——这正是生产要走的路径。
+            # 升到旧 head，再一路走到当前 head——这正是生产要走的路径。
             await connection.run_sync(up, PREVIOUS)
-            await connection.run_sync(up, CURRENT)
+            await connection.run_sync(up, HEAD)
             # 默认知识库由迁移种下（documents.knowledge_base_id 非空，造数据要靠它）。
             # 这里只核对它真的在，缺了就是迁移链出了问题，早点报出来比后面报外键错清楚。
 
@@ -152,7 +157,7 @@ def test_migration_removes_every_foreign_key_and_business_cleanup_still_works(mi
     async def verify():
         env = migrated_database
         async with env.engine.begin() as connection:
-            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == CURRENT
+            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == HEAD
             # 1、验收条件：这 16 处约束都不在了。
             assert await _foreign_key_count(connection) == 0
             # 2、列还在——拆掉的只是约束，不是字段。抽查三个有代表性的。
@@ -217,7 +222,7 @@ def test_deleting_an_account_leaves_no_orphans_on_the_constraint_free_schema(mig
     ``UserAdminService.delete_user`` 在同一个事务里显式做完。
 
     断言的是**外部可观察结果**——归属记录查不到、Token 查不到、决策留痕的
-    ``actor_id`` 变空但记录还在——不去断言删了几条语句、按什么顺序删。
+    ``actor_id`` 变空但记录还在、个人偏好被删掉——不去断言删了几条语句、按什么顺序删。
     """
 
     async def verify():
@@ -253,6 +258,16 @@ def test_deleting_an_account_leaves_no_orphans_on_the_constraint_free_schema(mig
                 actor_id=user_id, content_snapshot={"text": "历史结论"},
             )
             session.add(review)
+            # 个人偏好：第四张要清理的表。它没有运维清理命令可兜底，漏了就是一条永远
+            # 查不到也删不掉的孤儿配置。
+            session.add(UserPreferenceRecord(
+                user_id=user_id, system_prompt="随账号一起消失。",
+                document_limit=20, matches_per_document=5,
+            ))
+            session.add(UserPreferenceRecord(
+                user_id=bystander_id, system_prompt="别人的配置。",
+                document_limit=10, matches_per_document=3,
+            ))
             await session.commit()
             review_id = review.id
 
@@ -285,9 +300,14 @@ def test_deleting_an_account_leaves_no_orphans_on_the_constraint_free_schema(mig
             assert kept.actor_id is None
             assert kept.decision == "adopt" and kept.content_snapshot == {"text": "历史结论"}
 
+            # 偏好行也必须一起消失：库里没有外键，删账号不会带走它。
+            assert await session.get(UserPreferenceRecord, user_id) is None
+
             # 4、别人名下的东西一点没动。
             assert await session.get(UserRecord, bystander_id) is not None
             assert await session.get(AgentThreadRecord, bystander_thread_id) is not None
+            bystander_prefs = await session.get(UserPreferenceRecord, bystander_id)
+            assert bystander_prefs is not None and bystander_prefs.document_limit == 10
             bystander_tokens = (await session.scalars(
                 select(AccessTokenRecord.token).where(AccessTokenRecord.user_id == bystander_id)
             )).all()
@@ -313,7 +333,7 @@ def test_downgrade_rebuilds_all_foreign_keys_and_blocks_on_orphans(migrated_data
 
         # 2、再升回来——升回来之后正是不设防状态，孤儿才有机会进来。
         async with env.engine.begin() as connection:
-            await connection.run_sync(env.up, CURRENT)
+            await connection.run_sync(env.up, HEAD)
             assert await _foreign_key_count(connection) == 0
         # 制造一处孤儿：一条指向不存在配置的 run。拆约束之前这一步根本写不进去。
         async with env.sessions() as session:
@@ -324,8 +344,8 @@ def test_downgrade_rebuilds_all_foreign_keys_and_blocks_on_orphans(migrated_data
         with pytest.raises(Exception, match="回滚前必须先清理孤儿数据"):
             async with env.engine.begin() as connection:
                 await connection.run_sync(env.down)
-        # 失败不能偷偷改版本号：回滚整体没生效，库仍停在本迁移上。
+        # 失败不能偷偷改版本号：回滚整体没生效，库仍停在当前 head 上。
         async with env.engine.begin() as connection:
-            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == CURRENT
+            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == HEAD
 
     run(verify())

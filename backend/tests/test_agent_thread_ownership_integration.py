@@ -32,8 +32,11 @@ from agent_lab.agent.errors import AgentThreadNotFoundError
 from agent_lab.db.session import engine
 from agent_lab.models.agent_thread import AgentThreadRecord
 from agent_lab.models.user import UserRecord
+from agent_lab.models.user_preference import UserPreferenceRecord
+from agent_lab.schemas.user_preference import UserPreferenceUpdateRequest
 from agent_lab.services.agent_thread_service import AgentThreadService
 from agent_lab.services.user_admin_service import UserAdminService
+from agent_lab.services.user_preference_service import UserPreferenceService
 
 
 pytestmark = pytest.mark.skipif(
@@ -184,6 +187,82 @@ def test_ownership_filter_really_isolates_two_accounts() -> None:
     asyncio.run(verify(), loop_factory=asyncio.SelectorEventLoop)
 
 
+def test_thread_snapshots_the_account_prompt_on_a_real_database() -> None:
+    """真库上验「建会话时快照提示词、续聊不重读偏好」。
+
+    语句级测试只能证明 SQL 里带了那个列，证明不了它在真库上生效：列名写错、类型不匹配、
+    ``RETURNING`` 拿不到值，编译文本都照样通过。这条在真 PostgreSQL 上跑一遍完整路径——
+    写偏好、建会话、改偏好、续聊——直接看会话里存的是哪一份。
+    """
+
+    async def verify() -> None:
+        suffix = uuid4().hex
+        connection = await engine.connect()
+        outer_transaction = await connection.begin()
+        factory = async_sessionmaker(
+            bind=connection,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
+        try:
+            owner = await _create_user(factory, f"prefs-{suffix}@example.com")
+            threads = AgentThreadService(factory)
+
+            # 1、先配一份偏好，再建会话——会话该拍下这一份。
+            async with factory() as session:
+                await UserPreferenceService(session).replace(
+                    owner.id,
+                    UserPreferenceUpdateRequest(
+                        system_prompt="第一版提示词。",
+                        document_limit=10,
+                        matches_per_document=3,
+                    ),
+                )
+            thread_id, prompt = await threads.ensure_thread(
+                user_id=owner.id, thread_id=None, first_message="第一轮"
+            )
+            assert prompt == "第一版提示词。"
+            async with factory() as session:
+                stored = await session.get(AgentThreadRecord, thread_id)
+                assert stored is not None and stored.system_prompt == "第一版提示词。"
+
+            # 2、改偏好之后续聊：会话里那份不变。
+            async with factory() as session:
+                await UserPreferenceService(session).replace(
+                    owner.id,
+                    UserPreferenceUpdateRequest(
+                        system_prompt="第二版提示词。",
+                        document_limit=20,
+                        matches_per_document=5,
+                    ),
+                )
+            same_thread, resumed_prompt = await threads.ensure_thread(
+                user_id=owner.id, thread_id=thread_id, first_message="第二轮"
+            )
+            assert same_thread == thread_id
+            assert resumed_prompt == "第一版提示词。"
+
+            # 3、新开的会话用改过之后的那份。
+            _, new_prompt = await threads.ensure_thread(
+                user_id=owner.id, thread_id=None, first_message="新会话"
+            )
+            assert new_prompt == "第二版提示词。"
+
+            # 4、没配过提示词的账号：快照为空，运行时回落到内置默认。
+            other = await _create_user(factory, f"noprefs-{suffix}@example.com")
+            _, empty_prompt = await threads.ensure_thread(
+                user_id=other.id, thread_id=None, first_message="没配过"
+            )
+            assert empty_prompt is None
+        finally:
+            await outer_transaction.rollback()
+            await connection.close()
+            await engine.dispose()
+
+    asyncio.run(verify(), loop_factory=asyncio.SelectorEventLoop)
+
+
 def test_deleting_an_account_clears_its_thread_rows() -> None:
     """删账号会清掉它的会话归属记录，靠的是业务代码而不是数据库。
 
@@ -210,9 +289,20 @@ def test_deleting_an_account_clears_its_thread_rows() -> None:
         try:
             doomed = await _create_user(factory, f"doomed-{suffix}@example.com")
             threads = AgentThreadService(factory)
-            thread_id = await threads.ensure_thread(
+            thread_id, _ = await threads.ensure_thread(
                 user_id=doomed.id, thread_id=None, first_message="随账号一起消失"
             )
+            # 也给这个账号配一份偏好：删账号时它必须一起清掉。配置没有运维清理命令可兜底，
+            # 漏了就是一条永远查不到也删不掉的孤儿行。
+            async with factory() as session:
+                await UserPreferenceService(session).replace(
+                    doomed.id,
+                    UserPreferenceUpdateRequest(
+                        system_prompt="随账号一起消失。",
+                        document_limit=10,
+                        matches_per_document=3,
+                    ),
+                )
 
             async with factory() as session:
                 assert await session.get(AgentThreadRecord, thread_id) is not None
@@ -231,6 +321,8 @@ def test_deleting_an_account_clears_its_thread_rows() -> None:
                     .where(AgentThreadRecord.user_id == doomed.id)
                 )
                 assert remaining == 0
+                # 偏好行也必须一起消失：库里没有外键，删账号不会带走它。
+                assert await session.get(UserPreferenceRecord, doomed.id) is None
         finally:
             await outer_transaction.rollback()
             await connection.close()

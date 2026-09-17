@@ -24,11 +24,11 @@ import { DocumentReader, useDocumentReader } from '@/features/semantic-search'
 const route = useRoute()
 const router = useRouter()
 
-// 自定义系统提示词是设置中心的持久偏好：发送时从偏好 store 读，本页不再持有编辑状态。
+// 自定义系统提示词是设置中心的账号偏好，不再由本页逐轮发送：服务端在建会话时从偏好
+// 拍一份快照进那个会话。本页只读偏好来判断要不要亮输入条上的徽章。
 const { preferences } = usePreferences()
 
 const chat = useAgentChat({
-  getSystemPrompt: () => preferences.agentSystemPrompt,
   getScopeError: () => scope.error.value,
   onThreadCreated: (id) => {
     void router.replace({ name: 'agent-thread', params: { threadId: id } })

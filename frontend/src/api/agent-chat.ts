@@ -51,8 +51,6 @@ export interface StreamAgentChatOptions {
   message: string
   /** 续聊时带上上一轮 done 事件给的会话 id；省略表示新建会话。 */
   threadId?: string | null
-  /** 覆盖本次运行的系统提示词；省略或空白表示用服务端默认的那份。 */
-  systemPrompt?: string | null
   scope?: KnowledgeBaseSelection
   signal?: AbortSignal
 }
@@ -61,7 +59,7 @@ export interface StreamAgentChatOptions {
  * 发起一次 Agent 对话，按到达顺序逐个产出 SSE 事件。
  *
  * **为什么用 fetch + getReader 而不是 EventSource**：EventSource 只能发 GET，没法带请求体，
- * 而提问和自定义提示词都必须走 body（放进 query string 会被网关日志和浏览器历史记录下来）；
+ * 而提问必须走 body（放进 query string 会被网关日志和浏览器历史记录下来）；
  * 它也不支持自定义请求头，`credentials: 'same-origin'` 这类控制同样拿不到。
  *
  * 契约校验放在这一层：每帧都过一遍形状检查，不符合就抛 `response_invalid` 结束流，和
@@ -73,14 +71,13 @@ export interface StreamAgentChatOptions {
 export async function* streamAgentChat({
   message,
   threadId,
-  systemPrompt,
   scope,
   signal,
 }: StreamAgentChatOptions): AsyncGenerator<AgentChatEvent, void, void> {
+  // 提示词不再由这里携带：它取自会话（新建时由服务端从账号偏好拍快照），见 ADR 0029。
   const payload: AgentChatRequest = { message }
   if (threadId) payload.thread_id = threadId
   if (scope) payload.scope = scope
-  if (systemPrompt && systemPrompt.trim()) payload.system_prompt = systemPrompt
 
   // 内部 controller 同时承载三个中止来源：调用方的 signal、连接超时、空闲超时。
   // 只有它能中止 fetch，所以调用方的 signal 要转发进来。

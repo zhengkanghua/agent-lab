@@ -117,11 +117,14 @@ class InMemoryAgentThreadService:
     Attributes:
         threads: ``thread_id`` 到 ``(user_id, title, created_at, last_active_at)`` 的映射。
         deleted: 被 ``delete_thread_record`` 删掉的 id，按调用顺序。
+        prompts: ``user_id`` 到该账号偏好提示词的映射；不在这里的账号视为没配过。
+            真实实现去 ``user_preferences`` 表取，替身用这个字典模拟「取到 / 取不到」两支。
     """
 
     def __init__(self) -> None:
         self.threads: dict[UUID, SimpleNamespace] = {}
         self.deleted: list[UUID] = []
+        self.prompts: dict[UUID, str] = {}
 
     async def ensure_thread(
         self,
@@ -130,21 +133,27 @@ class InMemoryAgentThreadService:
         thread_id: UUID | None,
         first_message: str,
         scope: KnowledgeBaseSelection | None = None,
-    ) -> UUID:
-        """新建或续活一个会话，归属不符时抛 ``AgentThreadNotFoundError``。"""
+    ) -> tuple[UUID, str | None]:
+        """新建或续活一个会话，归属不符时抛 ``AgentThreadNotFoundError``。
+
+        返回 ``(会话 id, 会话提示词)``。新建时从 ``prompts`` 取该账号的偏好当快照；续聊时
+        沿用会话里存的那份，**不回读偏好**——与真实实现同义，这条差异是测试要守住的行为。
+        """
 
         now = datetime.now(UTC)
         if thread_id is None:
             created = uuid4()
+            system_prompt = self.prompts.get(user_id)
             self.threads[created] = SimpleNamespace(
                 thread_id=created,
                 user_id=user_id,
                 title=derive_thread_title(first_message),
                 scope=(scope or KnowledgeBaseSelection(mode="all")).model_dump(mode="json"),
+                system_prompt=system_prompt,
                 created_at=now,
                 last_active_at=now,
             )
-            return created
+            return created, system_prompt
 
         record = self.threads.get(thread_id)
         if record is None or record.user_id != user_id:
@@ -152,7 +161,7 @@ class InMemoryAgentThreadService:
         record.last_active_at = now
         if scope is not None:
             record.scope = scope.model_dump(mode="json")
-        return thread_id
+        return thread_id, record.system_prompt
 
     async def update_scope(self, *, user_id, thread_id, scope):
         record = await self.get_owned_thread(user_id=user_id, thread_id=thread_id)
@@ -280,6 +289,7 @@ def create_agent_app(
     model: Any,
     *,
     superuser: bool = True,
+    anonymous: bool = False,
     agent_build_error: Exception | None = None,
     model_catalog_error: Exception | None = None,
 ) -> tuple[FastAPI, FakeSearchRuntime]:
@@ -291,7 +301,10 @@ def create_agent_app(
 
     Args:
         model: 注入的假聊天模型。
-        superuser: 为 ``False`` 时只覆盖普通用户依赖，保留真实超级用户检查，用来测权限拒绝。
+        superuser: 为 ``False`` 时把当前账号换成普通账号（仍算已登录），用来测「普通账号能进」。
+        anonymous: 为 ``True`` 时**不覆盖任何认证依赖**，请求表现为完全没带凭据，用来测 401。
+            它与 ``superuser=False`` 是两件事：后者是「登录了但不是超管」，前者是「没登录」。
+            权限放开后这两者必须分开，否则「没凭据进不来」这条会被一个普通账号的替身悄悄满足。
         agent_build_error: 非空时让 Agent 工厂抛这个异常，模拟装配失败。
         model_catalog_error: 非空时让启动时的模型名校验抛这个异常，模拟「配置的模型不在上游列表里」。
             它和 ``agent_build_error`` 走的是 lifespan 里同一个 ``try``，对外表现应当完全一致
@@ -328,14 +341,13 @@ def create_agent_app(
         if model_catalog_error is not None:
             raise model_catalog_error
 
-    grant = allow_superuser if superuser else allow_reader
-    app = grant(
-        create_offline_app(
-            runtime_factory=lambda: search_runtime,
-            agent_runtime_factory=agent_factory,
-            model_catalog_check=catalog_check,
-        )
+    app = create_offline_app(
+        runtime_factory=lambda: search_runtime,
+        agent_runtime_factory=agent_factory,
+        model_catalog_check=catalog_check,
     )
+    if not anonymous:
+        app = (allow_superuser if superuser else allow_reader)(app)
     return app, search_runtime
 
 
@@ -373,6 +385,7 @@ def seed_owned_thread(
     user_id: UUID = SUPERUSER_ID,
     title: str = "预置会话",
     last_active_at: datetime | None = None,
+    system_prompt: str | None = None,
 ) -> SimpleNamespace:
     """在内存会话表里预置一行归属记录。
 
@@ -383,6 +396,7 @@ def seed_owned_thread(
             「这是别人的会话」。
         title: 会话标题。
         last_active_at: 最后活跃时间；省略时用当前时间。想构造确定的排序就显式传。
+        system_prompt: 该会话的提示词快照；省略等同「用内置默认提示词」。
 
     Returns:
         刚写进去的那行记录，便于随后修改或断言。
@@ -394,6 +408,7 @@ def seed_owned_thread(
         user_id=user_id,
         title=title,
         scope={"mode": "all"},
+        system_prompt=system_prompt,
         created_at=now,
         last_active_at=last_active_at or now,
     )

@@ -572,3 +572,35 @@ def test_usage_does_not_leak_into_the_event_stream() -> None:
     assert "120" not in "".join(
         each.text for each in events if isinstance(each, AgentTokenEvent)
     )
+
+
+def test_the_system_prompt_stays_out_of_messages_and_event_definitions() -> None:
+    """提示词不进消息历史，也不进 SSE 事件定义——这是把 ``replay.py`` 的既有设计钉住。
+
+    提示词是**会话级属性**，由 ``resolve_system_prompt`` 每次模型调用前动态注入，本来就不该
+    出现在 checkpointer 的消息里（那里存的是用户提问与模型回答）。同时它也不该被塞进 SSE
+    事件：事件流是对外契约，加一个字段就要动 OpenAPI 和前端生成的类型，而前端根本不需要它
+    ——它判断「这个会话的提示词已固定」只需要 ``done`` 事件带回的 ``thread_id``。
+
+    这条是**反向**断言：下面两半都验证「没有发生」，用来挡住后来人顺手把提示词放进这两处
+    中的任何一处。会话级快照存 ``agent_threads.system_prompt``（见 ADR 0029）。
+    """
+
+    model = ScriptedChatModel(responses=[AIMessage(content="降息了。")])
+    prompt = "这段文字只该出现在模型请求里。"
+
+    events = collect(
+        build_offline_graph(model),
+        context=AgentContext(system_prompt=prompt),
+    )
+
+    # 1、模型确实收到了这段提示词——否则下面的「没出现在别处」只是因为它压根没用上。
+    assert str(model.received_messages[0][0].content).startswith(prompt)
+
+    # 2、SSE 事件里没有任何地方带着它。
+    for event in events:
+        assert prompt not in AgentChatEventEnvelope(root=event).model_dump_json()
+
+    # 3、事件联合类型的字段里没有新增提示词位——加了字段的话这里会看到。
+    assert not [name for name in AgentDoneEvent.model_fields if "prompt" in name]
+    assert not [name for name in AgentErrorEvent.model_fields if "prompt" in name]

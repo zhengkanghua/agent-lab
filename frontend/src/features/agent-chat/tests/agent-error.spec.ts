@@ -49,7 +49,7 @@ describe('presentAgentError', () => {
   })
 
   it('只有 status 能判定时退到 status 表', () => {
-    expect(presentAgentError(apiError('unknown_error', 403)).title).toBe('没有使用 Agent 的权限')
+    expect(presentAgentError(apiError('unknown_error', 403)).title).toBe('当前账号无法使用 Agent')
     expect(presentAgentError(apiError('unknown_error', 422)).title).toBe('提问未通过校验')
   })
 

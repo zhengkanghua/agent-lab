@@ -41,6 +41,7 @@ def app_for(
     model: Any,
     *,
     superuser: bool = True,
+    anonymous: bool = False,
     agent_build_error: Exception | None = None,
     model_catalog_error: Exception | None = None,
 ) -> tuple[FastAPI, Any]:
@@ -53,6 +54,7 @@ def app_for(
     return create_agent_app(
         model,
         superuser=superuser,
+        anonymous=anonymous,
         agent_build_error=agent_build_error,
         model_catalog_error=model_catalog_error,
     )
@@ -243,11 +245,19 @@ def test_new_conversation_records_ownership_for_the_current_account() -> None:
     assert record.title == "央行降息了吗"
 
 
-def test_custom_system_prompt_reaches_the_model() -> None:
+def test_account_preference_prompt_reaches_the_model_on_a_new_thread() -> None:
+    """账号在偏好里配了提示词 → 新建会话时该会话存下这份，且本轮就生效。
+
+    提示词不再从请求体来（那个字段已删除），所以这条改从偏好构造前提。它一次性穿过三处：
+    偏好取值、会话快照的写入、运行上下文的组装——这正是只有 HTTP 层才能观察到的路径。
+    """
+
     model = scripted("答案")
     app, _search = app_for(model)
+    account_id = SUPERUSER_ID
+    app.state.offline_threads.prompts[account_id] = "只用一句话回答。"
 
-    run(chat(app, message="问题", system_prompt="只用一句话回答。"))
+    run(chat(app, message="问题"))
 
     system = model.received_messages[0][0]
     # startswith 而非相等：末尾有一段运行时注入的当前日期（见 middleware.append_current_date），
@@ -255,7 +265,13 @@ def test_custom_system_prompt_reaches_the_model() -> None:
     assert str(system.content).startswith("只用一句话回答。")
 
 
-def test_default_prompt_applies_when_not_supplied() -> None:
+def test_account_without_a_preference_uses_the_default_prompt() -> None:
+    """账号没配过提示词 → 会话存空值，本轮使用服务端内置默认提示词。
+
+    「没配过」与「配了一份空提示词」不是一回事：前者回落到默认，后者会让模型失去角色约束。
+    这里构造的是前者——偏好字典里没有这个账号。
+    """
+
     model = scripted("答案")
     app, _search = app_for(model)
 
@@ -263,6 +279,56 @@ def test_default_prompt_applies_when_not_supplied() -> None:
 
     system = model.received_messages[0][0]
     assert str(system.content).startswith(DEFAULT_SYSTEM_PROMPT)
+
+
+def test_changing_the_preference_does_not_affect_an_existing_thread() -> None:
+    """会话建立后账号改了偏好 → 已开始的会话续聊时仍用会话里那份。
+
+    这是「会话级快照」的核心保证：会话内的约束不中途变化，前后回答才可比。反过来说，
+    如果续聊时回读偏好表，用户在设置页改一次提示词就会把正在进行的会话换掉。
+    """
+
+    model = scripted("第一轮回答", "第二轮回答")
+    app, _search = app_for(model)
+    app.state.offline_threads.prompts[SUPERUSER_ID] = "第一版提示词。"
+
+    _, frames = run(chat(app, message="第一轮"))
+    thread_id = _thread_id_from_frames(frames)
+
+    # 会话开完再改偏好：只该影响新开的会话。
+    app.state.offline_threads.prompts[SUPERUSER_ID] = "第二版提示词。"
+    run(chat(app, message="第二轮", thread_id=thread_id))
+
+    # 一次 run 一次模型调用，所以第二轮的系统消息在第 2 条记录里。
+    # 它取自会话快照，仍是第一版。
+    assert len(model.received_messages) == 2
+    assert str(model.received_messages[1][0].content).startswith("第一版提示词。")
+
+
+def test_a_new_thread_after_the_change_uses_the_new_preference() -> None:
+    """改过偏好之后新开的会话用新值——与上一条合起来构成完整的「只影响新会话」语义。"""
+
+    model = scripted("第一轮回答", "新会话回答")
+    app, _search = app_for(model)
+    app.state.offline_threads.prompts[SUPERUSER_ID] = "第一版提示词。"
+
+    run(chat(app, message="第一轮"))
+    app.state.offline_threads.prompts[SUPERUSER_ID] = "第二版提示词。"
+    run(chat(app, message="新会话"))
+
+    # 新会话从头开始，用的是改过之后的偏好。
+    assert len(model.received_messages) == 2
+    assert str(model.received_messages[1][0].content).startswith("第二版提示词。")
+
+
+def _thread_id_from_frames(frames: list[str]) -> str:
+    """从 SSE 帧里取 done 事件带回的会话 id。"""
+
+    for frame in frames:
+        payload = json.loads(frame.removeprefix("data: "))
+        if payload.get("event") == "done":
+            return str(payload["thread_id"])
+    raise AssertionError("流里没有 done 事件，拿不到会话 id")
 
 
 def test_default_prompt_endpoint_returns_the_same_constant() -> None:
@@ -281,16 +347,19 @@ def test_default_prompt_endpoint_returns_the_same_constant() -> None:
     assert response.json() == {"system_prompt": DEFAULT_SYSTEM_PROMPT}
 
 
-def test_request_without_superuser_credentials_is_rejected() -> None:
-    """没有超级用户凭据就进不来，而且模型一次都不该被调用。
+def test_request_without_credentials_is_rejected_before_calling_the_model() -> None:
+    """没有凭据就进不来，而且模型一次都不该被调用。
 
-    这里覆盖的是普通用户依赖、保留真实的超级用户检查，所以缺凭据时由 fastapi-users 给出
-    401（不是 403——它连身份都没确认，谈不上权限不足）。关键断言是第二条：拒绝发生在
-    调模型之前，不会白花一次 token。
+    缺凭据时由 fastapi-users 给出 401（不是 403——它连身份都没确认，谈不上权限不足）。
+    关键断言是第二条：拒绝发生在调模型之前，不会白花一次 token。
+
+    普通账号能不能进由下一条测试覆盖；这里只验「没登录进不来」这一半。
     """
 
     model = scripted("答案")
-    app, _search = app_for(model, superuser=False)
+    # 用 anonymous 而不是 superuser=False：后者是「登录了但普通」，现在同样能进，
+    # 拿它测 401 会变成一条恒假的断言。
+    app, _search = app_for(model, anonymous=True)
 
     response = run(send(app, "POST", "/agent/chat", json={"message": "问题"}))
 
@@ -298,11 +367,32 @@ def test_request_without_superuser_credentials_is_rejected() -> None:
     assert model.received_messages == []
 
 
-def test_agent_routes_are_guarded_by_superuser_not_active_user() -> None:
-    """结构性断言：**每个** Agent 路由器挂的都是超级用户守卫。
+def test_agent_chat_is_open_to_a_regular_account() -> None:
+    """普通登录账号能发起对话——这是本次改动要放开的行为。
 
-    上一条测试只能证明「没凭据进不来」，那连挂 ``current_active_user`` 也能通过。这条
-    直接查挂上去的是哪个依赖对象，能挡住「有人把守卫降级成普通用户」这种改动。
+    上面那条只证明「没凭据进不来」，一个永远 401 的实现也能通过它。这条补上另一个方向：
+    普通账号（``superuser=False``）拿到的是 200 而不是 403。
+
+    权限放开后靠什么挡跨账号读对话：会话归属（``AgentThreadService`` 按 ``user_id`` 过滤），
+    它按账号判断、与角色无关，所以放开角色不影响隔离。那部分由会话归属自己的测试覆盖。
+    """
+
+    model = scripted("答案")
+    app, _search = app_for(model, superuser=False)
+
+    response = run(send(app, "POST", "/agent/chat", json={"message": "问题"}))
+
+    assert response.status_code == 200
+    # 真的走到了模型，而不是被某个中间层悄悄短路成空响应。
+    assert model.received_messages != []
+
+
+def test_agent_routes_are_guarded_by_active_user_not_superuser() -> None:
+    """结构性断言：**每个** Agent 路由器挂的都是普通登录守卫，不是超级用户守卫。
+
+    行为测试证明「普通账号能进」，但证明不了「没有哪个路由器被单独改成超级用户」——那会
+    让对话能进、会话列表却 403，是一个只有点到那个入口才会发现的半开状态。这条直接查挂上去
+    的是哪个依赖对象。
 
     断言的是「全部 ``/agent/`` 路由器都被守卫」而不是「恰好有一个路由器」：``/agent`` 前缀下
     现在有对话和会话记录两个路由器，以后可能更多，而这条测试要保住的性质是「没有一个漏掉守卫」。
@@ -330,8 +420,8 @@ def test_agent_routes_are_guarded_by_superuser_not_active_user() -> None:
     assert len(included) >= 2
     for router in included:
         guards = [dep.dependency for dep in router.include_context.dependencies]
-        assert current_superuser in guards
-    assert current_active_user not in guards
+        assert current_active_user in guards
+        assert current_superuser not in guards
 
 
 def test_agent_build_failure_yields_503_without_breaking_search() -> None:

@@ -19,7 +19,7 @@ import { MAX_MESSAGE_CHARACTERS } from '../model/agent-validation'
 
 const props = defineProps<{
   modelValue: string
-  /** 偏好里已保存非空提示词时为真：输入条亮出「已启用」徽章。 */
+  /** 账号偏好里配了非空提示词时为真：输入条亮出徽章，提示「新会话会用它」。 */
   customPromptActive: boolean
   inputError: string | null
   remainingCharacters: number
@@ -100,14 +100,15 @@ function onEnter(event: KeyboardEvent): void {
         <!-- 知识库范围选择器插槽（与 SearchComposer 范式对齐） -->
         <slot name="scope" />
 
-        <!-- 覆盖生效时亮徽章，点它直达设置页。默认状态不打扰：没有可调的东西
-             就不该占一格。 -->
+        <!-- 账号配了自定义提示词时亮徽章，点它直达设置页。默认状态不打扰：没有可调的东西
+             就不该占一格。徽章说的是「新会话会用它」——提示词按会话快照，已经开始的会话
+             不受设置页改动影响（见 ADR 0029）。 -->
         <RouterLink
           v-if="customPromptActive"
           class="prompt-badge-link"
           :to="{ name: 'settings', params: { section: 'agent' } }"
-          aria-label="自定义提示词已启用，去设置页调整"
-          title="自定义提示词已启用，去设置页调整"
+          aria-label="自定义提示词已启用，新会话会使用它；去设置页调整"
+          title="自定义提示词已启用，新会话会使用它；去设置页调整"
         >
           <span class="prompt-trigger">
             <Settings2 :size="15" aria-hidden="true" />

@@ -171,13 +171,18 @@ describe('AgentChatPage', () => {
     wrapper.unmount()
   })
 
-  it('非超管看不到后台入口，主导航也只剩语义检索', async () => {
+  it('普通账号：Agent 入口常驻，后台入口仍不可见', async () => {
+    // 拆成两个断言而不是合成一条：它们是两件事，一个「Agent 入口对所有人可见」的实现
+    // 与一个「后台入口也只对所有人可见」的实现，在合并写法下可能都通过。
     auth.user.value = { ...SUPERUSER, is_superuser: false, is_environment_admin: false }
     const { wrapper } = await mountPage()
 
-    expect(wrapper.find('a[aria-label="后台管理"]').exists()).toBe(false)
+    // Agent 对话已对所有登录账号开放（ADR 0030）。
     const navLabels = wrapper.findAll('.sidebar-nav .nav-item').map((item) => item.text())
-    expect(navLabels).toEqual(['语义检索'])
+    expect(navLabels).toEqual(['语义检索', 'Agent 对话'])
+
+    // 放开 Agent 不等于放开后台。
+    expect(wrapper.find('a[aria-label="后台管理"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -349,10 +354,11 @@ describe('AgentChatPage', () => {
     wrapper.unmount()
   })
 
-  it('设置中心保存的自定义系统提示词随下一轮发出', async () => {
+  it('自定义提示词不再逐轮随请求发出，输入条只亮徽章', async () => {
+    // 提示词改为会话级快照：由服务端在建会话时从账号偏好拍一份进那个会话，
+    // 请求体里不再带它（见 ADR 0029）。这条把「不再随轮发送」钉住。
     const { wrapper } = await mountPage()
 
-    // 提示词是设置中心的持久偏好（应用级单例 store），发送时由页面注入给 useAgentChat。
     const { preferences } = usePreferences()
     preferences.agentSystemPrompt = '你是财经记者。'
 
@@ -360,11 +366,11 @@ describe('AgentChatPage', () => {
     await wrapper.get('.agent-form').trigger('submit')
     await flushPromises()
 
-    expect(api.streamAgentChat.mock.calls[0]?.[0]).toMatchObject({
-      systemPrompt: '你是财经记者。',
-    })
+    const payload = api.streamAgentChat.mock.calls[0]?.[0] as Record<string, unknown>
+    expect(payload).not.toHaveProperty('systemPrompt')
+    expect(payload.message).toBe('问题')
 
-    // 覆盖生效时输入条亮徽章，链回设置页。
+    // 账号配了提示词时输入条亮徽章，链回设置页。
     const badge = wrapper.get('.prompt-badge-link')
     expect(badge.attributes('href')).toBe('/settings/agent')
     wrapper.unmount()

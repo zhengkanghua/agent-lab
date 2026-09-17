@@ -64,42 +64,42 @@ describe('application router authentication guard', () => {
     expect(router.currentRoute.value.name).toBe('search')
   })
 
-  it('allows only superusers to enter the agent workspace', async () => {
-    auth.status.value = 'authenticated'
-    auth.user.value = { is_superuser: false }
-    const regularRouter = await freshRouter()
+  it('普通账号也能进 Agent 工作台，未登录仍然进不去', async () => {
+    // 权限已对所有登录账号放开（ADR 0030），所以这里验的是「登录即可用」而不是「只有超管」。
+    // 逐条验两个角色，因为一个「谁都放行」的实现也能通过普通账号那一半。
+    for (const isSuperuser of [false, true]) {
+      auth.status.value = 'authenticated'
+      auth.user.value = { is_superuser: isSuperuser }
+      const router = await freshRouter()
 
-    await regularRouter.push('/agent')
-    await regularRouter.isReady()
-    // 后端 /agent/* 挂的是 current_superuser，前端不挡住的话用户只会撞上 403。
-    expect(regularRouter.currentRoute.value.name).toBe('search')
+      await router.push('/agent')
+      await router.isReady()
 
-    auth.user.value = { is_superuser: true }
-    const superuserRouter = await freshRouter()
-    await superuserRouter.push('/agent')
-    await superuserRouter.isReady()
-    expect(superuserRouter.currentRoute.value.name).toBe('agent-chat')
+      expect(router.currentRoute.value.name).toBe('agent-chat')
+    }
+
+    // 没登录仍然进不去——放开角色不等于放开认证。
+    auth.status.value = 'anonymous'
+    auth.user.value = null
+    const anonymousRouter = await freshRouter()
+    await anonymousRouter.push('/agent')
+    await anonymousRouter.isReady()
+    expect(anonymousRouter.currentRoute.value.name).toBe('login')
   })
 
-  it('会话深链带上 threadId 参数，并同样只对超级用户开放', async () => {
+  it('会话深链带上 threadId 参数，同样只要求登录', async () => {
     const threadId = '30000000-0000-4000-8000-000000000001'
 
+    // 普通账号带上 threadId 也应当直达那个会话：链接可分享、可收藏是它的设计前提，
+    // 而现在能打开它的不再只有超管。
     auth.status.value = 'authenticated'
-    auth.user.value = { is_superuser: true }
-    const superuserRouter = await freshRouter()
-    await superuserRouter.push(`/agent/${threadId}`)
-    await superuserRouter.isReady()
-
-    expect(superuserRouter.currentRoute.value.name).toBe('agent-thread')
-    expect(superuserRouter.currentRoute.value.params.threadId).toBe(threadId)
-
-    // 少了这一半，一条分享出去的会话链接会绕过超级用户检查——而后端会用 403 拒掉它，
-    // 用户看到的是一个报错的空页面。
     auth.user.value = { is_superuser: false }
-    const regularRouter = await freshRouter()
-    await regularRouter.push(`/agent/${threadId}`)
-    await regularRouter.isReady()
-    expect(regularRouter.currentRoute.value.name).toBe('search')
+    const router = await freshRouter()
+    await router.push(`/agent/${threadId}`)
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('agent-thread')
+    expect(router.currentRoute.value.params.threadId).toBe(threadId)
   })
 
   it('未登录时访问会话深链会带着完整地址跳登录页', async () => {
@@ -114,6 +114,22 @@ describe('application router authentication guard', () => {
 
     expect(router.currentRoute.value.name).toBe('login')
     expect(router.currentRoute.value.query.redirect).toBe(`/agent/${threadId}`)
+  })
+
+  it('设置中心的三个分区都对普通账号开放', async () => {
+    // 这里原先只覆盖了 /settings/agent 的守卫，而且那条守卫随权限放开被删掉了。
+    // 改成对三个分区逐个验：新增分区时漏配权限会在这里暴露，而不是等用户点进去才发现。
+    auth.status.value = 'authenticated'
+    auth.user.value = { is_superuser: false }
+
+    for (const section of ['account', 'search', 'agent']) {
+      const router = await freshRouter()
+      await router.push(`/settings/${section}`)
+      await router.isReady()
+
+      expect(router.currentRoute.value.name).toBe('settings')
+      expect(router.currentRoute.value.params.section).toBe(section)
+    }
   })
 
   it.each(['users', 'scheduled-jobs', 'documents'])(

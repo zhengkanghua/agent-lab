@@ -11,24 +11,44 @@
 """
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi_users.password import PasswordHelper
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.schema import CreateTable
 
-from agent_lab.api.account import get_account_service
-from agent_lab.auth.dependencies import current_active_user_token
+from agent_lab.agent.limits import MAX_SYSTEM_PROMPT_CHARS
+from agent_lab.api.account import get_account_service, get_user_preference_service
+from agent_lab.auth.dependencies import current_active_user, current_active_user_token
 from agent_lab.models.user import UserRecord
 from agent_lab.schemas.account import AccountPasswordChangeRequest
+from agent_lab.schemas.document_search import (
+    DEFAULT_DOCUMENT_LIMIT,
+    DEFAULT_MATCHES_PER_DOCUMENT,
+)
+from agent_lab.schemas.user_preference import UserPreferenceUpdateRequest
 from agent_lab.services.account_service import (
     INVALID_CURRENT_PASSWORD_DETAIL,
     AccountDomainError,
     AccountService,
 )
 from agent_lab.services.user_admin_service import INVALID_PASSWORD_DETAIL
+from agent_lab.services.user_preference_service import UserPreferenceService
 from tests.app_helpers import create_offline_app, send
 from tests.auth_helpers import READER_ID, authenticated_reader
+
+
+def compiled(statement: Any) -> str:
+    """把 SQLAlchemy 语句编译成 PostgreSQL 方言的 SQL 文本。
+
+    与 ``test_agent_thread_service.py`` 的同名辅助函数同一个写法：断言的是「编译出来的
+    语句里有没有那个条件」，不连库。
+    """
+
+    return str(statement.compile(dialect=postgresql.dialect()))
 
 # 本次请求 Cookie 里那个 Token。断言「保留当前会话」时要能把它和别的 Token 区分开，
 # 所以取一个一眼能认出来的固定值。
@@ -394,3 +414,281 @@ def test_service_treats_vanished_account_as_wrong_current_password() -> None:
     assert error.value.code == "current_password_invalid"
     assert session.commit_count == 0
     assert session.rollback_count == 1
+
+
+# ---- 个人偏好读写（/auth/me/preferences）----
+#
+# 这一组的分层与上面一致：HTTP 层用 fake Service 证明「路由把登录账号交给了 Service」
+# 与「错误码映射」；Service 层用 fake Session 证明「未配置返回默认值」「整体覆盖」。
+# 不连 PostgreSQL。
+
+
+class FakePreferenceService:
+    """记录偏好读写参数并返回可控结果的假 Service。"""
+
+    def __init__(self) -> None:
+        self.reads: list[UUID] = []
+        self.writes: list[tuple[UUID, Any]] = []
+        self.stored = {
+            "system_prompt": "只用一句话回答。",
+            "document_limit": 20,
+            "matches_per_document": 5,
+        }
+
+    async def get(self, user_id: UUID) -> Any:
+        """记录读取账号并返回当前存的一份。"""
+
+        self.reads.append(user_id)
+        return self.stored
+
+    async def replace(self, user_id: UUID, request: Any) -> Any:
+        """记录写入并回显这份值。"""
+
+        self.writes.append((user_id, request))
+        return self.stored
+
+
+def build_preference_app(service: FakePreferenceService, *, authenticated: bool) -> Any:
+    """创建使用 fake Runtime 和 fake 偏好 Service 的测试应用。"""
+
+    app = create_offline_app(runtime_factory=FakeRuntime)
+    app.dependency_overrides[get_user_preference_service] = lambda: service
+    if authenticated:
+        app.dependency_overrides[current_active_user] = authenticated_reader
+    return app
+
+
+def test_preferences_require_authentication_before_service_call() -> None:
+    """匿名读写偏好都返回 401，且 Service 不执行。"""
+
+    service = FakePreferenceService()
+
+    for method in ("GET", "PUT"):
+        response = run(
+            send(
+                build_preference_app(service, authenticated=False),
+                method,
+                "/auth/me/preferences",
+                json={"document_limit": 10, "matches_per_document": 3},
+            )
+        )
+        assert response.status_code == 401
+
+    assert service.reads == [] and service.writes == []
+
+
+def test_preferences_round_trip_uses_the_logged_in_account() -> None:
+    """读到的与写入的都是**当前登录账号**，路径里不带账号 id。"""
+
+    service = FakePreferenceService()
+    app = build_preference_app(service, authenticated=True)
+
+    read = run(send(app, "GET", "/auth/me/preferences"))
+    written = run(
+        send(
+            app,
+            "PUT",
+            "/auth/me/preferences",
+            json={
+                "system_prompt": "只用一句话回答。",
+                "document_limit": 20,
+                "matches_per_document": 5,
+            },
+        )
+    )
+
+    assert read.status_code == 200
+    assert read.json() == {
+        "system_prompt": "只用一句话回答。",
+        "document_limit": 20,
+        "matches_per_document": 5,
+    }
+    assert written.status_code == 200
+    assert service.reads == [READER_ID]
+    assert [user_id for user_id, _ in service.writes] == [READER_ID]
+    request = service.writes[0][1]
+    assert (request.document_limit, request.matches_per_document) == (20, 5)
+
+
+def test_preferences_validation_error_is_stable() -> None:
+    """越界的数量参数在 Pydantic 层就被拒，不会进 Service。"""
+
+    service = FakePreferenceService()
+    response = run(
+        send(
+            build_preference_app(service, authenticated=True),
+            "PUT",
+            "/auth/me/preferences",
+            json={"document_limit": 0, "matches_per_document": 3},
+        )
+    )
+
+    assert response.status_code == 422
+    assert service.writes == []
+
+
+def test_preferences_reject_an_overlong_system_prompt() -> None:
+    """提示词长度上限在新 schema 上生效。
+
+    这道约束原先挂在 ``AgentChatRequest.system_prompt`` 字段上，随本次改动删除了；不在这里
+    补回来服务端就没有真边界——前端会截断，但服务端才是边界。
+    """
+
+    service = FakePreferenceService()
+    response = run(
+        send(
+            build_preference_app(service, authenticated=True),
+            "PUT",
+            "/auth/me/preferences",
+            json={
+                "system_prompt": "x" * (MAX_SYSTEM_PROMPT_CHARS + 1),
+                "document_limit": 10,
+                "matches_per_document": 3,
+            },
+        )
+    )
+
+    assert response.status_code == 422
+    assert service.writes == []
+
+
+def test_blank_system_prompt_is_stored_as_unset() -> None:
+    """纯空白提示词被归一化成 ``None``（用默认），而不是存一份空提示词。
+
+    空串语义是「用默认的」：真存一份空提示词会让模型完全失去角色约束和引用要求。
+    """
+
+    service = FakePreferenceService()
+    run(
+        send(
+            build_preference_app(service, authenticated=True),
+            "PUT",
+            "/auth/me/preferences",
+            json={
+                "system_prompt": "   \n  ",
+                "document_limit": 10,
+                "matches_per_document": 3,
+            },
+        )
+    )
+
+    assert service.writes[0][1].system_prompt is None
+
+
+class PreferenceSession:
+    """偏好 Service 用到的假 Session：只实现 ``get`` / ``scalar`` / ``execute`` / ``commit``。"""
+
+    def __init__(self, record: Any = None, *, scalar_result: Any = None) -> None:
+        self.record = record
+        self.scalar_result = scalar_result
+        self.executed: list[Any] = []
+        self.commit_count = 0
+
+    async def get(self, _model: Any, _key: Any) -> Any:
+        """返回预置的偏好行（``None`` 表示该账号还没配过）。"""
+
+        return self.record
+
+    async def scalar(self, _statement: Any) -> Any:
+        """返回预置的单列值，供 ``system_prompt_for`` 使用。"""
+
+        return self.scalar_result
+
+    async def execute(self, statement: Any) -> Any:
+        """记录写入语句。"""
+
+        self.executed.append(statement)
+        return None
+
+    async def commit(self) -> None:
+        """记一次提交。"""
+
+        self.commit_count += 1
+
+
+def test_service_returns_contract_defaults_when_the_account_has_no_row() -> None:
+    """没有配置行不是错误，而是「还没配过」——返回契约默认值而不是 404。
+
+    调用方（设置页、建会话时取提示词）因此不必各自处理「查不到」这一支。
+    """
+
+    service = UserPreferenceService(PreferenceSession(None))  # type: ignore[arg-type]
+
+    result = run(service.get(READER_ID))
+
+    assert result.system_prompt is None
+    assert result.document_limit == DEFAULT_DOCUMENT_LIMIT
+    assert result.matches_per_document == DEFAULT_MATCHES_PER_DOCUMENT
+
+
+def test_service_reads_the_stored_row_when_present() -> None:
+    """有配置行时返回库里的值。"""
+
+    record = SimpleNamespace(
+        system_prompt="自定义提示词。",
+        document_limit=20,
+        matches_per_document=5,
+    )
+    service = UserPreferenceService(PreferenceSession(record))  # type: ignore[arg-type]
+
+    result = run(service.get(READER_ID))
+
+    assert result.system_prompt == "自定义提示词。"
+    assert (result.document_limit, result.matches_per_document) == (20, 5)
+
+
+def test_service_system_prompt_lookup_returns_what_the_account_configured() -> None:
+    """建会话时取的提示词：取到就返回，没配过就是 ``None``（调用方据此用内置默认）。"""
+
+    configured = UserPreferenceService(  # type: ignore[arg-type]
+        PreferenceSession(scalar_result="配好的提示词。")
+    )
+    unconfigured = UserPreferenceService(  # type: ignore[arg-type]
+        PreferenceSession(scalar_result=None)
+    )
+
+    assert run(configured.system_prompt_for(READER_ID)) == "配好的提示词。"
+    assert run(unconfigured.system_prompt_for(READER_ID)) is None
+
+
+def test_service_replace_upserts_and_returns_the_stored_value() -> None:
+    """保存走 upsert 并回读落库结果，响应里就是库里那份。"""
+
+    record = SimpleNamespace(
+        system_prompt="新提示词。",
+        document_limit=20,
+        matches_per_document=5,
+    )
+    session = PreferenceSession(record)
+    service = UserPreferenceService(session)  # type: ignore[arg-type]
+
+    result = run(
+        service.replace(
+            READER_ID,
+            UserPreferenceUpdateRequest(
+                system_prompt="新提示词。",
+                document_limit=20,
+                matches_per_document=5,
+            ),
+        )
+    )
+
+    assert result.system_prompt == "新提示词。"
+    assert len(session.executed) == 1
+    assert session.commit_count == 1
+    # 一条语句完成插入或更新：ON CONFLICT 必须先存在才能生成，否则并发下会撞主键。
+    sql = compiled(session.executed[0]).upper()
+    assert "ON CONFLICT" in sql
+
+
+def test_service_delete_for_removes_the_row_without_committing() -> None:
+    """删账号时清偏好：只删不提交，事务归调用方——不能出现「账号没了、配置还在」的窗口。"""
+
+    session = PreferenceSession(None)
+    service = UserPreferenceService(session)  # type: ignore[arg-type]
+
+    run(service.delete_for(READER_ID))
+
+    assert len(session.executed) == 1
+    assert compiled(session.executed[0]).lstrip().upper().startswith("DELETE")
+    assert session.commit_count == 0

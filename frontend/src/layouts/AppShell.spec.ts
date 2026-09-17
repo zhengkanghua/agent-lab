@@ -78,12 +78,14 @@ describe('AppShell', () => {
     expect(brand.get('.brand-text small').text()).toBe('知识库工作台')
   })
 
-  it('主导航写死在外壳里：检索人人可见，Agent 入口只给超管', async () => {
+  it('主导航常驻：检索与 Agent 对话对所有登录账号可见', async () => {
+    // 权限放开之后 Agent 入口不再按角色隐藏（ADR 0030）。普通账号那一半必须单独验：
+    // 只验超管的话，一个「只给超管渲染」的实现也能通过。
     const { wrapper } = await mountShell()
     expect(wrapper.findAll('.sidebar-nav .nav-item').map((item) => item.text())).toEqual([
       '语义检索',
+      'Agent 对话',
     ])
-    expect(wrapper.find('a[aria-label="后台管理"]').exists()).toBe(false)
 
     session.user.value = { email: 'admin@example.com', is_superuser: true }
     const admin = await mountShell()
@@ -91,6 +93,16 @@ describe('AppShell', () => {
       '语义检索',
       'Agent 对话',
     ])
+  })
+
+  it('后台入口仍然只给超管', async () => {
+    // 放开 Agent 不等于放开后台。这条与上一条分开，因为它们是两件事：
+    // 一条管主导航常驻，一条管后台入口的角色限制。
+    const { wrapper } = await mountShell()
+    expect(wrapper.find('a[aria-label="后台管理"]').exists()).toBe(false)
+
+    session.user.value = { email: 'admin@example.com', is_superuser: true }
+    const admin = await mountShell()
     expect(admin.wrapper.get('a[aria-label="后台管理"]').attributes('href')).toBe('/admin')
   })
 

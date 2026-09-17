@@ -14,6 +14,7 @@ import {
 } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { authSession } from '@/features/auth'
+import { usePreferences } from '@/features/settings'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 import ThemeToggle from '@/shared/ui/ThemeToggle.vue'
@@ -67,22 +68,26 @@ withDefaults(
 
 const emit = defineEmits<{ primary: []; logout: [] }>()
 
-/* 后台与 Agent 入口仅超管可见。权限只是体验层——真正的门在路由 meta.requiresSuperuser
+/* 主导航对所有登录账号常驻：检索与 Agent 对话都是登录即可用的能力。
+   后台入口仍仅超管可见——权限只是体验层，真正的门在路由 meta.requiresSuperuser
    与后端 current_superuser 上，这里不渲染只是不让普通账号看到点进去必然失败的入口。 */
 const isSuperuser = computed(() => authSession.user.value?.is_superuser === true)
 
-const navItems = computed(() =>
-  [
-    { key: 'search', to: { name: 'search' }, label: '语义检索', icon: Search, visible: true },
-    {
-      key: 'agent',
-      to: { name: 'agent-chat' },
-      label: 'Agent 对话',
-      icon: Bot,
-      visible: isSuperuser.value,
-    },
-  ].filter((item) => item.visible),
-)
+const navItems = computed(() => [
+  { key: 'search', to: { name: 'search' }, label: '语义检索', icon: Search },
+  { key: 'agent', to: { name: 'agent-chat' }, label: 'Agent 对话', icon: Bot },
+])
+
+/* 账号偏好在这里读一次，供三个页面共用。
+ *
+ * 为什么放在外壳而不是各页自己读：检索页提交时要读数量参数、对话页要读提示词判断要不要亮
+ * 徽章、设置页要展示与编辑——每一页都读一次就是每次页面切换多一次往返，而且它们读到的
+ * 必须是同一份。外壳是三个页面唯一的共同祖先，且它在登录后才渲染。store 内部按账号去重，
+ * 所以这里每次挂载都调也不会重复请求。 */
+const { load: loadPreferences } = usePreferences()
+onMounted(() => {
+  void loadPreferences(authSession.user.value?.id)
+})
 
 /* 窄屏抽屉：桌面常驻，窄屏收起为抽屉。逻辑与 AdminShell 同款。 */
 const drawerOpen = ref(false)

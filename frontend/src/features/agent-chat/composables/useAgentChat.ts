@@ -27,12 +27,6 @@ export type AgentThreadLoader = typeof getAgentThreadMessages
 export interface UseAgentChatOptions {
   stream?: AgentChatStream
   loadThreadMessages?: AgentThreadLoader
-  /**
-   * 发送时读取自定义系统提示词。提示词是设置中心的偏好（本浏览器的持久配置），不是
-   * 对话状态——由调用方注入 getter 而不是在这里持有，本 composable 保持与偏好 store
-   * 解耦，测试也能自由替身。
-   */
-  getSystemPrompt?: () => string
   getScopeError?: () => string | null
   saveScope?: typeof updateAgentThreadScope
   onThreadCreated?: (threadId: string) => void
@@ -57,7 +51,6 @@ const HISTORY_TRACE_NOTE = '这次工具调用没有结果记录，当时的对�
 export function useAgentChat({
   stream = streamAgentChat,
   loadThreadMessages = getAgentThreadMessages,
-  getSystemPrompt = () => '',
   getScopeError = () => null,
   saveScope = updateAgentThreadScope,
   onThreadCreated,
@@ -137,7 +130,6 @@ export function useAgentChat({
       for await (const event of stream({
         message: question,
         threadId: threadId.value,
-        systemPrompt: getSystemPrompt(),
         scope: submittedSelection,
         signal: controller.signal,
       })) {

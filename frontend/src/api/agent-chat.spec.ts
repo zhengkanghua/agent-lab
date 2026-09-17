@@ -244,25 +244,22 @@ describe('streamAgentChat', () => {
     }).rejects.toMatchObject({ code: 'response_invalid' })
   })
 
-  it('只在给了 thread_id 和非空提示词时才发这两个字段', async () => {
+  it('只在给了 thread_id 时才发这个字段，且请求体里没有提示词', async () => {
+    // 提示词改为会话级快照后，请求体里不再有 system_prompt（见 ADR 0029）。
+    // 这条同时挡住「有人把它加回请求体」——那会让客户端重新获得改模型行为的能力。
     const fetchMock = vi.fn().mockResolvedValue(sseResponse([]))
     vi.stubGlobal('fetch', fetchMock)
 
-    for await (const _event of streamAgentChat({ message: '问', systemPrompt: '   ' })) void _event
+    for await (const _event of streamAgentChat({ message: '问' })) void _event
     expect(JSON.parse(fetchMock.mock.calls[0]![1].body as string)).toEqual({ message: '问' })
 
     fetchMock.mockResolvedValue(sseResponse([]))
-    for await (const _event of streamAgentChat({
-      message: '再问',
-      threadId: THREAD_ID,
-      systemPrompt: '你是记者。',
-    })) {
+    for await (const _event of streamAgentChat({ message: '再问', threadId: THREAD_ID })) {
       void _event
     }
     expect(JSON.parse(fetchMock.mock.calls[1]![1].body as string)).toEqual({
       message: '再问',
       thread_id: THREAD_ID,
-      system_prompt: '你是记者。',
     })
   })
 
