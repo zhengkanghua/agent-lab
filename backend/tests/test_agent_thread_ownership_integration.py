@@ -104,14 +104,14 @@ def test_ownership_filter_really_isolates_two_accounts() -> None:
             bob = await _create_user(factory, f"bob-{suffix}@example.com")
             threads = AgentThreadService(factory)
 
-            # 1、Alice 建两个会话，Bob 建一个。
-            alice_first = await threads.ensure_thread(
+            # 1、Alice 建两个会话，Bob 建一个。返回值是 (会话 id, 会话提示词)。
+            alice_first, _ = await threads.ensure_thread(
                 user_id=alice.id, thread_id=None, first_message="Alice 的第一个会话"
             )
-            alice_second = await threads.ensure_thread(
+            alice_second, _ = await threads.ensure_thread(
                 user_id=alice.id, thread_id=None, first_message="Alice 的第二个会话"
             )
-            bob_only = await threads.ensure_thread(
+            bob_only, _ = await threads.ensure_thread(
                 user_id=bob.id, thread_id=None, first_message="Bob 的会话"
             )
             assert len({alice_first, alice_second, bob_only}) == 3
@@ -122,12 +122,10 @@ def test_ownership_filter_really_isolates_two_accounts() -> None:
                     user_id=bob.id, thread_id=alice_first, first_message="偷看"
                 )
             # 自己的能续，返回同一个 id。
-            assert (
-                await threads.ensure_thread(
-                    user_id=alice.id, thread_id=alice_first, first_message="接着聊"
-                )
-                == alice_first
+            resumed, _ = await threads.ensure_thread(
+                user_id=alice.id, thread_id=alice_first, first_message="接着聊"
             )
+            assert resumed == alice_first
 
             # 3、读取：Bob 读不到 Alice 的，Alice 读得到自己的。
             with pytest.raises(AgentThreadNotFoundError):
