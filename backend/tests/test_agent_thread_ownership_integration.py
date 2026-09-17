@@ -33,6 +33,7 @@ from agent_lab.db.session import engine
 from agent_lab.models.agent_thread import AgentThreadRecord
 from agent_lab.models.user import UserRecord
 from agent_lab.services.agent_thread_service import AgentThreadService
+from agent_lab.services.user_admin_service import UserAdminService
 
 
 pytestmark = pytest.mark.skipif(
@@ -55,8 +56,9 @@ async def _create_user(factory: async_sessionmaker, email: str) -> UserRecord:
         已提交（到 savepoint）的账号记录。
 
     Notes:
-        必须是真实存在的账号：``agent_threads.user_id`` 上有指向 ``users.id`` 的外键，
-        随手编一个 UUID 会直接违反约束——那种失败看起来像「归属写坏了」，其实只是测试数据不对。
+        必须是真实存在的账号：``agent_threads.user_id`` 是指向 ``users.id`` 的逻辑外键，
+        归属校验和删账号清理都按它定位数据；随手编一个 UUID 会让断言在语义上对不上
+        （库上已经没有约束会拦住它了，见 ADR 0028，所以这里更要自己写对）。
     """
 
     user = UserRecord(
@@ -182,14 +184,17 @@ def test_ownership_filter_really_isolates_two_accounts() -> None:
     asyncio.run(verify(), loop_factory=asyncio.SelectorEventLoop)
 
 
-def test_deleting_an_account_cascades_to_its_thread_rows() -> None:
-    """删账号会带走它的会话归属记录。
+def test_deleting_an_account_clears_its_thread_rows() -> None:
+    """删账号会清掉它的会话归属记录，靠的是业务代码而不是数据库。
 
-    模型里写了 ``ondelete="CASCADE"``，但那只是声明——约束到底有没有建到库上，只有真库能回答。
-    少了它，删账号会因为外键约束失败（500），或者留下一堆指向不存在账号的行。
+    这条用例**必须走** ``UserAdminService.delete_user``，不能直接 ``session.delete(UserRecord)``。
+    库上已经没有 ``ON DELETE CASCADE`` 了（见 ADR 0028），直接删 ``users`` 那一行不会带走
+    ``agent_threads``——那样测出来的是「删账号会留下孤儿」，正好是反的。改走业务路径之后，
+    断言验的是业务代码的清理结果，这才是这次改动要保护的东西。
 
-    注意级联只清业务表这一行，**不清 checkpointer 里的历史**：那四张表不在我们的外键图里。
+    注意清理只清业务表这一行，**不清 checkpointer 里的历史**：那四张表不在我们的表里。
     删账号后残留的历史由 ``prune-orphan-threads`` 回收，这也是那个命令存在的理由之一。
+    **本用例不覆盖 checkpointer**——它跑在真实 PostgreSQL 上，但断言只涉及业务表。
     """
 
     async def verify() -> None:
@@ -211,10 +216,14 @@ def test_deleting_an_account_cascades_to_its_thread_rows() -> None:
 
             async with factory() as session:
                 assert await session.get(AgentThreadRecord, thread_id) is not None
-                await session.delete(await session.get(UserRecord, doomed.id))
-                await session.commit()
+
+            # 走业务层那条唯一的删账号路径，它在一个事务里清完归属记录、Token 和
+            # 决策留痕的 actor_id，最后才删账号。
+            async with factory() as session:
+                await UserAdminService(session).delete_user(doomed.id)
 
             async with factory() as session:
+                assert await session.get(UserRecord, doomed.id) is None
                 assert await session.get(AgentThreadRecord, thread_id) is None
                 remaining = await session.scalar(
                     select(func.count())

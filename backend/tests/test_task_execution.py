@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from agent_lab.models.scheduled_job import JobRunRecord, ScheduledJobRecord
 from agent_lab.models.write_operation import WriteOperationRecord
+from agent_lab.services.scheduled_job_service import ScheduledJobService
 from agent_lab.services.write_coordination import WriteCoordinator, discard_task_preparation
 from agent_lab.tasks.contracts import (
     ExecutionPolicy, FailureDecision, RecoveryDecision, RequestConflict, ResourceWait,
@@ -46,9 +47,11 @@ def test_request_identity_snapshot_deletion_and_expired_receipt():
             with pytest.raises(TaskOverlap) as error:
                 await system.service.trigger(job.id, actor="user:1", request_key="new")
             assert error.value.run_id == original.run_id
+            # 删配置必须走业务路径：库上已经没有 ON DELETE SET NULL，直接把行删掉
+            # 会留下指向已删配置的 job_id，那不叫「配置被删了」，叫数据坏了。
             async with system.sessions() as session:
-                await session.delete(await session.get(ScheduledJobRecord, job.id))
-                await session.commit()
+                manager = ScheduledJobService(session, CronSchedule(clock=system.clock), system.registry)
+                await manager.delete_job(job.id)
             run = await execute_accepted(system, original)
             assert run.job_id is None and run.source_job_id == job.id and run.stats == {"value": 7}
             system.clock.advance(31 * 86400)

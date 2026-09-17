@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import DateTime, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from agent_lab.db.base import Base, TimestampMixin
@@ -35,7 +35,7 @@ class SourceRecord(TimestampMixin, Base):
     因为同步总是先按唯一业务键定位来源。
 
     一个容易混淆的点：``documents`` relationship 是 ORM 对象导航「属性」，不是
-    sources 表里的数组列——真实外键在 documents.source_id 那一侧。
+    sources 表里的数组列——逻辑外键在 documents.source_id 那一侧，库上没有约束。
     """
 
     __tablename__ = "sources"
@@ -84,9 +84,8 @@ class SourceRecord(TimestampMixin, Base):
     )
     knowledge_base_id: Mapped[UUID | None] = mapped_column(
         Uuid,
-        ForeignKey("knowledge_bases.id", ondelete="RESTRICT"),
         nullable=True,
-        comment="来源当前绑定的 KnowledgeBase；为空表示尚未配置。",
+        comment="来源当前绑定的 KnowledgeBase；为空表示尚未配置。业务层维护的逻辑外键，库上无约束。",
     )
     sync_checkpoint: Mapped[str | None] = mapped_column(
         String(128),
@@ -102,11 +101,16 @@ class SourceRecord(TimestampMixin, Base):
         comment="该来源增量同步游标最近一次成功推进的时间；未同步时为空。",
     )
 
-    # 一对多 ORM 导航属性，不是 sources 表中的数组字段。实际外键保存在
-    # documents.source_id，删除/更新策略由该外键和业务 Service 共同控制。
+    # 一对多 ORM 导航属性，不是 sources 表中的数组字段。逻辑外键保存在
+    # documents.source_id，连带行为由业务 Service 显式控制。库上没有外键约束，
+    # join 条件不能再靠 ForeignKey 推断，因此两处都显式写出。
     documents: Mapped[list[DocumentRecord]] = relationship(
         back_populates="source",
+        primaryjoin="SourceRecord.id == DocumentRecord.source_id",
+        foreign_keys="DocumentRecord.source_id",
     )
     knowledge_base: Mapped[KnowledgeBaseRecord | None] = relationship(
         back_populates="sources",
+        primaryjoin="SourceRecord.knowledge_base_id == KnowledgeBaseRecord.id",
+        foreign_keys="SourceRecord.knowledge_base_id",
     )

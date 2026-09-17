@@ -16,7 +16,6 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
-    ForeignKey,
     Index,
     String,
     Uuid,
@@ -35,7 +34,9 @@ class UserRecord(SQLAlchemyBaseUserTableUUID, TimestampMixin, Base):
     ``uq_users_email_lower`` 对 ``lower(email)`` 建唯一索引，使登录查询与数据库唯一性都
     忽略大小写。``hashed_password`` 只保存 pwdlib/Argon2 Hash。``is_active`` 控制账号
     是否可登录，``is_superuser`` 只用于授权高风险 Pipeline。继承的时间字段记录账号
-    创建和最近一次 ORM 更新；本表与新闻表没有外键或 relationship。超级用户同时拥有
+    创建和最近一次 ORM 更新；本表与新闻表没有逻辑外键或 relationship，指向本表的
+    ``access_tokens``、``agent_threads``、``document_review_records`` 三列都是逻辑外键，
+    删账号的连带清理由 ``UserAdminService`` 在同一事务内显式完成。超级用户同时拥有
     手动 Pipeline 和账号管理权限，环境托管标记用于区分不可由网页降级的保底账号。
     """
 
@@ -107,9 +108,9 @@ class AccessTokenRecord(SQLAlchemyBaseAccessTokenTableUUID, Base):
     """access_tokens 表：一个浏览器登录会话对应的一枚可撤销随机 Token。
 
     ``token`` 是 FastAPI Users 生成的 43 字符随机主键，也是 Cookie 携带的业务唯一键；
-    ``user_id`` 外键指向 users.id，并在删除用户时级联清理。用户索引用于批量撤销账号
-    会话，创建时间索引用于有效期查询和清理过期记录。本实体没有 ORM relationship，
-    因为认证只按 Token 或用户 ID 定位，不需要隐式加载用户对象。
+    ``user_id`` 是逻辑外键，指向 users.id，库上没有约束，删账号时由业务层清理这些 Token。
+    用户索引用于批量撤销账号会话，创建时间索引用于有效期查询和清理过期记录。本实体没有
+    ORM relationship，因为认证只按 Token 或用户 ID 定位，不需要隐式加载用户对象。
     """
 
     __tablename__ = "access_tokens"
@@ -132,7 +133,6 @@ class AccessTokenRecord(SQLAlchemyBaseAccessTokenTableUUID, Base):
     )
     user_id: Mapped[UUID] = mapped_column(
         Uuid,
-        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
-        comment="该登录 Token 所属的 users.id；删除用户时级联撤销。",
+        comment="该登录 Token 所属的 users.id；业务层维护的逻辑外键，库上无约束。删账号时由业务层撤销。",
     )

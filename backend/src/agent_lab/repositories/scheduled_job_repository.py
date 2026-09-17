@@ -1,9 +1,13 @@
-"""周期配置的短事务存取；任务执行独立保存在公共任务仓储中。"""
+"""周期配置的短事务存取；任务执行独立保存在公共任务仓储中。
+
+``delete_job`` 是删配置的唯一路径，它必须在同一事务里把历史 run 的 ``job_id`` 置空。
+库里没有 ``ON DELETE SET NULL`` 了，这一步没有数据库兜底。
+"""
 
 from uuid import uuid4
-from sqlalchemy import select
+from sqlalchemy import select, update
 
-from agent_lab.models.scheduled_job import ScheduledJobRecord
+from agent_lab.models.scheduled_job import JobRunRecord, ScheduledJobRecord
 from agent_lab.tasks.repository import TaskRepository
 
 
@@ -38,6 +42,24 @@ class ScheduledJobRepository:
         await self._session.refresh(record)
 
     async def delete_job(self, record):
+        """删除周期配置，并在同一事务里断开历史执行对它的指向。
+
+        库里没有 ``ON DELETE SET NULL``，不补这一步会静默留下指向已删配置的 ``job_id``。
+        置空只影响 ``job_id`` 这一列：``source_job_id`` 和受理时冻结的 ``config_snapshot``
+        原样保留，历史仍能按原配置身份查询（ADR 0019）。
+
+        Args:
+            record: 已加行锁的 ``ScheduledJobRecord``。
+
+        Notes:
+            一次 PostgreSQL 写入事务，覆盖两条语句（置空历史 + 删配置行）。
+        """
+
+        await self._session.execute(
+            update(JobRunRecord)
+            .where(JobRunRecord.job_id == record.id)
+            .values(job_id=None)
+        )
         await self._session.delete(record)
         await self._session.commit()
 

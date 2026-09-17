@@ -37,4 +37,10 @@ class KnowledgeBaseRecord(TimestampMixin, Base):
     )
     visibility_revision: Mapped[int] = mapped_column(default=1, server_default="1", nullable=False,
         comment="索引可见性修订；候选写入意图、采用、停止使用与回收时推进。")
-    sources: Mapped[list[SourceRecord]] = relationship(back_populates="knowledge_base")
+    # 库上没有外键约束，join 条件不能靠 ForeignKey 推断，必须与 SourceRecord.knowledge_base
+    # 那一侧的显式声明保持一致。
+    sources: Mapped[list[SourceRecord]] = relationship(
+        back_populates="knowledge_base",
+        primaryjoin="KnowledgeBaseRecord.id == SourceRecord.knowledge_base_id",
+        foreign_keys="SourceRecord.knowledge_base_id",
+    )

@@ -1,4 +1,10 @@
-"""完整文档删除和保留期选择；冻结原件清单后停止使用，逐项确认再清除历史。"""
+"""完整文档删除和保留期选择；冻结原件清单后停止使用，逐项确认再清除历史。
+
+本模块是删 ``documents`` 的**唯一**路径，也是「删父表必须连带子表」这条业务约定的
+落点：``finish()`` 在同一个事务里断开三个指向、按序删 ``document_review_records``、
+``document_versions``、``document_processing_records``，最后才删主表。库上没有外键
+约束，顺序不再有数据库兜底，改动这个方法时要连着这段说明一起看。
+"""
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -156,7 +162,9 @@ class DocumentRetentionRepository:
                     or document.usage_status != "deleting" or document.index_revision != snapshot.revision
                     or document.management_revision != snapshot.management_revision):
                 raise ProcessingApplicationError("document_deletion_conflict")
-            # 先断开当前指向，再按 RESTRICT 外键顺序删除结论、版本和候选。
+            # 先断开当前指向，再按业务层约定的删除次序清掉结论、版本和候选：库里没有
+            # 外键约束了，顺序与断开指向都不再有人替我们兜底，而 processing_id 仍指向
+            # document_processing_records，所以必须先删依赖它的两张表。
             document.current_version_id = document.latest_processing_id = document.draft_processing_id = None
             await self._session.flush()
             for model in (DocumentReviewRecord, DocumentVersion, DocumentProcessingRecord):

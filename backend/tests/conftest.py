@@ -14,6 +14,7 @@ INTEGRATION_SWITCHES = {
     "test_qdrant_remote_integration.py": "RUN_QDRANT_REMOTE_INTEGRATION_TEST",
     "test_scheduler_postgres_integration.py": "RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST",
     "test_task_migration_postgres_integration.py": "RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST",
+    "test_foreign_key_drop_migration_postgres_integration.py": "RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST",
     "test_task_handoff_postgres_integration.py": "RUN_POSTGRES_SCHEDULER_INTEGRATION_TEST",
     "test_task_queue_integration.py": "RUN_TASK_QUEUE_INTEGRATION_TEST",
     "test_task_local_integration.py": "RUN_TASK_LOCAL_INTEGRATION_TEST",

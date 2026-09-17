@@ -1,9 +1,15 @@
-"""周期配置与公共任务执行的持久身份；删除配置不删除已受理工作。"""
+"""周期配置与公共任务执行的持久身份；删除配置不删除已受理工作。
+
+``scheduled_job_runs.job_id`` 与 ``retry_of`` 都是**逻辑外键**：列与索引在，库上没有
+``FOREIGN KEY`` 约束。删配置时把历史 run 的 ``job_id`` 置空由
+``ScheduledJobRepository.delete_job`` 显式完成；``retry_of`` 的「仍被关联的记录受保护」
+由 ``TaskStore.prune_history`` 判断。
+"""
 
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint, Uuid, text
+from sqlalchemy import DateTime, Index, String, UniqueConstraint, Uuid, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -27,8 +33,13 @@ class ScheduledJobRecord(TimestampMixin, Base):
     config_version: Mapped[int] = mapped_column(default=1, server_default="1", nullable=False)
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    # FK 只用于仍存在的配置；历史中的 source_job_id 和快照不随删除改变。
-    runs: Mapped[list["JobRunRecord"]] = relationship(back_populates="job", passive_deletes="all")
+    # 库上没有外键约束，join 条件靠下面两处显式声明；job_id 只用于仍存在的配置，
+    # 历史中的 source_job_id 和快照不随删除改变。
+    runs: Mapped[list["JobRunRecord"]] = relationship(
+        back_populates="job", passive_deletes="all",
+        primaryjoin="ScheduledJobRecord.id == JobRunRecord.job_id",
+        foreign_keys="JobRunRecord.job_id",
+    )
 
 
 class JobRunRecord(Base):
@@ -48,7 +59,9 @@ class JobRunRecord(Base):
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    job_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("scheduled_jobs.id", ondelete="SET NULL"), index=True)
+    job_id: Mapped[UUID | None] = mapped_column(
+        Uuid, index=True,
+        comment="原周期配置；删除配置后由业务层置空。业务层维护的逻辑外键，库上无约束。")
     source_job_id: Mapped[UUID | None] = mapped_column(Uuid, comment="原周期配置身份，删除配置后仍保留。")
     task_type: Mapped[str] = mapped_column(String(64), nullable=False)
     task_version: Mapped[int] = mapped_column(default=1, server_default="1", nullable=False)
@@ -77,9 +90,16 @@ class JobRunRecord(Base):
     error_type: Mapped[str | None] = mapped_column(String(128))
     config_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}", nullable=False)
     policy_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    retry_of: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("scheduled_job_runs.id", ondelete="RESTRICT"), index=True)
+    retry_of: Mapped[UUID | None] = mapped_column(
+        Uuid, index=True,
+        comment="人工重试所关联的原失败执行；业务层维护的逻辑外键，库上无约束。"
+                "仍被关联的记录由 prune_history 保护。")
 
-    job: Mapped[ScheduledJobRecord | None] = relationship(back_populates="runs")
+    job: Mapped[ScheduledJobRecord | None] = relationship(
+        back_populates="runs",
+        primaryjoin="JobRunRecord.job_id == ScheduledJobRecord.id",
+        foreign_keys="JobRunRecord.job_id",
+    )
 
 
 class TaskRequestRecord(Base):

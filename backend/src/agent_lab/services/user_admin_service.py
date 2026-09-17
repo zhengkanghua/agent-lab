@@ -1,7 +1,11 @@
 """实现超级用户对内部账号、权限、密码和数据库会话的管理用例。
 
-本 Service 只读写 PostgreSQL users/access_tokens，不负责 HTTP、Cookie 设置或公开注册。
-环境管理员不可通过此层降级或改密；任何操作都不能移除最后一个启用的超级用户。
+本 Service 只读写 PostgreSQL users、access_tokens、agent_threads 和
+document_review_records，不负责 HTTP、Cookie 设置或公开注册。环境管理员不可通过此层
+降级、改密或删除；任何操作都不能移除最后一个启用的超级用户。
+
+**删账号是跨聚合的，所以落在这一层。** 库里没有数据库级外键，删一行 users 不会带走
+别的表；本层在同一个事务内把这四张表处理完，见 ``delete_user``。
 """
 
 from dataclasses import dataclass
@@ -9,11 +13,13 @@ from uuid import UUID
 
 from fastapi_users import exceptions
 from fastapi_users.password import PasswordHelper
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_lab.auth.manager import validate_password_strength
+from agent_lab.models.agent_thread import AgentThreadRecord
+from agent_lab.models.document_processing import DocumentReviewRecord
 from agent_lab.models.user import AccessTokenRecord, UserRecord
 from agent_lab.schemas.user_admin import (
     UserAdminCreateRequest,
@@ -41,9 +47,9 @@ class UserAdminService:
     生命周期是「一个 HTTP 请求一个实例」，不能跨请求复用：它持有的 Session 就是本次请求
     的事务边界，每个公开方法自己 commit 或 rollback，调用方不需要再管事务。
 
-    两条贯穿全类的业务约束：环境管理员（``is_environment_admin``）不能被本层降级或改密，
-    只能通过服务端密钥改；任何操作都不能让系统失去最后一个「启用且是超管」的账号，否则
-    没人能再进管理页。
+    两条贯穿全类的业务约束：环境管理员（``is_environment_admin``）不能被本层降级、改密或
+    删除，只能通过服务端密钥改；任何操作都不能让系统失去最后一个「启用且是超管」的账号，
+    否则没人能再进管理页。
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -252,6 +258,75 @@ class UserAdminService:
         await self._session.refresh(user)
         return user
 
+    async def delete_user(self, user_id: UUID) -> None:
+        """删除账号，并在同一事务内清干净它在别处留下的引用。
+
+        这是拆掉数据库外键之后**唯一**的删账号路径。库里没有 ``ON DELETE`` 行为，
+        删一行 ``users`` 不会带走任何别的表，因此四件事必须在同一个事务里按顺序做完，
+        否则会留下查不到也管不了的孤儿行：
+
+        1. ``agent_threads``：删掉该账号的会话归属记录。**不删 checkpointer 里的历史**——
+           那四张表不由本项目管（ADR 0004），残留历史由 ``prune-orphan-threads`` 回收。
+           这一点与拆约束之前完全一致，本次不扩大清理范围。
+        2. ``access_tokens``：删掉登录 Token，否则已签发的 Cookie 还能继续通过认证。
+        3. ``document_review_records.actor_id``：**置空**，不是删行。换版决策记录是客观
+           事实，不因为操作者账号消失而失效；只是「是谁拍的板」不再可回溯。
+        4. 最后才删 ``users`` 这一行。
+
+        第 3 条是这四步里最容易漏的：它不是级联删除而是置空，方向正好相反。
+
+        Args:
+            user_id: 目标账号 id。
+
+        Raises:
+            UserAdminDomainError: ``user_not_found``、``environment_admin_protected``，
+                或 ``last_superuser_protected``（删掉他就没人能再进管理页）。
+
+        Notes:
+            一次 PostgreSQL 写入事务。四张表都按 ``user_id`` 走索引定位，不产生全表扫描。
+        """
+
+        # 1、锁行取人，挡掉环境托管账号。环境管理员的身份来自服务端配置，删掉之后
+        #    下次启动还会被重新创建，等于删了个「看起来生效、实际没有」的对象。
+        user = await self._get_user_for_update(user_id)
+        await self._ensure_not_environment_managed(user)
+
+        # 2、最后一个活跃超管不能删。与 update_user 里那条同源：删掉之后没人能再进
+        #    管理页，而这次连「把状态改回来」的入口都没了。同样加行锁，避免两个并发
+        #    请求各自看到「还有 2 个」然后一起删。
+        if user.is_active and user.is_superuser:
+            remaining = list(
+                await self._session.scalars(
+                    select(UserRecord.id)
+                    .where(
+                        UserRecord.is_active.is_(True),
+                        UserRecord.is_superuser.is_(True),
+                    )
+                    .with_for_update()
+                )
+            )
+            if len(remaining) <= 1:
+                await self._session.rollback()
+                raise UserAdminDomainError(
+                    "last_superuser_protected",
+                    "最后一个活跃超级管理员不能被删除。",
+                )
+
+        # 3、按顺序清掉指向这个账号的引用。顺序不是数据库要求的（库上已经没有约束），
+        #    而是「先清子、后删父」这条业务约定，写死在这里以免后来的人调换。
+        await self._session.execute(
+            delete(AgentThreadRecord).where(AgentThreadRecord.user_id == user_id)
+        )
+        await self._delete_sessions(user_id)
+        # 4、决策留痕置空操作者，行本身和 content_snapshot 全部保留。
+        await self._session.execute(
+            update(DocumentReviewRecord)
+            .where(DocumentReviewRecord.actor_id == user_id)
+            .values(actor_id=None)
+        )
+        await self._session.delete(user)
+        await self._session.commit()
+
     async def revoke_sessions(self, user_id: UUID) -> int:
         """撤销目标账号的全部数据库登录 Token，环境管理员也允许主动撤销。
 
@@ -313,8 +388,8 @@ class UserAdminService:
     async def _ensure_not_environment_managed(self, user: UserRecord) -> None:
         """挡住对环境托管管理员的改动。
 
-        环境管理员的邮箱和密码来自服务端配置，每次启动会按配置同步。在这里改它等于改了个
-        「下次重启就被覆盖」的值，看起来生效了、实际没有——所以直接拒绝，让人去改配置。
+        环境管理员的邮箱和密码来自服务端配置，每次启动会按配置同步。在这里改它（或删它）等于
+        改了个「下次重启就被覆盖」的值，看起来生效了、实际没有——所以直接拒绝，让人去改配置。
 
         Args:
             user: 已取出的目标账号。

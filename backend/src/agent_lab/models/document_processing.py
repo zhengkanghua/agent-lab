@@ -1,11 +1,17 @@
-"""文档原件、候选处理和人工审核的持久记录。"""
+"""文档原件、候选处理和人工审核的持久记录。
+
+三张表都带指向 ``documents``、``document_processing_records`` 和 ``users`` 的**逻辑外键**：
+列与索引在，库上没有 ``FOREIGN KEY`` 约束。连带删除的顺序由
+``DocumentRetentionRepository.finish`` 显式保证；删账号只置空
+``document_review_records.actor_id``，决策记录本身保留。
+"""
 
 from __future__ import annotations
 
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, Uuid, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Index, Integer, String, Text, UniqueConstraint, Uuid, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,8 +30,8 @@ class DocumentProcessingRecord(TimestampMixin, Base):
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     document_id: Mapped[UUID] = mapped_column(
-        Uuid, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False,
-        comment="所属 Document；同一 Document 可保留多个来源和采用记录。",
+        Uuid, nullable=False,
+        comment="所属 Document；同一 Document 可保留多个来源和采用记录。业务层维护的逻辑外键，库上无约束。",
     )
     source_kind: Mapped[str] = mapped_column(String(32), nullable=False, comment="file、freshrss 或 manual。")
     state: Mapped[str] = mapped_column(String(32), nullable=False, server_default="received", comment="处理阶段。")
@@ -68,8 +74,10 @@ class DocumentVersion(TimestampMixin, Base):
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    document_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
-    processing_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("document_processing_records.id", ondelete="RESTRICT"), nullable=False)
+    document_id: Mapped[UUID] = mapped_column(Uuid, nullable=False,
+        comment="所属 Document；业务层维护的逻辑外键，库上无约束。")
+    processing_id: Mapped[UUID] = mapped_column(Uuid, nullable=False,
+        comment="产生本版本的候选处理记录；业务层维护的逻辑外键，库上无约束。")
     revision: Mapped[int] = mapped_column(Integer, nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     mime_type: Mapped[str] = mapped_column(String(127), nullable=False)
@@ -98,12 +106,15 @@ class DocumentReviewRecord(TimestampMixin, Base):
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    document_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
-    processing_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("document_processing_records.id", ondelete="RESTRICT"), nullable=False)
+    document_id: Mapped[UUID] = mapped_column(Uuid, nullable=False,
+        comment="所属 Document；业务层维护的逻辑外键，库上无约束。")
+    processing_id: Mapped[UUID] = mapped_column(Uuid, nullable=False,
+        comment="本次决定针对的候选处理记录；业务层维护的逻辑外键，库上无约束。")
     candidate_revision: Mapped[int] = mapped_column(Integer, nullable=False)
     decision: Mapped[str] = mapped_column(String(32), nullable=False, comment="adopt、reject 或 retry。")
     decision_source: Mapped[str] = mapped_column(String(32), nullable=False, comment="automatic 或 manual。")
-    actor_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True,
+        comment="人工拍板的操作者；自动决策为空。业务层维护的逻辑外键，库上无约束。")
     conclusion: Mapped[str | None] = mapped_column(Text, nullable=True)
     preview_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     content_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"),

@@ -1,9 +1,13 @@
 """定义持久层统一新闻文档及其 Qdrant 索引状态。
 
-本模块位于 SQLAlchemy models 层，负责 ``documents`` 表的业务字段、主外键、约束、
+本模块位于 SQLAlchemy models 层，负责 ``documents`` 表的业务字段、唯一约束、
 查询索引和派生向量副本状态；不负责抓取 FreshRSS、不构建 LangChain Document、不
 生成 Embedding，也不保存 Chunk 或 Vector。Qdrant Point 可由这里的正文、来源关系和
 ``VectorIndexSpec`` 重建，PostgreSQL 仍是新闻业务事实来源。
+
+``knowledge_base_id``、``source_id`` 和三个指向子表的 ``*_id`` 都是**业务层维护的
+逻辑外键**：列在、类型在、索引在，库上没有 ``FOREIGN KEY`` 约束，连带删除由
+Repository 显式完成（见 ``DocumentRetentionRepository.finish``）。
 """
 
 from __future__ import annotations
@@ -16,7 +20,6 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Enum,
-    ForeignKey,
     Index,
     String,
     Text,
@@ -54,9 +57,9 @@ class DocumentRecord(TimestampMixin, Base):
 
     「业务粒度」= 一行代表「某个来源下面的一篇逻辑文档」。``id`` 是主键；
     ``source_id + external_id`` 是业务唯一键（幂等去重据此判断）；``source_id``
-    外键指向 sources.id。``processing_status`` 索引供 Worker 扫描待处理任务用，
-    ``published_at`` 索引供按时间的新闻范围查询用。``source`` relationship 只是
-    ORM 导航属性，不是额外数据库列。
+    是逻辑外键，指向 sources.id 的关系由业务层维护。``processing_status`` 索引供
+    Worker 扫描待处理任务用，``published_at`` 索引供按时间的新闻范围查询用。
+    ``source`` relationship 只是 ORM 导航属性，不是额外数据库列。
 
     一个关键设计：「派生副本」与「业务事实」分开。``index_revision`` 表示当前业务
     字段「应该写入」的 Qdrant 版本；indexed 系列字段记录「最近一次完整成功」写入
@@ -104,15 +107,13 @@ class DocumentRecord(TimestampMixin, Base):
     )
     knowledge_base_id: Mapped[UUID] = mapped_column(
         Uuid,
-        ForeignKey("knowledge_bases.id", ondelete="RESTRICT"),
         nullable=False,
-        comment="Document 实际归属的 KnowledgeBase。",
+        comment="Document 实际归属的 KnowledgeBase；业务层维护的逻辑外键，库上无约束。",
     )
     source_id: Mapped[UUID | None] = mapped_column(
         Uuid,
-        ForeignKey("sources.id", ondelete="RESTRICT"),
         nullable=True,
-        comment="可选的外部来源；人工或文件 Document 可以为空。",
+        comment="可选的外部来源；人工或文件 Document 可以为空。业务层维护的逻辑外键，库上无约束。",
     )
     external_id: Mapped[str | None] = mapped_column(
         String(512),
@@ -232,21 +233,18 @@ class DocumentRecord(TimestampMixin, Base):
         comment="最近一次索引失败的脱敏、限长错误说明，不保存密钥或完整正文。",
     )
     current_version_id: Mapped[UUID | None] = mapped_column(
-        Uuid, ForeignKey("document_versions.id", ondelete="SET NULL", use_alter=True,
-                         name="fk_documents_current_version_id"), nullable=True,
-        comment="当前正式可见的 DocumentVersion 身份。"
+        Uuid, nullable=True,
+        comment="当前正式可见的 DocumentVersion 身份；业务层维护的逻辑外键，库上无约束。"
     )
     latest_processing_id: Mapped[UUID | None] = mapped_column(
-        Uuid, ForeignKey("document_processing_records.id", ondelete="SET NULL", use_alter=True,
-                         name="fk_documents_latest_processing_id"), nullable=True,
-        comment="最近接收的候选记录；不会改变当前已采用正文。",
+        Uuid, nullable=True,
+        comment="最近接收的候选记录；不会改变当前已采用正文。业务层维护的逻辑外键，库上无约束。",
     )
     current_index_instance_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True,
         comment="当前正式读取的物理索引实例；重建不改写已采用历史。")
     draft_processing_id: Mapped[UUID | None] = mapped_column(
-        Uuid, ForeignKey("document_processing_records.id", ondelete="SET NULL", use_alter=True,
-                         name="fk_documents_draft_processing_id"), nullable=True,
-        comment="最新人工草稿；来源更新不会覆盖。",
+        Uuid, nullable=True,
+        comment="最新人工草稿；来源更新不会覆盖。业务层维护的逻辑外键，库上无约束。",
     )
     manual_review_required: Mapped[bool] = mapped_column(default=False, server_default="false", nullable=False,
         comment="主动复核、人工修正或拒绝后，新来源必须人工确认。")
@@ -259,10 +257,20 @@ class DocumentRecord(TimestampMixin, Base):
         comment="active、rejected 或 deleting；候选处理不会改变正式可见性。",
     )
 
-    # relationship 只描述 ORM 对象导航，不会新增数据库列；真正的数据库关联由
-    # source_id 外键承担。Pipeline 使用该属性前必须 eager-load，避免异步懒加载。
-    source: Mapped[SourceRecord | None] = relationship(back_populates="documents")
-    knowledge_base: Mapped[KnowledgeBaseRecord] = relationship()
+    # relationship 只描述 ORM 对象导航，不会新增数据库列。库上已经没有外键约束，join 条件
+    # 不能再靠 ``ForeignKey`` 推断（那会让 mapper 配置期抛 ``NoForeignKeysError``），因此
+    # 每个涉及逻辑外键的 relationship 都要显式写 ``primaryjoin`` 与 ``foreign_keys``。
+    # Pipeline 使用这些属性前必须 eager-load，避免异步懒加载。
+    source: Mapped[SourceRecord | None] = relationship(
+        back_populates="documents",
+        primaryjoin="DocumentRecord.source_id == SourceRecord.id",
+        foreign_keys="DocumentRecord.source_id",
+    )
+    knowledge_base: Mapped[KnowledgeBaseRecord] = relationship(
+        primaryjoin="DocumentRecord.knowledge_base_id == KnowledgeBaseRecord.id",
+        foreign_keys="DocumentRecord.knowledge_base_id",
+    )
     current_version: Mapped[DocumentVersion | None] = relationship(
+        primaryjoin="DocumentRecord.current_version_id == DocumentVersion.id",
         foreign_keys=[current_version_id], viewonly=True,
     )
