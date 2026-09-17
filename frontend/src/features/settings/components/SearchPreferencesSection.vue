@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { ListFilter, Layers3 } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseField from '@/shared/ui/BaseField.vue'
 import BaseSelect from '@/shared/ui/BaseSelect.vue'
 import {
@@ -15,23 +16,52 @@ import { usePreferences } from '../composables/usePreferences'
  * 设置中心 · 检索偏好分区。
  *
  * 数量参数从检索输入条的折叠区迁来：它们本来就是全局一份、影响之后所有检索的设置，
- * 埋在输入条 popover 里既不可发现、也不能持久。设置页里改动即生效并落在本浏览器。
+ * 埋在输入条 popover 里既不可发现、也不能持久。设置页里改动即生效并保存在账号上。
+ *
+ * 每次改动立即提交，没有保存按钮——两个下拉就是两个值，加一个显式的「保存」只会让人
+ * 忘记点。提交失败时把本地值退回改动前那一份并给出提示，避免界面显示一个没存进去的值。
  */
-const { preferences, resetSearchPreferences } = usePreferences()
+const { preferences, save } = usePreferences()
+
+const saveError = ref('')
+
+/** 提交一份新值；失败则回滚并提示。 */
+async function commit(patch: Partial<{ documentLimit: number; matchesPerDocument: number }>) {
+  const previous = {
+    documentLimit: preferences.documentLimit,
+    matchesPerDocument: preferences.matchesPerDocument,
+  }
+  Object.assign(preferences, patch)
+  saveError.value = ''
+  try {
+    await save({ ...preferences })
+  } catch {
+    Object.assign(preferences, previous)
+    saveError.value = '保存失败，请稍后重试。'
+  }
+}
 
 const documentLimit = computed({
   get: () => String(preferences.documentLimit),
   set: (value: string) => {
-    preferences.documentLimit = Number(value)
+    void commit({ documentLimit: Number(value) })
   },
 })
 
 const matchesPerDocument = computed({
   get: () => String(preferences.matchesPerDocument),
   set: (value: string) => {
-    preferences.matchesPerDocument = Number(value)
+    void commit({ matchesPerDocument: Number(value) })
   },
 })
+
+/** 两个数量参数一起恢复默认。提示词不跟进：清空提示词是 Agent 分区里一个显式动作。 */
+function resetSearchDefaults(): void {
+  void commit({
+    documentLimit: DEFAULT_PREFERENCES.documentLimit,
+    matchesPerDocument: DEFAULT_PREFERENCES.matchesPerDocument,
+  })
+}
 
 const hasCustomized = computed(
   () =>
@@ -44,8 +74,11 @@ const hasCustomized = computed(
   <section class="search-prefs" aria-labelledby="search-prefs-heading">
     <h2 id="search-prefs-heading" class="section-heading">检索偏好</h2>
     <p class="section-intro">
-      这两个参数是全局默认，影响之后每一次检索。更改立即生效，并自动保存在当前浏览器。
+      这两个参数是全局默认，影响之后每一次检索。更改立即生效，并保存在你的账号上，
+      换浏览器或换设备登录都保持一致。
     </p>
+
+    <BaseCallout v-if="saveError" class="save-error" tone="danger" :description="saveError" />
 
     <div class="field-group">
       <BaseField
@@ -78,12 +111,7 @@ const hasCustomized = computed(
     </div>
 
     <div class="section-footer">
-      <BaseButton
-        variant="ghost"
-        size="sm"
-        :disabled="!hasCustomized"
-        @click="resetSearchPreferences"
-      >
+      <BaseButton variant="ghost" size="sm" :disabled="!hasCustomized" @click="resetSearchDefaults">
         <template #icon><ListFilter :size="15" aria-hidden="true" /></template>
         恢复默认（10 篇 · 每篇 3 条）
       </BaseButton>

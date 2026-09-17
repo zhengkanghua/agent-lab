@@ -5,8 +5,9 @@ export { default as AgentPromptSection } from './components/AgentPromptSection.v
 export { usePreferences } from './composables/usePreferences'
 export {
   DEFAULT_PREFERENCES,
-  PREFERENCES_STORAGE_KEY,
+  fromRemotePreferences,
   sanitizePreferences,
+  toRemotePreferences,
   validateAgentSystemPrompt,
   type UserPreferences,
 } from './model/preferences'

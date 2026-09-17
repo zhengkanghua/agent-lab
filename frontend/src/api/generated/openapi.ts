@@ -58,6 +58,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/me/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 读取当前账号的个人偏好
+         * @description 返回当前登录账号的个人偏好。从未配置过的账号拿到的是契约默认值，而不是 404——「还没配过」是一个正常状态，不是错误。
+         */
+        get: operations["read_own_preferences_auth_me_preferences_get"];
+        /**
+         * 保存当前账号的个人偏好
+         * @description 整体覆盖当前登录账号的个人偏好，不存在则新建。设置页是「草稿 + 显式保存」的形态，提交的就是完整一份，所以这里不做部分更新。
+         *
+         *     系统提示词作为**新会话**的初始提示词，已经开始的会话不受影响。
+         */
+        put: operations["replace_own_preferences_auth_me_preferences_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/me": {
         parameters: {
             query?: never;
@@ -1194,11 +1220,6 @@ export interface components {
              * @description 要接着聊的会话 id，必须是当前账号自己的会话，否则返回 404；省略表示新建会话，新 id 通过 done 事件返回。
              */
             thread_id?: string | null;
-            /**
-             * System Prompt
-             * @description 覆盖本次运行的系统提示词；省略则使用服务端内置的默认提示词。只影响本次请求，不会被持久化。
-             */
-            system_prompt?: string | null;
             /** @description 本次提交的会话范围；省略沿用已保存选择，新会话默认所有启用知识库。 */
             scope?: components["schemas"]["KnowledgeBaseSelection"] | null;
         };
@@ -3260,6 +3281,57 @@ export interface components {
             is_superuser?: boolean | null;
         };
         /**
+         * UserPreferenceResponse
+         * @description 当前登录账号的个人偏好。
+         *
+         *     ``system_prompt`` 用 ``None`` 表达「未配置」而不是空串：「没配过」与「配了一份空的」
+         *     不是一回事，前者回落到服务端默认提示词，后者会让模型失去角色约束。
+         */
+        UserPreferenceResponse: {
+            /**
+             * System Prompt
+             * @description 自定义系统提示词；为 null 表示使用服务端内置默认提示词。
+             */
+            system_prompt: string | null;
+            /**
+             * Document Limit
+             * @description 检索默认返回的文档数。
+             */
+            document_limit: number;
+            /**
+             * Matches Per Document
+             * @description 每篇文档默认保留的片段数。
+             */
+            matches_per_document: number;
+        };
+        /**
+         * UserPreferenceUpdateRequest
+         * @description 整体覆盖当前登录账号的个人偏好。
+         *
+         *     整体覆盖而不是部分更新：设置页是「草稿 + 显式保存」的形态，保存动作提交的就是完整
+         *     一份，不存在「只改其中一个字段」的调用方；整体覆盖语义更简单，也不会出现两个客户端
+         *     各改一个字段互相覆盖的合并问题。
+         */
+        UserPreferenceUpdateRequest: {
+            /**
+             * System Prompt
+             * @description 自定义系统提示词；为 null 表示恢复使用服务端内置默认提示词。作为新会话的初始提示词，已开始的会话不受影响。
+             */
+            system_prompt?: string | null;
+            /**
+             * Document Limit
+             * @description 检索默认返回的文档数。
+             * @default 10
+             */
+            document_limit: number;
+            /**
+             * Matches Per Document
+             * @description 每篇文档默认保留的片段数。
+             * @default 3
+             */
+            matches_per_document: number;
+        };
+        /**
          * UserSessionRevocationResponse
          * @description 批量撤销目标账号数据库登录 Token 的安全统计。
          */
@@ -3721,6 +3793,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AccountErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountErrorResponse"];
+                };
+            };
+        };
+    };
+    read_own_preferences_auth_me_preferences_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserPreferenceResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountErrorResponse"];
+                };
+            };
+        };
+    };
+    replace_own_preferences_auth_me_preferences_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserPreferenceUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserPreferenceResponse"];
                 };
             };
             /** @description Unprocessable Entity */

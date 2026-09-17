@@ -10,21 +10,23 @@ import { useDefaultAgentPrompt } from '../composables/useDefaultAgentPrompt'
 import { usePreferences } from '../composables/usePreferences'
 
 /**
- * 设置中心 · Agent 偏好分区（仅超级用户）。
+ * 设置中心 · Agent 偏好分区。
  *
  * 自定义系统提示词从对话输入区的折叠面板迁来：它是「改变模型行为」的配置，不是一条
  * 消息——商业产品的同类能力（自定义指令）都在设置页里，可发现、可持久、可恢复默认。
- * 保存进本浏览器的偏好 store，之后每一轮对话（任何会话）发送时都会带上。
+ * 保存在账号上，**作为新会话的初始提示词**：会话建立时会被快照进那个会话，此后不变。
  *
- * 编辑走草稿 + 显式保存：提示词是大段文本，即时生效会让「改一半」的半成品被下一轮
- * 对话带出去。保存成功给一条 2.5 秒的内联确认——一个轻量动作不值得动用全局通知。
+ * 编辑走草稿 + 显式保存：提示词是大段文本，即时生效会让「改一半」的半成品被新会话带走。
+ * 保存成功给一条 2.5 秒的内联确认——一个轻量动作不值得动用全局通知。
  */
-const { preferences } = usePreferences()
+const { preferences, save: savePreferences } = usePreferences()
 const { defaultPrompt, load: loadDefaultPrompt } = useDefaultAgentPrompt()
 
 // 草稿归设置页持有，分区切换不会丢失，也不会提前改变实际使用的提示词。
 const draft = defineModel<string>({ required: true })
 const savedFlash = ref(false)
+const saveError = ref('')
+const saving = ref(false)
 let savedFlashTimer: ReturnType<typeof setTimeout> | undefined
 
 onMounted(() => {
@@ -38,10 +40,11 @@ const validationError = computed(() => validateAgentSystemPrompt(draft.value))
 /** 与已保存值不同才算改过：保存键是「提交差异」的开关，不是常亮装饰。 */
 const isDirty = computed(() => draft.value !== preferences.agentSystemPrompt)
 
-const canSave = computed(() => isDirty.value && validationError.value === null)
+const canSave = computed(() => isDirty.value && validationError.value === null && !saving.value)
 
 watch(draft, () => {
   savedFlash.value = false
+  saveError.value = ''
 })
 
 const statusLabel = computed(() =>
@@ -50,17 +53,27 @@ const statusLabel = computed(() =>
 
 const remainingCharacters = computed(() => MAX_SYSTEM_PROMPT_CHARACTERS - draft.value.length)
 
-function save(): void {
+async function save(): Promise<void> {
   if (!canSave.value) return
-  preferences.agentSystemPrompt = draft.value
-  savedFlash.value = true
-  clearTimeout(savedFlashTimer)
-  savedFlashTimer = setTimeout(() => {
-    savedFlash.value = false
-  }, 2500)
+  saving.value = true
+  saveError.value = ''
+  try {
+    // 写的是完整一份偏好：接口是整体覆盖，提示词与两个数量参数一起提交。
+    await savePreferences({ ...preferences, agentSystemPrompt: draft.value })
+    savedFlash.value = true
+    clearTimeout(savedFlashTimer)
+    savedFlashTimer = setTimeout(() => {
+      savedFlash.value = false
+    }, 2500)
+  } catch {
+    // 失败时不动草稿也不动已保存值：用户还能再点一次保存，不会丢掉刚写的内容。
+    saveError.value = '保存失败，请稍后重试。'
+  } finally {
+    saving.value = false
+  }
 }
 
-/** 草稿退回已保存值。与「清空并恢复默认」不同：它不落盘，只是不保存这次编辑。 */
+/** 草稿退回已保存值。与「清空并恢复默认」不同：它不提交，只是放弃这次编辑。 */
 function discardDraft(): void {
   draft.value = preferences.agentSystemPrompt
 }
@@ -71,9 +84,9 @@ function fillDefault(): void {
 }
 
 /** 清空草稿并立即保存：这是「回到默认行为」的显式动作，两步并一步不用再点保存。 */
-function clearPrompt(): void {
+async function clearPrompt(): Promise<void> {
   draft.value = ''
-  preferences.agentSystemPrompt = ''
+  await save()
 }
 </script>
 
@@ -81,8 +94,9 @@ function clearPrompt(): void {
   <section class="agent-prefs" aria-labelledby="agent-prefs-heading">
     <h2 id="agent-prefs-heading" class="section-heading">Agent 偏好</h2>
     <p class="section-intro">
-      自定义系统提示词决定 Agent 的行为方式，之后每一轮对话都会带上它。只保存在当前浏览器，
-      不会被同步；留空表示使用服务端内置的默认提示词。
+      自定义系统提示词决定 Agent 的行为方式。它作为新会话的初始提示词，会话建立时定下，
+      已开始的会话不受影响。保存在你的账号上，换设备登录也一致；留空表示使用服务端内置的
+      默认提示词。
     </p>
 
     <div class="editor-card">
@@ -94,10 +108,11 @@ function clearPrompt(): void {
         <Transition name="flash">
           <span v-if="savedFlash" class="saved-note" role="status">
             <Check :size="13" aria-hidden="true" />
-            已保存，下一轮对话生效
+            已保存，新会话生效
           </span>
         </Transition>
         <span v-if="isDirty" class="unsaved-note" role="status">尚未保存</span>
+        <span v-if="saveError" class="save-error" role="alert">{{ saveError }}</span>
       </div>
 
       <BaseField
@@ -188,6 +203,11 @@ function clearPrompt(): void {
 
 .unsaved-note {
   color: var(--warning);
+  font-size: var(--fs-xs);
+}
+
+.save-error {
+  color: var(--danger);
   font-size: var(--fs-xs);
 }
 

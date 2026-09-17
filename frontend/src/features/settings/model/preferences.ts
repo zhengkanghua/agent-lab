@@ -8,14 +8,15 @@ import {
   normalizeMatchesPerDocument,
   normalizeResultLimit,
 } from '@/api/document-search'
+import type { RemotePreferences } from '@/api/preferences'
 
 /**
- * 用户偏好的纯模型：类型、默认值、清洗与校验。不持有任何响应式状态、不碰浏览器 API，
- * 持久化在 `../composables/usePreferences.ts`。
+ * 用户偏好的纯模型：类型、默认值、清洗与校验。不持有任何响应式状态、不碰网络，
+ * 读写与加载态在 `../composables/usePreferences.ts`。
  *
- * 偏好只存在本浏览器（localStorage），不进后端：数量参数与系统提示词本来就随每次请求
- * 发送，后端不需要知道「用户偏好的默认值」。因此这里没有任何密钥或凭据——密码与 Token
- * 仍然只存在于 HttpOnly Cookie，绝不入 localStorage（见 frontend/README.md 的登录边界）。
+ * 偏好归属于账号、存在后端（`user_preferences` 表），换浏览器或清站点数据都不再丢失。
+ * 这里仍然没有任何密钥或凭据——密码与 Token 只存在于 HttpOnly Cookie，绝不落到前端存储
+ * （见 frontend/README.md 的登录边界）。
  */
 
 export interface UserPreferences {
@@ -33,9 +34,6 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   agentSystemPrompt: '',
 }
 
-/** localStorage 键名。带版本号：未来字段语义变化时整体作废重读，不做跨版本迁移。 */
-export const PREFERENCES_STORAGE_KEY = 'signaldesk.preferences.v1'
-
 export function validateAgentSystemPrompt(prompt: string): string | null {
   if (prompt.length > MAX_SYSTEM_PROMPT_CHARACTERS) {
     return `系统提示词不能超过 ${MAX_SYSTEM_PROMPT_CHARACTERS} 个字符。`
@@ -44,9 +42,11 @@ export function validateAgentSystemPrompt(prompt: string): string | null {
 }
 
 /**
- * 把任意来源（localStorage JSON、旧版本残留）清洗成安全值：
- * 缺失/非法字段落回默认，数量参数按契约边界归一，提示词超长截断到上界。
- * 任何异常输入都不能让设置页打不开——偏好是体验数据，不是事实数据。
+ * 把任意来源清洗成安全值：缺失/非法字段落回默认，数量参数按契约边界归一，
+ * 提示词超长截断到上界。
+ *
+ * 接口返回值和「读接口失败时的兜底」两条路径都走它——任何异常输入都不能让设置页打不开，
+ * 偏好是体验数据，不是事实数据。
  */
 export function sanitizePreferences(input: unknown): UserPreferences {
   if (typeof input !== 'object' || input === null) {
@@ -68,6 +68,25 @@ export function sanitizePreferences(input: unknown): UserPreferences {
       : DEFAULT_PREFERENCES.agentSystemPrompt
 
   return { documentLimit, matchesPerDocument, agentSystemPrompt }
+}
+
+/** 把接口返回的那份（字段名与前端不同）转成前端偏好。 */
+export function fromRemotePreferences(remote: RemotePreferences): UserPreferences {
+  return sanitizePreferences({
+    documentLimit: remote.documentLimit,
+    matchesPerDocument: remote.matchesPerDocument,
+    // 后端的 null 表示「未配置」，在界面上就是空串。
+    agentSystemPrompt: remote.systemPrompt,
+  })
+}
+
+/** 把前端偏好转成接口要提交的形状。 */
+export function toRemotePreferences(preferences: UserPreferences): RemotePreferences {
+  return {
+    systemPrompt: preferences.agentSystemPrompt,
+    documentLimit: preferences.documentLimit,
+    matchesPerDocument: preferences.matchesPerDocument,
+  }
 }
 
 /**

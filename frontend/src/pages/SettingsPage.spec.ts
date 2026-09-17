@@ -3,14 +3,26 @@ import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
-  // 设置页会经 useDefaultAgentPrompt 拉默认提示词；检索分区不发任何请求。
+  // 设置页会经 useDefaultAgentPrompt 拉默认提示词；还会读写个人偏好。
   fetchAgentDefaultPrompt: vi.fn(),
+  fetchPreferences: vi.fn(),
+  savePreferences: vi.fn(),
 }))
 
 vi.mock('@/api/agent-chat', () => ({
   fetchAgentDefaultPrompt: api.fetchAgentDefaultPrompt,
   MAX_SYSTEM_PROMPT_CHARACTERS: 4000,
 }))
+
+vi.mock('@/api/preferences', () => ({
+  fetchPreferences: api.fetchPreferences,
+  savePreferences: api.savePreferences,
+}))
+
+/** 后端那一份的形状：字段名与前端不同，默认是「未配置 + 默认数量参数」。 */
+function remote(overrides: Record<string, unknown> = {}) {
+  return { systemPrompt: '', documentLimit: 10, matchesPerDocument: 3, ...overrides }
+}
 
 const session = vi.hoisted(() => ({
   user: { value: null as { email: string; is_superuser: boolean } | null },
@@ -23,7 +35,6 @@ vi.mock('@/features/auth/auth-session', () => ({
 
 import SettingsPage from './SettingsPage.vue'
 import { usePreferences } from '@/features/settings'
-import { DEFAULT_PREFERENCES } from '@/features/settings'
 
 function makeRouter(): Router {
   return createRouter({
@@ -55,8 +66,11 @@ async function mountAt(path: string) {
 
 describe('SettingsPage', () => {
   beforeEach(() => {
-    localStorage.clear()
-    Object.assign(usePreferences().preferences, DEFAULT_PREFERENCES)
+    usePreferences().resetForTests()
+    api.fetchPreferences.mockReset()
+    api.fetchPreferences.mockResolvedValue(remote())
+    api.savePreferences.mockReset()
+    api.savePreferences.mockImplementation((next: unknown) => Promise.resolve(next))
     api.fetchAgentDefaultPrompt.mockReset()
     api.fetchAgentDefaultPrompt.mockResolvedValue('你是新闻检索助手。')
     session.user.value = { email: 'admin@example.com', is_superuser: true }
@@ -102,6 +116,12 @@ describe('SettingsPage', () => {
     const { preferences } = usePreferences()
     expect(preferences.documentLimit).toBe(20)
     expect(preferences.matchesPerDocument).toBe(1)
+    // 改动即保存：两次改动各发一次请求，不是等某个「保存」按钮。
+    expect(api.savePreferences).toHaveBeenCalledTimes(2)
+    expect(api.savePreferences.mock.calls[1]![0]).toMatchObject({
+      documentLimit: 20,
+      matchesPerDocument: 1,
+    })
     wrapper.unmount()
   })
 
@@ -116,21 +136,29 @@ describe('SettingsPage', () => {
     expect(wrapper.get('.status-badge').text()).toContain('使用服务端默认提示词')
 
     await wrapper.get('.editor-actions button[type="button"]').trigger('click')
+    await flushPromises()
 
+    expect(api.savePreferences).toHaveBeenCalledWith(
+      expect.objectContaining({ systemPrompt: '你是财经记者。' }),
+      { notifyUnauthorized: false },
+    )
     expect(usePreferences().preferences.agentSystemPrompt).toBe('你是财经记者。')
     expect(wrapper.get('.status-badge').text()).toContain('已启用自定义提示词')
     expect(wrapper.get('.saved-note').text()).toContain('已保存')
     wrapper.unmount()
   })
 
-  it('普通用户看不到 Agent 偏好分区，导航里也没有它', async () => {
+  it('普通账号也能看到 Agent 偏好分区——它随 Agent 对话一起放开', async () => {
+    // 原先这里断言的是「普通用户被拉回账号分区」。那条行为随 ADR 0030 作废：
+    // Agent 对话对所有登录账号开放，它的偏好就不再是超级用户专有。
     session.user.value = { email: 'user@example.com', is_superuser: false }
     const { wrapper } = await mountAt('/settings/agent')
 
-    // 页面兜底把地址拉回账号分区。
-    expect(wrapper.find('#account-heading').exists()).toBe(true)
-    expect(wrapper.find('#agent-prefs-heading').exists()).toBe(false)
-    expect(wrapper.text()).not.toContain('Agent 偏好')
+    expect(wrapper.find('#agent-prefs-heading').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Agent 偏好')
+    // 三个分区都在导航里。
+    expect(wrapper.text()).toContain('账号安全')
+    expect(wrapper.text()).toContain('检索偏好')
     wrapper.unmount()
   })
 

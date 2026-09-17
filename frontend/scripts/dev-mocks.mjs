@@ -51,6 +51,14 @@ const REGULAR_USER = {
    看的人会以为删除没生效。进程内保存，重启 mock 即还原。 */
 const ACCOUNTS = [ENV_ADMIN, REGULAR_USER].map((user) => ({ ...user }))
 
+/* 当前账号的个人偏好。字段名与后端一致（下划线），与账号目录同一个理由：
+   保存后要能读回来，否则本地看起来像「保存没生效」。 */
+const PREFERENCES = {
+  system_prompt: null,
+  document_limit: 10,
+  matches_per_document: 3,
+}
+
 const BEST_MATCH = {
   chunk_id: '10000000-0000-4000-8000-000000000001',
   score: 0.91,
@@ -266,6 +274,12 @@ export async function matchApi(url, authed, options = {}) {
   if (suffix === '/auth/me') return authed ? json(SUPERUSER) : unauth
   if (suffix === '/auth/login') return { status: 204, contentType: 'text/plain', body: '' }
   if (suffix === '/auth/logout') return { status: 204, contentType: 'text/plain', body: '' }
+  // 个人偏好：进程内可变，保存后刷新页面能读到刚写的那份（否则本地看什么都像没保存成功）。
+  if (suffix === '/auth/me/preferences') {
+    if (!authed) return unauth
+    if (method === 'PUT') Object.assign(PREFERENCES, body ?? {})
+    return json({ ...PREFERENCES })
+  }
   if (!authed) return unauth
   const task = matchTaskApi(suffix, requestUrl.searchParams, method, body, options.requestKey ?? '')
   if (task) return task

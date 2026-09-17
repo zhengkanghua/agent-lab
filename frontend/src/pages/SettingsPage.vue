@@ -15,24 +15,56 @@ import {
 } from '@/features/settings'
 
 /**
- * 设置中心：账号安全、检索偏好、Agent 偏好（超管）都在这里。
+ * 设置中心：账号安全、检索偏好、Agent 偏好都在这里。
  *
  * 桌面端是外壳内容区上的居中浮层（2026-09 重设计 P4）：路由与深链不变，
  * /settings/search 等地址仍然直达；侧栏在浮层之外保持可点，导航离开就是出口。
  * 窄屏（≤720px）回退整页形态——没有遮罩与 Esc，dialog 语义一并撤掉。
- * 分区由路由参数决定，分区组件按需渲染。Agent 偏好分区只对超级用户有意义。
+ * 分区由路由参数决定，分区组件按需渲染。三个分区都对所有登录账号开放。
  */
 const route = useRoute()
 const router = useRouter()
 
 const { loggingOut, logoutError, logout } = useLogout()
 
-const isSuperuser = computed(() => authSession.user.value?.is_superuser === true)
-const { preferences } = usePreferences()
+const { preferences, load: loadPreferences } = usePreferences()
 const agentPromptDraft = ref(preferences.agentSystemPrompt)
+
+/**
+ * 用户是否动过草稿。
+ *
+ * 用它而不是「草稿 != 已保存值」来判断要不要用服务端那份覆盖草稿：刚进页面时草稿是默认值、
+ * 服务端那份还没加载回来，两者本来就不等——那个不等不是「用户在编辑」。按值比较会让加载
+ * 完成后不敢覆盖，于是服务端存的提示词永远显示不出来。
+ */
+const draftTouched = ref(false)
 const hasUnsavedPrompt = computed(
-  () => isSuperuser.value && agentPromptDraft.value !== preferences.agentSystemPrompt,
+  () => draftTouched.value && agentPromptDraft.value !== preferences.agentSystemPrompt,
 )
+
+/** 用户编辑草稿。与程序化同步分开，前者标记「已动过」，后者不标记。 */
+function onDraftEdit(value: string): void {
+  draftTouched.value = true
+  agentPromptDraft.value = value
+}
+
+// 服务端那份回来后同步进草稿，但只在用户还没动过它时。保存成功后也走这里，
+// 把草稿对齐到服务端归一化过的那份。
+watch(
+  () => preferences.agentSystemPrompt,
+  (saved) => {
+    if (!draftTouched.value) agentPromptDraft.value = saved
+  },
+)
+
+// 读一次账号偏好。读失败由 store 落回默认值，不阻塞页面——偏好是体验数据，
+// 拿它换掉整个设置页是不划算的（见 usePreferences 的说明）。
+//
+// 外壳（AppShell）已经为三个页面读过一次，这里再调通常是命中缓存、不发请求；留着它是因为
+// 设置页是唯一会**展示**偏好值的地方，直接依赖外壳的加载时序会让「外壳改了、这里静默失效」。
+onMounted(() => {
+  void loadPreferences(authSession.user.value?.id)
+})
 
 function confirmDiscardPrompt(): boolean {
   return !hasUnsavedPrompt.value || window.confirm('提示词尚未保存，确定离开并放弃修改？')
@@ -68,17 +100,6 @@ watch(
   (value) => {
     if (route.params.section !== value) {
       void router.replace({ name: 'settings', params: { section: value } })
-    }
-  },
-  { immediate: true },
-)
-
-// 普通用户手输 /settings/agent：守卫已拦一层，这里兜底（守卫改动落后于组件渲染的窗口）。
-watch(
-  () => [section.value, isSuperuser.value] as const,
-  ([current, superuser]) => {
-    if (current === 'agent' && !superuser) {
-      void router.replace({ name: 'settings', params: { section: 'account' } })
     }
   },
   { immediate: true },
@@ -184,14 +205,15 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
           </header>
 
           <div class="settings-layout">
-            <SettingsNav class="settings-rail" :section="section" :is-superuser="isSuperuser" />
+            <SettingsNav class="settings-rail" :section="section" />
 
             <div class="settings-content">
               <AccountSection v-if="section === 'account'" :user="authSession.user.value" />
               <SearchPreferencesSection v-else-if="section === 'search'" />
               <AgentPromptSection
-                v-else-if="section === 'agent' && isSuperuser"
-                v-model="agentPromptDraft"
+                v-else-if="section === 'agent'"
+                :model-value="agentPromptDraft"
+                @update:model-value="onDraftEdit"
               />
             </div>
           </div>
