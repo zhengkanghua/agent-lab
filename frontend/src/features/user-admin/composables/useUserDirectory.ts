@@ -1,6 +1,7 @@
 import { computed, onScopeDispose, ref } from 'vue'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import {
+  deleteUser,
   listUsers,
   resetUserPassword,
   revokeUserSessions,
@@ -21,6 +22,8 @@ export interface UseUserDirectoryOptions {
   /**
    * 当前账号把自己停用或降级之后执行。刷新会话与跳转都归页面：
    * 它们涉及 auth 与 router，而 feature 之间不互相 import、也不 import 布局与页面。
+   *
+   * 删除自己不在本回调的范围内——那条路在 `deleteAccount` 里就被挡掉了，见那里的说明。
    */
   onSelfDowngraded: () => Promise<void>
 }
@@ -166,6 +169,34 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
     })
   }
 
+  const deleteMutation = useMutation({
+    mutationFn: (userId: string) => deleteUser(userId),
+  })
+
+  /**
+   * 删除一个账号。保底管理员与当前登录账号都不允许删。
+   *
+   * 当前账号自己不能删，不是因为后端拦得住（后端只挡最后一个活跃超管），而是这个页面
+   * 会立刻失去意义：删完自己的会话就没了，接下来要么跳登录页要么跳检索页，让管理员
+   * 先删别人、再让别人来删自己更顺。要删自己得换一个账号操作。
+   */
+  async function deleteAccount(user: UserAdminDto): Promise<void> {
+    if (isBusy(user.id)) return
+    if (user.is_environment_admin || user.id === options.currentUserId()) return
+    if (!window.confirm(`删除账号 ${user.email}？该账号的会话与登录状态会一并清除，且无法恢复。`))
+      return
+
+    await runRowAction({
+      userId: user.id,
+      fallback: '账号删除失败，请稍后重试。',
+      run: async () => {
+        await deleteMutation.mutateAsync(user.id)
+        removeUser(user.id)
+        feedback.value = `已删除账号 ${user.email}。`
+      },
+    })
+  }
+
   /**
    * 撤销一个账号的全部会话。
    */
@@ -220,6 +251,15 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
     feedback.value = ''
   }
 
+  /** 删除成功后把该行摘掉。不重新拉列表：这一行已经不存在，重拉只会多一次往返。 */
+  function removeUser(userId: string): void {
+    queryClient.setQueryData(userAdminKeys.users(), (oldData: UserAdminDto[] | undefined) =>
+      (oldData ?? []).filter((user) => user.id !== userId),
+    )
+    // 被删那一行可能正展开着密码重置表单，收起它，否则残留状态会跟到下一行。
+    if (resetUserId.value === userId) cancelPasswordReset()
+  }
+
   function replaceUser(updated: UserAdminDto): void {
     queryClient.setQueryData(userAdminKeys.users(), (oldData: UserAdminDto[] | undefined) => {
       const existing = oldData ?? []
@@ -269,6 +309,7 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
     cancelPasswordReset,
     submitPasswordReset,
     revokeSessions,
+    deleteAccount,
     acceptCreatedUser,
     clearFeedback,
     isBusy,

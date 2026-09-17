@@ -36,6 +36,7 @@ const emit = defineEmits<{
   'submit-reset': [user: UserAdminDto]
   'cancel-reset': []
   'revoke-sessions': [user: UserAdminDto]
+  'delete-account': [user: UserAdminDto]
 }>()
 
 /** 只给展开的那一行传字符串，其余传 null——行组件据此判断要不要渲染表单。 */
@@ -115,6 +116,7 @@ function resetPasswordFor(user: UserAdminDto): string | null {
         @submit-reset="emit('submit-reset', user)"
         @cancel-reset="emit('cancel-reset')"
         @revoke-sessions="emit('revoke-sessions', user)"
+        @delete-account="emit('delete-account', user)"
       />
     </TransitionGroup>
   </section>

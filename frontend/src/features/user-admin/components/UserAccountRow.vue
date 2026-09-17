@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { KeyRound, RefreshCw, ShieldCheck, UserRound } from '@lucide/vue'
+import { KeyRound, RefreshCw, ShieldCheck, Trash2, UserRound } from '@lucide/vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import type { UserAdminDto } from '@/api/user-admin'
 import { formatCreatedAt } from '../model/user-account'
@@ -33,11 +33,22 @@ const emit = defineEmits<{
   'submit-reset': []
   'cancel-reset': []
   'revoke-sessions': []
+  'delete-account': []
 }>()
 
 const managed = computed(() => props.user.is_environment_admin)
 const isCurrentUser = computed(() => props.user.id === props.currentUserId)
 const resetOpen = computed(() => props.resetPassword !== null)
+
+/* 自己那一行的删除键禁用：删完自己这个页面就没了，让管理员先删别人更顺。
+   保底管理员另有 managed 挡着，两件事分开判断，因为禁用理由不同、提示也不同。 */
+const deleteBlocked = computed(() => managed.value || isCurrentUser.value)
+
+const deleteTitle = computed(() => {
+  if (managed.value) return '请修改部署 Secret 后重启服务'
+  if (isCurrentUser.value) return '不能删除当前登录账号，请换一个账号操作'
+  return '删除账号'
+})
 
 /* 两个开关各写一个转发函数，不合成「传事件名进来」的那一个：
    defineEmits 的重载签名把事件名与载荷绑在一起，传进来的联合类型两个重载都不匹配。 */
@@ -152,6 +163,17 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
       >
         <RefreshCw :size="15" aria-hidden="true" />
         撤销会话
+      </button>
+      <button
+        type="button"
+        class="action-danger"
+        :disabled="deleteBlocked || busy"
+        :title="deleteTitle"
+        :data-testid="`delete-${user.id}`"
+        @click="emit('delete-account')"
+      >
+        <Trash2 :size="15" aria-hidden="true" />
+        删除账号
       </button>
     </div>
 

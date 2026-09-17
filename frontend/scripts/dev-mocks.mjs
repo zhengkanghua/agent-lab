@@ -47,6 +47,10 @@ const REGULAR_USER = {
   updated_at: '2026-08-18T00:00:00Z',
 }
 
+/* 账号目录的可变副本。删除要真的从列表里消失，否则删完刷新一下又回来了，
+   看的人会以为删除没生效。进程内保存，重启 mock 即还原。 */
+const ACCOUNTS = [ENV_ADMIN, REGULAR_USER].map((user) => ({ ...user }))
+
 const BEST_MATCH = {
   chunk_id: '10000000-0000-4000-8000-000000000001',
   score: 0.91,
@@ -271,7 +275,36 @@ export async function matchApi(url, authed, options = {}) {
         (item) => requestUrl.searchParams.get('include_inactive') === 'true' || item.is_active,
       ),
     )
-  if (suffix === '/admin/users') return json([ENV_ADMIN, REGULAR_USER])
+  if (suffix === '/admin/users') return json(ACCOUNTS)
+  const accountId = /^\/admin\/users\/([^/]+)$/.exec(suffix)?.[1]
+  if (accountId && method === 'DELETE') {
+    const index = ACCOUNTS.findIndex((user) => user.id === accountId)
+    if (index < 0)
+      return json({ code: 'user_not_found', detail: '账号不存在。', retryable: false }, 404)
+    // 与后端的保护规则一致：保底管理员和最后一个活跃超管都删不了。
+    // 本地调试若「删得掉」而线上被拒，会让人以为后端坏了。
+    if (ACCOUNTS[index].is_environment_admin)
+      return json(
+        {
+          code: 'environment_admin_protected',
+          detail: '环境托管的管理员账号必须通过服务端密钥修改。',
+          retryable: false,
+        },
+        409,
+      )
+    const activeSuperusers = ACCOUNTS.filter((user) => user.is_active && user.is_superuser)
+    if (ACCOUNTS[index].is_active && ACCOUNTS[index].is_superuser && activeSuperusers.length <= 1)
+      return json(
+        {
+          code: 'last_superuser_protected',
+          detail: '最后一个活跃超级管理员不能被删除。',
+          retryable: false,
+        },
+        409,
+      )
+    ACCOUNTS.splice(index, 1)
+    return { status: 204, contentType: 'text/plain', body: '' }
+  }
   if (suffix === '/sources') return json(SOURCES)
   if (suffix === '/document-search') {
     const scope = resolveScope(body.scope ?? { mode: 'selected', knowledge_base_ids: [NEWS_ID] })

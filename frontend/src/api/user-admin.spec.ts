@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createUser,
+  deleteUser,
   listUsers,
   resetUserPassword,
   revokeUserSessions,
@@ -77,6 +78,38 @@ describe('user admin API', () => {
       JSON.stringify({ password: 'private-reset-password' }),
     )
     expect(fetchMock.mock.calls[3]?.[1]).toEqual(expect.objectContaining({ method: 'DELETE' }))
+  })
+
+  it('deletes an account through a 204 with no body', async () => {
+    // 204 是空体。这条用例真正防的是「把删账号接到 requestJson 上」——那条路径会把空响应
+    // 当成 response_invalid 抛出来，删除明明成功却报错，而且只在真跑接口时才发现。
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(deleteUser(user.id)).resolves.toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/admin/users/${user.id}`,
+      expect.objectContaining({ method: 'DELETE', credentials: 'same-origin' }),
+    )
+  })
+
+  it('surfaces a stable code when deleting is refused', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          code: 'last_superuser_protected',
+          detail: '最后一个活跃超级管理员不能被删除。',
+          retryable: false,
+        },
+        409,
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(deleteUser(user.id)).rejects.toMatchObject({
+      code: 'last_superuser_protected',
+      status: 409,
+    })
   })
 
   it('rejects malformed users and revocation counts before rendering', async () => {

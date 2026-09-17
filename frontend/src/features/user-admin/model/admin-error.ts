@@ -16,8 +16,8 @@ import { resolveErrorCopy } from '@/api/error-copy'
 const MESSAGE_BY_CODE: Readonly<Partial<Record<string, string>>> = {
   user_already_exists: '该邮箱已经存在账号。',
   invalid_password: '密码不符合安全要求：需要 12 到 128 个字符，且不能与账号邮箱相同。',
-  environment_admin_protected: '保底管理员由部署 Secret 托管，不能在网页中修改。',
-  last_superuser_protected: '不能停用或降级最后一个启用的超级用户。',
+  environment_admin_protected: '保底管理员由部署 Secret 托管，不能在网页中修改或删除。',
+  last_superuser_protected: '不能停用、降级或删除最后一个启用的超级用户。',
   user_not_found: '该账号已不存在，请刷新列表。',
   permission_denied: '当前账号没有管理权限。',
   invalid_request: '提交内容不符合账号管理要求，请检查后重试。',

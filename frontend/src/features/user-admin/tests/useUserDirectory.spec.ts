@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
   resetUserPassword: vi.fn(),
   revokeUserSessions: vi.fn(),
   createUser: vi.fn(),
+  deleteUser: vi.fn(),
 }))
 
 vi.mock('../../../api/user-admin', () => api)
@@ -65,6 +66,7 @@ describe('useUserDirectory', () => {
     api.updateUser.mockReset()
     api.resetUserPassword.mockReset()
     api.revokeUserSessions.mockReset()
+    api.deleteUser.mockReset()
     api.listUsers.mockResolvedValue([reader, environmentAdmin])
   })
 
@@ -309,6 +311,69 @@ describe('useUserDirectory', () => {
     api.revokeUserSessions.mockResolvedValueOnce({ revoked_sessions: 3 })
     await directory.revokeSessions(reader)
     expect(directory.feedback.value).toContain('3')
+    wrapper.unmount()
+  })
+
+  it('删除账号要先确认，拒绝就什么都不做', async () => {
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    const { wrapper, directory } = mountHarness()
+    await directory.load()
+
+    await directory.deleteAccount(reader)
+
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(api.deleteUser).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('删除成功后把该行摘掉并给出反馈', async () => {
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true),
+    )
+    api.deleteUser.mockResolvedValue(undefined)
+    const { wrapper, directory } = mountHarness()
+    await directory.load()
+    expect(directory.users.value).toHaveLength(2)
+
+    await directory.deleteAccount(reader)
+
+    expect(api.deleteUser).toHaveBeenCalledWith(reader.id)
+    expect(directory.users.value.map((user) => user.id)).toEqual([environmentAdmin.id])
+    expect(directory.feedback.value).toContain(reader.email)
+    wrapper.unmount()
+  })
+
+  it('删除失败时错误落在该行，列表不动', async () => {
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true),
+    )
+    api.deleteUser.mockRejectedValue(
+      new ApiError({ message: 'nope', code: 'last_superuser_protected', status: 409 }),
+    )
+    const { wrapper, directory } = mountHarness()
+    await directory.load()
+
+    await directory.deleteAccount(reader)
+
+    expect(directory.users.value).toHaveLength(2)
+    expect(directory.rowErrors.value[reader.id]).toContain('超级用户')
+    wrapper.unmount()
+  })
+
+  it('保底管理员与当前账号不能删，连确认都不弹', async () => {
+    const confirm = vi.fn(() => true)
+    vi.stubGlobal('confirm', confirm)
+    const { wrapper, directory } = mountHarness(environmentAdmin.id)
+    await directory.load()
+
+    await directory.deleteAccount(environmentAdmin)
+    await directory.deleteAccount({ ...reader, id: environmentAdmin.id })
+
+    expect(confirm).not.toHaveBeenCalled()
+    expect(api.deleteUser).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

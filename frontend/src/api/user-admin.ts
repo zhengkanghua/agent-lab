@@ -1,5 +1,5 @@
 import type { components } from './generated/openapi'
-import { ApiError, requestJson } from './client'
+import { ApiError, requestJson, requestVoid } from './client'
 import { hasText, isNonNegativeInteger, isRecord, isUuid } from './json-guards'
 
 export type UserAdminDto = components['schemas']['UserAdminResponse']
@@ -73,6 +73,17 @@ export async function resetUserPassword({
     method: 'POST',
     body: JSON.stringify(payload),
   })
+}
+
+/**
+ * 删除一个账号。
+ *
+ * 后端返回 204 空体，所以走 `requestVoid` 而不是 `requestJson`——后者会把空响应
+ * 当成 `response_invalid` 抛出来。删除会连带清掉该账号的会话归属与登录 Token，
+ * 确认文案由调用方负责。
+ */
+export async function deleteUser(userId: string): Promise<void> {
+  await requestVoid(`/admin/users/${encodeURIComponent(userId)}`, { method: 'DELETE' })
 }
 
 export async function revokeUserSessions(userId: string): Promise<UserSessionRevocationDto> {

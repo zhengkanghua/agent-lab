@@ -88,7 +88,12 @@ describe('UserDirectoryTable', () => {
     const first = wrapper.get(`[data-user-id="${FIRST_ID}"]`)
     const second = wrapper.get(`[data-user-id="${SECOND_ID}"]`)
 
-    expect(first.find('[disabled]').exists()).toBe(false)
+    // 空闲那一行里，除「删除账号」外都不该被禁用。删除键另有自己的禁用条件（当前账号、
+    // 保底管理员），不随在途状态走，所以从这条断言里排掉它——它由下面那条用例单独覆盖。
+    const controls = first
+      .findAll('input, button')
+      .filter((control) => !control.attributes('data-testid')?.startsWith('delete-'))
+    expect(controls.every((control) => control.attributes('disabled') === undefined)).toBe(true)
     expect(first.get('[role="alert"]').text()).toBe('该账号是最后一个超级用户。')
     for (const control of second.findAll('input, button')) {
       expect(control.attributes('disabled')).toBeDefined()
@@ -127,6 +132,7 @@ describe('UserDirectoryTable', () => {
     await wrapper.get(`[data-testid="superuser-${SECOND_ID}"]`).setValue(true)
     await wrapper.get(`[data-testid="reset-${SECOND_ID}"]`).trigger('click')
     await wrapper.get(`[data-testid="sessions-${SECOND_ID}"]`).trigger('click')
+    await wrapper.get(`[data-testid="delete-${SECOND_ID}"]`).trigger('click')
 
     expect(wrapper.emitted('set-active')?.[0]?.[0]).toMatchObject({ id: SECOND_ID })
     expect(wrapper.emitted('set-active')?.[0]?.[1]).toBe(false)
@@ -136,6 +142,22 @@ describe('UserDirectoryTable', () => {
     ])
     expect(wrapper.emitted('open-reset')?.[0]?.[0]).toMatchObject({ id: SECOND_ID })
     expect(wrapper.emitted('revoke-sessions')?.[0]?.[0]).toMatchObject({ id: SECOND_ID })
+    expect(wrapper.emitted('delete-account')?.[0]?.[0]).toMatchObject({ id: SECOND_ID })
+  })
+
+  it('保底管理员与当前账号的删除键禁用，其余行可用', () => {
+    // currentUserId 是 FIRST_ID，所以第一行（当前账号）禁用、第二行可用。
+    const wrapper = mountTable()
+    expect(wrapper.get(`[data-testid="delete-${FIRST_ID}"]`).attributes('disabled')).toBeDefined()
+    expect(
+      wrapper.get(`[data-testid="delete-${SECOND_ID}"]`).attributes('disabled'),
+    ).toBeUndefined()
+
+    const managed = mountTable({
+      users: [user(FIRST_ID, { is_environment_admin: true })],
+      currentUserId: undefined,
+    })
+    expect(managed.get(`[data-testid="delete-${FIRST_ID}"]`).attributes('disabled')).toBeDefined()
   })
 
   it('刷新键发出 refresh', async () => {

@@ -101,6 +101,13 @@ class FakeAdminService:
         self.calls.append(("password", (user_id, len(request.password))))
         return self.user
 
+    async def delete_user(self, user_id: UUID) -> None:
+        """记录删账号，或抛出预置领域错误。"""
+
+        if self.error is not None:
+            raise self.error
+        self.calls.append(("delete", user_id))
+
     async def revoke_sessions(self, user_id: UUID) -> int:
         """记录会话撤销并返回固定删除数。"""
 
@@ -195,6 +202,54 @@ def test_user_admin_http_commands_use_typed_bodies_and_safe_responses() -> None:
         ("password", (service.user_id, 24)),
         ("sessions", service.user_id),
     ]
+
+
+def test_delete_account_is_superuser_only_and_returns_no_body() -> None:
+    """删账号挂在鉴权之后，成功时是 204 空响应。
+
+    两件只有 HTTP 层才成立的事：未登录时 Service 根本不被调用；成功时没有任何响应体
+    （前端按 204 读空体，多一个 body 反而要额外处理）。
+    """
+
+    anonymous = FakeAdminService()
+    anonymous_response = run(
+        request(
+            build_app(anonymous, authenticated=False),
+            "DELETE",
+            f"/admin/users/{anonymous.user_id}",
+        )
+    )
+    assert anonymous_response.status_code == 401
+    assert anonymous.calls == []
+
+    service = FakeAdminService()
+    response = run(
+        request(build_app(service, authenticated=True), "DELETE", f"/admin/users/{service.user_id}")
+    )
+    assert response.status_code == 204
+    assert response.content == b""
+    assert service.calls == [("delete", service.user_id)]
+
+
+def test_delete_account_maps_domain_error_to_stable_response() -> None:
+    """删账号的领域错误按稳定 code 返回，不泄露内部状态。"""
+
+    service = FakeAdminService()
+    service.error = UserAdminDomainError(
+        "last_superuser_protected",
+        "最后一个活跃超级管理员不能被删除。",
+    )
+
+    response = run(
+        request(build_app(service, authenticated=True), "DELETE", f"/admin/users/{service.user_id}")
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "code": "last_superuser_protected",
+        "detail": "最后一个活跃超级管理员不能被删除。",
+        "retryable": False,
+    }
 
 
 def test_environment_admin_domain_error_has_stable_conflict_response() -> None:
@@ -319,6 +374,55 @@ def test_service_rolls_back_before_protecting_environment_admin() -> None:
 
     with pytest.raises(UserAdminDomainError) as error:
         run(service.update_user(current.id, UserAdminUpdateRequest(is_superuser=False)))
+
+    assert error.value.code == "environment_admin_protected"
+    assert session.rollback_count == 1
+    assert session.commit_count == 0
+
+
+def test_service_protects_last_active_superuser_from_deletion() -> None:
+    """最后一个启用超级用户连删都不能删，且失败时不留半截事务。
+
+    与 ``update_user`` 那条同源但更硬：降权至少还有别的超管能把它改回来，删掉连入口都没了。
+    """
+
+    current = UserRecord(
+        id=uuid4(),
+        email="only-admin@example.com",
+        hashed_password="not-used",
+        is_active=True,
+        is_superuser=True,
+        is_verified=True,
+        is_environment_admin=False,
+    )
+    session = FinalSuperuserSession(current)
+    service = UserAdminService(session)  # type: ignore[arg-type]
+
+    with pytest.raises(UserAdminDomainError) as error:
+        run(service.delete_user(current.id))
+
+    assert error.value.code == "last_superuser_protected"
+    assert session.rollback_count == 1
+    assert session.commit_count == 0
+
+
+def test_service_refuses_to_delete_environment_managed_admin() -> None:
+    """环境托管账号删不得：删了下次启动还会被配置重新建出来。"""
+
+    current = UserRecord(
+        id=uuid4(),
+        email="env-admin@example.com",
+        hashed_password="not-used",
+        is_active=True,
+        is_superuser=True,
+        is_verified=True,
+        is_environment_admin=True,
+    )
+    session = FinalSuperuserSession(current)
+    service = UserAdminService(session)  # type: ignore[arg-type]
+
+    with pytest.raises(UserAdminDomainError) as error:
+        run(service.delete_user(current.id))
 
     assert error.value.code == "environment_admin_protected"
     assert session.rollback_count == 1

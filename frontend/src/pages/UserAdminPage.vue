@@ -47,7 +47,9 @@ onMounted(() => {
 <template>
   <section class="admin-page" aria-labelledby="admin-title" style="container-type: inline-size">
     <div class="page-bar">
-      <p class="page-intro">创建平台账号、调整使用权限，并在需要时重置密码或撤销登录会话。</p>
+      <p class="page-intro">
+        创建平台账号、调整使用权限，并在需要时重置密码、撤销登录会话或删除账号。
+      </p>
       <BaseButton v-if="!createForm.expanded.value" variant="primary" @click="createForm.open">
         <template #icon><Plus :size="18" aria-hidden="true" /></template>
         创建账号
@@ -90,6 +92,7 @@ onMounted(() => {
       @submit-reset="directory.submitPasswordReset"
       @cancel-reset="directory.cancelPasswordReset"
       @revoke-sessions="directory.revokeSessions"
+      @delete-account="directory.deleteAccount"
     />
   </section>
 </template>

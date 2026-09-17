@@ -65,7 +65,7 @@ async def list_users(
 ) -> list[UserAdminResponse] | JSONResponse:
     """返回不含密码和 Token 的账号列表。"""
 
-    # 五条路由的形状一样：调 Service，把两类失败翻成同构 JSON，成功的结果过一遍
+    # 六条路由的形状一样：调 Service，把两类失败翻成同构 JSON，成功的结果过一遍
     # response schema。model_validate 在这里不只是转换——UserAdminResponse 没有
     # hashed_password 字段，走一遍它就等于确保密码 Hash 不会被顺出去。
     # 只有这条不会抛领域错误：列表查询没有「目标不存在」之类的前提。
@@ -153,6 +153,41 @@ async def reset_user_password(
     except SQLAlchemyError as error:
         return _database_error(error)
     return UserAdminResponse.model_validate(user)
+
+
+@router.delete(
+    "/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        404: {"model": UserAdminErrorResponse},
+        409: {"model": UserAdminErrorResponse},
+        503: {"model": UserAdminErrorResponse},
+    },
+    summary="删除内部账号",
+    # 显式给 description，docstring 就不进 OpenAPI（`description or cleandoc(__doc__)`）——
+    # 下面那段讲的是「为什么不能写返回类型标注」，属于维护者的话，不该出现在对外契约里。
+    description=(
+        "删除账号，并连带清理它的会话归属与登录 Token、置空换版决策留痕的操作者。"
+        "成功时无响应体。"
+    ),
+)
+async def delete_user(
+    user_id: UUID,
+    service: Annotated[UserAdminService, Depends(get_user_admin_service)],
+):
+    """删除账号，并连带清理它的会话归属、登录 Token 与换版决策留痕的操作者。
+
+    成功时 ``204`` 无响应体。这里刻意不写返回类型标注：``204`` 不允许有响应体，
+    标上 ``JSONResponse`` 会被 FastAPI 当成响应模型而直接报错；错误分支返回的
+    ``Response`` 由框架原样送出，不需要标注参与。
+    """
+
+    try:
+        await service.delete_user(user_id)
+    except UserAdminDomainError as error:
+        return _domain_error(error)
+    except SQLAlchemyError as error:
+        return _database_error(error)
 
 
 @router.delete(
