@@ -13,7 +13,7 @@ import {
   SEARCH_EXAMPLES,
   useDocumentReader,
   useSearchStream,
-  type NewsReadableResult,
+  type ReadableResult,
   type SearchRecord,
 } from '@/features/semantic-search'
 
@@ -93,7 +93,7 @@ async function startNewSearch(): Promise<void> {
   composerRef.value?.focusInput()
 }
 
-function openDocument(result: NewsReadableResult, trigger: HTMLButtonElement | null): void {
+function openDocument(result: ReadableResult, trigger: HTMLButtonElement | null): void {
   void reader.open(result, trigger)
 }
 </script>

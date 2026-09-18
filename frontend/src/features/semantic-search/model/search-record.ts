@@ -1,4 +1,4 @@
-import type { NewsDocumentResult } from './search-result'
+import type { DocumentResult } from './search-result'
 import type { SearchErrorPresentation } from './search-error'
 import type { KnowledgeBaseSelection, ResolvedKnowledgeBaseScope } from '@/api/knowledge-scope'
 
@@ -28,7 +28,7 @@ export interface SearchRecord {
   scope?: ResolvedKnowledgeBaseScope
   status: SearchRecordStatus
   /** 成功时后端返回的按 Document 分组结果，原始顺序。 */
-  results: NewsDocumentResult[]
+  results: DocumentResult[]
   /** status 为 error 时的错误展示。 */
   error: SearchErrorPresentation | null
 }

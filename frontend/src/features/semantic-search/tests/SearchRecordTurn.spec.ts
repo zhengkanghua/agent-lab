@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import SearchRecordTurn from '../components/SearchRecordTurn.vue'
 import type { SearchRecord } from '../model/search-record'
-import type { NewsDocumentResult } from '../model/search-result'
+import type { DocumentResult } from '../model/search-result'
 
 function makeRecord(overrides: Partial<SearchRecord> = {}): SearchRecord {
   return {
@@ -17,7 +17,7 @@ function makeRecord(overrides: Partial<SearchRecord> = {}): SearchRecord {
   }
 }
 
-const documentResult: NewsDocumentResult = {
+const documentResult: DocumentResult = {
   documentId: '20000000-0000-4000-8000-000000000001',
   knowledgeBaseId: '10000000-0000-4000-8000-000000000010',
   contentHash: 'a'.repeat(64),

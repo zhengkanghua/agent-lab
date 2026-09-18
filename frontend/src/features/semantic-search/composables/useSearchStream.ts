@@ -12,7 +12,7 @@ import {
   normalizeResultLimit,
   searchDocuments,
 } from '@/api/document-search'
-import { toNewsDocumentResults, type NewsDocumentResult } from '../model/search-result'
+import { toDocumentResults, type DocumentResult } from '../model/search-result'
 import { presentSearchError } from '../model/search-error'
 import { MAX_QUERY_CHARACTERS, validateQuery } from '../model/search-validation'
 import {
@@ -77,7 +77,7 @@ export function useSearchStream({
   function settleRecord(
     recordId: number,
     status: Exclude<SearchRecordStatus, 'loading'>,
-    results: NewsDocumentResult[],
+    results: DocumentResult[],
     error: ApiError | null,
     scope?: ResolvedKnowledgeBaseScope,
   ): void {
@@ -138,7 +138,7 @@ export function useSearchStream({
       if (requestId !== requestSequence) return null
 
       const names = new Map(response.scope.knowledge_bases.map((item) => [item.id, item.name]))
-      const mapped = toNewsDocumentResults(response.results).map((item) => ({
+      const mapped = toDocumentResults(response.results).map((item) => ({
         ...item,
         knowledgeBaseName: names.get(item.knowledgeBaseId),
       }))

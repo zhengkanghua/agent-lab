@@ -8,13 +8,13 @@ import SafeMarkdown from '@/shared/ui/SafeMarkdown.vue'
 import type { ApiError } from '@/api/client'
 import type { DocumentEvidence } from '@/api/agent-evidence'
 import { resolveErrorCopy, type ErrorCopy } from '@/api/error-copy'
-import type { NewsDocumentDetail } from '../model/document-detail'
-import { formatPublishedAt, type NewsReadableResult } from '../model/search-result'
+import type { DocumentDetail } from '../model/document-detail'
+import { formatPublishedAt, type ReadableResult } from '../model/search-result'
 
 const props = defineProps<{
   open: boolean
-  result: NewsReadableResult | null
-  detail: NewsDocumentDetail | null
+  result: ReadableResult | null
+  detail: DocumentDetail | null
   loading: boolean
   error: ApiError | null
   hashMismatch: boolean

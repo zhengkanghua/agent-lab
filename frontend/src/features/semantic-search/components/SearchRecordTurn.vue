@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { ChevronDown, CircleAlert, RotateCcw, Search, SearchX } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
-import type { NewsDocumentResult } from '../model/search-result'
+import type { DocumentResult } from '../model/search-result'
 import { isErrorRetryable, recordHitCount, type SearchRecord } from '../model/search-record'
 import SearchResultCard from './SearchResultCard.vue'
 import { scopeLabel } from '@/api/knowledge-scope'
@@ -28,7 +28,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   toggle: []
   retry: []
-  read: [result: NewsDocumentResult, trigger: HTMLButtonElement | null]
+  read: [result: DocumentResult, trigger: HTMLButtonElement | null]
 }>()
 
 const hitCount = computed(() => recordHitCount(props.record))

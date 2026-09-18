@@ -7,15 +7,15 @@ import {
   formatPublishedAt,
   formatScore,
   isExcerptLong,
-  type NewsDocumentResult,
+  type DocumentResult,
 } from '../model/search-result'
 
 const props = defineProps<{
-  result: NewsDocumentResult
+  result: DocumentResult
 }>()
 
 const emit = defineEmits<{
-  read: [result: NewsDocumentResult, trigger: HTMLButtonElement | null]
+  read: [result: DocumentResult, trigger: HTMLButtonElement | null]
 }>()
 
 const showAdditional = ref(false)

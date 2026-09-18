@@ -2,8 +2,8 @@ import { computed, onScopeDispose, ref, shallowRef } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ApiError } from '@/api/client'
 import { fetchDocument } from '@/api/documents'
-import { toNewsDocumentDetail } from '../model/document-detail'
-import type { NewsReadableResult } from '../model/search-result'
+import { toDocumentDetail } from '../model/document-detail'
+import type { ReadableResult } from '../model/search-result'
 
 export function documentDetailQueryKey(documentId: string, contentHash: string) {
   // UUID 与 SHA-256 十六进制字符串大小写不影响业务身份；统一 key 可避免同一
@@ -14,7 +14,7 @@ export function documentDetailQueryKey(documentId: string, contentHash: string) 
 export function useDocumentReader() {
   const queryClient = useQueryClient()
   const isOpen = ref(false)
-  const selectedResult = shallowRef<NewsReadableResult | null>(null)
+  const selectedResult = shallowRef<ReadableResult | null>(null)
   const triggerElement = shallowRef<HTMLElement | null>(null)
 
   const queryKey = computed(() => {
@@ -50,7 +50,7 @@ export function useDocumentReader() {
     ) {
       return null
     }
-    return toNewsDocumentDetail(dto)
+    return toDocumentDetail(dto)
   })
 
   const error = computed<ApiError | null>(() => {
@@ -81,7 +81,7 @@ export function useDocumentReader() {
   )
 
   async function open(
-    result: NewsReadableResult,
+    result: ReadableResult,
     trigger: HTMLElement | null = null,
   ): Promise<void> {
     const previous = selectedResult.value

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { toNewsDocumentResult } from '../model/search-result'
+import { toDocumentResult } from '../model/search-result'
 
 const firstMatch = {
   chunk_id: '10000000-0000-4000-8000-000000000001',
@@ -37,7 +37,7 @@ const dto = {
 
 describe('document search view model', () => {
   it('maps the grouped DTO without treating score as a percentage', () => {
-    const result = toNewsDocumentResult(dto)
+    const result = toDocumentResult(dto)
 
     expect(result).toMatchObject({
       documentId: dto.document_id,

@@ -1,6 +1,6 @@
 import type { DocumentDetailDto } from '@/api/documents'
 
-export interface NewsDocumentDetail {
+export interface DocumentDetail {
   documentId: string
   knowledgeBaseId: string
   knowledgeBaseName?: string | null
@@ -17,7 +17,7 @@ export interface NewsDocumentDetail {
   contentText: string
 }
 
-export function toNewsDocumentDetail(dto: DocumentDetailDto): NewsDocumentDetail {
+export function toDocumentDetail(dto: DocumentDetailDto): DocumentDetail {
   return {
     documentId: dto.document_id,
     knowledgeBaseId: dto.knowledge_base_id,

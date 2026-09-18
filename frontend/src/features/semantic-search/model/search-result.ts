@@ -1,7 +1,7 @@
 import type { DocumentSearchMatchDto, DocumentSearchResultDto } from '@/api/document-search'
 
 /** 检索结果打开全文时所需的稳定文档身份和回退元数据。 */
-export interface NewsReadableResult {
+export interface ReadableResult {
   documentId: string
   knowledgeBaseId: string
   knowledgeBaseName?: string
@@ -15,7 +15,7 @@ export interface NewsReadableResult {
   authors: string[]
 }
 
-export interface NewsDocumentMatch {
+export interface DocumentMatch {
   id: string
   excerpt: string
   score: number
@@ -23,14 +23,14 @@ export interface NewsDocumentMatch {
   chunkCount: number
 }
 
-export interface NewsDocumentResult extends NewsReadableResult {
+export interface DocumentResult extends ReadableResult {
   chunkCount: number
   bestScore: number
-  bestMatch: NewsDocumentMatch
-  additionalMatches: NewsDocumentMatch[]
+  bestMatch: DocumentMatch
+  additionalMatches: DocumentMatch[]
 }
 
-export function toNewsDocumentResult(dto: DocumentSearchResultDto): NewsDocumentResult {
+export function toDocumentResult(dto: DocumentSearchResultDto): DocumentResult {
   return {
     documentId: dto.document_id,
     knowledgeBaseId: dto.knowledge_base_id,
@@ -44,20 +44,21 @@ export function toNewsDocumentResult(dto: DocumentSearchResultDto): NewsDocument
     authors: [...dto.authors],
     chunkCount: dto.chunk_count,
     bestScore: dto.best_score,
-    bestMatch: toNewsDocumentMatch(dto.best_match),
-    additionalMatches: (dto.additional_matches ?? []).map(toNewsDocumentMatch),
+    bestMatch: toDocumentMatch(dto.best_match),
+    additionalMatches: (dto.additional_matches ?? []).map(toDocumentMatch),
   }
 }
 
-// 不去重也不重排：document_id 唯一性和「最高分降序 + document_id 升序」的顺序都由
-// Qdrant grouped query 在后端保证，重复 document_id 会被后端直接拒绝（拒绝点在
-// qdrant/search.py 的 search_groups，用 seen_document_ids 抛 QdrantSearchResponseError；
-// 排序键是 (-score, str(document_id))）。前端再算一遍只会在两边规则漂移时产生分歧。
-export function toNewsDocumentResults(dtos: DocumentSearchResultDto[]): NewsDocumentResult[] {
-  return dtos.map(toNewsDocumentResult)
+// 不去重也不重排：document_id 唯一性和「最高分降序 + document_id 升序」的顺序都由后端保证。
+// Qdrant 按 index_instance_id 分组（同一 Document 可能有多份正文实例），组内重复由
+// qdrant/search.py 的 search_groups 抛 QdrantSearchResponseError；跨实例的「同一 Document
+// 只出一条」由 knowledge/visibility.py 核验当前正式指向后判定，不满足则重查。
+// 排序键是 (-score, str(document_id))。前端再算一遍只会在两边规则漂移时产生分歧。
+export function toDocumentResults(dtos: DocumentSearchResultDto[]): DocumentResult[] {
+  return dtos.map(toDocumentResult)
 }
 
-function toNewsDocumentMatch(dto: DocumentSearchMatchDto): NewsDocumentMatch {
+function toDocumentMatch(dto: DocumentSearchMatchDto): DocumentMatch {
   return {
     id: dto.chunk_id,
     excerpt: dto.page_content,
