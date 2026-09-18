@@ -30,7 +30,7 @@ macOS 的 SF Pro 与 Windows 的 Segoe UI 提供独立的 Semibold，600 与 700
 
 ## 决策
 
-**字号 8 档，前缀改用 `--fs-`**：`xs 12 / sm 14 / base 16 / lg 18 / xl 20 / 2xl 24 / 3xl 32 / 4xl 42`（px）。
+**字号 7 档，前缀改用 `--fs-`**：`xs 12 / sm 14 / base 16 / lg 18 / xl 20 / 2xl 24 / 3xl 28`（px）。
 12px 是硬下限，不再有更小的档。档位与 Tailwind、Primer 的 `--text-xs..2xl` 对齐，
 不自造中间档——曾试过 13px 一档，与所有主流规范都不一致，且和 12px 的观感差异不足以支撑一档，已删。
 
@@ -38,6 +38,12 @@ macOS 的 SF Pro 与 Windows 的 Segoe UI 提供独立的 Semibold，600 与 700
 命名与 Primer 的 normal / semibold / bold 一致。
 
 **触控目标 1 档**：`--tap-target: 44px`，只在 `@media (pointer: coarse)` 里引用。
+
+**2026-09-12 重定角色（P0「安静阅览室」，`9249058`）。** 本文原写的 8 档
+（`3xl 32 / 4xl 42`）随登录页改造收敛为 7 档：42px 展示档取消，`3xl` 落 28px。
+同时重新分配了各档的用途——界面默认从 `base(16)` 下移到 `sm(14)`，`base(16)` 只留给
+阅读正文（回答、文档片段、编辑器），标题的层级落差改由留白与字色承担，不再靠堆字号。
+档位定义见 `frontend/src/styles/tokens.css` 的字号阶注释，以它为准。
 
 ## Consequences
 
@@ -54,6 +60,9 @@ macOS 上能逐档生效，且 `semibold` / `bold` 的语义差异在代码里�
 **`--text-*` 现在只表示颜色**，字号一律 `--fs-*`。分区隔开了，
 不会再出现「按 `--text-` 前缀搜索时两种语义混在一起」的情况。
 
-**SafeMarkdown 的 `0.82em` / `0.86em` 与 `style.css` 的 `body { font-size: 16px }` 保持裸值。**
-前两个是相对父级缩放的引用标记与行内代码，缩放本身是有意的；
-后者是 rem 的基准定义，令牌化会自我指涉。
+**全站只豁免三处裸值**，其余字号一律引 `--fs-*`（当前 266 处引令牌、3 处裸值）：
+
+- `SafeMarkdown.vue` 的 `0.86em`：行内代码相对父级缩放，缩放本身是有意的。
+- `SafeMarkdown.vue` 的 `11px`：引用上标小丸，只放「[1]」这类数字，不承载中文，
+  不受 12px 下限约束。（该处 2026-09-12 随 P0 新增，原写的 `0.82em` 引用标记已被删除。）
+- `style.css` 的 `body { font-size: 16px }`：rem 的基准定义，令牌化会自我指涉。

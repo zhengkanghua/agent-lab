@@ -28,7 +28,7 @@ LangGraph checkpointer 存在 PostgreSQL 的四张 `checkpoint*` 表里。Agent 
 Vite 去掉 `/api` 前缀后代理到
 `http://127.0.0.1:8000` 的对应 FastAPI 路由。浏览器访问搜索前必须使用内部账号登录；
 后端使用 PostgreSQL 可撤销 Token 和 HttpOnly Cookie，不开放注册。部署 Secret 或
-`backend/.env` 托管唯一保底超级管理员，服务启动时自动创建/同步；该管理员登录后可在
+`backend/.env` 托管唯一的恢复用超级用户，服务启动时自动创建/同步，不能从网页降级、改密或停用；该账号登录后可在
 `/admin/users` 创建和管理其他账号。检索、Agent 对话与个人偏好对所有登录账号开放，
 超级用户额外拥有账号管理、知识库/来源/文件管理与手动 Pipeline 权限，CLI 只保留为恢复入口。
 
@@ -39,7 +39,7 @@ Vite 去掉 `/api` 前缀后代理到
 才切换，失败保留旧已采用版本。首次采用前，普通全文、检索和 Agent 均不可读取候选。
 
 Agent 为每次提问保存实际范围和可核对的引用。点击引用可对照当时取得的片段与当前原文；
-原文更新、删除或知识库停用时明确提示。会话范围另存于 `agent_threads`，较早问答压缩后
+原文更新、删除或知识库停用时明确提示。会话知识库选择另存于 `agent_threads`，较早问答压缩后
 不再逐条回看，也不作为新回答的证据。链路见 [文件资料](docs/flows/file-document-lifecycle.md)
 和 [Agent 回答与引用](docs/flows/agent-answer-evidence.md)。
 
@@ -84,6 +84,6 @@ npm install
 npm run dev
 ```
 
-浏览器访问 <http://127.0.0.1:5173>，使用 `.env` 中的保底管理员登录；普通账号通过设置中心
+浏览器访问 <http://127.0.0.1:5173>，使用 `.env` 中配置的那个超级用户登录；普通账号通过设置中心
 （侧栏账号区进入，手机先展开导航）自助改密，超级用户在 `/admin/users` 添加和管理其他账号。详细前端命令见 `frontend/README.md`，生产发布步骤见
 `docs/container_deployment.md`，当前能力清单见 `docs/FEATURE_MAP.md`。

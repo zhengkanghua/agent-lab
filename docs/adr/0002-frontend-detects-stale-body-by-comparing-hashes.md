@@ -16,7 +16,7 @@
 
 ## Consequences
 
-判定责任在消费方：每个要打开全文的入口都得自己比一遍 `content_hash`。目前只有一个消费方
+判定责任在消费方：每个要打开全文的入口都得自己比一遍 `content_hash`。已有的两个入口都走同一处实现
 （`features/semantic-search/composables/useDocumentReader.ts` 的 `contentHashMismatch`，渲染在
-`components/DocumentReader.vue`）。第二个入口出现时要么复用它，要么重新实现一遍——漏掉不会报错，只会安静地
-不提示，用户看着旧正文以为是最新的。
+`components/DocumentReader.vue`）：检索页直接用它，Agent 对话页从引用进入阅读器时复用它。后续入口出现时
+同样要么复用、要么重新实现一遍——漏掉不会报错，只会安静地不提示，用户看着旧正文以为是最新的。

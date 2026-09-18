@@ -1,8 +1,8 @@
 # KnowledgeBase 从配置切片扩展为通用应用组件
 
-> **后续决策**：[ADR 0022](0022-pluggable-document-processing.md) 与 [ADR 0023](0023-durable-intake-and-document-review.md) 已将下文的 v2 索引与旧文档构建流程升级为 Docling、v3 候选隔离及已采用版本读取；KnowledgeBase 身份、范围与准入规则继续有效。下文阶段记录保留当时实现。
+> **后续决策**：[ADR 0022](0022-pluggable-document-processing.md) 与 [ADR 0023](0023-durable-intake-and-document-review.md) 取代下文的 v2 索引与旧文档构建流程，改为 Docling、v3 候选隔离及已采用版本读取；KnowledgeBase 身份、范围与准入规则继续有效。
 
-2026-09-06 先交付 KnowledgeBase 配置管理；2026-09-07 随 Source/Document 归属与检索、清理过滤成组接入，扩展到完整知识库应用边界。以下当前决策替代初次切片中“只交付配置、停用搜索检查延期”的临时边界。
+KnowledgeBase 从「只交付配置、停用搜索检查延期」的初次切片，扩展为完整的知识库应用边界：Source 绑定、Document 归属与检索、清理过滤成组接入。
 
 ## 决策
 
@@ -20,15 +20,15 @@ KnowledgeBase 的配置是所有数据隔离的共同前置。来源页面、清
 
 停用是可逆的配置变化，不删除已有数据。更新使用行锁和只修改明确字段的请求，重复提交相同值不刷新更新时间；稳定键从更新契约中排除，避免任务参数或来源映射失效。
 
-## 当前进度
+## 检索范围与归属的契约
 
-检索边界已扩展：`POST /vector-search` 和 `POST /document-search` 接受显式 `scope`，返回结果与实际知识库展示快照；旧缺省/单库请求保留数组响应和 news 缺省值。新旧范围并存必须一致，空选择或显式 null 不退化为无过滤查询。页面保存各检索记录的选择、实际集合与名称，后续改名或切换选择不改写历史。
+`POST /vector-search` 和 `POST /document-search` 接受显式 `scope`，返回结果与实际知识库展示快照；旧缺省/单库请求保留数组响应和 news 缺省值。新旧范围并存必须一致，空选择或显式 null 不退化为无过滤查询。页面保存各检索记录的选择、实际集合与名称，后续改名或切换选择不改写历史。
 
 Qdrant 搜索过滤器把单个 `knowledge_base_id` 编码为精确匹配，把集合编码为 MatchAny，搜索响应要求每个 Point 携带归属字段；范围端口统一查询数据库启用状态。未知 UUID 与停用目标都明确失败，不退化为全库查询。查询开始后以本次快照解释，下一次重新解析。默认搜索全部不改变定时清理缺省只作用于 news 的边界。
 
-归属、配置页面、清理范围及通用 Payload 已接入；`mime_type` 与可空 Source/URL 贯穿构建、Payload 和读取响应。验证与部署状态以测试记录和施工规格为准，ADR 不把离线测试通过解释为真实数据库迁移或生产重建完成。
+`mime_type` 与可空 Source/URL 贯穿构建、Payload 和读取响应。
 
-2026-09-08 第二阶段扩展文件入口：文本与 Markdown 通过独立管理用例创建或按 ID/revision 替换 Document，复用既有索引与删除协调。文件没有 Source 也可读取全文；停用库拒绝读取及新增/替换。文件名为可选索引元数据，兼容当前 v2 Payload，不因增加该字段清空或重建索引。会话范围独立保存，旧问答与摘要不能作为新运行的证据，见 [ADR 0021](0021-agent-run-evidence-and-replay.md)。
+2026-09-08 第二阶段扩展文件入口：文本与 Markdown 通过独立管理用例创建或按 ID/revision 替换 Document，复用既有索引与删除协调。文件没有 Source 也可读取全文；停用库拒绝读取及新增/替换。文件名为可选索引元数据，不因增加该字段清空或重建索引。会话知识库选择独立保存，旧问答与摘要不能作为新运行的证据，见 [ADR 0021](0021-agent-run-evidence-and-replay.md)。
 
 ## 消融结论
 

@@ -1,5 +1,11 @@
 # 设置中心收敛偏好配置：自定义系统提示词与检索数量参数迁入 /settings
 
+> **部分被取代（2026-09-18 核对）。** 本文有三处决策已被后续 ADR 取代，正文均已就地划线标注：
+> ①「偏好只持久化在 localStorage」→ [ADR 0027](0027-user-level-preferences-in-database.md)（迁入 `user_preferences` 表）；
+> ②「`useAgentChat` / `useSearchStream` 注入式读取提示词」→ [ADR 0029](0029-session-scoped-system-prompt.md)（提示词改为会话级快照，注入点删除）；
+> ③「Agent 偏好分区仅超级用户可见」→ [ADR 0030](0030-agent-open-to-all-accounts.md)（对所有登录账号开放）。
+> 仍然有效：设置中心 `/settings/:section?` 的形态与分区划分、输入区只留状态入口、契约常量上收 `api/` 层。
+
 前端此前有两处「其实是配置」的东西被埋在操作路径里：
 
 - **自定义系统提示词**塞在 Agent 输入区的一个折叠面板里。它是「改变模型行为」的配置，

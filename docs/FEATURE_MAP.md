@@ -31,7 +31,7 @@
 | 默认重试与任务历史策略 | 任务管理的策略对话框 | `/task-policy`、`/task-policy/changes` | `api/task_runs.py`、`tasks/service.py`、`tasks/repository.py`；前端 `TaskPolicyPanel.vue` | `test_task_api.py`、`test_task_execution.py`、`src/api/tasks.spec.ts` |
 | 文档批次交接与清理恢复 | 文件／文档管理与任务执行详情 | 文档管理写入口、`GET /task-runs/{run_id}` | [文档生命周期](flows/file-document-lifecycle.md)；`knowledge/task_intake.py`、`knowledge/adapters/pending_work.py`、`services/write_coordination.py`、`services/document_retention_service.py` | `test_news_pipeline_execution.py`、`test_task_execution.py`、`test_task_cross_storage_integration.py`、`test_task_migration_postgres_integration.py`（真实依赖默认跳过） |
 | Agent 对话（模型自己调检索工具再作答，SSE 流式；所有登录账号可用） | `/agent` | `POST /agent/chat` | `api/agent_chat.py` → `agent/runtime.py`、`agent/streaming.py`、`agent/tools/`；前端 `api/agent-chat.ts`、`features/agent-chat/`、`pages/AgentChatPage.vue` | `tests/test_agent_chat_api.py`、`tests/test_agent_streaming.py`、`tests/test_agent_tools.py`、`tests/test_agent_middleware.py`、`src/api/agent-chat.spec.ts`、`src/features/agent-chat/tests/`、`src/pages/AgentChatPage.spec.ts` |
-| Agent 会话范围与证据引用 | `/agent`、`/agent/:threadId` | `PATCH /agent/threads/{thread_id}/scope`、`POST /agent/chat`、`GET /agent/threads/{thread_id}/messages` | [回答与引用链路](flows/agent-answer-evidence.md)；`agent/context.py`、`agent/evidence.py`、`agent/replay.py`、`agent/middleware.py`；前端 `useAgentChat.ts`、`AgentTurnCard.vue` | `tests/test_agent_evidence_scope.py`、`src/api/agent-threads.spec.ts`、`src/features/agent-chat/tests/useAgentChat.spec.ts`、`src/pages/AgentChatPage.spec.ts` |
+| Agent 会话知识库选择与证据引用 | `/agent`、`/agent/:threadId` | `PATCH /agent/threads/{thread_id}/scope`、`POST /agent/chat`、`GET /agent/threads/{thread_id}/messages` | [回答与引用链路](flows/agent-answer-evidence.md)；`agent/context.py`、`agent/evidence.py`、`agent/replay.py`、`agent/middleware.py`；前端 `useAgentChat.ts`、`AgentTurnCard.vue` | `tests/test_agent_evidence_scope.py`、`src/api/agent-threads.spec.ts`、`src/features/agent-chat/tests/useAgentChat.spec.ts`、`src/pages/AgentChatPage.spec.ts` |
 | 检索偏好（数量参数的默认值，改动即生效，存在账号上） | `/settings/search`（检索输入条有直达入口） | `GET`/`PUT /auth/me/preferences` | `api/account.py` → `services/user_preference_service.py`；前端 `api/preferences.ts`、`features/settings/`、`pages/SettingsPage.vue` | `tests/test_account.py`、`src/api/preferences.spec.ts`、`src/features/settings/tests/`、`src/pages/SettingsPage.spec.ts` |
 | Agent 偏好（自定义系统提示词，作为新会话的初始值） | `/settings/agent`（输入条徽章直达） | `GET`/`PUT /auth/me/preferences` | `api/account.py` → `services/user_preference_service.py`；前端 `api/preferences.ts`、`features/settings/`、`pages/SettingsPage.vue` | `tests/test_account.py`、`src/api/preferences.spec.ts`、`src/features/settings/tests/`、`src/pages/SettingsPage.spec.ts` |
 | 读取 Agent 默认系统提示词 | `/settings/agent`（提示词编辑器内） | `GET /agent/default-prompt` | `api/agent_chat.py` → `agent/prompts.py`；前端 `features/settings/composables/useDefaultAgentPrompt.ts` | `tests/test_agent_chat_api.py`、`src/features/settings/tests/useDefaultAgentPrompt.spec.ts` |
@@ -40,12 +40,14 @@
 
 `/vector-search`、`/document-search`、`/documents`、`/auth/me/*`、`/agent/*` 要求普通启用账号；
 `/pipeline`、`/admin/users`、`/scheduled-jobs`、`/task-runs`、`/task-policy`、
-`/file-documents`、`/document-management` 要求超级用户。挂载点和依赖在
+`/file-documents`、`/document-management`、`/sources` 要求超级用户。
+`/knowledge-bases` 两开：`GET` 列表对所有启用账号开放（默认只返回启用库，非超管传
+`include_inactive` 会被拒），创建与编辑要求超级用户。挂载点和依赖在
 `backend/src/agent_lab/main.py` 的 `include_router` 处。Agent 对话与检索同级开放，
 照旧只读；放开后跨账号隔离靠会话归属，它按 `user_id` 判断、与角色无关
 （[ADR 0030](adr/0030-agent-open-to-all-accounts.md)）。
 
-公共任务的持久受理、Celery/Redis 进程形态、写资源协调及恢复决策见 [ADR 0019](adr/0019-scheduled-execution-and-write-coordination.md)。[ADR 0017](adr/0017-scheduler-runs-in-a-dedicated-process.md) 保留迁移前的历史。
+公共任务的持久受理、Celery/Redis 进程形态、写资源协调及恢复决策见 [ADR 0019](adr/0019-scheduled-execution-and-write-coordination.md)。
 
 检索页重构后去掉了「按片段」模式，前端只走 `POST /document-search`（按 Document 分组）并在页内做
 多轮累积（检索流）；后端 `/vector-search` 接口与后端单测仍保留，只是前端不再调用它，因此
@@ -61,7 +63,7 @@ Agent 那几行的能力边界见 [`adr/0003-agent-v1-is-read-only.md`](adr/0003
 
 用户管理这一行前后端两列写的都是 `/admin/users`，不是抄错：前端页面路由和后端 API 前缀刚好同名，
 浏览器实际请求 `/api/admin/users`。后端路由的 `tags=["user-admin"]` 只是 OpenAPI 分组标签，不是路径。
-后台在前端只有一条路由 `/admin/:section?`（users=账号管理、knowledge-bases=知识库、sources=来源管理、files=文件资料、documents=文档审核、scheduled-jobs=定时任务），
+后台在前端只有一条路由 `/admin/:section?`（users=账号管理、knowledge-bases=知识库、sources=来源管理、files=文件资料、documents=文档审核、scheduled-jobs=任务管理），
 各地址是同一条路由的分区，注册表见 `pages/AdminPage.vue`。
 
 ## 命令行能力

@@ -7,10 +7,23 @@
 
 在 `backend/src/agent_lab/qdrant/search.py` 的 `search_groups`：
 
-- `group_by="document_id"`，每组只出一条结果
-- 用 `seen_document_ids` 显式判重，重复即抛 `QdrantSearchResponseError`
+- `group_by="index_instance_id"`，每组只出一条结果
+- 用 `seen_instance_ids` 显式判重，重复即抛 `QdrantSearchResponseError`
 - 排序键 `(-score, str(document_id))`，即最高分降序 + document_id 升序；第二个键是为了
   最高分浮点相等时顺序仍然确定
+
+> **2026-09-10 勘误（`ebd76fe` 引入候选实例隔离后）。** 本文原写 `group_by="document_id"`、
+> `seen_document_ids`。分组键改成 `index_instance_id` 是 [ADR 0023](0023-durable-intake-and-document-review.md)
+> 的候选隔离要求的：同一 Document 在 Qdrant 里可能同时存在多份正文实例（正在采用的候选、
+> 已退休的旧版），按 `document_id` 分组会把不同版本的 Chunk 混进同一组，于是改按「实例」分组，
+> 保证一组内的 Chunk 来自同一份正文。`document_id` 仍是 Payload 里的字段、仍是最终结果的
+> 文档身份，也仍是排序键的第二段，只是不再是分组键。
+>
+> **文档级唯一性的把关点因此挪了一层。** `search_groups` 现在只保证「同一实例不出两组」；
+> 「同一 Document 只出一条结果」由外层的 `AdoptedVectorSearch._query()`
+> （`knowledge/visibility.py`）在核验当前正式指向之后判定，不满足即抛 `SearchVisibilityError`
+> 并触发有界重查——因为跨实例去重必须知道「哪个实例才是当前正式版本」，那是 PostgreSQL 才知道的
+> 事，Qdrant 适配层拿不到。本文「唯一性与顺序由后端保证、前端不重算」的立场不变。
 
 查这类不变量时别只 grep `schemas/`。校验逻辑在 Qdrant 适配层，不在 Pydantic 模型上。
 曾因只搜 `schemas/document_search.py` 没找到列表级校验器，就断言「后端不拒绝重复」，

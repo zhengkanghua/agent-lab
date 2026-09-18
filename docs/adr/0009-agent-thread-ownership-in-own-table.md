@@ -1,7 +1,7 @@
 # Agent 会话的归属放自己的表
 
 「某个会话属于谁」记在一张由 Alembic 管理的业务表 `agent_threads` 里（`thread_id` 主键、`user_id`
-外键指向 `users`、`title`、`created_at`、`last_active_at`），与 checkpointer 的四张表完全分开。归属判断
+逻辑外键指向 `users`、`title`、`created_at`、`last_active_at`），与 checkpointer 的四张表完全分开。归属判断
 只有一处实现：`AgentThreadService` 里带 `WHERE user_id` 的那几条语句。会话列表也从这张表读。
 
 原来没有这张表，`POST /agent/chat` 是 `thread_id = chat_request.thread_id or uuid4()`：前端给什么 id
