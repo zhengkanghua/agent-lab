@@ -51,13 +51,13 @@ describe('conversation', () => {
     appendToolCall(turn, {
       event: 'tool_call',
       tool_call_id: 'call-1',
-      tool: 'search_news',
+      tool: 'search_documents',
       arguments: { query: '甲' },
     })
     appendToolCall(turn, {
       event: 'tool_call',
       tool_call_id: 'call-2',
-      tool: 'search_news',
+      tool: 'search_documents',
       arguments: { query: '乙' },
     })
 
@@ -65,7 +65,7 @@ describe('conversation', () => {
       event: 'tool_result',
       evidence: [],
       tool_call_id: 'call-2',
-      tool: 'search_news',
+      tool: 'search_documents',
       content: '乙的结果',
       failed: false,
     })
@@ -76,7 +76,7 @@ describe('conversation', () => {
 
   it('不同工具的结果不会串到别的工具上', () => {
     const turn = createTurn('问题')
-    appendToolCall(turn, { event: 'tool_call', tool_call_id: 'call-1', tool: 'search_news' })
+    appendToolCall(turn, { event: 'tool_call', tool_call_id: 'call-1', tool: 'search_documents' })
     appendToolCall(turn, { event: 'tool_call', tool_call_id: 'call-2', tool: 'read_document' })
 
     applyToolResult(turn, {
@@ -99,7 +99,7 @@ describe('conversation', () => {
       event: 'tool_result',
       evidence: [],
       tool_call_id: 'call-unknown',
-      tool: 'search_news',
+      tool: 'search_documents',
       content: '孤立结果',
       failed: false,
     })
@@ -116,7 +116,7 @@ describe('conversation', () => {
     appendToolCall(turn, {
       event: 'tool_call',
       tool_call_id: 'call-1',
-      tool: 'search_news',
+      tool: 'search_documents',
       arguments: { query: '甲' },
     })
 
@@ -124,7 +124,7 @@ describe('conversation', () => {
       event: 'tool_result',
       evidence: [],
       tool_call_id: 'call-other',
-      tool: 'search_news',
+      tool: 'search_documents',
       content: '别处的结果',
       failed: false,
     })
@@ -136,13 +136,13 @@ describe('conversation', () => {
 
   it('收尾只动还在执行中的轨迹，已完成的保持原样', () => {
     const turn = createTurn('问题')
-    appendToolCall(turn, { event: 'tool_call', tool_call_id: 'call-1', tool: 'search_news' })
+    appendToolCall(turn, { event: 'tool_call', tool_call_id: 'call-1', tool: 'search_documents' })
     appendToolCall(turn, { event: 'tool_call', tool_call_id: 'call-2', tool: 'read_document' })
     applyToolResult(turn, {
       event: 'tool_result',
       evidence: [],
       tool_call_id: 'call-1',
-      tool: 'search_news',
+      tool: 'search_documents',
       content: '查到了。',
       failed: false,
     })
@@ -176,8 +176,8 @@ describe('conversation', () => {
       // 某一轮的内容留在原地不更新。
       const turns = turnsFromReplay(
         [
-          { question: '甲', answer: '', traces: [{ tool: 'search_news' }] },
-          { question: '乙', answer: '', traces: [{ tool: 'search_news' }] },
+          { question: '甲', answer: '', traces: [{ tool: 'search_documents' }] },
+          { question: '乙', answer: '', traces: [{ tool: 'search_documents' }] },
         ],
         '未送达。',
       )
@@ -203,8 +203,8 @@ describe('conversation', () => {
             question: '查一下',
             answer: '查不到。',
             traces: [
-              { tool: 'search_news', content: '有结果', failed: false },
-              { tool: 'search_news', content: null },
+              { tool: 'search_documents', content: '有结果', failed: false },
+              { tool: 'search_documents', content: null },
             ],
           },
         ],
@@ -221,7 +221,7 @@ describe('conversation', () => {
           {
             question: '查一下',
             answer: '暂时查不了。',
-            traces: [{ tool: 'search_news', content: '工具调用失败。', failed: true }],
+            traces: [{ tool: 'search_documents', content: '工具调用失败。', failed: true }],
           },
         ],
         '未送达。',
@@ -246,7 +246,7 @@ describe('conversation', () => {
 
     it('arguments 缺省时补空对象，不把 null 交给组件', () => {
       const [turn] = turnsFromReplay(
-        [{ question: '查', answer: '答', traces: [{ tool: 'search_news', content: 'ok' }] }],
+        [{ question: '查', answer: '答', traces: [{ tool: 'search_documents', content: 'ok' }] }],
         '未送达。',
       )
 
@@ -255,7 +255,7 @@ describe('conversation', () => {
 
     it('回放的轨迹不带 toolCallId：调用和结果已经合成一条，没有待配对的东西', () => {
       const [turn] = turnsFromReplay(
-        [{ question: '查', answer: '答', traces: [{ tool: 'search_news', content: 'ok' }] }],
+        [{ question: '查', answer: '答', traces: [{ tool: 'search_documents', content: 'ok' }] }],
         '未送达。',
       )
 

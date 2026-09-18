@@ -101,10 +101,10 @@ def test_tool_events_are_ordered_and_paired_before_done() -> None:
     检索到底成没成。
     """
 
-    counter = CountingTool("search_news", result="检索到 1 篇相关新闻。")
+    counter = CountingTool("search_documents", result="检索到 1 篇相关新闻。")
     model = ScriptedChatModel(
         responses=[
-            tool_call_message("search_news", {"text": "央行降息"}),
+            tool_call_message("search_documents", {"text": "央行降息"}),
             AIMessage(content="根据检索结果，确实降息了。"),
         ]
     )
@@ -112,11 +112,11 @@ def test_tool_events_are_ordered_and_paired_before_done() -> None:
 
     calls = [each for each in events if isinstance(each, AgentToolCallEvent)]
     results = [each for each in events if isinstance(each, AgentToolResultEvent)]
-    assert [each.tool for each in calls] == ["search_news"]
+    assert [each.tool for each in calls] == ["search_documents"]
     assert calls[0].arguments == {"text": "央行降息"}
-    assert [each.tool for each in results] == ["search_news"]
+    assert [each.tool for each in results] == ["search_documents"]
     assert results[0].failed is False
-    assert calls[0].tool_call_id == "call-search_news"
+    assert calls[0].tool_call_id == "call-search_documents"
     assert results[0].tool_call_id == calls[0].tool_call_id
     assert events.index(calls[0]) < events.index(results[0])
     assert isinstance(events[-1], AgentDoneEvent)
@@ -125,17 +125,17 @@ def test_tool_events_are_ordered_and_paired_before_done() -> None:
 def test_parallel_calls_to_one_tool_get_distinct_ids() -> None:
     """同一个工具并发调用两次时，两条轨迹各自的 id 不同且调用与结果按 id 对应。
 
-    这正是只按工具名配对会出错的场景：两次调用都叫 search_news，检索词不同。前端必须能
+    这正是只按工具名配对会出错的场景：两次调用都叫 search_documents，检索词不同。前端必须能
     区分「哪个结果属于哪个检索词」，否则界面会把两者对调。
     """
 
-    counter = CountingTool("search_news", result="检索结果。")
+    counter = CountingTool("search_documents", result="检索结果。")
     model = ScriptedChatModel(
         responses=[
             parallel_tool_call_message(
                 [
-                    ("call-1", "search_news", {"text": "央行降息"}),
-                    ("call-2", "search_news", {"text": "房贷利率"}),
+                    ("call-1", "search_documents", {"text": "央行降息"}),
+                    ("call-2", "search_documents", {"text": "房贷利率"}),
                 ]
             ),
             AIMessage(content="两个角度都查过了。"),
@@ -160,10 +160,10 @@ def test_a_failed_tool_is_marked_and_the_run_still_finishes() -> None:
     用户白白重问一遍。
     """
 
-    counter = CountingTool("search_news", error=RuntimeError("Qdrant 挂了"))
+    counter = CountingTool("search_documents", error=RuntimeError("Qdrant 挂了"))
     model = ScriptedChatModel(
         responses=[
-            tool_call_message("search_news", {"text": "央行降息"}),
+            tool_call_message("search_documents", {"text": "央行降息"}),
             AIMessage(content="检索暂时不可用，我先不下结论。"),
         ]
     )
@@ -245,10 +245,10 @@ def test_every_event_serializes_through_the_discriminated_union() -> None:
     某个事件类型漏出联合的话，生成的类型里就没有它，前端会静默丢掉这类事件。
     """
 
-    counter = CountingTool("search_news")
+    counter = CountingTool("search_documents")
     model = ScriptedChatModel(
         responses=[
-            tool_call_message("search_news", {"text": "央行降息"}),
+            tool_call_message("search_documents", {"text": "央行降息"}),
             AIMessage(content="结论如上。"),
         ]
     )
@@ -404,7 +404,7 @@ def test_tracing_stays_off_without_an_api_key() -> None:
     "chunk",
     [
         AIMessageChunk(content=""),
-        AIMessage(content=[{"type": "tool_use", "id": "x", "name": "search_news", "input": {}}]),
+        AIMessage(content=[{"type": "tool_use", "id": "x", "name": "search_documents", "input": {}}]),
     ],
 )
 def test_non_text_model_output_produces_no_token_event(chunk: AIMessage) -> None:

@@ -108,7 +108,7 @@ async def retry(processing_id: UUID, body: ReviewTargetRequest, service: Service
     return await service.retry(processing_id, actor_id=actor.id, **body.model_dump())
 
 
-@router.get("/candidates/{processing_id}/original", summary="下载已保存的原始资料", response_class=Response)
+@router.get("/candidates/{processing_id}/original", summary="下载已保存的原件", response_class=Response)
 async def original(processing_id: UUID, service: Service):
     data, filename = await service.original(processing_id)
     return Response(data, media_type="application/octet-stream", headers={

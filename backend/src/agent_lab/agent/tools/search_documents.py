@@ -1,4 +1,4 @@
-"""检索 Tool 使用运行范围快照；只返回实际命中的片段与应用建立的引用标识。"""
+"""检索 Tool 使用本次运行的知识库范围；只返回实际命中的片段与应用建立的引用标识。"""
 
 from datetime import UTC, datetime, timedelta
 from typing import Annotated

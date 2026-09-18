@@ -1,4 +1,4 @@
-"""显式启用后验证环境管理员同步与账号管理 Service 的真实 PostgreSQL 行为。"""
+"""显式启用后验证环境托管超级用户同步与账号管理 Service 的真实 PostgreSQL 行为。"""
 
 import asyncio
 import os

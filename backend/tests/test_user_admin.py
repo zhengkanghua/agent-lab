@@ -358,7 +358,7 @@ def test_service_protects_last_active_superuser() -> None:
 
 
 def test_service_rolls_back_before_protecting_environment_admin() -> None:
-    """环境管理员保护分支显式结束行锁事务。"""
+    """环境托管保护分支显式结束行锁事务。"""
 
     current = UserRecord(
         id=uuid4(),

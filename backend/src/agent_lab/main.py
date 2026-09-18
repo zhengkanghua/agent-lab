@@ -148,7 +148,7 @@ def build_vector_search_runtime() -> VectorSearchRuntime:
 def build_agent_runtime(search_service: VectorSearchService) -> AgentRuntime:
     """从环境配置组装进程级 Agent Runtime（只构造对象，不连接任何服务）。
 
-    为什么参数是「已建好的搜索 Service」而不是自己再建一个：Agent 的 ``search_news``
+    为什么参数是「已建好的搜索 Service」而不是自己再建一个：Agent 的 ``search_documents``
     工具做的事和 ``POST /document-search`` 完全一样，共用同一个 Service 才能保证两条
     入口的检索行为一致，也避免多出一套 Ollama/Qdrant 连接池。这也是 Agent Runtime 必须
     在搜索 Runtime 之后装配的原因。
@@ -220,7 +220,7 @@ def create_app(
         agent_runtime: AgentRuntime | None = None
         shutdown_error: Exception | None = None
         try:
-            # 1、migration 已由部署步骤完成；先同步唯一环境管理员，再构造只读 Runtime。
+            # 1、migration 已由部署步骤完成；先同步唯一的环境托管超级用户，再构造只读 Runtime。
             await environment_admin_sync()
             runtime = runtime_factory()
             application.state.vector_search_runtime = runtime

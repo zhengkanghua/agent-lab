@@ -1,4 +1,4 @@
-"""原始资料对象存储端口及 MinIO/S3 实现。"""
+"""原件对象存储端口及 MinIO/S3 实现。"""
 
 import asyncio
 from contextlib import closing

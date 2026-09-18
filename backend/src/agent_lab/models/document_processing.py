@@ -19,7 +19,7 @@ from agent_lab.db.base import Base, TimestampMixin
 
 
 class DocumentProcessingRecord(TimestampMixin, Base):
-    """一份原始资料或人工候选的一次可恢复处理记录。"""
+    """一份原件或人工候选的一次可恢复处理记录。"""
 
     __tablename__ = "document_processing_records"
     __table_args__ = (

@@ -348,14 +348,14 @@ describe('useAgentChat', () => {
         {
           event: 'tool_call',
           tool_call_id: 'call-1',
-          tool: 'search_news',
+          tool: 'search_documents',
           arguments: { query: '利率' },
         },
         {
           event: 'tool_result',
           evidence: [],
           tool_call_id: 'call-1',
-          tool: 'search_news',
+          tool: 'search_documents',
           content: '找到 2 篇。',
           failed: false,
         },
@@ -369,7 +369,7 @@ describe('useAgentChat', () => {
 
     expect(chat.turns.value[0]?.traces).toHaveLength(1)
     expect(chat.turns.value[0]?.traces[0]).toMatchObject({
-      tool: 'search_news',
+      tool: 'search_documents',
       arguments: { query: '利率' },
       content: '找到 2 篇。',
       failed: false,
@@ -385,20 +385,20 @@ describe('useAgentChat', () => {
         {
           event: 'tool_call',
           tool_call_id: 'call-1',
-          tool: 'search_news',
+          tool: 'search_documents',
           arguments: { query: '甲' },
         },
         {
           event: 'tool_call',
           tool_call_id: 'call-2',
-          tool: 'search_news',
+          tool: 'search_documents',
           arguments: { query: '乙' },
         },
         {
           event: 'tool_result',
           evidence: [],
           tool_call_id: 'call-2',
-          tool: 'search_news',
+          tool: 'search_documents',
           content: '乙的结果',
           failed: false,
         },
@@ -406,7 +406,7 @@ describe('useAgentChat', () => {
           event: 'tool_result',
           evidence: [],
           tool_call_id: 'call-1',
-          tool: 'search_news',
+          tool: 'search_documents',
           content: '甲的结果',
           failed: false,
         },
@@ -490,7 +490,7 @@ describe('useAgentChat', () => {
         {
           event: 'tool_call',
           tool_call_id: 'call-1',
-          tool: 'search_news',
+          tool: 'search_documents',
           arguments: { query: '利率' },
         },
         {
@@ -931,7 +931,7 @@ describe('useAgentChat', () => {
           {
             question: '查一下',
             answer: '',
-            traces: [{ tool: 'search_news', arguments: { query: '利率' }, content: null }],
+            traces: [{ tool: 'search_documents', arguments: { query: '利率' }, content: null }],
           },
         ]),
       )

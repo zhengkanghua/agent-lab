@@ -81,7 +81,7 @@ describe('agent threads API', () => {
               question: '查一下',
               status: 'incomplete',
               answer: '查不到。',
-              traces: [{ tool: 'search_news', arguments: {}, content: null, failed: false }],
+              traces: [{ tool: 'search_documents', arguments: {}, content: null, failed: false }],
             },
           ],
           scope: { mode: 'all' },
@@ -131,7 +131,7 @@ describe('agent threads API', () => {
     await expect(deleteAgentThread(THREAD_ID)).rejects.toBeInstanceOf(ApiError)
   })
 
-  it('用独立 PATCH 保存会话范围，方便下次提问和重新打开沿用', async () => {
+  it('用独立 PATCH 保存会话知识库选择，方便下次提问和重新打开沿用', async () => {
     const scope = {
       mode: 'selected' as const,
       knowledge_base_ids: ['10000000-0000-4000-8000-000000000010'],

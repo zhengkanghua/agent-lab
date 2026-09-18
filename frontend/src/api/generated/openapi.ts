@@ -361,7 +361,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 下载已保存的原始资料 */
+        /** 下载已保存的原件 */
         get: operations["original_document_management_candidates__processing_id__original_get"];
         put?: never;
         post?: never;
@@ -643,7 +643,7 @@ export interface paths {
         head?: never;
         /**
          * 修改账号权限
-         * @description 修改启用/超级用户状态，受环境管理员和最后超级用户保护。
+         * @description 修改启用/超级用户状态，受环境托管超级用户和最后超级用户保护。
          */
         patch: operations["update_user_admin_users__user_id__patch"];
         trace?: never;
@@ -1220,7 +1220,7 @@ export interface components {
              * @description 要接着聊的会话 id，必须是当前账号自己的会话，否则返回 404；省略表示新建会话，新 id 通过 done 事件返回。
              */
             thread_id?: string | null;
-            /** @description 本次提交的会话范围；省略沿用已保存选择，新会话默认所有启用知识库。 */
+            /** @description 本次提交的会话知识库选择；省略沿用已保存选择，新会话默认所有启用知识库。 */
             scope?: components["schemas"]["KnowledgeBaseSelection"] | null;
         };
         /**

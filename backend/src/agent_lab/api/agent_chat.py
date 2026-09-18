@@ -208,7 +208,7 @@ async def agent_chat(
     续聊时沿用会话里那份），因此同一会话内前后一致，且用户在设置页改提示词只影响新开的会话。
 
     Args:
-        chat_request: 提问、可选会话 id 与可选会话范围。
+        chat_request: 提问、可选会话 id 与可选会话知识库选择。
         runtime: 进程级 Agent Runtime，由 lifespan 装配。
         langsmith_settings: 追踪配置，进程级缓存。
         user: 当前登录账号，用于会话归属。

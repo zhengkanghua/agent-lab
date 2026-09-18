@@ -105,7 +105,7 @@ describe('UserAdminPage', () => {
     vi.unstubAllGlobals()
   })
 
-  it('环境管理员操作受限，账号概况随目录刷新', async () => {
+  it('环境托管超级用户操作受限，账号概况随目录刷新', async () => {
     api.listUsers.mockResolvedValue([
       environmentAdmin,
       regularUser,

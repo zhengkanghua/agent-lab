@@ -46,20 +46,20 @@ class AuthSettings(BaseSettings):
     admin_email: EmailStr | None = Field(
         default=None,
         description=(
-            "环境托管保底超级管理员邮箱，来源于 AUTH_ADMIN_EMAIL；与密码必须同时配置。"
+            "环境托管超级用户的邮箱，来源于 AUTH_ADMIN_EMAIL；与密码必须同时配置。"
         ),
     )
     admin_password: SecretStr | None = Field(
         default=None,
         description=(
-            "环境托管保底超级管理员明文密码，来源于 AUTH_ADMIN_PASSWORD；仅用于启动时"
+            "环境托管超级用户的明文密码，来源于 AUTH_ADMIN_PASSWORD；仅用于启动时"
             "同步 Argon2 Hash，SecretStr 禁止在 repr 和日志中显示明文。"
         ),
     )
 
     @model_validator(mode="after")
     def validate_environment_admin(self) -> "AuthSettings":
-        """要求保底管理员邮箱/密码成对出现并复用账号密码强度边界。
+        """要求环境托管超级用户的邮箱/密码成对出现并复用账号密码强度边界。
 
         Returns:
             配置完整且密码满足最小长度、最大长度和非邮箱同值约束的当前实例。
@@ -91,7 +91,7 @@ class AuthSettings(BaseSettings):
 
     @property
     def environment_admin_configured(self) -> bool:
-        """是否同时提供了可同步的保底管理员邮箱和密码。"""
+        """是否同时提供了可同步的环境托管超级用户邮箱和密码。"""
 
         return self.admin_email is not None and self.admin_password is not None
 

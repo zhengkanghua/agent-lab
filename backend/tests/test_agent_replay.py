@@ -51,12 +51,12 @@ def test_tool_call_and_result_are_paired_by_tool_call_id() -> None:
         AIMessage(
             content="",
             tool_calls=[
-                {"name": "search_news", "args": {"query": "甲"}, "id": "call-1"},
-                {"name": "search_news", "args": {"query": "乙"}, "id": "call-2"},
+                {"name": "search_documents", "args": {"query": "甲"}, "id": "call-1"},
+                {"name": "search_documents", "args": {"query": "乙"}, "id": "call-2"},
             ],
         ),
-        ToolMessage(content="乙的结果", tool_call_id="call-2", name="search_news"),
-        ToolMessage(content="甲的结果", tool_call_id="call-1", name="search_news"),
+        ToolMessage(content="乙的结果", tool_call_id="call-2", name="search_documents"),
+        ToolMessage(content="甲的结果", tool_call_id="call-1", name="search_documents"),
         AIMessage(content="两家说法一致。"),
     ]
 
@@ -74,11 +74,11 @@ def test_failed_tool_result_keeps_its_failed_flag() -> None:
 
     messages = [
         HumanMessage(content="查一下"),
-        tool_call_message("search_news", {"query": "利率"}),
+        tool_call_message("search_documents", {"query": "利率"}),
         ToolMessage(
             content="工具调用失败：新闻数据库当前不可用。",
-            tool_call_id="call-search_news",
-            name="search_news",
+            tool_call_id="call-search_documents",
+            name="search_documents",
             status="error",
         ),
         AIMessage(content="暂时查不了。"),
@@ -98,7 +98,7 @@ def test_tool_call_without_result_replays_as_pending_content_none() -> None:
 
     messages = [
         HumanMessage(content="查一下"),
-        tool_call_message("search_news", {"query": "利率"}),
+        tool_call_message("search_documents", {"query": "利率"}),
     ]
 
     turns, _summarized, _summary = build_replay_turns(messages)
@@ -129,7 +129,7 @@ def test_multimodal_content_blocks_keep_only_text() -> None:
         AIMessage(
             content=[
                 {"type": "text", "text": "可见的回答。"},
-                {"type": "tool_use", "id": "x", "name": "search_news", "input": {}},
+                {"type": "tool_use", "id": "x", "name": "search_documents", "input": {}},
             ]
         ),
     ]

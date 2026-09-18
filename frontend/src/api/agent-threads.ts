@@ -85,7 +85,7 @@ export async function updateAgentThreadScope(
     body: JSON.stringify(scope),
   })
   if (!isSelection(value))
-    throw invalidThreadResponse('会话范围保存结果无法确认，请重新打开会话核对。')
+    throw invalidThreadResponse('会话知识库选择保存结果无法确认，请重新打开会话核对。')
 }
 
 /** 删除一个会话及其历史。删除不可撤销，调用方负责先向用户确认。 */

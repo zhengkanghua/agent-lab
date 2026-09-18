@@ -8,7 +8,7 @@ function trace(overrides: Partial<AgentToolTrace> = {}): AgentToolTrace {
   return {
     id: 'trace-1',
     toolCallId: 'call-1',
-    tool: 'search_news',
+    tool: 'search_documents',
     arguments: { query: '央行利率' },
     content: '找到 2 篇。',
     failed: false,
@@ -32,7 +32,7 @@ describe('AgentToolTraceList', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('检索新闻')
+    expect(wrapper.text()).toContain('检索文档')
     expect(wrapper.text()).toContain('读取全文')
   })
 
@@ -132,7 +132,7 @@ describe('AgentToolTraceList 折叠', () => {
     // 折叠后这一行是唯一可见的轨迹信息，只写「2 次调用」的话用户还得展开才知道干了什么。
     // 「思考过程」前缀给这行细条一个名字（2026-09 重设计 P3）。
     expect(summaryOf(wrapper).get('.disclosure-title').text()).toBe(
-      '思考过程 · 检索新闻 · 读取全文',
+      '思考过程 · 检索文档 · 读取全文',
     )
   })
 
@@ -141,7 +141,7 @@ describe('AgentToolTraceList 折叠', () => {
       props: { traces: [trace(), trace({ id: 't2' }), trace({ id: 't3' })] },
     })
 
-    expect(summaryOf(wrapper).get('.disclosure-title').text()).toBe('思考过程 · 检索新闻 ×3')
+    expect(summaryOf(wrapper).get('.disclosure-title').text()).toBe('思考过程 · 检索文档 ×3')
   })
 
   it('流式中默认展开', () => {

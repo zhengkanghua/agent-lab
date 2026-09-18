@@ -355,7 +355,7 @@ watch(detail, async (value) => {
               >对照内容
               <select v-model="comparison">
                 <option value="candidate">当前候选预览</option>
-                <option value="original">原始资料</option>
+                <option value="original">原件</option>
                 <option value="adopted">已采用版本</option>
               </select>
             </label>

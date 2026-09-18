@@ -6,8 +6,9 @@ Create Date: 2026-09-02 10:00:00.000000
 
 该 migration 创建 ``scheduled_jobs``（定时任务配置）与 ``scheduled_job_runs``（任务执行
 历史）两张表，并插入两条启用的种子任务（freshrss-sync 每 10 分钟、index-pending 每
-5 分钟），参数与手动流水线接口的默认值一致。调度器的设计与取舍见
-docs/adr/0014-in-process-apscheduler-with-db-as-source-of-truth.md。
+5 分钟），参数与手动流水线接口的默认值一致。表结构自本次建立后一直沿用，
+但调度引擎已由 APScheduler 换成 Celery Beat／Worker（见
+docs/adr/0019-scheduled-execution-and-write-coordination.md）。
 """
 
 from collections.abc import Sequence
@@ -155,8 +156,8 @@ def upgrade() -> None:
     )
 
     # 种子任务的 cron 与参数默认值老板已确认；
-    # enabled=true：部署完成即开始自动同步与索引，不想自动跑可在管理端停用或关闭
-    # SCHEDULER_ENABLED 总开关。
+    # enabled=true：部署完成即开始自动同步与索引，不想自动跑可在任务管理里停用该条配置。
+    # （原「SCHEDULER_ENABLED 总开关」已在迁移到 Celery Beat 时移除，见 ADR 0019。）
     #
     # 参数必须显式 CAST 成 uuid/jsonb：bindparams 从 Python 字符串值推断出 String 类型时，
     # psycopg 会把占位符渲染成 %(sync_id)s::VARCHAR，直接插 uuid 列会报 DatatypeMismatch

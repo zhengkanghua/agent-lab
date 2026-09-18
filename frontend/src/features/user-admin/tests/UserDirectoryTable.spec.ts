@@ -89,7 +89,7 @@ describe('UserDirectoryTable', () => {
     const second = wrapper.get(`[data-user-id="${SECOND_ID}"]`)
 
     // 空闲那一行里，除「删除账号」外都不该被禁用。删除键另有自己的禁用条件（当前账号、
-    // 保底管理员），不随在途状态走，所以从这条断言里排掉它——它由下面那条用例单独覆盖。
+    // 环境托管超级用户），不随在途状态走，所以从这条断言里排掉它——它由下面那条用例单独覆盖。
     const controls = first
       .findAll('input, button')
       .filter((control) => !control.attributes('data-testid')?.startsWith('delete-'))
@@ -145,7 +145,7 @@ describe('UserDirectoryTable', () => {
     expect(wrapper.emitted('delete-account')?.[0]?.[0]).toMatchObject({ id: SECOND_ID })
   })
 
-  it('保底管理员与当前账号的删除键禁用，其余行可用', () => {
+  it('环境托管超级用户与当前账号的删除键禁用，其余行可用', () => {
     // currentUserId 是 FIRST_ID，所以第一行（当前账号）禁用、第二行可用。
     const wrapper = mountTable()
     expect(wrapper.get(`[data-testid="delete-${FIRST_ID}"]`).attributes('disabled')).toBeDefined()

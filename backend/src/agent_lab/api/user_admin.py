@@ -117,7 +117,7 @@ async def update_user(
     body: UserAdminUpdateRequest,
     service: Annotated[UserAdminService, Depends(get_user_admin_service)],
 ) -> UserAdminResponse | JSONResponse:
-    """修改启用/超级用户状态，受环境管理员和最后超级用户保护。"""
+    """修改启用/超级用户状态，受环境托管超级用户和最后超级用户保护。"""
 
     try:
         user = await service.update_user(user_id, body)

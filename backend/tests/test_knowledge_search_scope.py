@@ -129,7 +129,7 @@ def test_agent_uses_run_snapshot_and_rejects_disabled_scope_on_next_run(within_d
             await scope.update(news.id, KnowledgeBaseUpdateRequest(is_active=False))
             with pytest.raises(KnowledgeBaseInactiveError) as caught:
                 await service.resolve_scope(selection)
-            assert sanitize_tool_error(caught.value, SimpleNamespace(tool_call={"name": "search_news"})) == "工具调用失败：知识库已停用。"
+            assert sanitize_tool_error(caught.value, SimpleNamespace(tool_call={"name": "search_documents"})) == "工具调用失败：知识库已停用。"
             assert len(embeddings.query_calls) == 1
         finally:
             await client.close()

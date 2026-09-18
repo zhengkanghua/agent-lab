@@ -37,7 +37,7 @@ class UserRecord(SQLAlchemyBaseUserTableUUID, TimestampMixin, Base):
     创建和最近一次 ORM 更新；本表与新闻表没有逻辑外键或 relationship，指向本表的
     ``access_tokens``、``agent_threads``、``document_review_records`` 三列都是逻辑外键，
     删账号的连带清理由 ``UserAdminService`` 在同一事务内显式完成。超级用户同时拥有
-    手动 Pipeline 和账号管理权限，环境托管标记用于区分不可由网页降级的保底账号。
+    手动 Pipeline 和账号管理权限，环境托管标记用于区分不可由网页降级的那个超级用户。
     """
 
     __tablename__ = "users"

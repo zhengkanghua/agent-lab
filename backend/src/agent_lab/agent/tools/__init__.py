@@ -32,14 +32,14 @@ def build_agent_tools(
     """按固定顺序组装 Agent 可用的只读工具。
 
     顺序有意义但不影响正确性：工具的 schema 按这个顺序进入模型上下文，先出现的更容易被
-    选中。``search_news`` 排在前面，因为正常链路总是「先检索、必要时再读全文」。
+    选中。``search_documents`` 排在前面，因为正常链路总是「先检索、必要时再读全文」。
 
     Args:
         search_service: 进程级只读检索 Service。
         session_factory: 产出短命 ``AsyncSession`` 的工厂，供全文读取工具按调用开关。
 
     Returns:
-        ``[search_news, read_document]``，可直接交给 ``create_agent(tools=...)``。
+        ``[search_documents, read_document]``，可直接交给 ``create_agent(tools=...)``。
 
     Notes:
         只组装对象，不执行任何 I/O。两个工具都不具备写能力。

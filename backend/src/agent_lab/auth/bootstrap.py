@@ -1,4 +1,4 @@
-"""在应用启动时把环境 Secret 幂等同步为唯一保底超级管理员。
+"""在应用启动时把环境 Secret 幂等同步为唯一的环境托管超级用户。
 
 本模块只访问 PostgreSQL 的 users/access_tokens：不挂载 HTTP 路由，不访问 FreshRSS、
 Ollama 或 Qdrant。环境密码只进入 pwdlib 校验/Hash，不写日志、异常或返回对象。
@@ -30,7 +30,7 @@ class EnvironmentAdminSyncResult:
 
 
 async def sync_configured_environment_admin() -> EnvironmentAdminSyncResult:
-    """使用默认配置与 Session factory 同步环境保底管理员。
+    """使用默认配置与 Session factory 同步环境托管超级用户。
 
     Returns:
         只包含布尔状态、释放数量和用户 UUID 的脱敏结果。
@@ -53,7 +53,7 @@ async def synchronize_environment_admin(
     settings: AuthSettings,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> EnvironmentAdminSyncResult:
-    """同步、切换或解除唯一环境管理员标记，并处理并发启动竞争。
+    """同步、切换或解除唯一的环境托管标记，并处理并发启动竞争。
 
     Args:
         settings: 已校验且用 SecretStr 包装密码的认证配置。
@@ -89,11 +89,11 @@ async def _synchronize_once(
     session: AsyncSession,
     settings: AuthSettings,
 ) -> EnvironmentAdminSyncResult:
-    """在一个事务中完成一次环境管理员同步尝试。
+    """在一个事务中完成一次环境托管超级用户同步尝试。
 
-    「环境管理员」是配置文件里那对邮箱和密码在库里对应的那个账号，作用是保底：万一所有
-    超管都被禁用或删了，改配置重启就能拿回入口。所以每次启动都要把库对齐到配置，而且
-    全局只能有一个账号带这个标记。
+    环境托管超级用户是配置文件里那对邮箱和密码在库里对应的那个账号，作用是恢复通道：
+    万一所有超管都被禁用或删了，改配置重启就能拿回入口。所以每次启动都要把库对齐到配置，
+    而且全局只能有一个账号带这个标记。
 
     Args:
         session: 本次尝试独占的 Session，同时是事务边界。
@@ -180,7 +180,7 @@ async def _synchronize_once(
             # 不算密码变更，也就不用踢人下线。
             target.hashed_password = upgraded_hash
 
-    # 6、把上一任的标记摘掉，保证全局只有一个环境管理员。flush 一下让 UPDATE 先走，
+    # 6、把上一任的标记摘掉，保证全局只有一个账号带环境托管标记。flush 一下让 UPDATE 先走，
     #    避免和下面给 target 上标记的语句在同一批里撞上唯一约束。
     released = 0
     for previous in managed_users:
@@ -190,7 +190,7 @@ async def _synchronize_once(
     if released:
         await session.flush()
 
-    # 7、强制把目标账号拉回「可用的超管」状态。这是保底通道的意义所在：账号在库里被禁用、
+    # 7、强制把目标账号拉回「可用的超管」状态。这是恢复通道的意义所在：账号在库里被禁用、
     #    降权或标成未验证都不影响，改配置重启就能恢复。
     target.email = email
     target.is_active = True

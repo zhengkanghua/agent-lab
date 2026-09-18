@@ -202,12 +202,12 @@ class UnknownToolGuardMiddleware(AgentMiddleware):
 
     **为什么需要它**：LangGraph 遇到未注册的工具名时会回一条 ``status="error"`` 的
     ``ToolMessage`` 让模型自己纠正。模型通常纠正不了——它会说「我的环境里没有提供
-    search_news」，然后凭空作答或者干脆沉默。用户看到的是「查了资料但不回答」，而日志里
+    search_documents」，然后凭空作答或者干脆沉默。用户看到的是「查了资料但不回答」，而日志里
     只有一条工具错误，看不出问题出在工具名上。
 
     这个场景不是假设：``LLM_MODEL`` 曾被配成 ``auto``（某些中转站的自动路由开关，按每次
     HTTP 调用挑上游），于是一次运行里的某一步被路由到一个自带工具集的端点，模型发出了
-    ``Bash(command, description)`` 调用——本项目只有 ``search_news`` 和 ``read_document``。
+    ``Bash(command, description)`` 调用——本项目只有 ``search_documents`` 和 ``read_document``。
     有了这道守卫，那次排查会从第一条日志就指向工具名，而不是从前端和流式管道查起。
 
     **为什么是拦下而不是让模型重试**：重试同样的提示词大概率再犯（见

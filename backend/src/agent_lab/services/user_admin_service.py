@@ -1,8 +1,8 @@
 """实现超级用户对内部账号、权限、密码和数据库会话的管理用例。
 
 本 Service 只读写 PostgreSQL users、access_tokens、agent_threads 和
-document_review_records，不负责 HTTP、Cookie 设置或公开注册。环境管理员不可通过此层
-降级、改密或删除；任何操作都不能移除最后一个启用的超级用户。
+document_review_records，不负责 HTTP、Cookie 设置或公开注册。带环境托管标记的那个超级用户
+不可通过此层降级、改密或删除；任何操作都不能移除最后一个启用的超级用户。
 
 **删账号是跨聚合的，所以落在这一层。** 库里没有数据库级外键，删一行 users 不会带走
 别的表；本层在同一个事务内把这四张表处理完，见 ``delete_user``。
@@ -48,9 +48,9 @@ class UserAdminService:
     生命周期是「一个 HTTP 请求一个实例」，不能跨请求复用：它持有的 Session 就是本次请求
     的事务边界，每个公开方法自己 commit 或 rollback，调用方不需要再管事务。
 
-    两条贯穿全类的业务约束：环境管理员（``is_environment_admin``）不能被本层降级、改密或
-    删除，只能通过服务端密钥改；任何操作都不能让系统失去最后一个「启用且是超管」的账号，
-    否则没人能再进管理页。
+    两条贯穿全类的业务约束：带环境托管标记的超级用户（``is_environment_admin``）不能被本层
+    降级、改密或删除，只能通过服务端密钥改；任何操作都不能让系统失去最后一个「启用且是超管」
+    的账号，否则没人能再进管理页。
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -67,7 +67,7 @@ class UserAdminService:
         self._password_helper = PasswordHelper()
 
     async def list_users(self) -> list[UserRecord]:
-        """按环境管理员优先、邮箱升序返回全部内部账号。
+        """按环境托管超级用户优先、邮箱升序返回全部内部账号。
 
         Returns:
             当前 users 表中的 ORM 用户列表，不包含密码 Hash 的额外加载。
@@ -289,7 +289,7 @@ class UserAdminService:
             一次 PostgreSQL 写入事务。四张表都按 ``user_id`` 走索引定位，不产生全表扫描。
         """
 
-        # 1、锁行取人，挡掉环境托管账号。环境管理员的身份来自服务端配置，删掉之后
+        # 1、锁行取人，挡掉环境托管账号。它的身份来自服务端配置，删掉之后
         #    下次启动还会被重新创建，等于删了个「看起来生效、实际没有」的对象。
         user = await self._get_user_for_update(user_id)
         await self._ensure_not_environment_managed(user)
@@ -334,9 +334,9 @@ class UserAdminService:
         await self._session.commit()
 
     async def revoke_sessions(self, user_id: UUID) -> int:
-        """撤销目标账号的全部数据库登录 Token，环境管理员也允许主动撤销。
+        """撤销目标账号的全部数据库登录 Token，环境托管超级用户也允许主动撤销。
 
-        这里刻意不挡环境管理员：撤销只是让人重新登录一次，不改变任何权限，是安全操作。
+        这里刻意不挡环境托管超级用户：撤销只是让人重新登录一次，不改变任何权限，是安全操作。
         怀疑凭据泄漏时，管理员自己的会话也该能一键清掉。
 
         Args:
@@ -392,9 +392,9 @@ class UserAdminService:
         return user
 
     async def _ensure_not_environment_managed(self, user: UserRecord) -> None:
-        """挡住对环境托管管理员的改动。
+        """挡住对环境托管超级用户的改动。
 
-        环境管理员的邮箱和密码来自服务端配置，每次启动会按配置同步。在这里改它（或删它）等于
+        它的邮箱和密码来自服务端配置，每次启动会按配置同步。在这里改它（或删它）等于
         改了个「下次重启就被覆盖」的值，看起来生效了、实际没有——所以直接拒绝，让人去改配置。
 
         Args:

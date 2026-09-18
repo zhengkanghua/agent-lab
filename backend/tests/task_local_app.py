@@ -47,5 +47,5 @@ def create_api():
     from tests.app_helpers import FakeSearchRuntime, create_offline_app
 
     service = build_task_components(db.async_session_factory)[0]
-    # 保留真实账号密码/Cookie；搜索、Agent 和环境管理员同步不属于这次联调。
+    # 保留真实账号密码/Cookie；搜索、Agent 和环境托管超级用户同步不属于这次联调。
     return create_offline_app(runtime_factory=FakeSearchRuntime, task_service_factory=lambda: service)

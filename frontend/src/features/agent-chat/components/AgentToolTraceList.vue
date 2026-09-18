@@ -15,7 +15,6 @@ const props = defineProps<{
 /** 工具名到中文说明的映射。未知工具名原样显示，不猜。 */
 const TOOL_LABELS: Readonly<Partial<Record<string, string>>> = {
   search_documents: '检索文档',
-  search_news: '检索新闻',
   read_document: '读取全文',
 }
 
@@ -24,9 +23,9 @@ function labelFor(tool: string): string {
 }
 
 /* 折叠后这一行是用户唯一能看到的轨迹信息，所以要能独立回答「它干了什么」。
-   写成「检索新闻 · 读取全文」而不是「2 次工具调用」：后者只有数量没有内容，
+   写成「检索文档 · 读取全文」而不是「2 次工具调用」：后者只有数量没有内容，
    用户还是得展开才知道发生了什么，那折叠就没有意义了。
-   同名工具连着调多次时合并计数，否则查了五个词会刷出五个「检索新闻」。 */
+   同名工具连着调多次时合并计数，否则查了五个词会刷出五个「检索文档」。 */
 const summaryText = computed(() => {
   const counts = new Map<string, number>()
   for (const trace of props.traces) {
@@ -114,10 +113,7 @@ function formatArguments(args: Record<string, unknown>): string {
         <span class="trace-icon" aria-hidden="true">
           <BaseSpinner v-if="trace.content === null" :size="15" />
           <CircleAlert v-else-if="trace.failed" :size="15" />
-          <Search
-            v-else-if="trace.tool === 'search_documents' || trace.tool === 'search_news'"
-            :size="15"
-          />
+          <Search v-else-if="trace.tool === 'search_documents'" :size="15" />
           <Wrench v-else :size="15" />
         </span>
 

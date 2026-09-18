@@ -80,7 +80,7 @@ onScopeDispose(() => {
 </script>
 
 <template>
-  <section class="document-original" aria-label="原始资料">
+  <section class="document-original" aria-label="原件">
     <p class="original-note">原件保持上传时的字节；HTML 以文本展示。</p>
     <div class="original-actions">
       <BaseButton variant="outline" size="sm" :disabled="!stored || loading" @click="view"

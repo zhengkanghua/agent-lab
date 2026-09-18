@@ -248,7 +248,7 @@ def test_auth_tables_define_required_comments_and_indexes() -> None:
         and index.dialect_options["postgresql"]["where"] is not None
         and index.dialect_options["postgresql"]["where"].compare(text("is_environment_admin"))
         for index in user_indexes
-    ), "只对环境管理员启用唯一约束，普通账号不受该约束限制"
+    ), "只对环境托管标记启用唯一约束，普通账号不受该约束限制"
     for column in ("created_at", "user_id"):
         assert any(
             not index.unique
@@ -259,7 +259,7 @@ def test_auth_tables_define_required_comments_and_indexes() -> None:
 
 
 def test_auth_settings_allow_environment_admin_to_be_omitted() -> None:
-    """本地未配置保底管理员时保持向后兼容，不生成任何默认凭据。"""
+    """本地未配置环境托管超级用户时保持向后兼容，不生成任何默认凭据。"""
 
     settings = AuthSettings(_env_file=None)  # type: ignore[call-arg]
 
@@ -314,7 +314,7 @@ def test_auth_settings_reject_invalid_environment_admin_pairs(
 
 
 def test_lifespan_synchronizes_environment_admin_before_search_runtime() -> None:
-    """应用必须先完成保底管理员数据库同步，再接受搜索 Runtime 构造。"""
+    """应用必须先完成环境托管超级用户的数据库同步，再接受搜索 Runtime 构造。"""
 
     events: list[str] = []
 

@@ -116,7 +116,7 @@ describe('useUserDirectory', () => {
     wrapper.unmount()
   })
 
-  it('保底管理员不发请求', async () => {
+  it('环境托管超级用户不发请求', async () => {
     const { wrapper, directory } = mountHarness()
     await directory.load()
 
@@ -363,7 +363,7 @@ describe('useUserDirectory', () => {
     wrapper.unmount()
   })
 
-  it('保底管理员与当前账号不能删，连确认都不弹', async () => {
+  it('环境托管超级用户与当前账号不能删，连确认都不弹', async () => {
     const confirm = vi.fn(() => true)
     vi.stubGlobal('confirm', confirm)
     const { wrapper, directory } = mountHarness(environmentAdmin.id)

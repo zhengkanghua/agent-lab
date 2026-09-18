@@ -17,7 +17,7 @@ function makeUser(overrides: Partial<UserAdminDto> & Pick<UserAdminDto, 'email'>
 }
 
 describe('sortUsers', () => {
-  it('保底管理员排在最前，与它的邮箱字典序无关', () => {
+  it('环境托管超级用户排在最前，与它的邮箱字典序无关', () => {
     const input = [
       makeUser({ email: 'alice@example.com' }),
       makeUser({ email: 'zoe@example.com', is_environment_admin: true }),

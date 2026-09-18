@@ -86,9 +86,6 @@
 
   /* 7、语义层——强调与状态。 */
   --accent: var(--pine-600);
-  /* 已弃用别名（2026-09，决策见 docs/adr/0007 追加节）：src/ 下已无使用方，
-     仅为外部遗留引用保留过渡期，新代码禁止引用，删时连同深浅两个覆盖块一起删。 */
-  --accent-primary: var(--accent);
   --accent-hover: var(--pine-700);
   --accent-soft: var(--pine-100);
   --accent-ring: rgb(12 95 80 / 22%);
@@ -113,8 +110,6 @@
   --radius-lg: 16px; /* 卡片、对话框 */
   --radius-xl: 24px; /* 输入坞、设置浮层 */
   --radius-pill: 999px;
-  /* 已弃用别名（2026-09，同 --accent-primary）：与 --radius-pill 完全重名重复。 */
-  --radius-full: var(--radius-pill);
 
   /* 触控目标最小边长。44px 是 iOS HIG 的推荐下限，也是 Material 的 48dp 一档。
      手指的接触面比鼠标指针粗得多，小于它的控件在触屏上要么点不中、要么点到隔壁。
@@ -287,7 +282,6 @@
 
   /* 7、语义层——强调与状态 */
   --accent: var(--pine-600);
-  --accent-primary: var(--pine-600);
   --accent-hover: var(--pine-400);
   --accent-soft: var(--pine-100);
   --accent-ring: rgb(143 184 171 / 24%);

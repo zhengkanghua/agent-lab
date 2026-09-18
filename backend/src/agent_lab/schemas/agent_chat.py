@@ -54,7 +54,7 @@ class AgentChatRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    scope: KnowledgeBaseSelection | None = Field(default=None, description="本次提交的会话范围；省略沿用已保存选择，新会话默认所有启用知识库。")
+    scope: KnowledgeBaseSelection | None = Field(default=None, description="本次提交的会话知识库选择；省略沿用已保存选择，新会话默认所有启用知识库。")
 
     @field_validator("scope")
     @classmethod

@@ -75,10 +75,10 @@ def test_failing_tool_is_retried_before_the_error_handler_sees_it() -> None:
     确实在内层。若两个中间件顺序写反，这里会是 1——而下面的文案断言依然通过。
     """
 
-    failing = CountingTool("search_news", error=RuntimeError(LEAKY_MESSAGE))
+    failing = CountingTool("search_documents", error=RuntimeError(LEAKY_MESSAGE))
     model = ScriptedChatModel(
         responses=[
-            tool_call_message("search_news", {"text": "央行"}),
+            tool_call_message("search_documents", {"text": "央行"}),
             AIMessage(content="抱歉，暂时查不到。"),
         ]
     )
@@ -105,7 +105,7 @@ def test_an_unregistered_tool_call_ends_the_run_with_a_classified_error() -> Non
     ``Bash(command, description)``，见 ``UnknownToolGuardMiddleware`` 的说明。
     """
 
-    registered = CountingTool("search_news")
+    registered = CountingTool("search_documents")
     model = ScriptedChatModel(
         responses=[
             tool_call_message("Bash", {"command": "ls", "description": "列目录"}),
@@ -130,10 +130,10 @@ def test_a_registered_tool_call_passes_the_guard_untouched() -> None:
     与上一条成对：只有上一条时，一个「什么都拦」的坏实现同样能通过。
     """
 
-    registered = CountingTool("search_news", result="检索结果")
+    registered = CountingTool("search_documents", result="检索结果")
     model = ScriptedChatModel(
         responses=[
-            tool_call_message("search_news", {"text": "央行"}),
+            tool_call_message("search_documents", {"text": "央行"}),
             AIMessage(content="根据检索结果……"),
         ]
     )
@@ -180,10 +180,10 @@ def test_run_continues_after_a_tool_fails() -> None:
     一个错误事件。这里断言运行走到了 ``done``，且模型拿到失败结果后仍产出了回答。
     """
 
-    failing = CountingTool("search_news", error=RuntimeError("boom"))
+    failing = CountingTool("search_documents", error=RuntimeError("boom"))
     model = ScriptedChatModel(
         responses=[
-            tool_call_message("search_news", {"text": "央行"}),
+            tool_call_message("search_documents", {"text": "央行"}),
             AIMessage(content="检索暂时不可用，我无法回答这个问题。"),
         ]
     )
@@ -224,11 +224,11 @@ def test_tool_call_limit_stops_further_tool_use() -> None:
     模型用已有材料收尾。
     """
 
-    counting = CountingTool("search_news", result="一条结果")
+    counting = CountingTool("search_documents", result="一条结果")
     # 脚本一直要求调工具，比上限多几次，确保上限而不是脚本决定了停止时机。
     model = ScriptedChatModel(
         responses=[
-            *[tool_call_message("search_news", {"text": f"q{i}"})
+            *[tool_call_message("search_documents", {"text": f"q{i}"})
               for i in range(TOOL_CALL_RUN_LIMIT + 3)],
             AIMessage(content="收尾回答"),
         ]
@@ -243,10 +243,10 @@ def test_tool_call_limit_stops_further_tool_use() -> None:
 def test_model_call_limit_ends_the_run() -> None:
     """模型调用次数到顶后运行结束，不无限循环。"""
 
-    counting = CountingTool("search_news", result="一条结果")
+    counting = CountingTool("search_documents", result="一条结果")
     model = ScriptedChatModel(
         responses=[
-            tool_call_message("search_news", {"text": f"q{i}"})
+            tool_call_message("search_documents", {"text": f"q{i}"})
             for i in range(MODEL_CALL_RUN_LIMIT + 5)
         ]
     )

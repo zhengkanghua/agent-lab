@@ -46,13 +46,13 @@ MAX_USER_MESSAGE_CHARS = 4000
 
 # ---- 工具输出上限：检索结果和正文都会进入模型上下文，必须有界 ----
 
-# search_news 一次最多返回几篇新闻、每篇最多几个片段。刻意小于
+# search_documents 一次最多返回几篇文档、每篇最多几个片段。刻意小于
 # schemas.document_search 的 MAX_DOCUMENT_LIMIT（100）：那是给人看的分页上限，
 # 这里是给模型看的上下文预算。
 SEARCH_TOOL_MAX_DOCUMENTS = 5
 SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT = 2
 
-# search_news 的 within_days 上限。365 天不是「语料库最多存一年」，而是「再往回问就等于
+# search_documents 的 within_days 上限。365 天不是「语料库最多存一年」，而是「再往回问就等于
 # 不限时间」——超过一年的窗口对排序几乎没有影响，却让模型有机会填出 99999 这种它自己也
 # 说不清的值。给个明确上限，模型填超了会被参数校验挡下并看到范围说明，比默默接受更好。
 SEARCH_TOOL_MAX_WITHIN_DAYS = 365

@@ -247,14 +247,14 @@ describe('AgentChatPage', () => {
       {
         event: 'tool_call',
         tool_call_id: 'call-1',
-        tool: 'search_news',
+        tool: 'search_documents',
         arguments: { query: '利率' },
       },
       {
         event: 'tool_result',
         evidence: [],
         tool_call_id: 'call-1',
-        tool: 'search_news',
+        tool: 'search_documents',
         content: '找到 2 篇。',
         failed: false,
       },
@@ -269,7 +269,7 @@ describe('AgentChatPage', () => {
 
     /* 轨迹现在整块折叠（Q10），落定后是收起状态。收起的 <details> 里子节点仍在 DOM 中，
        所以下面这两条读得到内容，读到的是「渲染对了」而不是「展开着」。 */
-    expect(wrapper.get('.trace-list').text()).toContain('检索新闻')
+    expect(wrapper.get('.trace-list').text()).toContain('检索文档')
     expect(wrapper.get('.trace-arguments').text()).toBe('query=利率')
     wrapper.unmount()
   })

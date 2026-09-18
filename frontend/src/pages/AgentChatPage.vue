@@ -280,7 +280,7 @@ async function chooseExample(value: string): Promise<void> {
                 @refresh="scope.refresh"
               />
               <span v-if="chat.savingScope.value" class="scope-note" role="status">
-                正在保存会话范围…
+                正在保存会话知识库选择…
               </span>
               <span v-else-if="chat.isStreaming.value" class="scope-note">
                 现在改选只影响下一次提问。

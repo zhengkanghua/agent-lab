@@ -8,7 +8,7 @@ import UserPasswordResetForm from './UserPasswordResetForm.vue'
 
 /* 账号目录里的一行。
  *
- * 保底管理员这一行大部分控件是禁用的：它由部署 Secret 托管，改不动。禁用之外还给了
+ * 环境托管超级用户这一行大部分控件是禁用的：它由部署 Secret 托管，改不动。禁用之外还给了
  * 斜纹底与 title 说明——只禁用不解释，管理员会以为是坏了。
  */
 
@@ -41,7 +41,7 @@ const isCurrentUser = computed(() => props.user.id === props.currentUserId)
 const resetOpen = computed(() => props.resetPassword !== null)
 
 /* 自己那一行的删除键禁用：删完自己这个页面就没了，让管理员先删别人更顺。
-   保底管理员另有 managed 挡着，两件事分开判断，因为禁用理由不同、提示也不同。 */
+   环境托管超级用户另有 managed 挡着，两件事分开判断，因为禁用理由不同、提示也不同。 */
 const deleteBlocked = computed(() => managed.value || isCurrentUser.value)
 
 const deleteTitle = computed(() => {
@@ -121,7 +121,7 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
       <label
         class="switch-control"
         :class="{ 'switch-disabled': managed }"
-        :title="managed ? '保底管理员必须保持超级用户' : '授予账号管理权限'"
+        :title="managed ? '环境托管超级用户必须保持超级用户' : '授予账号管理权限'"
       >
         <input
           type="checkbox"
