@@ -127,7 +127,7 @@ URL、API Key 后面多一个看不见的字符。这类故障很难查：日志
 
 已有 Redis 的部署负责 AOF/everysec、持久盘、容量和 `noeviction`，本项目不创建 Redis、专用网络或数据卷，也不修改共享实例配置。旧的 `REDIS_MAXMEMORY` 已不再使用。`REDIS_URL` 为项目公共连接，任务消息和后续缓存按各自前缀区分；`noeviction` 作用于整个实例，缓存用 TTL 过期，内存满时新增写入失败。任务发布失败的依据保留在 PostgreSQL，等待补投。运维监控需关注内存占用/上限、AOF 写入状态、持久盘剩余空间和任务投递错误；在现有监控平台配置告警，具体阈值按批准容量设置。Redis 重启不清卷，不对共享服务执行 FLUSHDB 或故障实验。
 
-已有环境从多建的 Redis 切换时，先在服务器更新连接配置，保持三个应用进程的队列名一致。工作流按 Beat、API、Worker 顺序停用旧进程，等待当前工作正常收尾，再启动连接已有 Redis 的新进程；已持久受理但未送达的任务由 Beat 按原执行编号补投，不搬运或清空 Redis 的键。新进程就绪后，只删除与本项目 Compose 标签一致的旧 `scheduler` 和 `redis` 容器；旧 Redis 先正常关闭，数据卷保留供核查与回退。旧 scheduler 若仍在运行则停止清理并报错，不强制删除。其他项目的 Redis 不在清理范围内，遗留容器的存在也不会触发历史任务交接脚本。
+已有环境从多建的 Redis 切换时，先在服务器更新连接配置，保持三个应用进程的队列名一致。工作流按 scheduler、Beat、API、Worker 的顺序停用旧进程（`scheduler` 是旧布局遗留的服务名，当前编排里只有后三个），等待当前工作正常收尾，再启动连接已有 Redis 的新进程；已持久受理但未送达的任务由 Beat 按原执行编号补投，不搬运或清空 Redis 的键。新进程就绪后，只删除与本项目 Compose 标签一致的旧 `scheduler` 和 `redis` 容器；旧 Redis 先正常关闭，数据卷保留供核查与回退。旧 scheduler 若仍在运行则停止清理并报错，不强制删除。其他项目的 Redis 不在清理范围内，遗留容器的存在也不会触发历史任务交接脚本。
 
 原件桶需预先创建并保持私有，按环境隔离。应用凭据只需覆盖本项目对象的读取、条件写入和删除；
 开启桶版本控制时也要允许读取和删除具体对象版本。应用不会创建桶或修改桶配置。不要为原件启用
@@ -135,7 +135,8 @@ URL、API Key 后面多一个看不见的字符。这类故障很难查：日志
 浏览器通过后端鉴权下载原件，无需桶公开读权限或浏览器侧 S3 密钥。
 
 构建环境首次安装依赖并从 Hugging Face 下载锁定的 tokenizer 文件，校验 SHA-256 后放入镜像，
-不下载 Embedding 模型权重。CI 在结构测试前也显式准备这些资源；运行时只读本地文件。
+不下载 Embedding 模型权重。这一步在镜像构建里完成（`backend/Dockerfile`），运行时只读本地文件；
+本地跑结构测试前需要自己先执行 `prepare_document_resources`。
 部署时可先用新镜像做离线资源检查：
 
 ```bash
@@ -245,8 +246,9 @@ Secrets 和 Variables 填在不同页签里，填错地方工作流读不到（�
 `docker push ***/***:backend-latest`，出错几乎无法定位。这些值也不是凭据——光有地址没有
 用户名密码拉不动私有仓库。
 
-工作流第二步会检查这五个 Variables 是否都非空，缺了就在第一秒失败并指出缺哪个；不检查会
-一路跑到几分钟后的 push 步骤才报一个含糊的错。
+工作流在「检查必需的 Variables 已配置」这一步校验这五个 Variables 是否都非空（排在取代码之后、
+装依赖之前），缺了就在早期失败并指出缺哪个；不检查会一路跑到几分钟后的
+push 步骤才报一个含糊的错。
 
 ### 更换 registry 时必须同步改的地方
 
@@ -293,18 +295,20 @@ docker compose logs -f backend
 推代码到 `main` 即自动部署。也可以在 GitHub 的 Actions 页面手动触发
 （`workflow_dispatch`），用于「服务器侧改了配置想重跑一次」而不必造空提交。
 
+**工作流只做构建与部署，不跑测试。** 测试与回归在本地完成（命令见
+[后端 README](../backend/README.md#测试) 和 [前端 README](../frontend/README.md#验证)），
+推送后 CI 从构建开始。唯一保留的构建期检查是前端 `npm run build` 内含的 `vue-tsc -b`。
+
 CI 的完整顺序在 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) 里，
 几个顺序约束是有意的，不要调整：
 
-1. **测试在构建之前**：先以上次成功部署为基线选择受影响的检查；后端改动准备锁定 tokenizer 并运行离线回归，任务相关改动运行 Linux 核心验收，消息组件和迁移变化分别追加耗时兼容性与历史升级验收，前端使用 Vitest 选择受影响测试。范围与本地命令见 [后端 README](../backend/README.md#测试) 和 [前端 README](../frontend/README.md#验证)。手动触发或没有可靠基线时完整验证；
-   所选检查失败就不构建、不推送、不部署。任务进程日志保存在 Actions artifact 中。
-2. **迁移在 `up -d` 之前**，且 `alembic upgrade head` 在 `agent-lab init-checkpointer`
+1. **迁移在 `up -d` 之前**，且 `alembic upgrade head` 在 `agent-lab init-checkpointer`
    之前。理由见 [ADR 0004](adr/0004-checkpointer-tables-outside-alembic.md)。
-3. **后端部署在前端上传之前**：迁移失败时部署中止，前端仍是旧版本，不会出现「新前端调
+2. **后端部署在前端上传之前**：迁移失败时部署中止，前端仍是旧版本，不会出现「新前端调
    老后端」。
-4. **`docker compose pull` 不能省**：tag 恒为 `backend-latest`，`up -d` 认为 tag 没变会
+3. **`docker compose pull` 不能省**：tag 恒为 `backend-latest`，`up -d` 认为 tag 没变会
    直接复用本地旧镜像——表现是 CI 全绿、容器也重启了，但跑的还是上一版代码。
-5. 候选编排先校验、拉镜像并检查已有 Redis 连接，再按旧编排停止 scheduler/Beat、API、Worker；成功迁移后替换编排并启动新进程。新进程就绪后清理本项目旧容器并保留旧 Redis 数据卷，已有共享 Redis 始终由其自身部署管理。迁移失败保持停止，不能自动恢复旧协议继续写新版表。旧配置备份为 `docker-compose.previous.yml`。
+4. 候选编排先校验、拉镜像并检查已有 Redis 连接，再按旧编排停止 scheduler/Beat、API、Worker；成功迁移后替换编排并启动新进程。新进程就绪后清理本项目旧容器并保留旧 Redis 数据卷，已有共享 Redis 始终由其自身部署管理。迁移失败保持停止，不能自动恢复旧协议继续写新版表。旧配置备份为 `docker-compose.previous.yml`。
 
 推送完成后执行 `gh run list --limit 1` 核对最新部署，失败时用 `gh run view <run-id>` 查明原因；修复在本地验证后再推送。Actions 就绪检查覆盖 API、Beat 和 Worker 消息连接，业务验收仍需受控操作与执行编号。
 
@@ -522,14 +526,14 @@ docker compose stop task-beat backend task-worker
 页面不会显示、保存或回显任何密码。账号停用、密码重置和主动撤销会话会删除
 `access_tokens`，旧浏览器下一次请求立即失效。
 
-### 5.3 环境管理员的轮换与恢复规则
+### 5.3 恢复用超级用户的轮换与恢复规则
 
 修改 `<DEPLOY_DIR>/.env` 后执行 `docker compose up -d`（env 变化会让 compose 重建容器、
 重新注入变量）：
 
 - 修改 `AUTH_ADMIN_PASSWORD`：启动同步 Argon2 Hash；若密码真的变化，撤销该账号所有
   现有会话。新密码可立即登录。
-- 修改 `AUTH_ADMIN_EMAIL`：新邮箱被创建/同步为唯一环境管理员；旧邮箱账号保留其密码、
+- 修改 `AUTH_ADMIN_EMAIL`：新邮箱被创建/同步为唯一带环境托管标记的超级用户；旧邮箱账号保留其密码、
   active 和 superuser 状态，仍可由新管理员在网页管理，不会被删除或自动降权。
 - 删除 `AUTH_ADMIN_EMAIL` 和 `AUTH_ADMIN_PASSWORD` 两行：启动释放环境托管标记，但不删
   除、不降级旧账号；它仍按数据库中的普通超级用户规则存在。

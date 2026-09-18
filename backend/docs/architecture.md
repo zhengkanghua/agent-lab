@@ -132,9 +132,10 @@ Agent 新会话默认所有启用库，迁移旧会话保留 news；每次运行
 ``GET /auth/me``。Token 是 DatabaseStrategy 保存在 ``access_tokens`` 的可撤销随机值，
 浏览器只拿到 HttpOnly Cookie。
 
-应用启动时在构造搜索 Runtime 之前同步 ``.env`` 中唯一的保底超级管理员
+应用启动时在构造搜索 Runtime 之前同步 ``.env`` 中配置的那个超级用户
 （``sync_configured_environment_admin()``）。该账号带环境托管标记，**不能**通过 API 停用、
 降级或重置密码（``environment_admin_protected``）；网页创建的其他账号可正常管理。
+它是网页入口不可用时的恢复通道，登录后与普通超级用户权限相同。
 ``UserAdminService`` 另外保护「最后一个超级用户」（``last_superuser_protected``），并对
 重复邮箱和弱密码返回 ``user_already_exists`` / ``invalid_password``。
 
@@ -581,7 +582,7 @@ Document 的正式可用性、候选处理阶段和管理修订分开。`documen
 ## 手动写入入口
 
 CLI 与 Worker 中的 Pipeline、定时索引及文档任务共用 `DocumentProcessingBatch`，解析、采用、旧索引回收分别有界。
-`sync-news` 只接收原始资料并确认来源位置，不生成向量；`index-pending` 消费已保存待办；
+`sync-news` 只接收原件并确认来源位置，不生成向量；`index-pending` 消费已保存待办；
 CLI `run-once` 直接执行一次同步和处理批次；`POST /pipeline/run-once` 持久受理后返回 202，由 Worker 执行相同业务顺序，结果从 `/task-runs/{run_id}` 读取。
 
 参数边界在 `pipeline/limits.py`。回执区分已解析、待审核、已采用、跳过、失败和清理数量，

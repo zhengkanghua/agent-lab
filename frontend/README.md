@@ -19,7 +19,7 @@ Session Storage 保存密码和 Token。退出调用 `POST /auth/logout` 撤销�
 
 超级用户可进入 `/admin/users`：页面通过受后端权限保护的 `/admin/users` API 创建账号、
 启用/停用、授予/撤销超级用户权限、重置密码和撤销会话。由部署端
-`AUTH_ADMIN_EMAIL/AUTH_ADMIN_PASSWORD` 托管的保底管理员会以独立横线样式显示，网页
+`AUTH_ADMIN_EMAIL/AUTH_ADMIN_PASSWORD` 托管的那个超级用户会以独立横线样式显示，网页
 不能停用、降级或重置其密码；这些值只能写在服务端 `.env`/Secret 中。普通用户手动
 访问该路由会被前端送回搜索页，而真正的安全边界仍是后端 `current_superuser` 依赖。
 
@@ -148,7 +148,7 @@ npm run dev
 
 开发服务器把 `/api/*` 代理到 `http://127.0.0.1:8000`，因此浏览器只使用同域相对 API
 路径。若需要切换地址，可通过 `VITE_API_BASE_URL` 指向另一个公开的 API 前缀；绝不能把
-账号密码或服务端密钥放进 `VITE_*` 变量。保底管理员配置属于后端进程，只能写入
+账号密码或服务端密钥放进 `VITE_*` 变量。恢复用超级用户的配置属于后端进程，只能写入
 `backend/.env` 或部署 Secret。仅需切换本地代理目标时，设置只由 Vite Node 进程读取、
 不会进入浏览器产物的 `BACKEND_PROXY_TARGET`，并继续让浏览器访问 `/api`。
 
@@ -180,7 +180,7 @@ npx prettier --check src/features/semantic-search/tests/SearchResultCard.spec.ts
 
 `vitest related` 按源文件的 import 关系选择受影响测试，适合改动一个组件或状态逻辑时使用。共享样式检查通过文件读取扫描源码，需要显式带上 `shared-styles.node.spec.ts`；它按规则检查全部当前文件，失败消息会指出具体文件。
 
-CI 使用同分支上一次成功部署作为基线，普通前端改动交给 `vitest related`，并带上共享样式检查。前端依赖、公共配置、HTTP/类型契约或入口变化，以及文件删除和重命名时运行完整前端测试；手动触发、工作流修改或无法取得可靠基线时也执行完整验证。纯文档或无关后端改动跳过前端测试。具体范围见 [部署工作流](../.github/workflows/deploy.yml)。
+**测试在本地跑，CI 不跑测试。** 部署工作流只负责构建与部署（见 [部署工作流](../.github/workflows/deploy.yml)）；推送前在本地按上面的范围规则选测试。普通改动用 `vitest related` 带上共享样式检查，前端依赖、公共配置、HTTP/类型契约或入口变化时跑完整测试。
 
 类型变化时可单独运行 `npm run typecheck`。需要完整回归或发布时执行：
 
@@ -219,6 +219,6 @@ npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated/o
 - `src/features/settings`：设置中心（账号安全 / 检索偏好 / Agent 偏好）与账号偏好
   store（读写 `/auth/me/preferences`）；
 - `src/pages`：登录、检索、Agent 对话、设置中心与后台控制台（单路由
-  `/admin/:section?`，AdminPage 按分区组合账号、知识库、来源、文件与定时任务）的路由级组合，
+  `/admin/:section?`，AdminPage 按分区组合账号、知识库、来源、文件与任务管理）的路由级组合，
   不直接执行 `fetch`；
 - `src/styles`：设计令牌（`tokens.css`）；全局 reset/base/components 分层写在 `src/style.css`。

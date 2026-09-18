@@ -93,7 +93,7 @@ Agent Runtime 的装配是**非致命**的：LLM 配置缺失或会话记忆连�
 ```text
 AUTH_COOKIE_SECURE      生产 HTTPS 必须 true；本地 http 联调才设 false
 AUTH_COOKIE_SAMESITE    只允许 strict 或 lax
-AUTH_ADMIN_EMAIL        保底超级管理员，必须与 AUTH_ADMIN_PASSWORD 同时配置或同时注释。
+AUTH_ADMIN_EMAIL        恢复用超级用户，必须与 AUTH_ADMIN_PASSWORD 同时配置或同时注释。
 AUTH_ADMIN_PASSWORD     留成 AUTH_ADMIN_EMAIL= 这样的空值会因邮箱格式校验直接启动失败。
                         密码 12 到 128 字符，且不能等于邮箱。
 FRESHRSS_SYNC_CATEGORIES  分类白名单，JSON 数组。不配就同步不到任何东西。
@@ -368,7 +368,7 @@ uv run pytest -q tests/test_scheduler_runner.py
 uv run pytest -q
 ```
 
-CI 仅在后端代码、测试、依赖或配置变化时运行完整离线回归；纯文档和仅前端改动跳过后端测试。比较基线是同分支上一次成功部署，包含其后失败或被取消运行留下的改动。手动触发、工作流修改、基线缺失或无法查询时执行完整验证，范围规则见 [部署工作流](../.github/workflows/deploy.yml)。
+**回归在本地跑，CI 不跑测试。** 部署工作流只负责构建与部署（见 [部署工作流](../.github/workflows/deploy.yml)）；推送前在本地完成与改动相关的回归，范围按根 `AGENTS.md` 的「工程取舍」选。写完整回归的触发条件与命令见上面的「测试」一节。
 
 写 HTTP 测试时用 ``tests/app_helpers.py`` 的 ``create_offline_app`` 建应用，别直接调
 ``create_app``：后者每个工厂参数都有生产默认值，漏掉一个，lifespan 就会拿真实的那个去连真实
@@ -378,7 +378,7 @@ CI 仅在后端代码、测试、依赖或配置变化时运行完整离线回�
 
 外部集成测试受环境变量门控，默认跳过。运行前需明确访问范围并获得授权；以下账号、模型和既有远程测试可能使用应用环境。定时任务测试可以使用老板已配置的开发 PostgreSQL/Qdrant，但只创建随机 schema、Collection、Alias 和合成数据，不碰业务数据，也不打印密钥或完整向量。
 
-真实 PostgreSQL 的环境管理员同步与账号管理 Service 行为；使用随机临时记录并自动清理：
+真实 PostgreSQL 的恢复用超级用户同步与账号管理 Service 行为；使用随机临时记录并自动清理：
 
 ```powershell
 $env:RUN_POSTGRES_AUTH_INTEGRATION_TEST="1"
@@ -440,7 +440,7 @@ docker compose -p agent-lab-task-tests -f docker-compose.task-tests.yml down --v
 
 该编排只建立内部测试网络与临时 PostgreSQL，不挂生产 `.env`，没有宿主端口。结果目录为 `.pytest_cache/task-environment/`，Worker/Beat/Redis 日志在其 `task-processes/` 下，先保留失败日志再清理。镜像内同时执行旧结构迁移、多进程 PostgreSQL 与文档事务交接中断验证；交接测试只构造合成待办，验证退出时整体回滚和已知结果重新保存，不调用原件或模型。有已授权 Linux PostgreSQL 时也可设置 `RUN_TASK_QUEUE_INTEGRATION_TEST=1`、`TASK_TEST_DATABASE_URL` 后运行 `tests/test_task_queue_integration.py`，本机需有 `redis-server`。
 
-CI 的 Linux 验收按风险选择，失败即停止部署，进程日志保存为 Actions artifact：
+Linux 验收按风险选择，**在本地或已授权的 Linux 环境跑，CI 不执行**：
 
 - 任务核心、持久交接及相关业务存储变化时，验证真实请求去重、取消竞争、进程故障恢复和正常关停后续办；健康流程共用一次隔离环境，破坏进程或 Redis 的场景各自隔离。
 - 消息组件、队列配置或后端依赖及容器配置变化时，追加 `queue_transport`：Redis AOF 重启、断线重连与自然可见性超时重投。自然重投必须等待真实消息证据，不缩短生产扫描行为来制造通过。
