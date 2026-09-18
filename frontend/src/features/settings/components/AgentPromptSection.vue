@@ -2,6 +2,7 @@
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { Bot, Check } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseField from '@/shared/ui/BaseField.vue'
 import BaseTextarea from '@/shared/ui/BaseTextarea.vue'
 import { MAX_SYSTEM_PROMPT_CHARACTERS } from '@/api/agent-chat'
@@ -18,8 +19,12 @@ import { usePreferences } from '../composables/usePreferences'
  *
  * 编辑走草稿 + 显式保存：提示词是大段文本，即时生效会让「改一半」的半成品被新会话带走。
  * 保存成功给一条 2.5 秒的内联确认——一个轻量动作不值得动用全局通知。
+ *
+ * **读成功之前保存键不可用。** 接口是整体覆盖，提交的是 `{...preferences}` 整份；读还没成功时
+ * store 里装的是默认值，此时保存会把账号上的两个检索参数一起覆盖成默认。置灰不是保守，
+ * 是防止一次「只改提示词」的操作顺手抹掉别的设置。
  */
-const { preferences, save: savePreferences } = usePreferences()
+const { preferences, loadState, canEdit, save: savePreferences } = usePreferences()
 const { defaultPrompt, load: loadDefaultPrompt } = useDefaultAgentPrompt()
 
 // 草稿归设置页持有，分区切换不会丢失，也不会提前改变实际使用的提示词。
@@ -40,7 +45,9 @@ const validationError = computed(() => validateAgentSystemPrompt(draft.value))
 /** 与已保存值不同才算改过：保存键是「提交差异」的开关，不是常亮装饰。 */
 const isDirty = computed(() => draft.value !== preferences.agentSystemPrompt)
 
-const canSave = computed(() => isDirty.value && validationError.value === null && !saving.value)
+const canSave = computed(
+  () => isDirty.value && validationError.value === null && !saving.value && canEdit.value,
+)
 
 watch(draft, () => {
   savedFlash.value = false
@@ -99,6 +106,15 @@ async function clearPrompt(): Promise<void> {
       默认提示词。
     </p>
 
+    <!-- 读失败时说明原因：编辑框是灰的，不说一句用户会以为页面坏了。加载中不提示，
+         那只是一瞬间。 -->
+    <BaseCallout
+      v-if="loadState === 'failed'"
+      class="load-error"
+      tone="danger"
+      description="读取账号偏好失败，暂时不能编辑。请刷新页面重试。"
+    />
+
     <div class="editor-card">
       <div class="status-row">
         <span class="status-badge" :class="{ 'is-active': preferences.agentSystemPrompt }">
@@ -126,6 +142,7 @@ async function clearPrompt(): Promise<void> {
             v-model="draft"
             class="prompt-editor"
             mono
+            :disabled="!canEdit"
             :rows="10"
             :maxlength="MAX_SYSTEM_PROMPT_CHARACTERS"
             placeholder="留空即使用默认提示词"
@@ -183,6 +200,12 @@ async function clearPrompt(): Promise<void> {
   color: var(--text-secondary);
   font-size: var(--fs-sm);
   line-height: 1.7;
+}
+
+/* 与编辑卡片同宽，别在窄栏里拉成一条通栏横幅。 */
+.load-error {
+  max-width: 44rem;
+  margin-bottom: var(--space-4);
 }
 
 .editor-card {

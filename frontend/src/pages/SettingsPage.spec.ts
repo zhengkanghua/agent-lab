@@ -125,6 +125,41 @@ describe('SettingsPage', () => {
     wrapper.unmount()
   })
 
+  it('偏好还没读回来时两个下拉禁用，改动不会把服务端配置覆盖成默认值', async () => {
+    // 这条守的是一次真实的数据丢失：写入是整体覆盖（提交 `{...preferences}` 整份），
+    // 读还没回来时 store 里是默认值，此时放行一次改动就会把账号上的自定义提示词一起
+    // 覆盖成默认——用户只是想调个下拉。用「永远不 resolve」把加载态钉住。
+    let release!: (value: unknown) => void
+    api.fetchPreferences.mockImplementation(() => new Promise((resolve) => (release = resolve)))
+    const { wrapper } = await mountAt('/settings/search')
+
+    const selects = wrapper.findAll('select')
+    expect(selects).toHaveLength(2)
+    expect(selects.every((each) => each.attributes('disabled') !== undefined)).toBe(true)
+
+    // 即使有人绕过 disabled 直接触发 change，也不该发出请求。
+    await selects[0]!.setValue('20')
+    expect(api.savePreferences).not.toHaveBeenCalled()
+
+    // 读回来之后才可编辑。
+    release(remote({ systemPrompt: '账号上的提示词', documentLimit: 10 }))
+    await flushPromises()
+    expect(
+      wrapper.findAll('select').every((each) => each.attributes('disabled') === undefined),
+    ).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('读偏好失败时禁用编辑并说明原因，不静默用默认值覆盖', async () => {
+    api.fetchPreferences.mockRejectedValue(new Error('boom'))
+    const { wrapper } = await mountAt('/settings/search')
+
+    expect(wrapper.text()).toContain('读取账号偏好失败')
+    await wrapper.findAll('select')[0]!.setValue('20')
+    expect(api.savePreferences).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('Agent 偏好分区：保存把草稿提交进偏好并内联确认', async () => {
     const { wrapper } = await mountAt('/settings/agent')
 

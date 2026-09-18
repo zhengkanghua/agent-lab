@@ -73,7 +73,42 @@ describe('usePreferences（应用级单例 + 后端读写）', () => {
     expect(api.fetchPreferences).toHaveBeenCalledTimes(1)
   })
 
+  it('读成功之前不允许编辑，也不允许保存', async () => {
+    // 写入是整体覆盖，提交的是 `{...preferences}` 整份。读还没成功时 store 里是默认值，
+    // 此时放行一次保存，就会把账号上真实存着的那份（可能是自定义提示词）覆盖成默认——
+    // 用户只是想改个下拉，提示词却没了。
+    const { canEdit, save, load } = usePreferences()
+
+    expect(canEdit.value).toBe(false)
+    await expect(
+      save({ documentLimit: 20, matchesPerDocument: 5, agentSystemPrompt: '你是记者。' }),
+    ).rejects.toBeInstanceOf(ApiError)
+    // 被拒绝的那次不能真的发出去。
+    expect(api.savePreferences).not.toHaveBeenCalled()
+
+    api.fetchPreferences.mockResolvedValue(remote())
+    await load()
+    expect(canEdit.value).toBe(true)
+  })
+
+  it('读接口失败后仍不可编辑，避免拿默认值把服务端配置覆盖掉', async () => {
+    api.fetchPreferences.mockRejectedValue(new ApiError({ message: 'nope', code: 'network_error' }))
+    const { canEdit, save, load } = usePreferences()
+
+    await load()
+
+    expect(canEdit.value).toBe(false)
+    await expect(
+      save({ documentLimit: 10, matchesPerDocument: 3, agentSystemPrompt: '' }),
+    ).rejects.toBeInstanceOf(ApiError)
+    expect(api.savePreferences).not.toHaveBeenCalled()
+  })
+
   it('保存成功后用服务端回读的那份覆盖本地', async () => {
+    api.fetchPreferences.mockResolvedValue(remote())
+    const { load } = usePreferences()
+    await load()
+
     // 服务端会把空白提示词归一成「未配置」。界面要显示服务端那份，否则用户会看到
     // 一个「保存了但显示的还是刚才那串空格」的假象。
     api.savePreferences.mockResolvedValue(remote({ systemPrompt: '', documentLimit: 10 }))
@@ -86,8 +121,11 @@ describe('usePreferences（应用级单例 + 后端读写）', () => {
   })
 
   it('保存失败时抛出，本地值不动', async () => {
+    api.fetchPreferences.mockResolvedValue(remote())
+    const { preferences, save, load } = usePreferences()
+    await load()
+
     api.savePreferences.mockRejectedValue(new ApiError({ message: 'nope', code: 'network_error' }))
-    const { preferences, save } = usePreferences()
     preferences.documentLimit = 20
 
     await expect(
@@ -98,8 +136,11 @@ describe('usePreferences（应用级单例 + 后端读写）', () => {
   })
 
   it('提交时把前端偏好转成接口要的形状', async () => {
+    api.fetchPreferences.mockResolvedValue(remote())
+    const { save, load } = usePreferences()
+    await load()
+
     api.savePreferences.mockResolvedValue(remote())
-    const { save } = usePreferences()
 
     await save({ documentLimit: 5, matchesPerDocument: 3, agentSystemPrompt: '你是记者。' })
 

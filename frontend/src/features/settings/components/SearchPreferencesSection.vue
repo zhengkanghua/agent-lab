@@ -20,8 +20,12 @@ import { usePreferences } from '../composables/usePreferences'
  *
  * 每次改动立即提交，没有保存按钮——两个下拉就是两个值，加一个显式的「保存」只会让人
  * 忘记点。提交失败时把本地值退回改动前那一份并给出提示，避免界面显示一个没存进去的值。
+ *
+ * **读成功之前两个下拉都禁用。** 提交是整体覆盖，此时 store 里装的是默认值，改一下就会把
+ * 账号上的真实配置（包括自定义提示词）一起覆盖成默认——用户只是调了个下拉，提示词却没了。
+ * 加载中禁用是暂时的，读失败则要说明原因，否则用户会以为页面坏了。
  */
-const { preferences, save } = usePreferences()
+const { preferences, loadState, canEdit, save } = usePreferences()
 
 const saveError = ref('')
 
@@ -80,6 +84,15 @@ const hasCustomized = computed(
 
     <BaseCallout v-if="saveError" class="save-error" tone="danger" :description="saveError" />
 
+    <!-- 读失败时说明原因：控件是灰的，不说一句用户会以为页面坏了。加载中不提示，
+         那只是一瞬间，闪一句「正在读取」比什么都不说更烦人。 -->
+    <BaseCallout
+      v-if="loadState === 'failed'"
+      class="load-error"
+      tone="danger"
+      description="读取账号偏好失败，暂时不能修改。请刷新页面重试。"
+    />
+
     <div class="field-group">
       <BaseField
         id="pref-document-limit"
@@ -87,7 +100,12 @@ const hasCustomized = computed(
         hint="一次检索覆盖多少篇不同的文档。数量越多，单次检索越慢。"
       >
         <template #default="{ control }">
-          <BaseSelect v-bind="control" v-model="documentLimit" class="narrow-select">
+          <BaseSelect
+            v-bind="control"
+            v-model="documentLimit"
+            :disabled="!canEdit"
+            class="narrow-select"
+          >
             <option v-for="option in DOCUMENT_LIMIT_OPTIONS" :key="option" :value="option">
               {{ option }} 篇
             </option>
@@ -101,7 +119,12 @@ const hasCustomized = computed(
         hint="折叠面板里每篇文档最多展开多少条原文片段。"
       >
         <template #default="{ control }">
-          <BaseSelect v-bind="control" v-model="matchesPerDocument" class="narrow-select">
+          <BaseSelect
+            v-bind="control"
+            v-model="matchesPerDocument"
+            :disabled="!canEdit"
+            class="narrow-select"
+          >
             <option v-for="option in MATCHES_PER_DOCUMENT_OPTIONS" :key="option" :value="option">
               {{ option }} 条
             </option>
@@ -111,7 +134,12 @@ const hasCustomized = computed(
     </div>
 
     <div class="section-footer">
-      <BaseButton variant="ghost" size="sm" :disabled="!hasCustomized" @click="resetSearchDefaults">
+      <BaseButton
+        variant="ghost"
+        size="sm"
+        :disabled="!canEdit || !hasCustomized"
+        @click="resetSearchDefaults"
+      >
         <template #icon><ListFilter :size="15" aria-hidden="true" /></template>
         恢复默认（10 篇 · 每篇 3 条）
       </BaseButton>
@@ -137,6 +165,12 @@ const hasCustomized = computed(
   color: var(--text-secondary);
   font-size: var(--fs-sm);
   line-height: 1.7;
+}
+
+/* 与下拉同宽，别在窄栏里拉成一条通栏横幅。 */
+.load-error {
+  max-width: 26rem;
+  margin-bottom: var(--space-5);
 }
 
 .field-group {

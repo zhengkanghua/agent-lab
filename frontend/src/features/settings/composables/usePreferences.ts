@@ -1,6 +1,6 @@
-import { reactive, readonly, ref } from 'vue'
+import { computed, reactive, readonly, ref } from 'vue'
 import { fetchPreferences, savePreferences } from '@/api/preferences'
-import { isAbortError } from '@/api/client'
+import { ApiError, isAbortError } from '@/api/client'
 import {
   DEFAULT_PREFERENCES,
   fromRemotePreferences,
@@ -23,6 +23,11 @@ import {
  * **检索页仍是「改动即生效」。** store 里的 `preferences` 在加载完成后同步可读，检索页每次
  * 提交时现读（`SearchPage.vue` 注入 getter），不需要 await。加载中与加载失败时它就是默认值，
  * 检索照常发出——只是这一轮用的是默认数量参数，而不是把用户卡在等待上。
+ *
+ * **读成功之前不允许写（`canEdit`）。** 这一条是必需的，不是保守：写入是整体覆盖，提交的是
+ * `{...preferences}` 整份。加载中或加载失败时 store 里装的是契约默认值，此时任何一次保存都会
+ * 把账号上真实存着的那份（可能是自定义提示词）覆盖成默认值——用户只是改了个下拉，提示词却没了。
+ * 「读不到就用默认值渲染」本身没问题，问题在于那份默认值不能反过来被当成事实写回去。
  */
 
 /** 存储接口的一次读取状态，供设置页展示「正在读取 / 读取失败」。 */
@@ -73,13 +78,30 @@ async function load(userId?: string): Promise<void> {
 }
 
 /**
+ * 是否可以编辑偏好：只有**成功读到服务端那一份**之后才允许。
+ *
+ * 写成一条规则放在 store 里，而不是让每个设置分区各自判断：写入是整体覆盖，任何一处漏判
+ * 都会静默覆盖掉账号上的真实配置。控件靠它置灰，`save` 自己也靠它兜底。
+ */
+const canEdit = computed(() => loadState.value === 'ready')
+
+/**
  * 把一份偏好写到后端。
  *
  * 成功时用服务端回读的那份覆盖本地（而不是把入参直接当结果），这样「服务端归一化过的值」
  * 才是界面显示的值——比如提交了空白提示词，服务端存的是「未配置」，界面就该显示成空。
  * 失败时抛出，由调用方决定怎么提示；本地值不动，避免「界面显示保存成功、实际没存」。
+ *
+ * **没读到之前直接拒绝**：这时 store 里装的是默认值，提交出去会把服务端的真实配置覆盖掉。
+ * 界面上控件已经置灰，所以走到这里说明调用方漏了判断——宁可报错，也不能静默清掉用户配置。
  */
 async function save(next: UserPreferences): Promise<void> {
+  if (!canEdit.value) {
+    throw new ApiError({
+      message: 'Preferences have not been loaded yet.',
+      code: 'preferences_not_loaded',
+    })
+  }
   const stored = await savePreferences(toRemotePreferences(next), { notifyUnauthorized: false })
   Object.assign(preferences, fromRemotePreferences(stored))
   loadState.value = 'ready'
@@ -97,6 +119,7 @@ export function usePreferences() {
   return {
     preferences,
     loadState: readonly(loadState),
+    canEdit,
     load,
     save,
     resetForTests,
