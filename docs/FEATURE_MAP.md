@@ -38,10 +38,12 @@
 | 会话记录（列出自己的会话、点进去看历史并接着聊、删除） | `/agent`（侧栏）、`/agent/:threadId` | `GET /agent/threads`、`GET /agent/threads/{thread_id}/messages`、`DELETE /agent/threads/{thread_id}` | `api/agent_threads.py` → `services/agent_thread_service.py`、`agent/replay.py`、`models/agent_thread.py`；前端 `api/agent-threads.ts`、`features/agent-chat/composables/useThreadList.ts`、`components/ThreadSidebar.vue` | `tests/test_agent_threads_api.py`、`tests/test_agent_thread_service.py`、`tests/test_agent_replay.py`、`tests/test_agent_thread_ownership_integration.py`（真库，默认跳过）、`src/api/agent-threads.spec.ts`、`src/features/agent-chat/tests/useThreadList.spec.ts` |
 | 健康检查 | 无 | `GET /health` | `api/health.py` | `tests/test_error_contract.py` |
 
-`/vector-search`、`/document-search`、`/documents` 要求登录；`/pipeline`、`/admin/users`、
-`/scheduled-jobs`、`/task-runs`、`/task-policy`、`/file-documents`、`/document-management`、`/agent` 要求超级用户。挂载点和依赖在 `backend/src/agent_lab/main.py` 的
-`include_router` 处。设置中心的两个偏好分区是纯前端能力，只读已有接口
-（`GET /agent/default-prompt`），自己没有后端路由。
+`/vector-search`、`/document-search`、`/documents`、`/auth/me/*`、`/agent/*` 要求普通启用账号；
+`/pipeline`、`/admin/users`、`/scheduled-jobs`、`/task-runs`、`/task-policy`、
+`/file-documents`、`/document-management` 要求超级用户。挂载点和依赖在
+`backend/src/agent_lab/main.py` 的 `include_router` 处。Agent 对话与检索同级开放，
+照旧只读；放开后跨账号隔离靠会话归属，它按 `user_id` 判断、与角色无关
+（[ADR 0030](adr/0030-agent-open-to-all-accounts.md)）。
 
 公共任务的持久受理、Celery/Redis 进程形态、写资源协调及恢复决策见 [ADR 0019](adr/0019-scheduled-execution-and-write-coordination.md)。[ADR 0017](adr/0017-scheduler-runs-in-a-dedicated-process.md) 保留迁移前的历史。
 

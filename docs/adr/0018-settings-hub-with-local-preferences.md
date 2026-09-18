@@ -15,7 +15,8 @@
 1. **新增 `/settings/:section?` 设置中心**，分区由路径参数决定（可刷新、可收藏）：
    - `account` 账号安全：登录信息 + 改自己密码（原 `/account` 整体并入，旧地址重定向保留）；
    - `search` 检索偏好：两个数量参数，改动即生效；
-   - `agent` Agent 偏好（仅超级用户）：自定义系统提示词编辑器，草稿 + 显式保存。
+   - `agent` Agent 偏好（~~仅超级用户~~）：自定义系统提示词编辑器，草稿 + 显式保存。
+     该分区随 Agent 对话一起对所有登录账号开放，见 [ADR 0030](0030-agent-open-to-all-accounts.md)。
 2. **~~偏好只持久化在本浏览器的 localStorage~~**（键 `signaldesk.preferences.v1`，带版本号），
    ~~不进后端：这些值本来就随每次请求发送，后端不需要知道「用户偏好的默认值」。应用级单例
    store（`features/settings/composables/usePreferences.ts`）写入即落盘，读盘失败静默落回默认。~~
@@ -25,9 +26,12 @@
 3. **输入区只留状态入口，不留编辑器**：Agent 输入条在提示词覆盖生效时亮一枚链回
    `/settings/agent` 的徽章；检索输入条保留一个直达 `/settings/search` 的图标入口，
    当前值放在 title 里。
-4. **`useAgentChat` / `useSearchStream` 改为注入式读取偏好**（`getSystemPrompt` /
+4. **`useAgentChat` / `useSearchStream` 改为注入式读取偏好**（~~`getSystemPrompt` /~~
    `getDocumentLimit` 等 getter）：提交那一刻读到什么值，这一轮就用什么值。composable
    与偏好 store 保持解耦，feature 之间不互相导入，页面是唯一组合点。
+   **提示词那一半已由 [ADR 0029](0029-session-scoped-system-prompt.md) 取代**：它不再是
+   每轮提交的参数，而是会话级快照，`getSystemPrompt` 注入点随之删除；`getDocumentLimit`
+   一路不变。
 
 ## Considered Options
 
@@ -54,10 +58,12 @@
 **本节已由 [ADR 0027](0027-user-level-preferences-in-database.md) 取代**：偏好改为每账号一份，
 换浏览器不再丢失配置，代价是设置页与检索页各多一次网络读取、且读取需要登录态。
 
-**安全边界不变。** 密码与 Token 只存在于 HttpOnly Cookie；Agent 提示词分区只对超级用户可见
-（路由守卫 + 页面兜底），因为 `/agent/*` 本来就只放行超级用户。前端的条件渲染是体验，不是鉴权。
+**安全边界不变。** 密码与 Token 只存在于 HttpOnly Cookie；~~Agent 提示词分区只对超级用户可见
+（路由守卫 + 页面兜底），因为 `/agent/*` 本来就只放行超级用户。~~ 前端的条件渲染是体验，不是鉴权。
 （提示词迁入 `user_preferences` 后，它作为账号数据受 `user_id` 归属约束；删账号时由业务层清理，
 库上不建级联，见 [ADR 0028](0028-drop-database-foreign-keys.md)。）
+**超管限制那半句已由 [ADR 0030](0030-agent-open-to-all-accounts.md) 取代**：Agent 对话与其
+偏好分区都对所有登录账号开放，鉴权仍是后端的账号归属判断，不在前端。
 
 **契约常量上收到 api 层。** 数量参数边界与提示词上界是请求契约的一部分，从 feature 的
 validation 模块移到 `api/document-search.ts` 与 `api/agent-chat.ts`——设置中心是它们的

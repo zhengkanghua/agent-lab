@@ -95,7 +95,8 @@ Qdrant 的 grouped query 先按独立索引实例分组，后端核验当前可�
 - 本文这条链路只读检索，不生成回答：`/document-search` 只返回检索到的原文片段，前端也只在
   页内做多轮检索流展示。`/vector-search` 后端仍保留，但前端检索页不再调用它。模型作答是另一条
   链路（`POST /agent/chat`，SSE），它复用同一个 `VectorSearchService.search_documents` 作为工具，但走不同的
-  路由、不同的权限（仅超级用户）和不同的响应形状。
+  路由和不同的响应形状；权限与检索页同级，都对所有登录账号开放（见
+  [ADR 0030](../adr/0030-agent-open-to-all-accounts.md)）。
 - 检索页的多轮「检索流」是纯页面状态：记录只在内存里向下累积，刷新或离开即清空，不写后端、
   不留库。Agent 的 Tool 不修改 Document 或 Qdrant；会话归属与选择范围写 `agent_threads`，
   消息和证据关系写 checkpointer（ADR 0003、0004、0021）。

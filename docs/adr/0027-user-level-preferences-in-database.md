@@ -11,7 +11,11 @@
 
 个人偏好此前只存在浏览器的 localStorage（`signaldesk.preferences.v1`），后端完全不知道它们。
 本决策把它们迁进 PostgreSQL 的新表 `user_preferences`，并新增 `GET` / `PUT /user/preferences`
-两个接口供账号读写自己的配置。本决策**部分取代** [ADR 0018](0018-settings-hub-with-local-preferences.md)：
+两个接口供账号读写自己的配置。**实现时挂载点定为 `/auth/me/preferences`**（不是本文写的
+`/user/preferences`）：账号自助已有既定形态，`api/account.py` 的 router 是 `prefix="/me"`、
+挂在 `api/auth.py` 的 `/auth` 下，新接口挂进同一个 router，自助类接口就只有一种形态。
+本文其余部分按 `/user/preferences` 的措辞保留原样，读到时以 `/auth/me/preferences` 为准。
+本决策**部分取代** [ADR 0018](0018-settings-hub-with-local-preferences.md)：
 那份文档中「偏好只持久化在本浏览器」这一条作废，其余部分继续有效。
 
 ## 为什么现在做
@@ -37,7 +41,7 @@
 1. **新建 `user_preferences` 表**，一行一个账号：`user_id` 主键、外键指向 `users.id` 且
    `ondelete="CASCADE"`；承载 `system_prompt`（可空，`NULL` 表示用服务端默认）与两个检索数量参数。
 2. **三个偏好全部迁入**，localStorage 不再作为偏好的事实源。
-3. **新增 `GET` / `PUT /user/preferences`**：读取与整体覆盖**当前登录账号**的配置。取值域由登录态
+3. **新增 `GET` / `PUT /auth/me/preferences`**（本文初稿写作 `/user/preferences`）：读取与整体覆盖**当前登录账号**的配置。取值域由登录态
    决定，不由路径参数决定，因此路径里不带账号 id——从形态上排除「改别人配置」的可能。
 4. **提示词与会话快照分成两层**：`user_preferences.system_prompt` 是账号的个人偏好（随时可改，
    影响以后新开的会话）；`agent_threads.system_prompt` 是会话级快照（建立时定下，会话内不变）。

@@ -653,7 +653,10 @@ document_versions           已采用的正文、结构、Chunk、元数据、�
 document_review_records     人工或自动审核结论及当时正文依据
 users            内部登录邮箱、Argon2 密码 Hash、启用/超级用户状态和唯一环境托管标记
 access_tokens    浏览器登录产生的可撤销随机 Token、创建时间和所属用户
-agent_threads    Agent 会话的账号归属、选择范围、标题与最后活跃时间；不含任何消息内容
+agent_threads    Agent 会话的账号归属、选择范围、会话级系统提示词快照、标题与最后活跃时间；
+                 不含任何消息内容
+user_preferences 账号级个人偏好：自定义系统提示词与两个检索数量参数；一行一个账号，
+                 system_prompt 为空表示用服务端内置默认提示词
 scheduled_jobs   周期配置：key 唯一、类型、cron、params、启停、配置版本与下一计划时刻
 scheduled_job_runs  周期及一次性任务执行：受理快照、稳定来源、策略、状态、投递、领取与结果；
                     删除配置保留执行，普通终态详情到期清理，未结束和恢复依据受保护
@@ -673,18 +676,24 @@ Chunk 清单与结构作为预览和已采用快照保存在 PostgreSQL，向量
 作者、标签和图片 URL 使用 PostgreSQL `text[]`；所有时间带时区，数据库连接会话固定为 UTC。
 
 Agent 的会话数据分在两处，边界是「内容 / 归属」：四张 ``checkpoint*`` 表存消息内容，
-``agent_threads`` 存归属、展示元信息和下一次运行的选择范围。前者由第三方库管、不由 Alembic 管；后者是普通业务表，
+``agent_threads`` 存归属、展示元信息、下一次运行的选择范围和会话级提示词快照。前者由第三方库管、不由 Alembic 管；后者是普通业务表，
 ``user_id`` 是指向 ``users`` 的**逻辑外键**（库上无约束，连带清理由
 ``UserAdminService.delete_user`` 在同一事务内显式完成，见
 [ADR 0028](../../docs/adr/0028-drop-database-foreign-keys.md)），并有 ``(user_id, last_active_at DESC)`` 索引。
 分开的理由见 [ADR 0009](../../docs/adr/0009-agent-thread-ownership-in-own-table.md)。
+
+``agent_threads`` 的两列写入语义**相反**，这不是疏漏：``scope`` 续聊时可被请求覆盖（另有专门的
+PATCH 路由），``system_prompt`` 在会话建立时从该账号的 ``user_preferences`` 拍下快照、续聊不重读
+偏好表——设置页改提示词只影响新开的会话。改动其中一列前先读
+[ADR 0029](../../docs/adr/0029-session-scoped-system-prompt.md)。
 
 **归属校验是访问控制，不是凭据检查。** 每条 ``/agent/*`` 路由先经
 ``AgentThreadService`` 确认目标会话属于当前账号，不属于就 404；``WHERE user_id`` 只写在那一个
 Service 里。``AgentChatRequest.thread_id`` 仍允许客户端填，但填别人的会拿到 404 而不是别人的历史。
 「不存在」与「不属于你」刻意返回同一个 code：区分开就等于给出一个枚举有效 id 的预言机。
 
-这一层不依赖「``/agent/*`` 只对超级用户开放」。那条权限将来放宽时，归属校验仍然成立——它是
+这一层不依赖路由的权限档位。``/agent/*`` 已对所有登录账号开放（[ADR 0030](../../docs/adr/0030-agent-open-to-all-accounts.md)），
+归属校验因此成了跨账号隔离的**唯一**屏障，它仍然成立——它是
 按账号判断的，不是按角色。
 
 ``POST /agent/chat`` 的校验必须在**流开始之前**完成：响应头一旦发出，失败就只能是一个 SSE

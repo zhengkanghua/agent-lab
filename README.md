@@ -23,13 +23,14 @@ Agent 对话走 `POST /api/agent/chat`，以 SSE 返回模型输出与工具调�
 LangGraph checkpointer 存在 PostgreSQL 的四张 `checkpoint*` 表里。Agent 只有两个只读工具
 （检索文档、读取全文），不修改 Document 或 Qdrant——见
 [`docs/adr/0003-agent-v1-is-read-only.md`](docs/adr/0003-agent-v1-is-read-only.md)。这条链路
-只对超级用户开放：每次对话都是真金白银的模型调用，自定义系统提示词等于让调用方直接改
-模型行为。开发环境由 Vite 去掉 `/api` 前缀后代理到
+对所有登录账号开放（见 [`docs/adr/0030-agent-open-to-all-accounts.md`](docs/adr/0030-agent-open-to-all-accounts.md)）：
+跨账号读对话由会话归属按账号挡住，与角色无关；代价是模型额度对全部登录账号共享。开发环境由
+Vite 去掉 `/api` 前缀后代理到
 `http://127.0.0.1:8000` 的对应 FastAPI 路由。浏览器访问搜索前必须使用内部账号登录；
 后端使用 PostgreSQL 可撤销 Token 和 HttpOnly Cookie，不开放注册。部署 Secret 或
 `backend/.env` 托管唯一保底超级管理员，服务启动时自动创建/同步；该管理员登录后可在
-`/admin/users` 创建和管理其他账号。普通账号只能读取，超级用户额外拥有账号管理、
-Agent 对话、知识库/来源/文件管理与手动 Pipeline 权限，CLI 只保留为恢复入口。
+`/admin/users` 创建和管理其他账号。检索、Agent 对话与个人偏好对所有登录账号开放，
+超级用户额外拥有账号管理、知识库/来源/文件管理与手动 Pipeline 权限，CLI 只保留为恢复入口。
 
 超级用户在 `/admin/files` 上传 `.txt`、`.md`，指定归属知识库，或按 Document ID 替换、删除。
 原件和待办保存成功即返回，Celery Worker 通过已受理的文档处理批次解析并处理采用；正常结果自动索引，异常留待人工处理。

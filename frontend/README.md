@@ -7,7 +7,7 @@ Signal Desk 是知识库语义检索工作台的 Vue 3 前端。检索页 `/` �
 原文片段；用户点击“阅读全文”后才调用 `GET /documents/{document_id}` 读取 PostgreSQL 当前
 完整正文。
 
-`/agent` 是另一条链路：超级用户在那里提问，由后端 Agent 在本次范围内决定检索哪些文档、要不要读
+`/agent` 是另一条链路：登录账号在那里提问，由后端 Agent 在本次范围内决定检索哪些文档、要不要读
 全文，再基于查到的内容作答，回答与工具调用轨迹以 SSE 流式到达。它同样只读——不写
 Document、不写 Qdrant；会话归属和范围保存到服务端。`/admin/files` 提供独立的文件管理入口，
 上传、替换和删除均需超级用户权限；`/admin/documents` 统一审核文件和 FreshRSS 资料。
@@ -67,10 +67,12 @@ Agent 提示词草稿在设置分区之间切换时保留，只有保存后才�
 
 ## Agent 对话页的数据边界
 
-- `/agent` 只对超级用户开放：路由 `meta.requiresSuperuser` 提前挡住，真正的安全边界仍是
-  后端 `/agent/*` 上的 `current_superuser` 依赖。普通账号手动访问会被送回检索页。
+- `/agent` 对所有登录账号开放，与检索页同级：路由只要求 `meta.requiresAuth`，真正的安全边界
+  是后端 `/agent/*` 上的 `current_active_user` 依赖，以及按 `user_id` 判定的会话归属
+  （见 [`docs/adr/0030-agent-open-to-all-accounts.md`](../docs/adr/0030-agent-open-to-all-accounts.md)）。
+  系统提示词不再由前端逐轮发送，因此请求体里只有提问、会话 id 和范围。
 - 流式接口用 `fetch` + `response.body.getReader()`，不用 `EventSource`。后者只能发 GET、
-  不能带请求体，提问和自定义提示词就得进 query string，会被网关日志和浏览器历史记下来。
+  不能带请求体，提问就得进 query string，会被网关日志和浏览器历史记下来。
 - 超时分两道：连接 30 秒、空闲 60 秒（后端心跳 15 秒，留四倍余量）。不复用 JSON 层的 45 秒
   总时长上限——一次 Agent 运行可能要几分钟，用它会在模型还在写的时候掐断。
 - 调用方提前 `break` 时会 `reader.cancel()` 关掉连接，否则后端那次运行会继续跑、继续计费。
