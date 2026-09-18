@@ -82,8 +82,10 @@ API、单个 Beat 和 Worker 使用同一份后端代码、独立进程与数据
 Agent Runtime 的装配是**非致命**的：LLM 配置缺失或会话记忆连不上时，只记异常类型（配置和
 连接串里都有凭据，异常文本可能带出来），把 ``app.state.agent_runtime`` 留成 ``None``，进程
 照常启动，只有 ``/agent/*`` 返回 503。所以「服务起来了」不等于「Agent 可用」，改完 LLM 配置
-要看启动日志里有没有 ``Agent 运行时装配失败``。``LLM_MODEL`` 填成上游不存在的名字属于另一
-种情况：启动完全看不出来，要到第一次提问才报错。
+要看启动日志里有没有 ``Agent 运行时装配失败``。``LLM_MODEL`` 填成上游不存在的名字在启动期
+就会失败：``agent/model_catalog.py`` 会向上游拉模型列表比对，不在其中即抛
+``LlmModelNotListedError``，``/agent/*`` 返回 503。**唯一放过的情况是上游列表拉不到**
+（网络不通、接口不支持），此时只记 warning，要等到第一次提问才会暴露。
 
 ## 配置
 
@@ -114,8 +116,8 @@ TASK_WORKER_CONCURRENCY   每个 Worker 容器的 prefork 子进程数，Compose
 QDRANT_DISTANCE         改这个或维度必须新建 Schema/Collection，不能原地改。
 LLM_API_KEY             LLM_PROVIDER=openai_compatible 时必须非空，否则 /agent/* 全部 503；
                         provider=ollama 时允许为空。检索接口不受影响。
-LLM_MODEL               必须是 LLM_BASE_URL 那一侧真实存在的模型名，填错要到第一次
-                        提问才报错，启动时看不出来。
+LLM_MODEL               必须是 LLM_BASE_URL 那一侧真实存在的模型名。填错时启动期会
+                        比对上游模型列表并失败，只有列表拉不到时才拖到第一次提问。
 LLM_USER_AGENT          默认 agent-lab。留空则沿用 SDK 默认值，此时部分中转站会按
                         User-Agent 把 openai SDK 的默认标识拦成 403，见下文。
 LANGSMITH_TRACING       默认 false。设成 true 意味着提问内容和检索到的文档正文会离开

@@ -14,7 +14,7 @@ POST /auth/logout                         撤销当前 Token
 GET  /auth/me                             当前账号的最小身份与权限字段
 GET  /knowledge-bases                     知识库配置列表（默认只列启用库）
 POST /knowledge-bases                     创建知识库（超级用户）
-PATCH /knowledge-bases/{kb_id}            改名称、说明或启停；无物理删除（超级用户）
+PATCH /knowledge-bases/{knowledge_base_id}  改名称、说明或启停；无物理删除（超级用户）
 GET  /sources                             外部来源列表与绑定状态（超级用户）
 PATCH /sources/{source_id}/knowledge-base 修改来源的知识库绑定（超级用户）
 POST /vector-search                       Chunk 级只读语义检索
@@ -357,6 +357,7 @@ agent/middleware.py 中间件流水线；顺序有语义，见 ADR 0005
 agent/runtime.py    组装根：编译一次图，进程级共享
 agent/streaming.py  翻译 LangGraph 事件，从持久状态确定 Done
 agent/checkpointer.py  四张 checkpointer 表名的唯一真源 + Alembic 的 include_object
+agent/model_catalog.py 启动期向上游拉模型列表，校验配置的模型名确实存在
 agent/errors.py     本层的已分类异常（叶子模块，不 import 框架图相关模块）
 ```
 
@@ -463,6 +464,7 @@ PostgreSQL 单方面掐掉的空闲连接（``idle_session_timeout``、中间代
 
 ```text
 VECTOR_SEARCH_ERROR_RULES   build_vector_search_error_response()
+    document_visibility_unavailable 503 /
     search_runtime_unavailable 503 / embedding_authentication_failed 502 /
     embedding_timeout 504 / embedding_unavailable 503 / embedding_model_not_found 503 /
     embedding_response_invalid 502 / qdrant_authentication_failed 502 /
@@ -484,6 +486,7 @@ USER_ADMIN_ERROR_RULES      build_user_admin_error_response()
 AGENT_CHAT_ERROR_RULES      build_agent_chat_error_response()
     agent_runtime_unavailable 503 / agent_checkpointer_unavailable 503 /
     agent_checkpointer_connection_lost 503 /
+    agent_thread_not_found 404 / agent_thread_database_unavailable 503 /
     llm_authentication_failed 502 / llm_request_blocked 502 / llm_timeout 504 /
     llm_rate_limited 503 / llm_model_not_found 503 / llm_request_rejected 502 /
     llm_unavailable 503 / llm_response_invalid 502 / llm_service_error 502 /

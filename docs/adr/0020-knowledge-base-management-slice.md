@@ -12,7 +12,7 @@ KnowledgeBase 从「只交付配置、停用搜索检查延期」的初次切片
 - 导入、索引、检索、Source 绑定和清理用例依赖纯数据契约与端口，PostgreSQL、FreshRSS、Qdrant、LangChain/Ollama 留在适配器与装配层。DocumentSnapshot 在数据库事务结束前构造，不让 ORM 生命周期进入索引用例。
 - 停用库拒绝新增绑定、来源导入和检索，已有数据保留且可显式维护清理。同步网络前检查一次，保存时在短事务中锁定并复核；Source 绑定参加 sync/index 持久写协调。
 - 普通内部搜索必须明确范围；新页面显式选择所有启用库或非空 ID 集合，服务端解析一次范围快照后交给 Qdrant 统一分组和排序。旧 HTTP 缺省仍明确传 news，不让旧调用方悄然跨库。范围不存在返回 404，停用或无启用库返回 409，均在 Embedding/Qdrant 之前失败。Agent 新会话默认所有启用库，既有会话迁移保留 news；每次运行取得不可变快照，Tool 只能继续缩小范围。
-- 索引和 Payload 采用 v2；多个 KnowledgeBase 共用同规格 Collection。重建占用 sync/index，完整构建并验收新 generation 后发布 current Alias，之后条件更新成功快照。构建失败保留原 Alias，发布或确认不确定时保留占用供人工核实；旧 Collection 不自动删除。
+- ~~索引和 Payload 采用 v2~~（**已由 [ADR 0022](0022-pluggable-document-processing.md) 取代为 v3**）；多个 KnowledgeBase 共用同规格 Collection。重建占用 sync/index，完整构建并验收新 generation 后发布 current Alias，之后条件更新成功快照。构建失败保留原 Alias，发布或确认不确定时保留占用供人工核实；旧 Collection 不自动删除。
 
 ## 原因与边界
 

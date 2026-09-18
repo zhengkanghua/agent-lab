@@ -158,10 +158,9 @@
 「不测实现细节」相矛盾。
 
 **`user_preferences` 的连带义务。** ADR 0027 批准给 `user_preferences.user_id` 加 `CASCADE`
-的那段论证随本决策失效。将来实现该表时**不建外键**，删账号清偏好必须接进本次补的这条
-`UserAdminService.delete_user` 路径、同一个事务。理由与应用到 `agent_threads`/`access_tokens`
-的完全相同；配置尤其不能指望运维命令兜底——会话有 `prune-orphan-threads`，配置没有对应的
-清理命令。
+的那段论证随本决策失效。该表**不建外键**，删账号清偏好接在 `UserAdminService.delete_user`
+路径里、同一个事务。理由与应用到 `agent_threads`/`access_tokens` 的完全相同；配置尤其不能
+指望运维命令兜底——会话有 `prune-orphan-threads`，配置没有对应的清理命令。
 
 **孤儿清理命令的定位不变。** `agent-lab prune-orphan-threads` 服务的场景是「功能上线前的历史
 数据没有归属记录」，**不应**被当成日常删账号的清理手段。正常路径靠业务代码在同一事务内清理干净。

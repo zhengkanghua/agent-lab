@@ -36,7 +36,7 @@
 | Agent 偏好（自定义系统提示词，作为新会话的初始值） | `/settings/agent`（输入条徽章直达） | `GET`/`PUT /auth/me/preferences` | `api/account.py` → `services/user_preference_service.py`；前端 `api/preferences.ts`、`features/settings/`、`pages/SettingsPage.vue` | `tests/test_account.py`、`src/api/preferences.spec.ts`、`src/features/settings/tests/`、`src/pages/SettingsPage.spec.ts` |
 | 读取 Agent 默认系统提示词 | `/settings/agent`（提示词编辑器内） | `GET /agent/default-prompt` | `api/agent_chat.py` → `agent/prompts.py`；前端 `features/settings/composables/useDefaultAgentPrompt.ts` | `tests/test_agent_chat_api.py`、`src/features/settings/tests/useDefaultAgentPrompt.spec.ts` |
 | 会话记录（列出自己的会话、点进去看历史并接着聊、删除） | `/agent`（侧栏）、`/agent/:threadId` | `GET /agent/threads`、`GET /agent/threads/{thread_id}/messages`、`DELETE /agent/threads/{thread_id}` | `api/agent_threads.py` → `services/agent_thread_service.py`、`agent/replay.py`、`models/agent_thread.py`；前端 `api/agent-threads.ts`、`features/agent-chat/composables/useThreadList.ts`、`components/ThreadSidebar.vue` | `tests/test_agent_threads_api.py`、`tests/test_agent_thread_service.py`、`tests/test_agent_replay.py`、`tests/test_agent_thread_ownership_integration.py`（真库，默认跳过）、`src/api/agent-threads.spec.ts`、`src/features/agent-chat/tests/useThreadList.spec.ts` |
-| 健康检查 | 无 | `GET /health` | `api/health.py` | `tests/test_error_contract.py` |
+| 健康检查 | 无 | `GET /health` | `api/health.py` | 无（真连 PostgreSQL，离线测试跑不了） |
 
 `/vector-search`、`/document-search`、`/documents`、`/auth/me/*`、`/agent/*` 要求普通启用账号；
 `/pipeline`、`/admin/users`、`/scheduled-jobs`、`/task-runs`、`/task-policy`、

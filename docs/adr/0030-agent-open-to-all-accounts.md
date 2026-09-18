@@ -48,5 +48,5 @@ Agent 对话此前只对超级用户开放（`main.py` 挂载 `/agent/*` 处用�
 
 **既有测试整条改写，不保留原始断言。** 那些「普通账号进不来」的断言验证的是一条本次明确要
 改掉的行为，留着就是留一条错的验证。逐条改成新行为（普通账号能进、无凭据仍 401、跨账号仍 404），
-其中 `test_agent_routes_are_guarded_by_superuser_not_active_user` 由结构性断言改成查
+其中 `test_agent_routes_are_guarded_by_active_user_not_superuser` 由结构性断言改成查
 `current_active_user`——它守的是「守卫对象没被悄悄改错」，这个价值换方向后仍成立。
