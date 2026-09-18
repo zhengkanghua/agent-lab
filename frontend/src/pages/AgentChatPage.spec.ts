@@ -15,6 +15,15 @@ const api = vi.hoisted(() => ({
 
 vi.mock('../api/agent-chat', () => api)
 
+// 外壳（AppShell）挂载时会给三个页面读一次账号偏好。不打桩的话每个用例都会真去 fetch，
+// jsdom 里表现成一次静默失败——store 把异常吞掉落回默认值，测试照过，只是跑了真实网络路径。
+const preferencesApi = vi.hoisted(() => ({
+  fetchPreferences: vi.fn(),
+  savePreferences: vi.fn(),
+}))
+
+vi.mock('@/api/preferences', () => preferencesApi)
+
 // 会话列表也要打桩：不打的话页面挂载时会真去 fetch，jsdom 里表现成一堆未处理的 rejection，
 // 而且列表永远停在错误态——本文件那些与列表无关的断言会在一个「侧栏报错」的界面上跑。
 const threadsApi = vi.hoisted(() => ({
@@ -133,8 +142,16 @@ describe('AgentChatPage', () => {
     session.logout.mockReset()
     session.logout.mockResolvedValue(undefined)
     resetAuthUser()
-    // 偏好是应用级单例：上个用例写进去的提示词不能漏到这个用例。
-    usePreferences().preferences.agentSystemPrompt = ''
+    // 偏好是应用级单例，用 resetForTests 而不是手改一个字段：模块级的 loadState/loadedFor
+    // 不复位的话，上个用例留下的「已加载过某个账号」会让下个用例的 load() 直接短路，
+    // 用例之间就产生了顺序依赖。
+    usePreferences().resetForTests()
+    preferencesApi.fetchPreferences.mockReset()
+    preferencesApi.fetchPreferences.mockResolvedValue({
+      systemPrompt: '',
+      documentLimit: 10,
+      matchesPerDocument: 3,
+    })
     threadsApi.listAgentThreads.mockReset()
     threadsApi.listAgentThreads.mockResolvedValue({ items: [], total: 0 })
     threadsApi.getAgentThreadMessages.mockReset()

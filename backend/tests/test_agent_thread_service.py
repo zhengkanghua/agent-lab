@@ -263,12 +263,15 @@ def test_continuing_a_thread_filters_by_both_thread_id_and_user_id() -> None:
     assert (session.commits, session.rollbacks) == (1, 0)
 
 
-def test_continuing_a_thread_does_not_read_the_preference_table() -> None:
-    """续聊时**不**回读个人偏好——这正是「会话级快照」的核心。
+def test_continuing_a_thread_never_writes_the_prompt_column() -> None:
+    """续聊的 UPDATE **不改** ``system_prompt``——这是「会话级快照」在语句层的落点。
 
-    如果哪天有人为了「让设置改动立刻生效」在这里加一条偏好查询，用户在设置页改一次提示词
-    就会把正在进行的会话换掉，会话内前后回答不再可比。这条断言把那个改动挡回去：
-    续聊只跑一条 UPDATE。
+    上一条只断言「续聊只有一条 UPDATE」，挡不住「往这条 UPDATE 的 ``.values()`` 里加一个
+    ``system_prompt=...``」——那种改动会让会话中途换设定，而语句条数不变、上一条照样绿。
+    所以这里单独看 SET 子句：``scope`` 可以改（改选是允许的），提示词不可以。
+
+    注意 RETURNING 里**有** ``system_prompt``，那是取回会话值用的，不是写入。所以不能整条
+    SQL 搜字段名，只能看 SET 与 WHERE 之间那一段。
     """
 
     session = FakeSession(rowcount=1, returning_row=(None,))
@@ -280,8 +283,14 @@ def test_continuing_a_thread_does_not_read_the_preference_table() -> None:
         )
     )
 
-    assert len(session.statements) == 1
-    assert compiled(session.statements[0]).lstrip().upper().startswith("UPDATE")
+    sql = compiled(session.statements[0]).upper()
+    assignments = sql.split(" SET ", 1)[1].split(" WHERE ", 1)[0]
+    assert "SYSTEM_PROMPT" not in assignments
+    # 正面那一半：``last_active_at`` 是这条 UPDATE 必写的列，它不在说明 SET 子句根本没取到，
+    # 那样上面的断言就是空转。
+    assert "LAST_ACTIVE_AT" in assignments
+    # 取回会话值用的 RETURNING 里**有**这一列，这是对的——所以上面只能看 SET 段。
+    assert "RETURNING" in sql and "SYSTEM_PROMPT" in sql.split("RETURNING", 1)[1]
 
 
 def test_continuing_someone_elses_thread_rolls_back_and_raises() -> None:

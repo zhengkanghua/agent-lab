@@ -56,11 +56,13 @@ pytestmark = pytest.mark.skipif(
 
 # 拆外键之前的那一版。本次拆外键的迁移就是从它接续的。
 PREVIOUS = "b6e2f9047a31"
-# 拆外键那条迁移自己的 revision。拆约束的验收条件针对它，所以断言「16 处都已拆」时必须停在
-# 这一版上，不能跟着 head 走——那会把别的迁移的改动混进来。
+# 拆外键那条迁移自己的 revision。它只用来在 fixture 里走到「已拆约束」那一步，断言不再停在
+# 它上面——见 HEAD 的说明。
 CURRENT = "d4b7c1e93a58"
-# 当前 head。升级到这个版本之后才能跑删除路径：``agent_threads.system_prompt`` 是后续迁移
-# 加的列，停在 CURRENT 上跑 ORM 会报「列不存在」。
+# 当前 head。验收条件停在 **head** 上而不是 CURRENT：本文件要保护的性质是「库里一个外键都没有，
+# 且业务层清理真的生效」，那是**当前**库的形态。若停在 CURRENT，之后任何一条加了外键的迁移都能
+# 悄悄溜过这条断言。升级到 head 之后才能跑删除路径——``agent_threads.system_prompt`` 是后续
+# 迁移加的列，停在 CURRENT 上跑 ORM 会报「列不存在」。
 HEAD = "e2c8f14b7a30"
 
 
@@ -94,8 +96,10 @@ def migrated_database():
     config = Config()
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
 
-    def up(connection, revision=CURRENT):
+    def up(connection, revision):
         # 复用外部连接，让迁移跑在随机 schema 上而不是 alembic.ini 里那条业务 DSN。
+        # revision 不给默认值：本文件的两处调用都显式传，留一个没人用的默认值只会让人以为
+        # 「升到 CURRENT 就够了」——那正是这条注释原来在说、而代码已经不这么做的事。
         config.attributes["connection"] = connection
         command.upgrade(config, revision)
 

@@ -14,7 +14,18 @@ const session = vi.hoisted(() => ({
 
 vi.mock('@/features/auth/auth-session', () => ({ authSession: { user: session.user } }))
 
+/* 外壳挂载时会给三个页面读一次个人偏好（`usePreferences().load`）。不 mock 的话每个用例
+   都会真发一次 `/api/auth/me/preferences`——jsdom 里 fetch 不存在，失败被 store 吞掉，
+   于是测试照过，只是静默跑了真实网络路径。这里既挡住它，也让「外壳确实触发了加载」可断言。 */
+const preferencesApi = vi.hoisted(() => ({
+  fetchPreferences: vi.fn(),
+  savePreferences: vi.fn(),
+}))
+
+vi.mock('@/api/preferences', () => preferencesApi)
+
 import AppShell from './AppShell.vue'
+import { usePreferences } from '@/features/settings'
 
 type Props = InstanceType<typeof AppShell>['$props']
 
@@ -53,6 +64,13 @@ async function mountShell(props: Partial<Props> = {}, slots: Record<string, unkn
 beforeEach(() => {
   session.user.value = { email: 'admin@example.com' }
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 })
+  usePreferences().resetForTests()
+  preferencesApi.fetchPreferences.mockReset()
+  preferencesApi.fetchPreferences.mockResolvedValue({
+    systemPrompt: '',
+    documentLimit: 10,
+    matchesPerDocument: 3,
+  })
 })
 
 afterEach(() => {
@@ -271,6 +289,14 @@ describe('AppShell', () => {
     }
     expect(document.body.style.overflow).toBe('auto')
     document.body.style.overflow = ''
+  })
+
+  it('挂载时读一次账号偏好，供三个页面共用', async () => {
+    // 加载点放在外壳而不是各页：三个页面都要用同一份，各自读会变成每次页面切换多一次往返。
+    // 这条钉住「外壳确实触发了加载」——只断言「页面能渲染」的话，把 onMounted 删掉测试照样绿。
+    await mountShell()
+
+    expect(preferencesApi.fetchPreferences).toHaveBeenCalledTimes(1)
   })
 
   it('抽屉里点主操作：发事件并顺手关抽屉', async () => {

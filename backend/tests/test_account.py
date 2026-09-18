@@ -18,7 +18,6 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi_users.password import PasswordHelper
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.schema import CreateTable
 
 from agent_lab.agent.limits import MAX_SYSTEM_PROMPT_CHARS
 from agent_lab.api.account import get_account_service, get_user_preference_service

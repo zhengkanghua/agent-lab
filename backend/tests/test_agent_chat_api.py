@@ -248,8 +248,13 @@ def test_new_conversation_records_ownership_for_the_current_account() -> None:
 def test_account_preference_prompt_reaches_the_model_on_a_new_thread() -> None:
     """账号在偏好里配了提示词 → 新建会话时该会话存下这份，且本轮就生效。
 
-    提示词不再从请求体来（那个字段已删除），所以这条改从偏好构造前提。它一次性穿过三处：
-    偏好取值、会话快照的写入、运行上下文的组装——这正是只有 HTTP 层才能观察到的路径。
+    提示词不再从请求体来（那个字段已删除），所以这条改从偏好构造前提。
+
+    **覆盖边界要写清楚**：会话归属依赖在本层换成了 ``InMemoryAgentThreadService``，所以
+    「从 ``user_preferences`` 表取值」这一环是替身模拟的，没有被这条走过。它真正穿过的是
+    「会话快照的写入」与「运行上下文的组装」。真实那一环由两层守着：
+    ``tests/test_agent_thread_service.py``（语句层）与
+    ``tests/test_agent_thread_ownership_integration.py`` 里门控的真库用例。
     """
 
     model = scripted("答案")
