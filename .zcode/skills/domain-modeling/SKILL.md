@@ -72,3 +72,18 @@ Only offer to create an ADR when all three are true:
 3. **The result of a real trade-off**: there were genuine alternatives and you picked one for specific reasons
 
 If any of the three is missing, skip the ADR. Use the format in [ADR-FORMAT.md](./ADR-FORMAT.md).
+
+## The format contract is enforced
+
+[FORMAT-CONTRACT.md](./FORMAT-CONTRACT.md) turns the rules above into machine-checkable form. It is the
+single definition: `scripts/check-domain-docs.mjs` reads its JSON block and applies it, and the four
+harnesses' write hooks plus the repo's `pre-commit` hook all call that script. This repo (agent-lab)
+uses the contract; the enforcement lives in the repository, not in this skill.
+
+Two practical consequences when you are working in such a repo:
+
+- A write to `CONTEXT.md` or `docs/adr/**` may be **rejected**. The rejection names the rule you broke
+  and points back at this skill. Read it — do not guess the format and retry. Existing files are judged
+  by "must not get worse": only newly introduced violations block, so fixing a legacy ADR incrementally
+  is allowed.
+- If you need to change a rule, change the contract file. Do not route around the hook.

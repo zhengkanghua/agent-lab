@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": "write_file|replace",
+        "hooks": [
+          {
+            "name": "domain-docs-format-guard",
+            "type": "command",
+            "command": "node \"$GEMINI_PROJECT_DIR/scripts/check-domain-docs.mjs\" --stdin"
+          }
+        ]
+      }
+    ]
+  }
+}

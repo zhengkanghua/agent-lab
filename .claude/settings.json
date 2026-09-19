@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/check-domain-docs.mjs\" --stdin",
+            "statusMessage": "校验领域模型文档格式"
+          }
+        ]
+      }
+    ]
+  }
+}

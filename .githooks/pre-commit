@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# 提交前检查：只校验本次暂存的领域模型文档（CONTEXT.md、docs/adr/*.md）。
+#
+# 刻意做得很窄：不格式化、不跑测试、不碰其他文件。它要挡的只有一件事——把不符合格式契约的
+# ADR / 术语表提交进去。用 `git commit --no-verify` 可以绕过（手工改文档时可能需要）。
+#
+# 规则不在这个脚本里，在 .codex/skills/domain-modeling/FORMAT-CONTRACT.md；
+# 校验逻辑在 scripts/check-domain-docs.mjs。这里只负责挑出暂存的文件。
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+staged=$(git diff --cached --name-only --diff-filter=ACM \
+  | grep -E '^(CONTEXT\.md|docs/adr/[^/]+\.md)$' || true)
+
+if [ -z "$staged" ]; then
+  exit 0
+fi
+
+# 未暂存的改动不能参与校验：门禁看的是「即将提交的内容」，不是工作区当前的样子。
+# 所以先把暂存内容取到临时目录，再对着它跑校验。
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+
+while IFS= read -r file; do
+  mkdir -p "$tmpdir/$(dirname "$file")"
+  git show ":$file" > "$tmpdir/$file"
+done <<< "$staged"
+
+# 本门禁是提醒，不是提交阻断器。node 不在 PATH 或脚本缺失时**放行**并在 stderr 提一句，
+# 不报错退出——否则一个与文档毫无关系的改动（或一台没装 node 的机器）会因为环境缺件而提交不了。
+# 真正拦住违规内容的是 CI 之外的手动校验与各 harness 的写入门禁。
+if ! command -v node >/dev/null 2>&1; then
+  echo "跳过领域模型文档格式检查：找不到 node。" >&2
+  exit 0
+fi
+if [ ! -f scripts/check-domain-docs.mjs ]; then
+  echo "跳过领域模型文档格式检查：scripts/check-domain-docs.mjs 不存在。" >&2
+  exit 0
+fi
+
+if ! node scripts/check-domain-docs.mjs --root "$tmpdir" --files $(cd "$tmpdir" && find . -name '*.md' | sed 's|^\./||'); then
+  echo ""
+  echo "以上文件不符合领域模型文档格式契约，本次提交已中止。"
+  echo "规则见 .codex/skills/domain-modeling/FORMAT-CONTRACT.md，先读它再改。"
+  echo "确认要跳过检查时用：git commit --no-verify"
+  exit 1
+fi

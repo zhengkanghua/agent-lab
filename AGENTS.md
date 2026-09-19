@@ -40,13 +40,21 @@
 ## 仓库约定
 
 1. `backend/` 与 `frontend/` 分别管理依赖、构建、测试和运行命令，不跨运行时导入模块。
-2. skill 以 `.codex/skills/` 为唯一源，`.claude/`、`.zcode/`、`.gemini/` 下的 `skills/` 是它的三份副本，各工具只读自己目录里的那份。改完源（或增删 skill）必须跑同步脚本，四份内容保持一致；只改一侧会让不同工具读到不同版本的同名 skill：
+2. skill 以 `.codex/skills/` 为唯一源，`.claude/`、`.zcode/`、`.gemini/`、`.pi/` 下的 `skills/` 是它的四份副本，各工具只读自己目录里的那份。改完源（或增删 skill）必须跑同步脚本，四份内容保持一致；只改一侧会让不同工具读到不同版本的同名 skill：
 
     ```bash
     bash scripts/sync-skills.sh    # 全量镜像 + diff 校验，输出「已同步」即成功
     ```
+
+    `.pi/` 是 pi 的项目级位置（pi 递归发现 `.pi/skills/**/SKILL.md`）。不要改用 `.agents/skills`——那是跨工具的标准位置，Codex 也读它，副本放那里会让 Codex 看到两份同名 skill。
 3. 探索代码前先读仓库根 `CONTEXT.md`（术语表）和 `docs/adr/`（决策记录）。两者都不存在就直接跳过，不要提示缺失、也不要提议预先创建。输出里提到领域概念时沿用 `CONTEXT.md` 的既定说法，不要换同义词。若结论与某条 ADR 冲突，显式指出是哪条，不要静默绕过。
 4. **`CONTEXT.md` 与 `docs/adr/` 的写入（新增、修改、删除）必须先调用 `domain-modeling` skill，或用 `/grill-with-docs`（它含前者的组合入口）。** 这两个文件是领域模型，格式、判据、什么该写什么不该写、过期怎么删，全部由 skill 在调用时给出，本文不复制一份——复制出来的第二份规范必然与 skill 漂移，而 agent 照着它就能绕过 skill 直接写，那正是这两个文件失序的来源。文件位置与命名：术语表在仓库根 `CONTEXT.md`，决策记录在 `docs/adr/NNNN-slug.md`（编号扫目录内最大号 +1）；两者都按需新建，不预先摆空文件。
+
+    格式契约在 `.codex/skills/domain-modeling/FORMAT-CONTRACT.md`，它同时是机器可读的那一份：`scripts/check-domain-docs.mjs` 从它读规则，四个 harness 的 hook（`.pi/extensions/`、`.claude/settings.json`、`.codex/hooks.json`、`.gemini/settings.json`）与 `.githooks/pre-commit` 都调那个脚本。写入不合规时会被拒绝，并把违规规则连同 skill 路径回给模型——**被拦住时该做的是去读 skill，不是猜格式**。想查自己改得对不对，手动跑：
+
+    ```bash
+    node scripts/check-domain-docs.mjs
+    ```
 5. 术语表和决策记录都在仓库根各一份，不按运行时拆。当前是一个业务领域（知识库语义检索）被 `frontend/` 和 `backend/` 两个运行时切开，两侧说的是同一套词——Document、Chunk、score、content_hash 贯穿前后端，前端类型由后端 `/openapi.json` 生成，所以前后端分离是技术边界、不是词汇边界。而且这套词在边界上还会改名、收窄或同名不同义（前端把 `page_content` 改叫 `excerpt`；后端两个版本号只暴露一个 `revision`；`content_hash` 在检索结果和全文详情里指的是不同正文版本），正因如此才需要根 `CONTEXT.md` 给出唯一定义，而不是各运行时各记一份。接入词汇会撞名的第二个业务领域时再重新判断要不要拆成 `CONTEXT-MAP.md` 加分目录 `CONTEXT.md`；触发条件是词汇冲突，不是目录变多。
 6. 「模块」在本仓库指运行时目录（`frontend/`、`backend/`），业务侧的那层含义写「业务领域」。Python 模块、Nginx 模块这类行业固定叫法不受影响。
 7. 各运行时的验证命令和代码规范由自己的文件承载，不在本文复制：改 `frontend/` 看 `frontend/AGENTS.md`，改 `backend/` 看 `backend/AGENTS.md`（注释规范）和 `backend/README.md` 的「测试」一节（验证命令）。

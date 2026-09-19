@@ -1,0 +1,18 @@
+{
+  "description": "领域模型文档（CONTEXT.md / docs/adr/）的格式门禁。规则见 .codex/skills/domain-modeling/FORMAT-CONTRACT.md，执行者是 scripts/check-domain-docs.mjs。",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/check-domain-docs.mjs\" --stdin",
+            "timeout": 30,
+            "statusMessage": "校验领域模型文档格式"
+          }
+        ]
+      }
+    ]
+  }
+}
