@@ -4,8 +4,11 @@
 # 刻意做得很窄：不格式化、不跑测试、不碰其他文件。它要挡的只有一件事——把不符合格式契约的
 # ADR / 术语表提交进去。用 `git commit --no-verify` 可以绕过（手工改文档时可能需要）。
 #
-# 规则不在这个脚本里，在 .codex/skills/domain-modeling/FORMAT-CONTRACT.md；
-# 校验逻辑在 scripts/check-domain-docs.mjs。这里只负责挑出暂存的文件。
+# 规则以 .codex/skills/domain-modeling/ 的上游原文为准，机器版与校验逻辑都在
+# scripts/check-domain-docs.mjs。这里只负责挑出暂存的文件。
+#
+# git 只在 `git config core.hooksPath .githooks` 之后才会调本文件（本机配置，不随 clone 走），
+# README「本地启动」有这一步。
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -42,7 +45,7 @@ fi
 if ! node scripts/check-domain-docs.mjs --root "$tmpdir" --files $(cd "$tmpdir" && find . -name '*.md' | sed 's|^\./||'); then
   echo ""
   echo "以上文件不符合领域模型文档格式契约，本次提交已中止。"
-  echo "规则见 .codex/skills/domain-modeling/FORMAT-CONTRACT.md，先读它再改。"
+  echo "规则见 .codex/skills/domain-modeling/ 的 ADR-FORMAT.md 与 CONTEXT-FORMAT.md，先读它们再改。"
   echo "确认要跳过检查时用：git commit --no-verify"
   exit 1
 fi

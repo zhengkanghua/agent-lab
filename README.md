@@ -43,12 +43,18 @@ Agent 为每次提问保存实际范围和可核对的引用。点击引用可�
 不再逐条回看，也不作为新回答的证据。链路见 [文件资料](docs/flows/file-document-lifecycle.md)
 和 [Agent 回答与引用](docs/flows/agent-answer-evidence.md)。
 
-`/admin/scheduled-jobs` 是任务管理入口，分周期配置和全部任务执行两个视图。手动 Pipeline、周期触发和文档后台批次共用持久受理与查询；提交后返回执行编号，页面关闭不影响后台工作。PostgreSQL 保存执行事实，Redis 传递消息，单个 Celery Beat 推进周期与补投，Worker 完成业务。部署与恢复依据见 [ADR 0019](docs/adr/0019-scheduled-execution-and-write-coordination.md)。
+`/admin/scheduled-jobs` 是任务管理入口，分周期配置和全部任务执行两个视图。手动 Pipeline、周期触发和文档后台批次共用持久受理与查询；提交后返回执行编号，页面关闭不影响后台工作。PostgreSQL 保存执行事实，Redis 传递消息，单个 Celery Beat 推进周期与补投，Worker 完成业务。调度组件的取舍与恢复边界见 [ADR 0019](docs/adr/0019-scheduled-execution-and-write-coordination.md)，部署形态见 [容器部署文档](docs/container_deployment.md)。
 
 ## 本地启动
 
 前置：需要一个可连接的 PostgreSQL（独立 Database `news_vector_lc`，表结构由 Alembic 迁移建），
 `DATABASE_URL` 指向它；任务消息使用项目共用的 Redis。Qdrant、Ollama、Redis 和 MinIO/S3 私有桶的配置见 `backend/README.md` 的「外部依赖」。已有环境升级先按[任务切换步骤](docs/container_deployment.md#定时任务升级与恢复)停止旧写入口。
+
+clone 之后先把 git hook 指到仓库里那份，否则提交前不会校验 ADR 与术语表的格式（这是本机 git 配置，不随仓库走）：
+
+```bash
+git config core.hooksPath .githooks
+```
 
 先启动后端：
 

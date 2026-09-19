@@ -1,5 +1,5 @@
 {
-  "description": "领域模型文档（CONTEXT.md / docs/adr/）的格式门禁。规则见 .codex/skills/domain-modeling/FORMAT-CONTRACT.md，执行者是 scripts/check-domain-docs.mjs。",
+  "description": "领域模型文档（CONTEXT.md / docs/adr/）的格式门禁。规则以 .codex/skills/domain-modeling/ 的上游原文为准，机器版在 scripts/check-domain-docs.mjs。",
   "hooks": {
     "PreToolUse": [
       {

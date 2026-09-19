@@ -2,8 +2,8 @@
  * 领域模型文档的结构门禁（pi 侧）。
  *
  * 拦住对 `CONTEXT.md` 与 `docs/adr/**` 的写入，校验内容是否符合
- * `.codex/skills/domain-modeling/FORMAT-CONTRACT.md`。规则不在这里——本扩展只是把
- * `scripts/check-domain-docs.mjs` 挂到 pi 的工具调用事件上；规则改了，这里不用动。
+ * `.codex/skills/domain-modeling/` 里上游 ADR-FORMAT.md 与 CONTEXT-FORMAT.md 的格式。规则不在这里——
+ * 本扩展只是把 `scripts/check-domain-docs.mjs`（规则的机器版）挂到 pi 的工具调用事件上；规则改了，这里不用动。
  *
  * 为什么拦结构而不是拦「有没有调用过 skill」：调用记录拦不住真正的失败模式——模型可以不调
  * skill 而写出一份格式对、判据错的 ADR。写出来的东西合不合规是确定的，可以机械判断。
@@ -47,7 +47,7 @@ function guard(cwd: string, payload: Record<string, unknown>): { block: true; re
   const reason = (result.stderr || result.stdout || '').trim();
   return {
     block: true,
-    reason: reason || '内容不符合领域模型文档格式契约，请先读 .codex/skills/domain-modeling/。',
+    reason: reason || '内容不符合领域模型文档格式，请先读 .codex/skills/domain-modeling/ 里的 ADR-FORMAT.md 与 CONTEXT-FORMAT.md。',
   };
 }
 
