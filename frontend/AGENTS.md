@@ -6,28 +6,13 @@
 
 ## 验证
 
-验证范围遵循根 `AGENTS.md` 的「工程取舍」，按阶段选择：
+验证范围遵循根 `AGENTS.md` 的「工程取舍」，按阶段选择：开发调试只跑相关测试文件或目录，连续修改可用 `npm test -- <测试路径>` 保持 watch，lint 和格式检查优先指定改动文件；需求完成时验证受影响的功能和调用方，类型变化运行 `npm run typecheck`，公共依赖、装配或构建配置变化时扩大范围；需要完整回归或准备发布时跑 `README.md`「验证」一节列出的全套命令，`build` 已包含类型检查，同一份代码无需再单独运行 `typecheck`。
 
-- 开发调试：运行相关测试文件或目录；连续修改可用 `npm test -- <测试路径>` 保持 watch。lint 和格式检查优先指定改动文件。
-- 需求完成：验证受影响的功能和调用方；类型变化运行 `npm run typecheck`，公共依赖、装配或构建配置变化时扩大范围。
-- 需要完整回归或准备发布：对最终代码运行下列全套检查。`build` 已包含类型检查，同一份代码无需再单独运行 `typecheck`。
-
-```powershell
-npm run lint
-npm run format:check
-npm run test:run
-npm run build
-```
-
-`vue-tsc` 的 `-b` 不能省。本项目是 solution 风格 tsconfig，根 `tsconfig.json` 只有 `references`；不加 `-b` 读不到子项目，会报 0 个错误并正常退出，属于静默通过。`typecheck` 与 `build` 脚本里已经带上，不要改掉。具体定向命令见 `README.md` 的「验证」。
+`vue-tsc` 的 `-b` 不能省。本项目是 solution 风格 tsconfig，根 `tsconfig.json` 只有 `references`；不加 `-b` 读不到子项目，会报 0 个错误并正常退出，属于静默通过。`typecheck` 与 `build` 脚本里已经带上，不要改掉。
 
 ## 代码约束
 
-1. `src/api/generated/openapi.ts` 是 `openapi-typescript` 生成物（文件头有生成声明），不手改。后端契约变化后在后端服务运行时重新生成：
-
-   ```powershell
-   npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated/openapi.ts
-   ```
+1. `src/api/generated/openapi.ts` 是 `openapi-typescript` 生成物（文件头有生成声明），不手改。后端契约变化后按 `README.md`「验证」一节末尾的命令，在后端服务运行时重新生成。
 
 2. 渲染后端返回的正文用 Vue 文本插值，不用 `v-html`。当前 `src/` 下没有任何 `v-html`，保持这个状态。
 3. `src/pages` 只做路由级组合，不直接执行 `fetch`；请求收敛在 `src/api`，状态收敛在 `src/features/*`。

@@ -1,6 +1,6 @@
 # 后端代码与注释规范
 
-适用范围：`backend/` 下的 Python 代码。前端不适用本文，见根 `AGENTS.md`。
+适用范围：`backend/` 下的 Python 代码。前端不适用本文，见 `frontend/AGENTS.md`；仓库级协作规则见根 `AGENTS.md`。
 
 ## 注释
 
@@ -25,8 +25,8 @@
   里。数据库不会拦你，写漏了就是一堆查不到也管不了的孤儿数据。
 - **连带逻辑写在各聚合自己的 Repository/Service 里，不新建抽象模块。** 要改这些方法前先确认
   是否还有第二条删除路径：`DocumentRetentionRepository.finish()`（删 `documents`）、
-  `UserAdminService.delete_user()`（删账号，跨 `agent_threads`/`access_tokens`/
-  `document_review_records` 三张表）、`ScheduledJobRepository.delete_job()`（删周期配置）。
+  `UserAdminService.delete_user()`（删账号，跨 `agent_threads`、`access_tokens`、
+  `document_review_records`、`user_preferences` 四张表）、`ScheduledJobRepository.delete_job()`（删周期配置）。
   测试也走这些路径，不要绕开它们直接 `session.delete()`。
 - **不要顺手把 `ForeignKey(...)` 加回模型。** 它同时负责生成库上约束和给 `relationship` 提供
   join 条件，加回来会改变删除行为；去掉它则必须先给受影响的 `relationship` 补
