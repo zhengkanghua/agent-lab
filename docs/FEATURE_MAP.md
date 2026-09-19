@@ -54,13 +54,10 @@
 多轮累积（检索流）；后端 `/vector-search` 接口与后端单测仍保留，只是前端不再调用它，因此
 不再占「对外能力」一行。
 
-Agent 那几行的能力边界见 [`adr/0003-agent-v1-is-read-only.md`](adr/0003-agent-v1-is-read-only.md)：
-它只有两个只读工具，不修改 Document 或 Qdrant。会话历史落在 checkpointer 自己的四张表里，
-不由 Alembic 管（[`adr/0004`](adr/0004-checkpointer-tables-outside-alembic.md)）；**谁拥有哪个会话**
-与会话选择范围另记在 Alembic 管的 `agent_threads` 表里（[`adr/0009`](adr/0009-agent-thread-ownership-in-own-table.md)）。
-读取、修改或续聊已有会话时先确认归属，不属于当前账号就 404——和「不存在」返回同一个码，
-避免拿状态码差异枚举会话 id。`POST /agent/chat` 是流式的，所以它的归属校验必须在流开始之前
-完成，且不使用请求级数据库 Session（[`adr/0010`](adr/0010-sse-routes-use-short-lived-db-sessions.md)）。
+Agent 那几行的能力边界（只读）、会话数据为什么分两处存、归属校验为什么在流开始前，分别见
+[`adr/0003`](adr/0003-agent-v1-is-read-only.md)、[`adr/0004`](adr/0004-checkpointer-tables-outside-alembic.md)、
+[`adr/0009`](adr/0009-agent-thread-ownership-in-own-table.md)、[`adr/0010`](adr/0010-sse-routes-use-short-lived-db-sessions.md)；
+实现上的说明在 `backend/docs/architecture.md` 的「Agent 对话」与「数据库表」两节，本文不复述。
 
 用户管理这一行前后端两列写的都是 `/admin/users`，不是抄错：前端页面路由和后端 API 前缀刚好同名，
 浏览器实际请求 `/api/admin/users`。后端路由的 `tags=["user-admin"]` 只是 OpenAPI 分组标签，不是路径。

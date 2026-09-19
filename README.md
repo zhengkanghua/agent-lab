@@ -56,31 +56,7 @@ clone 之后先把 git hook 指到仓库里那份，否则提交前不会校验 
 git config core.hooksPath .githooks
 ```
 
-先启动后端：
-
-```powershell
-cd backend
-uv sync
-Copy-Item .env.example .env
-# 编辑 .env：同时配置 AUTH_ADMIN_EMAIL、AUTH_ADMIN_PASSWORD，
-# 并在本地 HTTP 环境设置 AUTH_COOKIE_SECURE=false。
-# 文档接收还需配置 S3_ENDPOINT、S3_BUCKET、S3_ACCESS_KEY、S3_SECRET_KEY。
-# 要用 Agent 对话页还需配置 LLM_API_KEY（缺失时只有 /agent/* 返回 503，检索照常）。
-uv run python -m agent_lab.prepare_document_resources
-uv run alembic upgrade head
-uv run agent-lab init-checkpointer   # 只建 Agent 会话历史表，与 Alembic 互不干涉
-uv run uvicorn agent_lab.main:app --reload --host 127.0.0.1 --port 8000 `
-  --loop agent_lab.runtime:selector_loop_factory
-```
-
-Windows 原生可运行页面、API、Beat 和单进程 solo Worker，真实受理、补投、连续执行与正常关停已验证。下面是生产采用的 Linux prefork 启动命令，可在 Linux 主机、Docker 或 WSL 中运行；Windows 本地把 Worker 参数换成 `--pool=solo --concurrency=1`。两条命令各占一个终端，工作目录为 `backend/`，与 API 连接同一个 PostgreSQL 和 Redis：
-
-```bash
-uv run celery -A agent_lab.tasks.celery_app:app beat --loglevel=INFO --pidfile=
-uv run celery -A agent_lab.tasks.celery_app:app worker --pool=prefork --concurrency=2 --hostname=worker@%h --loglevel=INFO
-```
-
-`REDIS_URL` 配置项目共用 Redis 的地址，密码单独填 `REDIS_PASSWORD`，留空表示不需要密码。任务队列使用独立键前缀，后续缓存等用途也可复用该连接配置。文档处理不需要额外 cron；只启动 API 时仍可保存受理记录，耗时工作等待 Worker。容器编排与容量设置见后端 README 和部署文档。
+先启动后端。完整命令与 `.env` 里必须填的键见 `backend/README.md` 的「本地运行」和「配置」：`uv sync` 之后准备 tokenizer 资源、跑 Alembic 迁移，要用 Agent 对话页再执行一次 `agent-lab init-checkpointer`，然后起 uvicorn；Beat 与 Worker 各占一个终端，Windows 本地把 Worker 换成 `--pool=solo --concurrency=1`。只启动 API 时受理照常持久保存，耗时工作等 Worker 起来再推进。
 
 再启动前端：
 

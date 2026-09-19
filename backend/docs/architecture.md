@@ -258,16 +258,10 @@ VectorSearchRequest.query
     -> list[VectorSearchResult]
 ```
 
-请求契约（``schemas/vector_search.py``）：
-
-```text
-default top_k = 10          （DEFAULT_TOP_K）
-maximum top_k = 100         （MAX_TOP_K）
-maximum query characters = 4096  （MAX_QUERY_CHARACTERS）
-score_threshold = None      （可选，有限范围 [-1, 1]，拒绝 bool 与字符串）
-labels = MatchAny           （命中任意标签；空数组表示不过滤）
-published_from/to           （带时区且包含端点）
-```
+请求契约在 ``schemas/vector_search.py``：``top_k`` 的默认值与上限、``query`` 的字符上限都是该文件
+顶部的 ``DEFAULT_TOP_K`` / ``MAX_TOP_K`` / ``MAX_QUERY_CHARACTERS`` 常量，数值以代码为准；
+``score_threshold`` 可选，必须是 [-1, 1] 内的有限数，拒绝 bool 与字符串；``labels`` 是 MatchAny
+（命中任意标签，空数组表示不过滤）；``published_from/to`` 带时区且包含端点。
 
 不同 Payload 字段以 AND 组合并由 Qdrant 在候选集合中执行。缺失 ``published_at`` 的 Point 在没有
 时间条件时可以返回，一旦设置时间范围便不匹配。结果顺序完全沿用 Qdrant Cosine score，不在
@@ -294,10 +288,8 @@ Python 中重排；同一 Document 的多个 Chunk 可以分别返回，不做 d
 }
 ```
 
-```text
-default document_limit = 10        maximum = 100
-default matches_per_document = 3   maximum = 20
-```
+两个数量参数的默认值与上限是 ``schemas/document_search.py`` 顶部的 ``DEFAULT_*`` / ``MAX_*``
+常量，前端 ``api/document-search.ts`` 里有同名镜像，数值以代码为准。
 
 成功响应是 ``DocumentSearchResult[]``。每个文档包含 ``document_id``、``content_hash``、标题、
 来源、时间、作者、标签、``chunk_count``、最高的 ``best_score``、``best_match`` 和有限的
@@ -368,20 +360,15 @@ Agent 装配失败**不致命**：lifespan 捕获、只记异常类型、``app.s
 于是只有 ``/agent/*`` 返回 503，检索和流水线照常。反过来会让一个缺失的 ``LLM_API_KEY`` 把整个
 只读系统一起拖下线。关闭顺序上先关 Agent 再关检索 Runtime——Agent 复用后者的 Service。
 
-有界执行参数（``agent/limits.py``，全部是代码常量）：
-
-```text
-MODEL_CALL_RUN_LIMIT = 8            达到后结束运行并返回已有内容
-TOOL_CALL_RUN_LIMIT = 12            达到后只是不再允许调工具，模型仍能用已有材料作答
-MODEL_RETRY_MAX / TOOL_RETRY_MAX = 2
-SUMMARIZATION_TRIGGER / KEEP = 40 / 20   按消息条数触发，不按 token
-MAX_USER_MESSAGE_CHARS = 4000       超过直接拒绝，不截断
-MAX_SYSTEM_PROMPT_CHARS = 4000      同上：截断会把提示词砍成半句，行为更难预期
-SEARCH_TOOL_MAX_DOCUMENTS = 5       给模型的上下文预算，不是给人看的分页上限
-SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT = 2
-READ_DOCUMENT_MAX_CHARS = 6000      这里截断是对的：正文是数据不是指令
-SSE_HEARTBEAT_INTERVAL_SECONDS = 15
-```
+有界执行参数全在 ``agent/limits.py``，都是代码常量、刻意不进 ``.env``，数值以该文件为准。这里只记
+每个参数触发后的行为，那是读常量看不出来的：``MODEL_CALL_RUN_LIMIT`` 达到后结束运行并返回已有内容；
+``TOOL_CALL_RUN_LIMIT`` 达到后只是不再允许调工具，模型仍能用已有材料作答；``MODEL_RETRY_MAX`` 与
+``TOOL_RETRY_MAX`` 是两层各自的重试次数；``SUMMARIZATION_TRIGGER_MESSAGES`` /
+``SUMMARIZATION_KEEP_MESSAGES`` 按消息条数触发并保留历史，不按 token；``MAX_USER_MESSAGE_CHARS`` 与
+``MAX_SYSTEM_PROMPT_CHARS`` 超过直接拒绝而不截断，截断会把提示词砍成半句、行为更难预期；
+``SEARCH_TOOL_MAX_DOCUMENTS`` 与 ``SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT`` 是给模型的上下文预算，不是
+给人看的分页上限；``READ_DOCUMENT_MAX_CHARS`` 这里截断是对的，正文是数据不是指令；
+``SSE_HEARTBEAT_INTERVAL_SECONDS`` 是心跳间隔，前端的空闲超时按它的倍数留余量。
 
 SSE 侧的两个实现约束：
 
@@ -441,8 +428,8 @@ PostgreSQL 单方面掐掉的空闲连接（``idle_session_timeout``、中间代
 
 ## 集中的错误契约：api/error_contract.py
 
-搜索、文档搜索、账号管理和 Agent 路由共用一个错误契约层，映射收在有序的
-``ErrorContractRule`` 表里。Pipeline 的业务错误表继续供 Worker 生成脱敏结果；HTTP 受理及任务操作错误由 `api/task_routes.py` 统一映射，业务执行失败从任务详情读取。
+搜索、文档搜索、知识库、账号管理、定时任务和 Agent 路由共用一个错误契约层，映射收在有序的
+``ErrorContractRule`` 表里；文件与文档审核路由的领域错误按 ``code`` 查两张 ``*_ERROR_DETAILS`` 字典。Pipeline 的业务错误表继续供 Worker 生成脱敏结果；HTTP 受理及任务操作错误由 `api/task_routes.py` 统一映射，业务执行失败从任务详情读取。
 
 三条必须长期保住的设计约束：
 
@@ -482,6 +469,17 @@ PIPELINE_ERROR_RULES        scheduled_tasks.classify_error()（进入任务详�
 
 USER_ADMIN_ERROR_RULES      build_user_admin_error_response()
     user_admin_database_unavailable 503
+
+KNOWLEDGE_BASE_ERROR_RULES  build_knowledge_base_error_response()
+    no_active_knowledge_bases 409 / knowledge_base_inactive 409 / knowledge_base_not_found 404 /
+    knowledge_base_key_conflict 409 / knowledge_base_storage_unavailable 503
+
+SCHEDULED_JOB_ERROR_RULES   build_scheduled_job_error_response()
+    task_service_unavailable 503 / scheduled_job_database_unavailable 503
+
+FILE_DOCUMENT_ERROR_DETAILS / PROCESSING_ERROR_DETAILS
+    build_file_document_error_response() / build_processing_error_response()
+    按领域错误的 code 查表得到 status、detail、retryable；code 清单以文件为准
 
 AGENT_CHAT_ERROR_RULES      build_agent_chat_error_response()
     agent_runtime_unavailable 503 / agent_checkpointer_unavailable 503 /

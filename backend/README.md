@@ -153,6 +153,8 @@ uv sync
 Copy-Item .env.example .env
 # 编辑 .env，同时填写 AUTH_ADMIN_EMAIL/AUTH_ADMIN_PASSWORD；
 # 本地 HTTP 设置 AUTH_COOKIE_SECURE=false，生产 HTTPS 必须保持 true。
+# 文档接收还需 S3_ENDPOINT、S3_BUCKET、S3_ACCESS_KEY、S3_SECRET_KEY；
+# 要用 Agent 对话页还需 LLM_API_KEY（缺失时只有 /agent/* 返回 503，检索照常）。
 uv run python -m agent_lab.prepare_document_resources
 uv run alembic upgrade head
 # 只在要用 Agent 对话页时需要：建四张 checkpoint* 会话历史表，幂等，可重复执行。
