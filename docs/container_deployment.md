@@ -448,8 +448,9 @@ docker compose logs --tail 50 backend
 LLM 配置缺失或会话记忆连不上时，Agent Runtime 装配失败是**非致命**的：进程照常启动，
 只有 `/agent/*` 不可用。看启动日志里有没有 `Agent 运行时装配失败`。
 
-注意 `LLM_MODEL` 填成上游不存在的模型名是另一种情况：启动完全看不出来，要到第一次提问
-才报错。
+`LLM_MODEL` 填成上游不存在的模型名，启动期就会暴露：进程会向上游拉一次模型列表比对，不在
+其中就按同样的方式关掉 `/agent/*`。只有列表拉不到（网络不通、接口不支持）时才只记 warning，
+要等到第一次提问才报错。
 
 ### 回滚
 
@@ -499,7 +500,7 @@ docker compose stop task-beat backend task-worker
 1. 访问 `https://<域名>/login`。
 2. 使用 `AUTH_ADMIN_EMAIL` 和 `AUTH_ADMIN_PASSWORD` 登录；服务启动同步会在数据库中创建
    该账号，无需先运行 CLI。
-3. 从搜索页顶部的“账号管理”进入 `/admin/users`。
+3. 从侧栏底部的“后台管理”进入 `/admin`，账号管理是后台的一个分区（`/admin/users`）。
 4. 创建普通用户或其他超级用户；启用/停用、授权、重置密码和撤销会话都在页面完成。
 5. 普通用户不会看到管理入口；即使手动访问 URL，后端也会返回 403。
 

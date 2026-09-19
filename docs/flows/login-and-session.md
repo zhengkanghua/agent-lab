@@ -34,8 +34,8 @@ router.beforeEach ──► authSession.initialize() ──► GET /auth/me
 | 已登录但非超级用户访问 `requiresSuperuser` 路由 | 跳 `/`（不是报错页）。当前只有 `/admin/*` 带这个 meta，`/agent` 与 `/settings` 已对所有登录账号开放 |
 | 已登录访问 `/login` | 跳 `/` |
 
-路由的 `meta` 是唯一的权限声明处。**后端有自己独立的一套依赖校验**（`main.ts` 的
-`include_router` 处），前端守卫只管界面体验，不是安全边界——绕过它也拿不到数据。
+路由的 `meta` 是唯一的权限声明处。**后端有自己独立的一套依赖校验**（后端 `main.py` 的
+`include_router` 处，以及各 `APIRouter` 自带的 `dependencies`），前端守卫只管界面体验，不是安全边界——绕过它也拿不到数据。
 
 ## 登录
 

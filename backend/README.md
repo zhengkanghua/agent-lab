@@ -71,7 +71,7 @@ Agent 继续使用 LangChain/LangGraph，向量存储使用官方 qdrant-client�
 第 1 步不到位时 ``/agent/*`` 会返回 503（``agent_thread_database_unavailable``）而不是崩溃：
 归属记录读不出来就不让对话开始，避免在没有归属的情况下写下一段谁都管不了的历史。
 
-API 启动访问 PostgreSQL，同步环境托管管理员并装配受理与查询组件；不在启动时探测业务上游或 Redis，不创建 Collection/Alias。Redis 暂不可用时仍可持久受理，恢复后由 Beat 补投原执行。
+API 启动访问 PostgreSQL，同步环境托管管理员并装配受理与查询组件；除了向 LLM 上游拉一次模型列表核对 `LLM_MODEL`（见下文），不在启动时探测其他业务上游或 Redis，也不创建 Collection/Alias。Redis 暂不可用时仍可持久受理，恢复后由 Beat 补投原执行。
 
 API、单个 Beat 和 Worker 使用同一份后端代码、独立进程与数据库连接。Beat 动态读取周期配置并维护补投、恢复及历史；生产 Worker 使用 Linux prefork，子进程在 fork 后建立自己的持久 asyncio 循环和连接池。Windows 原生的 HTTP、Beat 和 solo Worker 已通过受理、补投、资源等待、非空业务处理及正常关停验证；生产 prefork 的多进程与故障验收由 Linux 承担，具体范围见「测试」。`WORKER_COUNT` 控制 API 进程数，`TASK_WORKER_CONCURRENCY` 控制每个 Worker 容器的子进程数；增加 Worker 实例不增加 Beat。
 
@@ -98,7 +98,8 @@ AUTH_COOKIE_SAMESITE    只允许 strict 或 lax
 AUTH_ADMIN_EMAIL        恢复用超级用户，必须与 AUTH_ADMIN_PASSWORD 同时配置或同时注释。
 AUTH_ADMIN_PASSWORD     留成 AUTH_ADMIN_EMAIL= 这样的空值会因邮箱格式校验直接启动失败。
                         密码 12 到 128 字符，且不能等于邮箱。
-FRESHRSS_SYNC_CATEGORIES  分类白名单，JSON 数组。不配就同步不到任何东西。
+FRESHRSS_SYNC_CATEGORIES  分类白名单，JSON 数组，必填且不能为空数组：缺了同步组件在装配时
+                          就会 ValidationError，不会静默同步到零条。
 S3_ENDPOINT / S3_BUCKET    后端可达的 MinIO/S3 地址与预先创建的私有桶。
 S3_ACCESS_KEY / S3_SECRET_KEY  仅配置在服务端；需要读取、条件写入和删除原件的权限。
 S3_REGION / S3_ADDRESSING_STYLE  区域及 path/virtual 寻址方式，按对象存储配置。
@@ -135,12 +136,13 @@ SDK 流量，openai SDK 默认发的 ``OpenAI/Python x.y.z`` 会被判 403 ``Per
 ``config/llm.py`` 里的默认值 ``4``。
 
 ``LANGSMITH_*`` 的键名刻意对齐 LangSmith 官方环境变量，但本项目用 pydantic-settings 读
-``.env``、不写 ``os.environ``，LangSmith SDK 自己看不到这些值——追踪开关由 ``agent.runtime``
-显式传入。所以改这些值必须重启进程才生效。
+``.env``、不写 ``os.environ``，LangSmith SDK 自己看不到这些值——追踪开关由 ``api/agent_chat.py``
+注入每次对话、``agent/streaming.py`` 按运行显式打开。所以改这些值必须重启进程才生效。
 
-``OLLAMA_API_KEY`` 与 ``QDRANT_API_KEY`` 允许为空并由 ``SecretStr`` 保护。非空时在
-``config/ollama_embedding.py`` 的 ``build_ollama_headers()`` 中集中采用 Bearer
-``Authorization`` 约定；如果反向代理实际使用其他 header，只调整这一处。这两个 Key 只是
+``OLLAMA_API_KEY`` 与 ``QDRANT_API_KEY`` 允许为空并由 ``SecretStr`` 保护。前者非空时在
+``config/ollama_embedding.py`` 的 ``build_ollama_headers()`` 中采用 Bearer ``Authorization``
+约定，反向代理实际使用其他 header 时只调整这一处；后者直接作为 ``api_key`` 交给
+``qdrant-client``（``qdrant/lifecycle.py``），header 由它决定。这两个 Key 只是
 服务访问上游的凭据，**不能**当作浏览器认证。不要把真实密钥写入源码、测试、README 或
 ``.env.example``。
 
@@ -352,7 +354,7 @@ uv run pytest -q tests/test_scheduler_runner.py
 uv run pytest -q
 ```
 
-**回归在本地跑，CI 不跑测试。** 部署工作流只负责构建与部署（见 [部署工作流](../.github/workflows/deploy.yml)）；推送前在本地完成与改动相关的回归，范围按根 `AGENTS.md` 的「工程取舍」选。写完整回归的触发条件与命令见上面的「测试」一节。
+**回归在本地跑，CI 不跑测试。** 部署工作流只负责构建与部署（见 [部署工作流](../.github/workflows/deploy.yml)）；推送前在本地完成与改动相关的回归，范围按根 `AGENTS.md` 的「工程取舍」选，完整离线回归就是本节开头那条 `uv run pytest -q`。
 
 写 HTTP 测试时用 ``tests/app_helpers.py`` 的 ``create_offline_app`` 建应用，别直接调
 ``create_app``：后者每个工厂参数都有生产默认值，漏掉一个，lifespan 就会拿真实的那个去连真实
@@ -405,6 +407,7 @@ uv run pytest -q --tb=short --scheduler-configured-services `
   tests/test_scheduler_postgres_integration.py `
   tests/test_task_migration_postgres_integration.py `
   tests/test_task_handoff_postgres_integration.py `
+  tests/test_foreign_key_drop_migration_postgres_integration.py `
   tests/test_scheduler_retention_integration.py `
   tests/test_file_documents_integration.py `
   tests/test_processing_postgres_integration.py `
@@ -467,8 +470,9 @@ try {
 
 该命令需事先配置并授权 `S3_*` 读写删除；`--scheduler-configured-services` 提供开发 PostgreSQL/Qdrant 地址。每种故障的精确资源与远端清理结果记录在 `.pytest_cache/task-cross-storage-*.json`。它验证真实三存储与公共 Worker 业务接缝，消息进程语义由前一组真实队列测试验证；两组都通过仍不能替代生产切换验收。
 
-第二阶段文件验证可只运行 ``tests/test_file_documents_integration.py``：覆盖上传到索引、检索、
-全文和替换，以及不同状态按 ID 删除、Qdrant 确认后数据库失败恢复、定时清理排除人工待办。
+第二阶段文件验证可只运行 ``tests/test_file_documents_integration.py``：一条参数化用例走完
+上传、后台处理、检索、全文和携带过期修订的替换冲突。按 ID 删除与远端确认后的数据库失败恢复在
+``test_document_deletion_integration.py``，定时清理排除人工待办在 ``test_scheduler_retention_integration.py``。
 样本资料与代表问题见 ``tests/fixtures/knowledge-base-phase-two/README.md``。
 真实回答验收也使用随机 PostgreSQL schema 和 Qdrant Collection/Alias，并调用当前配置的
 Embedding 与生成模型；只发送该目录中的合成资料和问题，不读取业务资料或访问 FreshRSS。
@@ -487,8 +491,8 @@ try {
 自动检查范围与出处身份后，仍须逐题核对结论是否被原文支持、推断是否标注、冲突是否说明；
 报告中的人工语义核对状态初始为 pending，不能用引用 ID 校验通过代替。
 
-真实 PostgreSQL 的会话归属过滤与旧会话清理（验证归属只匹配自己的行；需已跑过
-``alembic upgrade head``）：
+真实 PostgreSQL 的会话归属（验证归属过滤只匹配自己的行、建会话时快照账号提示词、删账号连带
+清掉归属行；需已跑过 ``alembic upgrade head``）：
 
 ```powershell
 $env:RUN_POSTGRES_AGENT_THREAD_INTEGRATION_TEST="1"

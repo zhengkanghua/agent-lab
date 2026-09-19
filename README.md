@@ -10,7 +10,7 @@ Qdrant 提供语义检索；MD 与 FreshRSS HTML 使用 Docling 解析并按结�
 agent-lab/
 ├── backend/   # FastAPI、FreshRSS、Ollama Embedding、Qdrant
 ├── frontend/  # Vue 3 + TypeScript + Vite 的 Signal Desk
-└── docs/      # 平台级路线图与决策记录
+└── docs/      # 能力地图、跨模块链路、决策记录与部署手册
 ```
 
 检索页和 Agent 对话都支持选择所有启用知识库或指定几个知识库。浏览器使用相对路径

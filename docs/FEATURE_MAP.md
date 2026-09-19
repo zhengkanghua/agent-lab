@@ -42,8 +42,9 @@
 `/pipeline`、`/admin/users`、`/scheduled-jobs`、`/task-runs`、`/task-policy`、
 `/file-documents`、`/document-management`、`/sources` 要求超级用户。
 `/knowledge-bases` 两开：`GET` 列表对所有启用账号开放（默认只返回启用库，非超管传
-`include_inactive` 会被拒），创建与编辑要求超级用户。挂载点和依赖在
-`backend/src/agent_lab/main.py` 的 `include_router` 处。Agent 对话与检索同级开放，
+`include_inactive` 会被拒），创建与编辑要求超级用户。挂载点在
+`backend/src/agent_lab/main.py` 的 `include_router` 处，权限依赖写在各 `APIRouter` 自身或
+路由装饰器上。Agent 对话与检索同级开放，
 照旧只读；放开后跨账号隔离靠会话归属，它按 `user_id` 判断、与角色无关
 （[ADR 0030](adr/0030-agent-open-to-all-accounts.md)）。
 
@@ -93,7 +94,7 @@ Agent 那几行的能力边界见 [`adr/0003-agent-v1-is-read-only.md`](adr/0003
 | 原件存储 | `backend/src/agent_lab/knowledge/storage.py` | 对象引用、字节核验与 MinIO/S3 适配器 |
 | 已采用版本可见性 | `backend/src/agent_lab/knowledge/visibility.py`、`knowledge/adapters/visibility.py` | 检索过滤、状态核验与有界重查 |
 | 运行时装配 | `backend/src/agent_lab/runtime.py`、`qdrant/runtime.py`、`pipeline/write_runtime.py`、`agent/runtime.py` | 进程级资源的构造与复用 |
-| 错误契约 | `backend/src/agent_lab/api/error_contract.py` | 异常到 `code`/`status`/`retryable` 的映射规则，检索与 Agent 各一张表 |
+| 错误契约 | `backend/src/agent_lab/api/error_contract.py` | 异常到 `code`/`status`/`retryable` 的映射规则，按链路各一张有序表，清单见 `backend/docs/architecture.md` 的「集中的错误契约」 |
 | 错误文案收敛 | `frontend/src/api/error-copy.ts` | 查表机制；文案表在各领域的 `model/*-error.ts` 里 |
 | 个人偏好 | `frontend/src/features/settings/composables/usePreferences.ts` | 应用级单例，读写后端 `user_preferences`；为什么入库见 `docs/adr/0027-user-level-preferences-in-database.md`，读失败与未加载完时的退化行为见该文件的头注释 |
 | OpenAPI 类型 | `frontend/src/api/generated/openapi.ts` | 由后端 `/openapi.json` 生成，命令见 `frontend/README.md` |

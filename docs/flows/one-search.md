@@ -53,7 +53,7 @@ Qdrant 的 grouped query 先按独立索引实例分组，后端核验当前可�
 `document_limit` 控制返回几篇，`matches_per_document` 控制每篇几个片段。结果按每篇最高分降序。
 
 **前端不重排、不聚合、不二次去重**（`features/semantic-search/model/search-result.ts` 的
-`toNewsDocumentResults` 注释有同样的说明）。前端再排一遍的话，两边规则一有出入，用户看到的
+`toDocumentResults` 注释有同样的说明）。前端再排一遍的话，两边规则一有出入，用户看到的
 顺序就和后端算出来的不一致，而且很难查。
 
 背景见 [`../adr/0001-backend-owns-result-uniqueness-and-order.md`](../adr/0001-backend-owns-result-uniqueness-and-order.md)。
