@@ -4,42 +4,14 @@ status: accepted
 
 # checkpointer 的表不由 Alembic 管理
 
-LangGraph 会话记忆的四张表（`checkpoints`、`checkpoint_blobs`、`checkpoint_writes`、
-`checkpoint_migrations`）由 `langgraph-checkpoint-postgres` 自己建、自己迁移，Alembic 不生成也不删除
-它们。为此 `alembic/env.py` 用 `include_object` 过滤把它们排除在自动比对之外，部署时用
-`agent-lab init-checkpointer` 在 `alembic upgrade head` 之后单独建表。
+LangGraph 会话记忆的四张表由 `langgraph-checkpoint-postgres` 自己建、自己迁移，Alembic 既不生成也不删除它们：`alembic/env.py` 用 `include_object` 把它们排除在自动比对之外，部署时在 `alembic upgrade head` 之后单独跑 `agent-lab init-checkpointer` 建表，顺序不能反。
 
-**不加那个过滤会安静地出事。** `alembic/env.py` 用 `target_metadata = Base.metadata`，这四张表不在 ORM
-元数据里，于是 `alembic revision --autogenerate` 会认为它们是「库里多出来的表」并生成
-`op.drop_table('checkpoints')`。生成的迁移文件读起来没有明显不对，跑下去就把用户的全部对话历史删了；
-同时 `alembic check` 会永久报漂移，让这条本该有用的检查失去意义。这段理由也写在 `alembic/env.py` 的
-导入处，改动前先读它。
-
-四张表的清理同样落在 Alembic 之外：清理不是迁移，而是由操作者手动执行的运维命令
-（`agent-lab prune-orphan-threads`、`agent-lab prune-old-threads --before-days N`）。两条都默认只
-预演、加 `--yes` 才真删。它们与用户能点到的「删除这个会话」不是一回事：那条按会话归属校验、一次删
-一个、只删自己的，属于产品能力；这两条是批量与孤儿清理的运维命令，没有对应的 HTTP 接口。当前也没有
-自动清理——任务类型注册表里没有会调用它们的定时任务，会话历史在无人干预时保持无界增长。命令与部署
-顺序见 [后端 README](../../backend/README.md)。
+不排除会安静地出事：这四张表不在 ORM 元数据里，`alembic revision --autogenerate` 会把它们当成「库里多出来的表」生成 `drop_table`，迁移文件读起来没有明显不对，跑下去就把用户的全部对话历史删了；同时 `alembic check` 会永久报漂移，让这条本该有用的检查失去意义。
 
 ## Considered Options
 
-**把四张表反向声明成 SQLAlchemy 模型，纳入 Alembic 统一管理。** 表结构就归一处了。但结构的定义权在
-`langgraph-checkpoint-postgres` 手里，它升级时会跑自己的迁移改这些表；我们的模型声明只是一份复制品，
-它一变我们就漂移，而漂移的表现是 `alembic check` 报错、autogenerate 生成一堆 `alter_column`——我们
-既不敢应用也没法忽略。跟着上游版本手工同步一份 schema 副本，是长期的、无收益的维护负担。
+**把四张表反向声明成 SQLAlchemy 模型，纳入 Alembic。** 表结构的定义权在上游库手里，它升级时会跑自己的迁移改这些表；我们的声明只是复制品，一变就漂移，跟着上游手工同步 schema 是长期无收益的负担。
 
-**跑 `alembic upgrade head` 时顺便建表（写进某个迁移的 `upgrade()`）。** 部署只剩一条命令，确实更
-顺手。但迁移里就得调 `AsyncPostgresSaver.setup()`，等于让 Alembic 迁移依赖一个第三方库的建表逻辑，
-而那段逻辑自己带版本管理；迁移文件按约定应当是「写下来就不再变」的历史记录，里面塞一个会随依赖升级
-改变行为的调用，就破了这个约定——回滚到某个旧迁移时它的行为已经不是当初那个了。
+**在某个迁移的 `upgrade()` 里顺便建表。** 迁移就得调上游的建表逻辑，而那段逻辑自己带版本管理；迁移文件按约定写下就不再变，塞一个会随依赖升级改变行为的调用就破了这个约定。
 
-**做成 HTTP 接口，在网页上点一下建表。** 老板说过后续重点放 API。但这是部署步骤不是用户能力，做成
-接口等于把一个能建表的写接口暴露在公网上，比一个只在部署时手工跑的命令危险得多。
-
-## Consequences
-
-部署多一步，且顺序不能反：先 `alembic upgrade head`，再 `agent-lab init-checkpointer`。
-
-`include_object` 是一层保护性配置，删掉不会立刻报错，只会让下一次 autogenerate 生成删表迁移——所以
-它在 `alembic/env.py` 里必须带注释说明后果，不能只留一个函数名。
+**做成 HTTP 接口，在网页上点一下建表。** 这是部署步骤不是用户能力，做成接口等于把一个能建表的写接口暴露在公网上。
