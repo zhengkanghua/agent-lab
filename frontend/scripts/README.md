@@ -78,20 +78,22 @@ node scripts/dev-audit.mjs
 
 ### 预期输出
 
-- `dev:shots` 在 `.devshots/` 生成 `NN-页面名.png`（该目录已加 `.gitignore`，不入库）。
-- `dev:audit` 在终端打印逐页检查结果：`overflowX=0 (ok)`、侧边栏 `244` 与内容区左缘 `244`
-  是否重叠、后台目录行数、顶栏功能链接集合，以及有没有 `console.error / pageerror`。
+- `dev:shots` 在 `.devshots/` 生成 `NN-页面名.png`（`05b`、`05c` 是设置中心的另外两个分区；该目录已加 `.gitignore`，不入库）。
+- `dev:audit` 在终端打印逐页检查结果：`overflowX=0 (ok)`、后台侧边栏右缘与内容区左缘是否重叠、
+  用户目录行数、前台侧栏导航项集合，以及有没有 `console.error / pageerror`。
 
 ## 文件职责
 
-| 文件                         | 作用                                                                             |
-| ---------------------------- | -------------------------------------------------------------------------------- |
-| `scripts/dev-mocks.mjs`      | **共享**的模拟数据 + `/api` 匹配函数（`matchApi`）。数据字段必须与后端契约一致。 |
-| `scripts/dev-screenshot.mjs` | 逐页渲染 + 全页截图（`01..09`），内部拿真实超管会话走各页。                      |
-| `scripts/dev-audit.mjs`      | 布局/结构/控制台审计，打印文本报告。                                             |
-| `.devshots/`                 | 截图输出目录（gitignore），可随时删除重建。                                      |
+| 文件                          | 作用                                                                                         |
+| ----------------------------- | -------------------------------------------------------------------------------------------- |
+| `scripts/dev-mocks.mjs`       | **共享**的模拟数据 + `/api` 匹配函数（`matchApi`）。数据字段必须与后端契约一致。             |
+| `scripts/task-mocks.mjs`      | 任务管理那几个接口的 mock（`matchTaskApi`），由 `dev-mocks.mjs` 接入，内存状态、重启即复位。 |
+| `scripts/dev-mock-server.mjs` | 把同一套 mock 包成本地 HTTP 服务，供人手动在浏览器里点。                                     |
+| `scripts/dev-screenshot.mjs`  | 逐页渲染 + 全页截图（11 张），内部拿真实超管会话走各页。                                     |
+| `scripts/dev-audit.mjs`       | 布局/结构/控制台审计，打印文本报告。                                                         |
+| `.devshots/`                  | 截图输出目录（gitignore），可随时删除重建。                                                  |
 
-两个 `.mjs` 都 `import { matchApi } from './dev-mocks.mjs'`，**mock 只写一份**，别在两边各抄一遍。
+三个 `.mjs` 都从 `dev-mocks.mjs` 取 `matchApi`，**mock 只写一份**，别在各处各抄一遍。
 
 ## 维护：后端契约变了怎么办（重要）
 
