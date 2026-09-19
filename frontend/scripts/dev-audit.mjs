@@ -62,11 +62,11 @@ authed = false
 await page.goto(`${BASE}/login`, { waitUntil: 'domcontentloaded' })
 await page.waitForTimeout(500)
 console.log('=== 登录页')
-console.log('  .login-tool visible:', await page.locator('.login-tool').first().isVisible())
+console.log('  .login-card visible:', await page.locator('.login-card').first().isVisible())
 console.log(
   '  登录按钮文本:',
   await page
-    .locator('.login-tool button[type="submit"]')
+    .locator('.login-form button[type="submit"]')
     .first()
     .textContent()
     .catch(() => null),
@@ -75,20 +75,25 @@ console.log(
 // 已登录态后的各页审计
 authed = true
 
+// 侧栏导航项的文字。工作台外壳是左侧栏（AppShell.vue 的 .shell-sidebar），
+// 顶栏那一版已经没有了；后台入口只对超管显示，且指向 /admin，不再有「账号管理」直达。
+const sidebarLabels = () =>
+  page
+    .locator('.shell-sidebar .nav-item')
+    .evaluateAll((els) => els.map((e) => (e.textContent || '').trim()))
+
 // 2) 检索页
 await audit('检索页·待输入', `${BASE}/`)
-const navLabels = await page
-  .locator('.topbar-nav-link')
-  .evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')))
+const navLabels = await sidebarLabels()
 console.log(
-  '  顶栏功能链接:',
+  '  侧栏导航项:',
   JSON.stringify(navLabels),
   navLabels.includes('账号管理') ? '  <-- 不应有账号管理直达!' : '  (符合:无账号管理直达)',
 )
 
 // 3) 检索结果
 await page.fill('textarea', '央行利率')
-await page.click('.composer button[type="submit"]')
+await page.click('.search-form button[type="submit"]')
 await page.waitForSelector('.result-card', { timeout: 8000 })
 console.log('=== 检索结果')
 console.log('  result-card 数量:', await page.locator('.result-card').count())
@@ -99,14 +104,7 @@ console.log(
 
 // 4) Agent 页
 await audit('Agent 对话页', `${BASE}/agent`)
-console.log(
-  '  顶栏功能链接:',
-  JSON.stringify(
-    await page
-      .locator('.topbar-nav-link')
-      .evaluateAll((e) => e.map((x) => x.getAttribute('aria-label'))),
-  ),
-)
+console.log('  侧栏导航项:', JSON.stringify(await sidebarLabels()))
 console.log(
   '  会话侧栏项数:',
   await page.locator('.thread-rail [role="listitem"], .thread-rail li').count(),
@@ -169,10 +167,7 @@ console.log(
     .textContent()
     .catch(() => null),
 )
-console.log(
-  '  用户目录行数:',
-  await page.locator('[data-testid^="active-"], table tbody tr').count(),
-)
+console.log('  用户目录行数:', await page.locator('.user-table .user-row').count())
 console.log('  侧边栏账号管理链接数:', await page.locator('a[href="/admin/users"]').count())
 
 // 7) 移动端·后台抽屉

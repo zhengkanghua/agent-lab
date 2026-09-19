@@ -34,7 +34,7 @@ wheels/
 *.egg
 
 # ---------- 测试与检查缓存 ----------
-# tests/ 不进镜像：测试在 CI 里跑，跑的是仓库代码，不是镜像。
+# tests/ 不进镜像：测试在本地跑（CI 只部署），跑的是仓库代码，不是镜像。
 tests/
 .pytest_cache/
 .mypy_cache/
@@ -51,9 +51,13 @@ docs/
 AGENTS.md
 
 # ---------- 容器与部署文件本身 ----------
+# 隔离验收那套（Dockerfile.task-tests、docker-compose.task-tests.yml 及其同名 .dockerignore）
+# 也不属于运行镜像，一并排除。
 Dockerfile
+Dockerfile.*
 .dockerignore
 docker-compose.yml
+docker-compose.*.yml
 
 # ---------- 版本控制与编辑器 ----------
 .git/

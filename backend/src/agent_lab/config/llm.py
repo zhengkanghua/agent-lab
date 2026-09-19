@@ -147,8 +147,9 @@ class LangSmithSettings(BaseSettings):
 
     但读取方式和 SDK 不同：SDK 走 ``os.environ`` 且带 ``lru_cache``，而本项目用
     pydantic-settings 读 ``.env``，值不会进入 ``os.environ``，所以 SDK 自己看不到它们。
-    追踪的开与关由 ``agent.runtime`` 用 ``langsmith.run_helpers.tracing_context`` 显式
-    传入，全程不修改 ``os.environ``。因此改这些值需要重启进程才生效。
+    追踪的开与关由 ``api/agent_chat.py`` 把本配置注入每次对话、``agent/streaming.py`` 用
+    ``langsmith.run_helpers.tracing_context`` 按运行显式打开，全程不修改 ``os.environ``。
+    因此改这些值需要重启进程才生效。
     """
 
     tracing: bool = Field(

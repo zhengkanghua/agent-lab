@@ -100,10 +100,11 @@ def _bounded_integer(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """构造 Pipeline 与账号管理 CLI 参数树，不读取配置或执行外部 I/O。
+    """构造维护 CLI 的参数树，不读取配置或执行外部 I/O。
 
     Returns:
-        包含三个 Pipeline 子命令和一个交互式建号子命令的 ``ArgumentParser``。
+        挂好建号、同步、索引、重建与 Agent 会话维护各子命令的 ``ArgumentParser``；
+        完整清单以 ``--help`` 为准，不在这里重复列举。
 
     Notes:
         本方法只创建进程内解析对象，不执行 PostgreSQL、FreshRSS、Embedding 或 Qdrant

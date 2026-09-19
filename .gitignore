@@ -13,8 +13,6 @@ output/
 .playwright-cli/
 # Playwright MCP 的快照与 console 日志，落在调用时的工作目录下
 .playwright-mcp/
-# 本地样式试验副本；没有运行时或构建引用。
-/.tmp-tw.css
 
 # ---------- 密钥与本地环境（全局兜底）----------
 # 模块内仍各自声明一次，这里是防止漏网的最后一道
