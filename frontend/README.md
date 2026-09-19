@@ -1,9 +1,9 @@
 # Signal Desk 前端
 
 Signal Desk 是知识库语义检索工作台的 Vue 3 前端。检索页 `/` 走 `POST /document-search`：
-后端用 Qdrant grouped query 按每篇 Document 的最高 Cosine score 做分组，前端把命中结果按
-“最新一条检索贴在输入框正下方、旧记录往下沉”的检索流（仿 Agent 会话体感）逐轮向下累积，
-多条历史记录可折叠回看，刷新即清空。该页不生成答案、不调用生成式 LLM，只返回检索到的
+后端按 Document 分组返回相关片段（分组与排序规则在后端，见 `backend/docs/architecture.md`），
+前端把命中结果按“最新一条检索贴在输入框正下方、旧记录往下沉”的检索流（仿 Agent 会话体感）
+逐轮向下累积，多条历史记录可折叠回看，刷新即清空。该页不生成答案、不调用生成式 LLM，只返回检索到的
 原文片段；用户点击“阅读全文”后才调用 `GET /documents/{document_id}` 读取 PostgreSQL 当前
 完整正文。
 
@@ -19,7 +19,7 @@ Session Storage 保存密码和 Token。退出调用 `POST /auth/logout` 撤销�
 
 超级用户可进入 `/admin/users`：页面通过受后端权限保护的 `/admin/users` API 创建账号、
 启用/停用、授予/撤销超级用户权限、重置密码和撤销会话。由部署端
-`AUTH_ADMIN_EMAIL/AUTH_ADMIN_PASSWORD` 托管的那个超级用户会以独立横线样式显示，网页
+`AUTH_ADMIN_EMAIL/AUTH_ADMIN_PASSWORD` 托管的那个超级用户在列表里单独标出，网页
 不能停用、降级或重置其密码；这些值只能写在服务端 `.env`/Secret 中。普通用户手动
 访问该路由会被前端送回搜索页，而真正的安全边界仍是后端 `current_superuser` 依赖。
 
@@ -43,58 +43,27 @@ Agent 提示词草稿在设置分区之间切换时保留，只有保存后才�
 
 ## 交互与数据边界
 
-- 检索页默认所有启用知识库，也可选择非空集合；每次提交固化选择及后端实际范围快照。
-  目录加载失败或选择失效时阻止提交，不能悄悄扩大范围。旧 HTTP 缺省 news 契约仍保留。
-- 检索页只走按 Document 分组：`document_limit` 控制一次检索的不同文档数量
-  （下限 1、默认 10），`matches_per_document` 控制每篇文档返回的相关片段数。两者的
-  默认值在设置中心的「检索偏好」分区维护（存在账号上），提交那一刻读到什么值
-  这一轮就用什么值；分组由后端 Qdrant grouped query 完成，前端按返回顺序渲染。
-- 每次搜索固化成一条“检索记录”，追加成向下长的检索流：最新一条顶在输入框正下方并完整
-  展开，旧记录折叠成“检索词 + 命中数”的标题行，可点开回看；刷新或离开页面即清空，不做
-  真会话、不落后端。
-- 一次只允许一条在途搜索：提交新搜索会取消上一条；输入条顶部常驻，一轮进入终态后仅清空
-  本次提交的草稿，等待期间新写的内容会保留。用户仍在原操作位置时恢复输入焦点；正在阅读全文
-  或已转到其他控件时，不抢走焦点。
-- 每篇文档默认只展示最高分片段，其他相关片段使用无框分隔列表展开；score 始终显示
-  原始数值，不转换成概率或百分比。
-- 全文由 Vue Query 以 `document_id + content_hash` 为缓存 key 按需加载，每次打开重新核对当前
-  正文，加载和失败时隐藏旧缓存；关闭或快速切换时取消旧请求。全文失败不清空检索流。
-- 搜索 hash 与 PostgreSQL 当前 hash 不同时展示版本更新提示，并显示数据库中的最新
-  正文。文本用 Vue 插值，Markdown 文件用共享 `SafeMarkdown` 安全解析，不使用 `v-html`；
-  外链图片不加载。没有 Source 或 URL 的文件也能阅读。
-- 桌面端使用右侧阅读面板，移动端使用全屏阅读层；支持 Esc、明确关闭按钮、焦点约束
-  和关闭后的触发按钮焦点恢复。
+检索页默认对所有启用知识库检索，也可以选一个非空集合；每次提交都把这次的选择和后端返回的实际范围快照固化在那条记录上。目录加载失败或选择已失效时页面阻止提交，绝不悄悄扩大范围；后端在请求不带 `scope` 时仍按旧契约缺省到 `news`，那是后端的兼容路径，新页面不依赖它。
+
+检索只走按 Document 分组这一种形态：`document_limit` 决定一次检索返回多少篇不同文档，`matches_per_document` 决定每篇带回几个相关片段，两个参数的下限、上限和默认值是 `api/document-search.ts` 里的契约常量。它们的默认值在设置中心的「检索偏好」分区维护、存在账号上，提交那一刻读到什么值这一轮就用什么值。分组和排序由后端完成，前端按返回顺序渲染，不重排、不聚合、不二次去重。
+
+每次搜索固化成一条“检索记录”，追加成一条向下生长的检索流：最新一条顶在输入框正下方完整展开，旧记录折叠成“检索词 + 命中数”的标题行，可以点开回看。刷新或离开页面即清空，这不是真会话，也不落后端。一次只允许一条在途搜索，提交新搜索会取消上一条。输入条常驻顶部，一轮进入终态后只清空本次提交的草稿，等待期间新写的内容保留；用户仍在原操作位置时恢复输入焦点，正在阅读全文或已经转到其他控件时不抢焦点。
+
+每篇文档默认只展示最高分片段，其他相关片段用无框分隔列表展开；score 始终显示原始数值，不换算成概率或百分比。全文由 Vue Query 以 `document_id + content_hash` 为缓存 key 按需加载，每次打开都重新核对当前正文，加载中和失败时隐藏旧缓存，关闭或快速切换时取消旧请求；全文失败不清空检索流。搜索结果里的 hash 与 PostgreSQL 当前 hash 不同时展示版本更新提示，并显示数据库里的最新正文。正文用 Vue 文本插值渲染，Markdown 文件交给共享的 `SafeMarkdown` 安全解析，不使用 `v-html`，外链图片不加载；没有 Source 或 URL 的文件同样能阅读。桌面端用右侧阅读面板，移动端用全屏阅读层，两者都支持 Esc、明确的关闭按钮、焦点约束和关闭后把焦点还给触发按钮。
 
 ## Agent 对话页的数据边界
 
-- `/agent` 对所有登录账号开放，与检索页同级：路由只要求 `meta.requiresAuth`，真正的安全边界
-  是后端 `/agent/*` 上的 `current_active_user` 依赖，以及按 `user_id` 判定的会话归属
-  （见 [`docs/adr/0030-agent-open-to-all-accounts.md`](../docs/adr/0030-agent-open-to-all-accounts.md)）。
-  系统提示词不再由前端逐轮发送，因此请求体里只有提问、会话 id 和范围。
-- 流式接口用 `fetch` + `response.body.getReader()`，不用 `EventSource`。后者只能发 GET、
-  不能带请求体，提问就得进 query string，会被网关日志和浏览器历史记下来。
-- 超时分两道：连接 30 秒、空闲 60 秒（后端心跳 15 秒，留四倍余量）。不复用 JSON 层的 45 秒
-  总时长上限——一次 Agent 运行可能要几分钟，用它会在模型还在写的时候掐断。
-- 调用方提前 `break` 时会 `reader.cancel()` 关掉连接，否则后端那次运行会继续跑、继续计费。
-- 回答用共享 `SafeMarkdown`，显式 sanitize、不解析原始 HTML、不加载外链图片。
-  用户提问、工具参数和工具返回继续按文本展示。只有服务端核验的本次引用能变成阅读入口。
-- 会话 id 和实际范围由服务端在 `run_started` 给出；新会话默认所有启用知识库，选择通过独立
-  PATCH 保存，重新打开继续沿用。运行期间改选只影响下一次，页面保留每次运行的范围快照。
-- 切换历史会话和浏览器前进后退以路由参数为准，离开后取消在途历史加载；迟到响应不会重新
-  改写地址。只有新建会话取得服务端 id 时补全当前地址。
-- 临时 token 供流式预览，`done.answer` 校正最终文字并给出完成状态及引用；缺少 Done 的流不能
-  当成完成。结束后同步最新 checkpoint，压缩后仅展示保留的近期问答；同步失败可重试。
-- 点击行内引用或引用列表，在阅读器对照当时片段和当前原文；更新、删除、停用和服务失败分别
-  提示。旧回答保持原样，不能把当前正文当成历史版本，也不强行高亮不可靠位置。
-- 自定义系统提示词在设置中心的「Agent 偏好」分区编辑，保存在账号上，**作为新会话的
-  初始提示词**：会话建立时由服务端拍一份快照进那个会话，已开始的会话不受影响
-  （`docs/adr/0029-session-scoped-system-prompt.md`）；清空即回到服务端默认。
-  输入条在账号配了提示词时亮一枚链回设置的徽章，不做编辑。
-- 取消一轮对话靠两道闸，`AbortController` 之外还有一个自增序号：事件已经拿在手里、`await`
-  还没恢复的那个窗口里 abort 拦不住任何东西，只有比对序号能阻止一次已取消的运行往界面写字。
-  取消后到达的 `done` 因此也不会写回会话 id。
-- 工具调用和结果优先按本轮 `tool_call_id` 配对，缺 ID 的旧记录保留按名字配对；不会跨问答
-  配对。缺失结果明确呈现，工具进一步缩小范围时展示实际范围。
+`/agent` 对所有登录账号开放，与检索页同级：路由只要求 `meta.requiresAuth`，真正的安全边界是后端 `/agent/*` 上的 `current_active_user` 依赖和按 `user_id` 判定的会话归属（见 [`docs/adr/0030-agent-open-to-all-accounts.md`](../docs/adr/0030-agent-open-to-all-accounts.md)）。系统提示词不再由前端逐轮发送，请求体里只有提问、会话 id 和范围。
+
+流式接口用 `fetch` 加 `response.body.getReader()`，不用 `EventSource`：后者只能发 GET、不能带请求体，提问就得进 query string，会被网关日志和浏览器历史记下来。超时分连接与空闲两道，常量在 `api/agent-chat.ts`，空闲那一道按后端心跳间隔留了几倍余量；不复用 `client.ts` 里整个请求的总时长上限，一次 Agent 运行可能要几分钟，用它会在模型还在写的时候掐断。调用方提前 `break` 时会 `reader.cancel()` 关掉连接，否则后端那次运行会继续跑、继续计费。取消一轮对话靠两道闸，`AbortController` 之外还有一个自增序号：事件已经拿在手里、`await` 还没恢复的那个窗口里 abort 拦不住任何东西，只有比对序号能阻止一次已取消的运行往界面写字，取消后到达的 `done` 因此也不会写回会话 id。
+
+会话 id 和实际范围由服务端在 `run_started` 给出。新会话默认所有启用知识库，选择通过独立的 PATCH 保存，重新打开继续沿用；运行期间改选只影响下一次，页面保留每次运行的范围快照。切换历史会话和浏览器前进后退以路由参数为准，离开后取消在途的历史加载，迟到的响应不会重新改写地址，只有新建会话取得服务端 id 时才补全当前地址。
+
+临时 token 只供流式预览，`done.answer` 校正最终文字并给出完成状态和引用，缺少 Done 的流不能当成完成。结束后同步最新 checkpoint，压缩后只展示保留的近期问答，同步失败可以重试。工具调用和结果优先按本轮 `tool_call_id` 配对，缺 ID 的旧记录保留按名字配对，不会跨问答配对；缺失的结果明确呈现，工具进一步缩小范围时展示实际范围。
+
+回答用共享的 `SafeMarkdown` 渲染，显式 sanitize、不解析原始 HTML、不加载外链图片；用户提问、工具参数和工具返回继续按文本展示。只有服务端核验过的本次引用能变成阅读入口：点击行内引用或引用列表，在阅读器里对照当时取得的片段和当前原文，原文更新、删除、知识库停用和服务失败分别提示；旧回答保持原样，不把当前正文当成历史版本，也不强行高亮不可靠的位置。
+
+自定义系统提示词在设置中心的「Agent 偏好」分区编辑，保存在账号上，作为新会话的初始提示词：会话建立时由服务端拍一份快照进那个会话，已开始的会话不受影响（`docs/adr/0029-session-scoped-system-prompt.md`），清空即回到服务端默认。账号配了提示词时输入条亮一枚链回设置的徽章，不在对话页编辑。
 
 ## 文件管理的数据边界
 
@@ -206,6 +175,8 @@ npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated/o
 
 ## 目录边界
 
+- `src/app`：路由表（`router.ts`，权限 `meta` 的唯一声明处）与 Vue Query 客户端；
+- `src/layouts`：`AppShell`（前台侧栏外壳）与 `AdminShell`（后台外壳）；
 - `src/api`：Cookie 登录、账号管理、HTTP 客户端、文档搜索/详情、Agent SSE 流、错误归一化
   和生成类型；数量参数与提示词上界的契约常量也在这里（`document-search.ts`、
   `agent-chat.ts`），它们是请求契约的一部分；
@@ -214,11 +185,17 @@ npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated/o
   检索流组件（输入条 / 单条记录 / 结果卡）；
 - `src/features/agent-chat`：多轮对话状态、工具轨迹配对、错误文案表和对话组件；
 - `src/features/file-documents`：文件上传、列表、替换、索引重试与删除状态；
-- `src/shared/ui/SafeMarkdown.vue`：答案与 Markdown 文件共用的安全渲染器；
-- `src/shared/composables/useKnowledgeBaseScope.ts`：启用知识库目录与选择有效性；
+- `src/features/document-review`：文档审核工作台、原件对照、预览与历史；
+- `src/features/knowledge-bases`、`src/features/sources`：知识库配置与来源绑定的目录页状态；
+- `src/features/user-admin`：账号目录、建号表单与账号操作；
+- `src/features/scheduled-jobs`：周期配置、任务执行、Pipeline 提交与策略面板；
 - `src/features/settings`：设置中心（账号安全 / 检索偏好 / Agent 偏好）与账号偏好
   store（读写 `/auth/me/preferences`）；
+- `src/shared/ui`：`Base*` 基础控件、`ComposerDock` 输入坞、`KnowledgeBaseScopePicker`、
+  `ThemeToggle`，以及答案与 Markdown 文件共用的安全渲染器 `SafeMarkdown.vue`；
+- `src/shared/composables/useKnowledgeBaseScope.ts`：启用知识库目录与选择有效性；
+- `src/shared/model`：跨功能共用的纯函数（文档处理状态显示、密码规则）；
 - `src/pages`：登录、检索、Agent 对话、设置中心与后台控制台（单路由
   `/admin/:section?`，AdminPage 按分区组合账号、知识库、来源、文件与任务管理）的路由级组合，
   不直接执行 `fetch`；
-- `src/styles`：设计令牌（`tokens.css`）；全局 reset/base/components 分层写在 `src/style.css`。
+- `src/styles`：设计令牌（`tokens.css`）与 `components/` 下的顶栏、动效两个共享样式层；全局 reset/base/components 分层写在 `src/style.css`。
