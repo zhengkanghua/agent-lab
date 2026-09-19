@@ -448,8 +448,7 @@ ACR 个人版不认 buildx 默认附加的 provenance / SBOM 证明。工作流�
 
 这个故障的表现容易误导：所有镜像层和镜像本身都推成功了，只有附加的证明 manifest 被拒，
 日志里前面全是正常的 `writing layer`，看起来像网络或权限问题。同理构建缓存用
-`type=gha` 而不是 `type=registry`。理由见
-[ADR 0008](adr/0008-backend-in-image-frontend-as-static-files.md) 最后一条。
+`type=gha` 而不是 `type=registry`。理由见 `.github/workflows/deploy.yml` 里 build 步骤的注释。
 
 ### 部署成功但代码没更新
 

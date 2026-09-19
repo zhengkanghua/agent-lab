@@ -37,7 +37,11 @@ class KnowledgeBaseCreateRequest(BaseModel):
 
 
 class KnowledgeBaseUpdateRequest(BaseModel):
-    """仅修改明确提交的配置；description 为 null 时清空说明。"""
+    """仅修改明确提交的配置；description 为 null 时清空说明。
+
+    稳定键 ``key`` 刻意不在这里：它是知识库的业务身份，定时任务参数和来源映射都按它引用，
+    允许改它会让那些引用静默失效。要换身份就新建一个库。
+    """
 
     name: KnowledgeBaseName | None = Field(default=None, description="新的展示名称。")
     description: KnowledgeBaseDescription | None = Field(default=None, description="新的说明；null 表示清空。")

@@ -75,9 +75,9 @@ API 启动访问 PostgreSQL，同步环境托管管理员并装配受理与查�
 
 API、单个 Beat 和 Worker 使用同一份后端代码、独立进程与数据库连接。Beat 动态读取周期配置并维护补投、恢复及历史；生产 Worker 使用 Linux prefork，子进程在 fork 后建立自己的持久 asyncio 循环和连接池。Windows 原生的 HTTP、Beat 和 solo Worker 已通过受理、补投、资源等待、非空业务处理及正常关停验证；生产 prefork 的多进程与故障验收由 Linux 承担，具体范围见「测试」。`WORKER_COUNT` 控制 API 进程数，`TASK_WORKER_CONCURRENCY` 控制每个 Worker 容器的子进程数；增加 Worker 实例不增加 Beat。旧进程内调度、独立 scheduler 和常驻文档消费者均已移除。
 
-同步、索引和清理保留周期配置，文档处理和 HTTP Pipeline 也接入公共任务组件。配置启用或执行期间可以编辑、停用和删除，后续受理使用新配置，已有执行沿用旧快照；删除后仍能按执行编号查询。相同配置未结束时，新的人工触发返回冲突，新周期留下跳过记录。错过 cron 不补跑；已受理工作继续推进。同任务约束、写资源等待和清理占用由 PostgreSQL 协调，CLI 也参与。详见 [ADR 0019](../docs/adr/0019-scheduled-execution-and-write-coordination.md)。
+同步、索引和清理保留周期配置，文档处理和 HTTP Pipeline 也接入公共任务组件。配置启用或执行期间可以编辑、停用和删除，后续受理使用新配置，已有执行沿用旧快照；删除后仍能按执行编号查询。相同配置未结束时，新的人工触发返回冲突，新周期留下跳过记录。错过 cron 不补跑；已受理工作继续推进。同任务约束、写资源等待和清理占用由 PostgreSQL 协调，CLI 也参与。决策与代价见 [ADR 0019](../docs/adr/0019-scheduled-execution-and-write-coordination.md)，精确规则见 [架构说明](docs/architecture.md) 的「公共任务组件」节。
 
-清理默认预演，仅选择已采用且超过保留期、没有待处理候选的 Document；待审核、失败和拒绝记录不自动清理。每批 50 连续处理，没有整次上限。失败可能保留删除待办或待核实占用，不能仅因心跳过期就解锁。规则与代价见 [ADR 0019](../docs/adr/0019-scheduled-execution-and-write-coordination.md)，排查和升级顺序见 [部署文档](../docs/container_deployment.md#定时任务升级与恢复)。
+清理默认预演，仅选择已采用且超过保留期、没有待处理候选的 Document；待审核、失败和拒绝记录不自动清理。每批 50 连续处理，没有整次上限。失败可能保留删除待办或待核实占用，不能仅因心跳过期就解锁。清理规则见 [ADR 0023](../docs/adr/0023-durable-intake-and-document-review.md)，占用不自动解锁的代价见 [ADR 0019](../docs/adr/0019-scheduled-execution-and-write-coordination.md)，排查和升级顺序见 [部署文档](../docs/container_deployment.md#定时任务升级与恢复)。
 
 Agent Runtime 的装配是**非致命**的：LLM 配置缺失或会话记忆连不上时，只记异常类型（配置和
 连接串里都有凭据，异常文本可能带出来），把 ``app.state.agent_runtime`` 留成 ``None``，进程
