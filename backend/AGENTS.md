@@ -25,8 +25,8 @@
   里。数据库不会拦你，写漏了就是一堆查不到也管不了的孤儿数据。
 - **连带逻辑写在各聚合自己的 Repository/Service 里，不新建抽象模块。** 要改这些方法前先确认
   是否还有第二条删除路径：`DocumentRetentionRepository.finish()`（删 `documents`）、
-  `UserAdminService.delete_user()`（删账号，跨 `agent_threads`、`access_tokens`、
-  `document_review_records`、`user_preferences` 四张表）、`ScheduledJobRepository.delete_job()`（删周期配置）。
+  `UserAdminService.delete_user()`（删账号：删掉 `agent_threads`、`access_tokens`、`user_preferences`
+  里的行，把 `document_review_records.actor_id` 置空）、`ScheduledJobRepository.delete_job()`（删周期配置）。
   测试也走这些路径，不要绕开它们直接 `session.delete()`。
 - **不要顺手把 `ForeignKey(...)` 加回模型。** 它同时负责生成库上约束和给 `relationship` 提供
   join 条件，加回来会改变删除行为；去掉它则必须先给受影响的 `relationship` 补
@@ -46,6 +46,9 @@
   `/openapi.json` 和前端生成的类型。这里有个逃生口：装饰器上显式写 `description=`
   时那份优先，docstring 就完全不进 OpenAPI（`description or cleandoc(__doc__)`）。
   所以路由 handler 想写长 docstring 是可以的，前提是装饰器里给了 `description=`；
-  没给就只写一句话，别按 `Args/Returns/Raises` 展开。项目里几条路由都是前一种做法。
-- LangChain `@tool` 装饰的函数的 docstring：整份原样送进模型上下文（默认
-  `parse_docstring=False`），内部异常类名之类的东西会跟着泄漏出去。
+  没给就只写一句话，别按 `Args/Returns/Raises` 展开。项目里两种做法都有：检索、账号、Agent
+  那几条给了 `description=` 配长 docstring，文档审核、任务那几条只写一句 docstring 或用 `summary=`，
+  改 handler 前先看清装饰器。
+- LangChain `@tool` 装饰的函数的 docstring：进模型上下文。本项目两个工具都开了
+  `parse_docstring=True`，`Args:` 段会被拆成各参数的描述，其余文字整份作为工具描述送进去；
+  内部异常类名之类的东西会跟着泄漏出去。

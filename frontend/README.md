@@ -55,7 +55,7 @@ Agent 提示词草稿在设置分区之间切换时保留，只有保存后才�
 
 `/agent` 对所有登录账号开放，与检索页同级：路由只要求 `meta.requiresAuth`，真正的安全边界是后端 `/agent/*` 上的 `current_active_user` 依赖和按 `user_id` 判定的会话归属（见 [`docs/adr/0030-agent-open-to-all-accounts.md`](../docs/adr/0030-agent-open-to-all-accounts.md)）。系统提示词不再由前端逐轮发送，请求体里只有提问、会话 id 和范围。
 
-流式接口用 `fetch` 加 `response.body.getReader()`，不用 `EventSource`：后者只能发 GET、不能带请求体，提问就得进 query string，会被网关日志和浏览器历史记下来。超时分连接与空闲两道，常量在 `api/agent-chat.ts`，空闲那一道按后端心跳间隔留了几倍余量；不复用 `client.ts` 里整个请求的总时长上限，一次 Agent 运行可能要几分钟，用它会在模型还在写的时候掐断。调用方提前 `break` 时会 `reader.cancel()` 关掉连接，否则后端那次运行会继续跑、继续计费。取消一轮对话靠两道闸，`AbortController` 之外还有一个自增序号：事件已经拿在手里、`await` 还没恢复的那个窗口里 abort 拦不住任何东西，只有比对序号能阻止一次已取消的运行往界面写字，取消后到达的 `done` 因此也不会写回会话 id。
+流式接口用 `fetch` 加 `response.body.getReader()`，不用 `EventSource`：后者只能发 GET、不能带请求体，提问就得进 query string，会被网关日志和浏览器历史记下来。超时分连接与空闲两道，常量在 `api/agent-chat.ts`，空闲那一道按后端心跳间隔留了四倍余量；不复用 `client.ts` 里整个请求的总时长上限，一次 Agent 运行可能要几分钟，用它会在模型还在写的时候掐断。调用方提前 `break` 时会 `reader.cancel()` 关掉连接，否则后端那次运行会继续跑、继续计费。取消一轮对话靠两道闸，`AbortController` 之外还有一个自增序号：事件已经拿在手里、`await` 还没恢复的那个窗口里 abort 拦不住任何东西，只有比对序号能阻止一次已取消的运行往界面写字，取消后到达的 `done` 因此也不会写回会话 id。
 
 会话 id 和实际范围由服务端在 `run_started` 给出。新会话默认所有启用知识库，选择通过独立的 PATCH 保存，重新打开继续沿用；运行期间改选只影响下一次，页面保留每次运行的范围快照。切换历史会话和浏览器前进后退以路由参数为准，离开后取消在途的历史加载，迟到的响应不会重新改写地址，只有新建会话取得服务端 id 时才补全当前地址。
 

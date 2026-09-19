@@ -43,8 +43,9 @@
 `/file-documents`、`/document-management`、`/sources` 要求超级用户。
 `/knowledge-bases` 两开：`GET` 列表对所有启用账号开放（默认只返回启用库，非超管传
 `include_inactive` 会被拒），创建与编辑要求超级用户。挂载点在
-`backend/src/agent_lab/main.py` 的 `include_router` 处，权限依赖写在各 `APIRouter` 自身或
-路由装饰器上。Agent 对话与检索同级开放，
+`backend/src/agent_lab/main.py` 的 `include_router` 处，多数 router 的权限依赖也挂在那里；
+文件资料与文档审核两个 router 把超级用户依赖写在 `APIRouter` 自身，`/knowledge-bases` 的写接口
+写在路由装饰器上，`/auth/me/*` 写在处理函数签名里。Agent 对话与检索同级开放，
 照旧只读；放开后跨账号隔离靠会话归属，它按 `user_id` 判断、与角色无关
 （[ADR 0030](adr/0030-agent-open-to-all-accounts.md)）。
 

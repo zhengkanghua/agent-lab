@@ -34,13 +34,13 @@
 | 后端内部实现、对外契约细节、错误码 | `backend/docs/architecture.md` |
 | 某个词指什么、某处为什么这样做而不是那样 | 根 `CONTEXT.md`（术语表）、`docs/adr/`（决策记录） |
 
-- 文档解释稳定职责、语义和外部契约；代码、测试和sql文件是精确行为真源。它们说明当前实现是什么；行为应当如何，以本次已确认需求和仍然有效的契约为准。旧测试可能需要随需求调整。
+- 文档解释稳定职责、语义和外部契约；代码、测试和迁移文件是精确行为真源。它们说明当前实现是什么；行为应当如何，以本次已确认需求和仍然有效的契约为准。旧测试可能需要随需求调整。
 - `docs/FEATURE_MAP.md` 只做能力到流程、代码和测试的导航；`docs/flows/` 只记录跨模块时序、终态和失败边界。不要在文档中复制 SQL、枚举、阈值或单模块算法。
 
 ## 仓库约定
 
 1. `backend/` 与 `frontend/` 分别管理依赖、构建、测试和运行命令，不跨运行时导入模块。
-2. skill 以 `.codex/skills/` 为唯一源，`.claude/`、`.zcode/`、`.gemini/`、`.pi/` 下的 `skills/` 是它的四份副本，各工具只读自己目录里的那份。改完源（或增删 skill）必须跑同步脚本，四份内容保持一致；只改一侧会让不同工具读到不同版本的同名 skill：
+2. skill 以 `.codex/skills/` 为唯一源，`.claude/`、`.zcode/`、`.gemini/`、`.pi/` 下的 `skills/` 是它的四份副本，各工具只读自己目录里的那份（Codex 还会额外扫跨工具的 `.agents/skills`，所以副本不能放那里，见下）。改完源（或增删 skill）必须跑同步脚本，四份内容保持一致；只改一侧会让不同工具读到不同版本的同名 skill：
 
     ```bash
     bash scripts/sync-skills.sh    # 全量镜像 + diff 校验，输出「已同步」即成功
@@ -50,7 +50,7 @@
 3. 探索代码前先读仓库根 `CONTEXT.md`（术语表）和 `docs/adr/`（决策记录）。输出里提到领域概念时沿用 `CONTEXT.md` 的既定说法，不要换同义词。若结论与某条 ADR 冲突，显式指出是哪条，不要静默绕过。
 4. **`CONTEXT.md` 与 `docs/adr/` 只在 grill-with-docs skill 的访谈里写。** 这是两个文件唯一的正常写入时机：访谈中某个词或某个取舍一有结论，就当场按 `domain-modeling` skill 的判据与格式落笔，不攒到访谈结束，更不留到交付收尾。实现中途冒出的决策（像拆外键、放开 Agent 权限那种当场拍板的）不自行写入：先向老板说明这条决策是什么、为什么值得记，问是否允许单独调 `domain-modeling` 写；没得到允许就不写。写什么、不写什么、写成什么样，全部以 skill 目录里的上游原文为准（`SKILL.md` 的三条件、`ADR-FORMAT.md`、`CONTEXT-FORMAT.md`）；skill 目录一律不改，本文也不复制一份——第二份规范必然与 skill 漂移，而照着它写就绕过了 skill，那正是这两个文件失序的来源。本仓库只比上游多要求一条：ADR 的 frontmatter 必须写 `status`，没有它读者无法机械判断一份 ADR 今天还有效没有。文件位置与命名：术语表在仓库根 `CONTEXT.md`，决策记录在 `docs/adr/NNNN-slug.md`（编号扫目录内最大号 +1）；两者都按需新建，不预先摆空文件。
 
-    上面的格式有一份机器版：`scripts/check-domain-docs.mjs`，规则常量在文件顶部，每条注明出自上游哪一句。四个 harness 的写入 hook（`.claude/settings.json`、`.codex/hooks.json`、`.gemini/settings.json`、`.pi/extensions/`）与 `.githooks/pre-commit` 都调它；`.zcode/` 没有写入 hook，在它上面只有 pre-commit 这道兜底。Gemini 默认只读 `GEMINI.md`，是 `.gemini/settings.json` 里的 `context.fileName` 让它读到本文，改那份设置时别把这一键丢了。不合规的写入会被拒绝，并把违规规则连同 skill 路径回给模型——**被拦住时该做的是去读 skill，不是猜格式重试，也不是绕过门禁**。两条使用约束：取代关系写在 `status: superseded by ADR-NNNN` 里、被指向的文件必须已存在，所以先写新 ADR、再改旧 ADR 指向它；bash 重定向能绕过写入 hook，落盘后的兜底是 pre-commit，新 clone 要先 `git config core.hooksPath .githooks`（见 README「本地启动」）。手动全量检查：
+    上面的格式有一份机器版：`scripts/check-domain-docs.mjs`，规则常量在文件顶部，每条注明出自上游哪一句。四个 harness 的写入 hook（`.claude/settings.json`、`.codex/hooks.json`、`.gemini/settings.json`、`.pi/extensions/`）与 `.githooks/pre-commit` 都调它；`.zcode/` 没有写入 hook，在它上面只有 pre-commit 这道兜底。Gemini 默认只读 `GEMINI.md`，是 `.gemini/settings.json` 里的 `context.fileName` 让它读到本文，改那份设置时别把这一键丢了。不合规的写入会被拒绝，并把违规规则连同 skill 路径回给模型（这套拦截在 Claude Code 上实测过，Codex 与 Gemini 按同一退出码约定接入、未在本仓库实测，见脚本头注释）——**被拦住时该做的是去读 skill，不是猜格式重试，也不是绕过门禁**。两条使用约束：取代关系写在 `status: superseded by ADR-NNNN` 里、被指向的文件必须已存在，所以先写新 ADR、再改旧 ADR 指向它；bash 重定向能绕过写入 hook，落盘后的兜底是 pre-commit，新 clone 要先 `git config core.hooksPath .githooks`（见 README「本地启动」）。手动全量检查：
 
     ```bash
     node scripts/check-domain-docs.mjs
@@ -59,7 +59,7 @@
     实现细节、验收记录、进度和踩坑不进这两个文件，各有去处：后端内部实现进 `backend/docs/architecture.md`，跨模块时序进 `docs/flows/`，某处改动的理由贴在那段代码的注释里。spec 删除前，其中仍有价值的记录先按这三个去向落位。
 5. 术语表和决策记录都在仓库根各一份，不按运行时拆。当前是一个业务领域（知识库语义检索）被 `frontend/` 和 `backend/` 两个运行时切开，两侧说的是同一套词——Document、Chunk、score、content_hash 贯穿前后端，前端类型由后端 `/openapi.json` 生成，所以前后端分离是技术边界、不是词汇边界。而且这套词在边界上还会改名、收窄或同名不同义（前端把 `page_content` 改叫 `excerpt`；后端两个版本号只暴露一个 `revision`；`content_hash` 在检索结果和全文详情里指的是不同正文版本），正因如此才需要根 `CONTEXT.md` 给出唯一定义，而不是各运行时各记一份。接入词汇会撞名的第二个业务领域时再重新判断要不要拆成 `CONTEXT-MAP.md` 加分目录 `CONTEXT.md`；触发条件是词汇冲突，不是目录变多。
 6. 「模块」在本仓库指运行时目录（`frontend/`、`backend/`），业务侧的那层含义写「业务领域」。Python 模块、Nginx 模块这类行业固定叫法不受影响。
-7. 各运行时的验证命令和代码规范由自己的文件承载，不在本文复制：改 `frontend/` 看 `frontend/AGENTS.md`，改 `backend/` 看 `backend/AGENTS.md`（注释规范）和 `backend/README.md` 的「测试」一节（验证命令）。
+7. 各运行时的验证命令和代码规范由自己的文件承载，不在本文复制：改 `frontend/` 看 `frontend/AGENTS.md`，改 `backend/` 看 `backend/AGENTS.md`（代码与注释规范）和 `backend/README.md` 的「测试」一节（验证命令）。
 
 ## 工程取舍
 1. 新增校验、拒绝条件、兜底或兼容路径，应能说明对应的需求、外部契约或具体故障风险。对会收窄业务能力的约束，说明影响范围；仅有“以后可能需要”的设想不足以引入它。

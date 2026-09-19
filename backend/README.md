@@ -473,8 +473,9 @@ try {
 该命令需事先配置并授权 `S3_*` 读写删除；`--scheduler-configured-services` 提供开发 PostgreSQL/Qdrant 地址。每种故障的精确资源与远端清理结果记录在 `.pytest_cache/task-cross-storage-*.json`。它验证真实三存储与公共 Worker 业务接缝，消息进程语义由前一组真实队列测试验证；两组都通过仍不能替代生产切换验收。
 
 第二阶段文件验证可只运行 ``tests/test_file_documents_integration.py``：一条参数化用例走完
-上传、后台处理、检索、全文和携带过期修订的替换冲突。按 ID 删除与远端确认后的数据库失败恢复在
-``test_document_deletion_integration.py``，定时清理排除人工待办在 ``test_scheduler_retention_integration.py``。
+上传、后台处理、检索、全文和携带过期修订的替换冲突。按 ID 删除、远端确认后的数据库失败恢复和
+定时清理排除人工删除待办都在 ``test_document_deletion_integration.py``；
+``test_scheduler_retention_integration.py`` 覆盖清理链路里远端删点成功后 PostgreSQL 收尾失败的恢复。
 样本资料与代表问题见 ``tests/fixtures/knowledge-base-phase-two/README.md``。
 真实回答验收也使用随机 PostgreSQL schema 和 Qdrant Collection/Alias，并调用当前配置的
 Embedding 与生成模型；只发送该目录中的合成资料和问题，不读取业务资料或访问 FreshRSS。

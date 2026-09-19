@@ -289,7 +289,7 @@ Python 中重排；同一 Document 的多个 Chunk 可以分别返回，不做 d
 ```
 
 两个数量参数的默认值与上限是 ``schemas/document_search.py`` 顶部的 ``DEFAULT_*`` / ``MAX_*``
-常量，前端 ``api/document-search.ts`` 里有同名镜像，数值以代码为准。
+常量，前端 ``api/document-search.ts`` 里有对应的镜像常量（文档数那一对在前端叫 ``*_RESULT_LIMIT``），数值以代码为准。
 
 成功响应是 ``DocumentSearchResult[]``。每个文档包含 ``document_id``、``content_hash``、标题、
 来源、时间、作者、标签、``chunk_count``、最高的 ``best_score``、``best_match`` 和有限的
