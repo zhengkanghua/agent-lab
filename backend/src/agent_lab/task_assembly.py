@@ -2,7 +2,6 @@
 
 import asyncio
 from dataclasses import replace
-from datetime import UTC, datetime
 
 from agent_lab.tasks.dispatch import TaskDispatcher
 from agent_lab.tasks.registry import TaskRegistry
@@ -42,15 +41,3 @@ def build_task_service():
     from agent_lab.db.session import async_session_factory
     return build_task_components(async_session_factory)[0]
 
-
-async def bootstrap_legacy_document_processing(session):
-    """旧执行入口已停止后的一次性交接；先回收遗留纯计算，再受理首批。"""
-    from agent_lab.knowledge.adapters.processing import PostgresProcessingRepository
-    from agent_lab.knowledge.task_intake import ensure_document_processing
-
-    # 旧消费者已经停止，无需再等解析领取超时。复用业务回收规则及其事务受理，
-    # 不触碰索引准备、发布和接收等可能仍需核实的远端写入。
-    await PostgresProcessingRepository(session).requeue_computations(started_before=datetime.now(UTC))
-    run_id = await ensure_document_processing(session)
-    await session.commit()
-    return run_id

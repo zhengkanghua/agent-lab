@@ -15,10 +15,8 @@ from sqlalchemy import func, select
 
 from agent_lab.domain.enums import ProcessingStatus
 from agent_lab.knowledge.task_intake import continue_document_processing, ensure_document_processing
-from agent_lab.knowledge.adapters.processing import PostgresProcessingRepository
 from agent_lab.models.document_processing import DocumentProcessingRecord
 from agent_lab.models.scheduled_job import JobRunRecord, TaskRequestRecord
-from agent_lab.task_assembly import bootstrap_legacy_document_processing
 from agent_lab.tasks.repository import TaskStore
 from tests.test_scheduler_postgres_integration import child, database, isolated_database, run, seed_documents
 
@@ -150,45 +148,3 @@ def test_batch_completion_process_exit_keeps_pending_and_successor_atomic(isolat
             assert (await session.get(DocumentProcessingRecord, remaining_id)).state == "pending"
     run(verify())
 
-
-def test_bootstrap_recovers_legacy_computations_without_restarting_uncertain_writes(isolated_database):
-    """仅剩解析／预览领取时也有首批；旧计算结果失效，未决写入与失败状态保留。"""
-    db = isolated_database
-    now = datetime.now(UTC)
-
-    async def verify():
-        documents = await seed_documents(db.sessions, [(now, now, ProcessingStatus.PENDING)] * 5)
-        async with db.sessions() as session:
-            source = await add_pending(session, documents[0].id)
-            draft = await add_pending(session, documents[1].id)
-            for pending in (source, draft):
-                pending.source_object_key = f"synthetic/legacy/{pending.id}"
-                pending.source_sha256, pending.source_size, pending.source_mime_type = "a" * 64, 16, "text/plain"
-            draft.requires_review, draft.draft_text, draft.draft_mime_type = True, "保留人工草稿", "text/markdown"
-            protected = [DocumentProcessingRecord(document_id=document.id, source_kind="freshrss", state=state)
-                         for document, state in zip(documents[2:], ("indexing", "publishing", "failed"), strict=True)]
-            session.add_all(protected)
-            await session.commit()
-            repository = PostgresProcessingRepository(session)
-            claims = [await repository.claim(identity) for identity in (source.id, draft.id)]
-            assert all(claim is not None for claim in claims)
-            assert await session.scalar(select(func.count()).select_from(JobRunRecord)) == 0
-            # 新近领取也能在确认停止旧消费者后的交接中回收，不能依赖未来另一个批次唤醒。
-            run_id = await bootstrap_legacy_document_processing(session)
-            assert run_id is not None
-            assert await bootstrap_legacy_document_processing(session) == run_id
-
-        async with db.sessions() as session:
-            accepted = await session.get(JobRunRecord, run_id)
-            assert accepted.status == "queued" and accepted.task_type == "document_processing"
-            assert await session.scalar(select(func.count()).select_from(JobRunRecord)) == 1
-            assert await session.scalar(select(TaskRequestRecord.run_id)) == run_id
-            for claim in claims:
-                pending = await session.get(DocumentProcessingRecord, claim.id)
-                assert pending.state == "pending" and pending.claim_token is None and pending.claimed_at is None
-                assert not await PostgresProcessingRepository(session).save_failure(claim, "late_result", state="failed")
-            retained_draft = await session.get(DocumentProcessingRecord, draft.id)
-            assert retained_draft.draft_text == "保留人工草稿" and retained_draft.requires_review
-            for original in protected:
-                assert (await session.get(DocumentProcessingRecord, original.id)).state == original.state
-    run(verify())

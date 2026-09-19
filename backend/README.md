@@ -73,11 +73,11 @@ Agent 继续使用 LangChain/LangGraph，向量存储使用官方 qdrant-client�
 
 API 启动访问 PostgreSQL，同步环境托管管理员并装配受理与查询组件；不在启动时探测业务上游或 Redis，不创建 Collection/Alias。Redis 暂不可用时仍可持久受理，恢复后由 Beat 补投原执行。
 
-API、单个 Beat 和 Worker 使用同一份后端代码、独立进程与数据库连接。Beat 动态读取周期配置并维护补投、恢复及历史；生产 Worker 使用 Linux prefork，子进程在 fork 后建立自己的持久 asyncio 循环和连接池。Windows 原生的 HTTP、Beat 和 solo Worker 已通过受理、补投、资源等待、非空业务处理及正常关停验证；生产 prefork 的多进程与故障验收由 Linux 承担，具体范围见「测试」。`WORKER_COUNT` 控制 API 进程数，`TASK_WORKER_CONCURRENCY` 控制每个 Worker 容器的子进程数；增加 Worker 实例不增加 Beat。旧进程内调度、独立 scheduler 和常驻文档消费者均已移除。
+API、单个 Beat 和 Worker 使用同一份后端代码、独立进程与数据库连接。Beat 动态读取周期配置并维护补投、恢复及历史；生产 Worker 使用 Linux prefork，子进程在 fork 后建立自己的持久 asyncio 循环和连接池。Windows 原生的 HTTP、Beat 和 solo Worker 已通过受理、补投、资源等待、非空业务处理及正常关停验证；生产 prefork 的多进程与故障验收由 Linux 承担，具体范围见「测试」。`WORKER_COUNT` 控制 API 进程数，`TASK_WORKER_CONCURRENCY` 控制每个 Worker 容器的子进程数；增加 Worker 实例不增加 Beat。
 
 同步、索引和清理保留周期配置，文档处理和 HTTP Pipeline 也接入公共任务组件。配置启用或执行期间可以编辑、停用和删除，后续受理使用新配置，已有执行沿用旧快照；删除后仍能按执行编号查询。相同配置未结束时，新的人工触发返回冲突，新周期留下跳过记录。错过 cron 不补跑；已受理工作继续推进。同任务约束、写资源等待和清理占用由 PostgreSQL 协调，CLI 也参与。决策与代价见 [ADR 0019](../docs/adr/0019-scheduled-execution-and-write-coordination.md)，精确规则见 [架构说明](docs/architecture.md) 的「公共任务组件」节。
 
-清理默认预演，仅选择已采用且超过保留期、没有待处理候选的 Document；待审核、失败和拒绝记录不自动清理。每批 50 连续处理，没有整次上限。失败可能保留删除待办或待核实占用，不能仅因心跳过期就解锁。清理规则见 [ADR 0023](../docs/adr/0023-durable-intake-and-document-review.md)，占用不自动解锁的代价见 [ADR 0019](../docs/adr/0019-scheduled-execution-and-write-coordination.md)，排查和升级顺序见 [部署文档](../docs/container_deployment.md#定时任务升级与恢复)。
+清理默认预演，仅选择已采用且超过保留期、没有待处理候选的 Document；待审核、失败和拒绝记录不自动清理。每批 50 连续处理，没有整次上限。失败可能保留删除待办或待核实占用，不能仅因心跳过期就解锁。清理规则见 [ADR 0023](../docs/adr/0023-durable-intake-and-document-review.md)，占用不自动解锁的代价见 [ADR 0019](../docs/adr/0019-scheduled-execution-and-write-coordination.md)，排查与恢复见 [部署文档](../docs/container_deployment.md#任务执行的排查与恢复)。
 
 Agent Runtime 的装配是**非致命**的：LLM 配置缺失或会话记忆连不上时，只记异常类型（配置和
 连接串里都有凭据，异常文本可能带出来），把 ``app.state.agent_runtime`` 留成 ``None``，进程
@@ -169,7 +169,7 @@ uv run celery -A agent_lab.tasks.celery_app:app worker --pool=prefork --concurre
 
 Windows 原生本地联调保留同一 Beat 命令，把 Worker 的 `--pool=prefork --concurrency=2` 换成 `--pool=solo --concurrency=1` 即可。真实受理、补投、连续执行及正常关停已通过本地联调；生产多进程故障恢复仍由 Linux 验收覆盖。
 
-只启动 API 不会自动推进文档解析或 HTTP Pipeline。已有 CLI `index-pending` 仍可显式执行一个处理批次，并遵守同一资源协调。Beat 就绪用 `uv run python -m agent_lab.tasks.status --check`；Worker 连通检查用 `celery ... inspect ping`，业务是否推进仍按执行编号查询。容器入口与停机切换见[部署文档](../docs/container_deployment.md#定时任务升级与恢复)。
+只启动 API 不会自动推进文档解析或 HTTP Pipeline。已有 CLI `index-pending` 仍可显式执行一个处理批次，并遵守同一资源协调。Beat 就绪用 `uv run python -m agent_lab.tasks.status --check`；Worker 连通检查用 `celery ... inspect ping`，业务是否推进仍按执行编号查询。容器入口与恢复步骤见[部署文档](../docs/container_deployment.md#任务执行的排查与恢复)。
 
 ``--loop agent_lab.runtime:selector_loop_factory`` 只为解决 Windows 兼容问题：Uvicorn
 在 Windows 默认用 ProactorEventLoop，而 Psycopg 3 的异步连接要求 SelectorEventLoop。
@@ -311,31 +311,13 @@ Invoke-RestMethod -Method Get `
 
 保存请求标识与原始参数后再提交；超时核对时重复同一个 POST 和标识，不重新生成标识。受理成功只代表已持久保存，最终同步与处理统计从执行详情读取。定时任务的立即执行和人工重试同样要求 `Idempotency-Key`；同一标识换内容返回冲突。`GET /task-runs` 列出全部执行，`POST /task-runs/{id}/cancel` 取消尚未开始或等待重试的执行；`POST /task-runs/{id}/retry` 为保留完整参数的失败记录创建关联新执行。默认重试及历史保留通过超级用户 `/task-policy` 管理，已有执行沿用受理时的策略。
 
-## 知识库升级与索引重建
-
-Docling 采用新文档处理表和 v3 索引规格。旧 v2 Point 缺少候选隔离所需身份，不能直接用于新版检索。
-本期按已确认的开发资料重置方案切换，不建设旧正文回填或双处理路径。执行顺序：
-
-1. 核对目标数据库、当前环境 Collection/Alias 和原件范围；确认 API、Beat、Worker、旧 scheduler、CLI 与远端未决写入已停止。
-2. 准备私有 S3 桶、后端配置及锁定 tokenizer，执行 `uv run alembic upgrade head`。
-3. 在已授权范围内清除文档、候选、已采用历史、审核记录和对应索引；仅重置确有必要重新接收的 Source checkpoint。
-   保留账号、KnowledgeBase 配置、Source 绑定、任务配置、Agent 会话及其 checkpointer 历史。
-4. 使用 `QDRANT_COLLECTION_SCHEMA_VERSION=v3` 和空的新目标，启动新版 API、Beat、Worker 并连接项目共用 Redis。
-   上传合成 MD/TXT，接收范围内的 FreshRSS 条目，核对原件、预览、采用、检索和删除。
-5. 记录清空和重新导入的数量、实际范围及未完成项。重置 checkpoint 后沿用 FreshRSS 首次有界同步，
-   不承诺回灌全部历史；S3 未配置时不能完成该切换。
+## 索引重建
 
 日常 `rebuild-index --generation N` 仅重建当前可用的已采用快照，复用冻结的 Chunk 与向量化文本。
 新 generation 逐篇回读核验，建立发布屏障后切换 Alias 与数据库索引映射；正文 revision 和已采用历史不变。
 切分规格变化必须重新预览、采用，不能用重建静默重切。构建失败保留原 Alias，发布中断用
 `recover-index-rebuild --generation N` 核对；写占用恢复仍需先确认旧执行与远端写入已停止。
-
-迁移 `f7c1d2e3a4b5` 增加处理、已采用版本和审核记录，表结构以迁移与 ORM 为准。部署操作独立于
-离线测试；随机隔离验收通过不表示应用数据库已迁移或已切换。只生成 SQL、不连接数据库：
-
-```powershell
-uv run alembic upgrade e74b9a310c65:head --sql
-```
+Docling 与 v3 规格的一次性切换已于 2026-09-11 完成，步骤见 [部署文档](../docs/container_deployment.md#索引重建与发布恢复) 指向的历史提交。
 
 ## 文档处理资源
 

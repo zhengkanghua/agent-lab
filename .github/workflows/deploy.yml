@@ -185,7 +185,8 @@ jobs:
         env:
           DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
 
-      # 编排先以候选文件上传，旧文件仍可用来停止旧 scheduler。
+      # 编排先以候选文件上传：迁移前要用服务器上现有的那份编排停掉正在跑的旧进程，
+      # 先覆盖文件会让旧进程按新编排停不干净。迁移成功后再替换，旧份留作 previous 供诊断。
       - name: 上传候选后端编排
         uses: burnett01/rsync-deployments@v9
         with:
@@ -239,14 +240,13 @@ jobs:
             print("已有 Redis 连接检查通过")
             PY
 
-            # 共享任务表升级前停止旧写入口。外部 CLI 和未决远端写入仍须按部署文档先核实。
-            # 迁移失败保持停止，不自动重启已不兼容的旧进程；旧镜像/编排保留作诊断依据。
-            legacy_scheduler=false
+            # 迁移前先按现有编排停掉旧进程，避免旧代码在表结构变化中途继续写入。外部 CLI 和
+            # 未决远端写入仍须按部署文档先核实。迁移失败保持停止，不自动重启已不兼容的旧进程；
+            # 旧镜像/编排保留作诊断依据。
             if [ -f docker-compose.yml ]; then
               services="$(docker compose config --services)"
-              for service in scheduler task-beat backend task-worker; do
+              for service in task-beat backend task-worker; do
                 if printf '%s\n' "$services" | grep -Fxq "$service"; then
-                  [ "$service" != scheduler ] || legacy_scheduler=true
                   docker compose stop --timeout 360 "$service"
                 fi
               done
@@ -254,10 +254,6 @@ jobs:
             fi
             docker compose -f docker-compose.next.yml run --no-deps --rm backend alembic upgrade head
             docker compose -f docker-compose.next.yml run --no-deps --rm backend agent-lab init-checkpointer
-            # 遗留待办只在旧 scheduler 布局首次切换时受理。普通部署不能重建已取消/失败批次。
-            if [ "$legacy_scheduler" = true ]; then
-              docker compose -f docker-compose.next.yml run --no-deps --rm backend python -m agent_lab.tasks.bootstrap
-            fi
             mv docker-compose.next.yml docker-compose.yml
             docker compose up -d backend task-worker task-beat
 
@@ -289,27 +285,6 @@ jobs:
                 exit 1
               fi
               sleep 3
-            done
-
-            # 新进程就绪后只清理本项目遗留的两个服务，不使用会扫到其他服务的 --remove-orphans。
-            # scheduler 必须已经退出；Redis 正常关停后删容器，保留数据卷供核查与回退。
-            compose_project="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' agent-lab-backend)"
-            test -n "$compose_project"
-            for legacy_service in scheduler redis; do
-              legacy_containers="$(docker ps -aq \
-                --filter "label=com.docker.compose.project=$compose_project" \
-                --filter "label=com.docker.compose.service=$legacy_service")"
-              for container in $legacy_containers; do
-                if [ "$legacy_service" = scheduler ]; then
-                  if [ "$(docker inspect --format '{{.State.Running}}' "$container")" = true ]; then
-                    echo "旧 scheduler 仍在运行，需核实旧写入后再清理；未强制删除。"
-                    exit 1
-                  fi
-                else
-                  docker stop --timeout 30 "$container"
-                fi
-                docker rm "$container"
-              done
             done
 
             # 被 backend-latest 覆盖掉的旧镜像会变成无名镜像留在磁盘上，不清理会慢慢吃满。

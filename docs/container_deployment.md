@@ -17,7 +17,7 @@ Cloudflare 与账号管理内容收在本文第五节。
 
 前端由 OpenResty 提供静态文件。生产 Compose 默认只有 `backend`、`task-beat` 和 `task-worker` 三个容器，使用同一个后端镜像；Redis 连接环境已有实例，由其自身部署管理。API 校验权限、持久受理并查询；单个 Beat 推进周期和补投；Linux prefork Worker 完成三类周期任务、文档处理批次和 HTTP Pipeline。PostgreSQL 保存状态和结果，Redis 当前传递任务消息，后续缓存等用途共用连接并区分键前缀。文件与 FreshRSS 的文档待办不需要额外 cron，进程职责与恢复决策见 [ADR 0019](adr/0019-scheduled-execution-and-write-coordination.md)。
 
-发布工作流先从候选容器检查已有 Redis 连通性，失败时不停止当前应用；切换后检查 API 健康、Beat 推进和 Worker 消息连接，通过后才清理本项目旧容器并上传前端。隔离验收在镜像构建和实际切换之前执行。
+发布工作流先从候选容器检查已有 Redis 连通性，失败时不停止当前应用；切换后检查 API 健康、Beat 推进和 Worker 消息连接，通过后才上传前端。
 
 ## 与容器化无关的内容
 
@@ -89,7 +89,7 @@ sudo mkdir -p /opt/agent-lab
 sudo chown deploy:deploy /opt/agent-lab
 ```
 
-全新环境把仓库 `backend/docker-compose.yml` 复制到 `<DEPLOY_DIR>/docker-compose.yml`，与 `.env` 放在同一目录。已有环境保留旧文件，发布工作流上传 `docker-compose.next.yml`，以旧编排停用旧入口、迁移成功后再替换，避免先覆盖文件导致旧 scheduler 无法识别。该编排继续使用已有外部 `1panel-network`。
+全新环境把仓库 `backend/docker-compose.yml` 复制到 `<DEPLOY_DIR>/docker-compose.yml`，与 `.env` 放在同一目录。已有环境保留旧文件，发布工作流上传 `docker-compose.next.yml`，先按旧编排停掉正在跑的进程、迁移成功后再替换：先覆盖文件会让旧进程按新编排停不干净。该编排继续使用已有外部 `1panel-network`。
 
 候选文件的上传和替换要求部署账号能写项目目录。工作流先核对目录内已有编排和 `.env`；目录不可写时，复用现有后端镜像启动一个无网络的临时容器，仅将项目目录本身的属主改为部署账号，与上面的建目录步骤一致。不递归修改目录内文件的权限，也不改变上层 1Panel 目录。
 
@@ -115,19 +115,17 @@ URL、API Key 后面多一个看不见的字符。这类故障很难查：日志
    邮箱相同。模板里的尖括号是占位符，必须替换。
 4. **不要写 `LLM_CHECKPOINT_POOL_SIZE`**。它在 `config/llm.py` 里声明为 `strict=True`，
    而 compose 的 `env_file` 注入的一律是字符串，配上会让容器启动即 `ValidationError`。
-5. 删除已失效的 `SCHEDULER_ENABLED`、刷新间隔、关闭宽限及按条数保留历史的旧设置。保留 `SCHEDULER_TIMEZONE=Asia/Shanghai` 与 `DATABASE_TIMEZONE=UTC`；周期、参数和启停仍在任务管理配置，默认重试与历史保留通过网页策略管理。
+5. 保留 `SCHEDULER_TIMEZONE=Asia/Shanghai` 与 `DATABASE_TIMEZONE=UTC`；周期、参数和启停在任务管理配置，默认重试与历史保留通过网页策略管理，`.env` 里不再有调度开关。
 6. 文档原件必须配置 `S3_ENDPOINT`、`S3_BUCKET`、`S3_REGION`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`
    和 `S3_ADDRESSING_STYLE`。MinIO endpoint 是后端可达的 API 地址，不是管理控制台地址。
    保持 `S3_REQUIRED=true`；缺少原件存储时上传和 FreshRSS 接收不能成功，不回退旧处理链。
 7. 新版使用 `QDRANT_COLLECTION_SCHEMA_VERSION=v3`。镜像已设置
    `DOCUMENT_TOKENIZER_PATH=/app/resources/tokenizers/bge-m3`，通常无需在 `.env` 重复设置；
    不要用本地开发的 `.cache/...` 路径覆盖它。`DOCUMENT_CHUNK_MAX_TOKENS` 默认 512，包含标题上下文。
-8. 容器必须显式设置 `REDIS_URL`，指向环境已有 Redis；没有配置时 Compose 直接报错。同在 `1panel-network` 时可用已有 Redis 的唯一容器名，否则使用容器可达的地址与端口。不要复制原生开发的 `127.0.0.1` 或已停用的 `agent-lab-redis` 地址。密码单独填 `REDIS_PASSWORD`，留空表示不需要密码，不把密码拼入 URL。API、Beat、Worker 的 Redis 配置与 `TASK_QUEUE_NAME` 必须一致；队列名同时决定消息及辅助键的前缀，不同环境须区分。连接凭据只放服务端配置，不放任务参数或前端变量。
+8. 容器必须显式设置 `REDIS_URL`，指向环境已有 Redis；没有配置时 Compose 直接报错。同在 `1panel-network` 时可用已有 Redis 的唯一容器名，否则使用容器可达的地址与端口。不要复制原生开发的 `127.0.0.1`。密码单独填 `REDIS_PASSWORD`，留空表示不需要密码，不把密码拼入 URL。API、Beat、Worker 的 Redis 配置与 `TASK_QUEUE_NAME` 必须一致；队列名同时决定消息及辅助键的前缀，不同环境须区分。连接凭据只放服务端配置，不放任务参数或前端变量。
 9. `WORKER_COUNT` 是 API 进程数，`TASK_WORKER_CONCURRENCY` 是每个 Worker 的 prefork 子进程数。`docker compose up -d --scale task-worker=2` 可增加 Worker 实例，Beat 保持单个。容器关闭宽限用于等待当前工作，不能据此限制清理整次时长。
 
-已有 Redis 的部署负责 AOF/everysec、持久盘、容量和 `noeviction`，本项目不创建 Redis、专用网络或数据卷，也不修改共享实例配置。旧的 `REDIS_MAXMEMORY` 已不再使用。`REDIS_URL` 为项目公共连接，任务消息和后续缓存按各自前缀区分；`noeviction` 作用于整个实例，缓存用 TTL 过期，内存满时新增写入失败。任务发布失败的依据保留在 PostgreSQL，等待补投。运维监控需关注内存占用/上限、AOF 写入状态、持久盘剩余空间和任务投递错误；在现有监控平台配置告警，具体阈值按批准容量设置。Redis 重启不清卷，不对共享服务执行 FLUSHDB 或故障实验。
-
-已有环境从多建的 Redis 切换时，先在服务器更新连接配置，保持三个应用进程的队列名一致。工作流按 scheduler、Beat、API、Worker 的顺序停用旧进程（`scheduler` 是旧布局遗留的服务名，当前编排里只有后三个），等待当前工作正常收尾，再启动连接已有 Redis 的新进程；已持久受理但未送达的任务由 Beat 按原执行编号补投，不搬运或清空 Redis 的键。新进程就绪后，只删除与本项目 Compose 标签一致的旧 `scheduler` 和 `redis` 容器；旧 Redis 先正常关闭，数据卷保留供核查与回退。旧 scheduler 若仍在运行则停止清理并报错，不强制删除。其他项目的 Redis 不在清理范围内，遗留容器的存在也不会触发历史任务交接脚本。
+已有 Redis 的部署负责 AOF/everysec、持久盘、容量和 `noeviction`，本项目不创建 Redis、专用网络或数据卷，也不修改共享实例配置。`REDIS_URL` 为项目公共连接，任务消息和后续缓存按各自前缀区分；`noeviction` 作用于整个实例，缓存用 TTL 过期，内存满时新增写入失败。任务发布失败的依据保留在 PostgreSQL，等待补投。运维监控需关注内存占用/上限、AOF 写入状态、持久盘剩余空间和任务投递错误；在现有监控平台配置告警，具体阈值按批准容量设置。Redis 重启不清卷，不对共享服务执行 FLUSHDB 或故障实验。
 
 原件桶需预先创建并保持私有，按环境隔离。应用凭据只需覆盖本项目对象的读取、条件写入和删除；
 开启桶版本控制时也要允许读取和删除具体对象版本。应用不会创建桶或修改桶配置。不要为原件启用
@@ -308,30 +306,15 @@ CI 的完整顺序在 [`.github/workflows/deploy.yml`](../.github/workflows/depl
    老后端」。
 3. **`docker compose pull` 不能省**：tag 恒为 `backend-latest`，`up -d` 认为 tag 没变会
    直接复用本地旧镜像——表现是 CI 全绿、容器也重启了，但跑的还是上一版代码。
-4. 候选编排先校验、拉镜像并检查已有 Redis 连接，再按旧编排停止 scheduler/Beat、API、Worker；成功迁移后替换编排并启动新进程。新进程就绪后清理本项目旧容器并保留旧 Redis 数据卷，已有共享 Redis 始终由其自身部署管理。迁移失败保持停止，不能自动恢复旧协议继续写新版表。旧配置备份为 `docker-compose.previous.yml`。
+4. 候选编排先校验、拉镜像并检查已有 Redis 连接，再按服务器上现有的编排停止 Beat、API、Worker；迁移成功后替换编排并启动新进程。迁移失败保持停止，不自动重启已不兼容的旧进程；已有共享 Redis 始终由其自身部署管理。旧编排备份为 `docker-compose.previous.yml`。
 
 推送完成后执行 `gh run list --limit 1` 核对最新部署，失败时用 `gh run view <run-id>` 查明原因；修复在本地验证后再推送。Actions 就绪检查覆盖 API、Beat 和 Worker 消息连接，业务验收仍需受控操作与执行编号。
 
 ## 三、排查
 
-### Docling 首次切换与恢复
+### 索引重建与发布恢复
 
-首次从旧文档链升级到 Docling 是一次资料切换，不能只更新镜像或把旧 Collection 改名为 v3。
-旧 Point 没有候选索引身份，旧 Document 也没有可供采用或重建的冻结 Chunk。当前开发资料已获准
-清空后重新导入，不建设旧正文迁移；以下顺序需记录实际执行结果，代码提交本身不表示切换已完成：
-
-1. 准备私有 S3 桶、服务端配置、包含 tokenizer 的 ARM64 新镜像及迁移；先完成随机隔离资源验收。
-2. 核对目标 PostgreSQL、当前项目的 Collection/Alias 与原件引用，列出待清理文档数量和来源范围。
-   停止 backend、Beat、Worker、遗留 scheduler 及容器外 CLI，确认远端未决写入结束，避免旧版在迁移后继续写入。
-3. 用新镜像执行 `alembic upgrade head`，按已核对范围清除文档、处理记录、已采用历史、审核记录、
-   相关删除待办及对应索引和原件；只重置重新接收所必需的 Source checkpoint。
-   保留账号、KnowledgeBase 配置、Source 绑定、定时任务配置、Agent 会话和 checkpointer 历史。
-4. 使用 v3 的空目标启动新版 API、Beat、Worker 并连接项目共用 Redis，上传合成 MD/TXT 并接收范围内的 FreshRSS HTML。
-   核对保存回执、原件下载、结构与 Chunk、正常自动采用、异常人工处理、旧版保留、检索和删除。
-5. 记录实际清理与重新导入的数量及失败记录，再恢复日常入口。FreshRSS 沿用首次有界同步规则，
-   重置 checkpoint 不保证回灌全部历史。存储或镜像未就绪时先保持切换未完成，不先清空资料。
-
-日常重建只复用当前已采用版本的冻结 Chunk。需要改变正文、章节或切分规则时，应生成候选并重新采用。
+Docling 结构化处理与 v3 索引规格的切换已于 2026-09-11 在开发资料上完成：清空后重新导入，不做旧正文迁移，当时的步骤与验收记录在提交 `5c96cfe` 前后的历史里。现在的资料只有一种形态，日常重建只复用当前已采用版本的冻结 Chunk。需要改变正文、章节或切分规则时，应生成候选并重新采用。
 重建新 generation 失败时保留原 Alias；发布结果不确定时先按下一节核实旧执行和写占用，再恢复发布：
 
 ```bash
@@ -341,18 +324,11 @@ docker compose run --rm backend agent-lab recover-index-rebuild --generation <�
 该命令核对已发布或仍在原 Alias 的状态，不重新向量化。解析或采用失败在文档管理中重试、修正或拒绝；
 拒绝只停止使用，明确删除才清除原件和文档历史。原件、向量删除中断保留待办，需继续核对并完成清理。
 
-### 定时任务升级与恢复
+### 任务执行的排查与恢复
 
-执行本节操作前确认目标环境、备份和授权。共享任务迁移为 `a91b3c7d5e20 → b6e2f9047a31`，保留周期配置、旧执行身份、快照及业务待办，新增受理、投递、策略和原请求回执。旧记录没有参数快照时明确标记缺失，不用当前配置伪造失败参数；这类历史不能人工重试。旧执行中、已有未确认占用或标记待核实的记录转为待核实；同配置存在多条未确认旧执行时拒绝升级，须核实后处理，不能删历史凑约束。
+公共任务组件（Celery Beat/Worker 加 Redis）已于 2026-09-13 替换掉旧的进程内 scheduler，切换步骤与当时的容器清理记录在提交 `623e17e` 前后的历史里。切换前受理的执行若没有参数快照，详情里会明确标记缺失，不用当前配置伪造失败参数，这类历史不能人工重试。
 
-首次切换的顺序：
-
-1. 完成旧结构迁移、多进程 PostgreSQL、真实 Redis/prefork/Beat 与 PostgreSQL/Qdrant/S3 恢复验收，记录实际环境和缺失项。夹具及隔离命令见 [后端 README](../backend/README.md#测试)；普通离线测试、浏览器替身和 Celery eager 不能替代。
-2. 准备新镜像、候选编排、共用 Redis 连接及持久化配置，保留旧编排和切换前数据库备份。原 v3 文档数据无需因共享任务重构而清空；不要把本次任务迁移与上一节 Docling 资料重置混在一起。
-3. 在维护窗口先停止旧 scheduler 与 API 的后台入口，并停止容器外写 CLI，核实旧进程及远端未决写入已结束。工作流会按旧编排停止服务，但不能识别容器外 CLI 或替代远端核实。已经使用新布局时依次停止 Beat、API、Worker；Worker 优先正常退出，强制退出后的记录保留恢复判断。
-4. 用候选编排执行 Alembic 和 checkpointer 初始化。首次从含 `scheduler` 的旧布局切换时，再执行一次 `python -m agent_lab.tasks.bootstrap`，把已有文档待办接到必要批次。交接复用业务回收规则，将已停止旧消费者遗留的解析／预览领取重新排队，无需等待计算超时；索引准备、发布及接收未决写入仍按原规则核实。普通部署不运行它，以免重建已取消或失败的任务。若旧部署未用标准服务名，操作者须在核实后显式执行这一次交接；仅执行 Alembic 不会受理这些旧业务待办。
-5. 迁移和交接成功后才将候选替换为正式编排，启动连接已有 Redis 的 API、Worker 和单个 Beat。失败保持停止，先检查迁移版本及前提再恢复部署，不自动运行旧进程。该切换包含停机；旧已受理工作保留，错过的周期不补执行。
-6. 分别核对 API `/health`、Beat 本地就绪、Worker 消息连接，再在批准范围内从网页受理一次任务并按编号核对结果。旧参数缺失、待核实及部分失败应如实可见，配置删除后仍能查已有执行。
+部署后分别核对 API `/health`、Beat 本地就绪、Worker 消息连接，再在批准范围内从网页受理一次任务并按编号核对结果：
 
 ```bash
 docker compose exec -T task-beat python -m agent_lab.tasks.status --check
@@ -362,7 +338,7 @@ docker compose run --no-deps --rm backend python -m agent_lab.scheduler_maintena
 
 第三条默认只查看执行者、心跳和占用，输出不含连接串、正文或第三方错误文本。页面的 `needs_attention` 不是允许重新执行的信号。先依据 owner 识别并确认所属进程已经停止，再确认 Qdrant/S3 等远端未决写入已结束；仅确认容器退出或心跳过期还不够。
 
-人工确认完成后，才在新版容器中执行对应恢复命令：
+人工确认完成后，才执行对应恢复命令：
 
 ```bash
 docker compose run --no-deps --rm backend python -m agent_lab.scheduler_maintenance --run-id <任务执行UUID> --confirm-stopped
@@ -372,9 +348,9 @@ docker compose run --no-deps --rm backend python -m agent_lab.scheduler_maintena
 
 恢复会拒绝近期仍有心跳的执行，关闭失联执行记录、解除相关占用并清除其待核实提示；已经失败的结果和统计继续保留。它不重新执行业务，也不删除 Document 或删除待办。删除待办由下一次正常清理重新核实并继续处理，失败不是“下次一定成功”的保证。
 
-日志用 `job_id`、`run_id`、`operation_id`、`owner` 关联：等待写资源、业务失败、客户端关闭失败、终态未保存是不同问题。业务成功但终态未保存时，不能直接再跑一次当作修复。
+日志用 `run_id`、`operation_id`、`owner` 关联（`job_id` 只在执行详情里，不进日志）：等待写资源、业务失败、客户端关闭失败、终态未保存是不同问题。业务成功但终态未保存时，不能直接再跑一次当作修复。
 
-回退前必须停止所有相关写入口并核实未决写入。公共任务迁移改变了受理与回执契约，拒绝自动 downgrade；不能通过删除执行、回执或业务待办强行降级。若必须回退到旧任务协议，应在确认数据损失范围后恢复切换前的配套备份，而非只回滚代码；已经发生的远端删除不会随数据库恢复自动撤销。
+回退前必须停止所有相关写入口并核实未决写入。共享任务表的迁移拒绝自动 downgrade，不能通过删除执行、回执或业务待办强行降级；若必须回到迁移前的版本，应在确认数据损失范围后恢复配套备份，而非只回滚代码；已经发生的远端删除不会随数据库恢复自动撤销。
 
 任务不推进时按以下证据区分原因：
 

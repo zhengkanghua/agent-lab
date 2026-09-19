@@ -48,7 +48,7 @@ Agent 为每次提问保存实际范围和可核对的引用。点击引用可�
 ## 本地启动
 
 前置：需要一个可连接的 PostgreSQL（独立 Database `news_vector_lc`，表结构由 Alembic 迁移建），
-`DATABASE_URL` 指向它；任务消息使用项目共用的 Redis。Qdrant、Ollama、Redis 和 MinIO/S3 私有桶的配置见 `backend/README.md` 的「外部依赖」。已有环境升级先按[任务切换步骤](docs/container_deployment.md#定时任务升级与恢复)停止旧写入口。
+`DATABASE_URL` 指向它；任务消息使用项目共用的 Redis。Qdrant、Ollama、Redis 和 MinIO/S3 私有桶的配置见 `backend/README.md` 的「外部依赖」。
 
 clone 之后先把 git hook 指到仓库里那份，否则提交前不会校验 ADR 与术语表的格式（这是本机 git 配置，不随仓库走）：
 
@@ -80,7 +80,7 @@ uv run celery -A agent_lab.tasks.celery_app:app beat --loglevel=INFO --pidfile=
 uv run celery -A agent_lab.tasks.celery_app:app worker --pool=prefork --concurrency=2 --hostname=worker@%h --loglevel=INFO
 ```
 
-`REDIS_URL` 配置项目共用 Redis 的地址，密码单独填 `REDIS_PASSWORD`，留空表示不需要密码。任务队列使用独立键前缀，后续缓存等用途也可复用该连接配置。文档处理不需要额外 cron；只启动 API 时仍可保存受理记录，耗时工作等待 Worker。原 `SCHEDULER_ENABLED` 开关和独立 scheduler 入口已移除。容器编排与容量设置见后端 README 和部署文档。
+`REDIS_URL` 配置项目共用 Redis 的地址，密码单独填 `REDIS_PASSWORD`，留空表示不需要密码。任务队列使用独立键前缀，后续缓存等用途也可复用该连接配置。文档处理不需要额外 cron；只启动 API 时仍可保存受理记录，耗时工作等待 Worker。容器编排与容量设置见后端 README 和部署文档。
 
 再启动前端：
 
