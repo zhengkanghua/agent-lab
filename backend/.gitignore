@@ -21,6 +21,8 @@ wheels/
 
 # ---------- 测试与类型检查缓存 ----------
 .pytest_cache/
+# pytest 的 basetemp（`--basetemp` 指到这里时产生，与源码无关）
+.tmp-pytest-check/
 .mypy_cache/
 .dmypy.json
 dmypy.json

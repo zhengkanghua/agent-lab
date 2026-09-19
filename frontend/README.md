@@ -38,8 +38,8 @@ Agent 提示词草稿在设置分区之间切换时保留，只有保存后才�
 
 后台的唯一入口位于前台侧栏底部，仅超级用户可见，指向 `/admin`；
 设置中心的分区导航只放三个设置分区。后台六个分区由 `AdminShell` 承载，
-文件资料与文档审核保持独立入口。单一入口的取舍与位置变更见
-[ADR 0025](../docs/adr/0025-admin-entry-is-a-single-topbar-link.md)。
+文件资料与文档审核保持独立入口。单一入口的理由（以及为何不在设置导航里再放一份）见
+[ADR 0011](../docs/adr/0011-self-service-page-separate-from-user-admin.md)。
 
 ## 交互与数据边界
 

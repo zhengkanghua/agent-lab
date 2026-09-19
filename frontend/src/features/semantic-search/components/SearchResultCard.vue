@@ -237,7 +237,7 @@ function requestFullText(event: MouseEvent): void {
 .result-excerpt,
 .related-matches p {
   /* 行长上限用 em 不用 ch：ch 是「0」的宽，量全角正文会偏窄一截。65em ≈ 65 个
-     全角字符，在 --stream-width 列宽下正好是不再收紧的自然上限（ADR 0016）。 */
+     全角字符，在 --stream-width 列宽下正好是不再收紧的自然上限。 */
   max-width: 65em;
   overflow-wrap: anywhere;
   color: var(--text-primary);

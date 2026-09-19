@@ -1,35 +1,53 @@
+---
+status: accepted
+superseded-by: [0022, 0023]
+---
+
 # KnowledgeBase 从配置切片扩展为通用应用组件
 
-> **后续决策**：[ADR 0022](0022-pluggable-document-processing.md) 与 [ADR 0023](0023-durable-intake-and-document-review.md) 取代下文的 v2 索引与旧文档构建流程，改为 Docling、v3 候选隔离及已采用版本读取；KnowledgeBase 身份、范围与准入规则继续有效。
+KnowledgeBase 从「只交付配置、停用搜索检查延期」的初次切片，扩展为完整的知识库应用边界：Source 绑定、
+Document 归属与检索、清理过滤成组接入。**本文的索引与文档构建部分已被
+[ADR 0022](0022-pluggable-document-processing.md) 与
+[ADR 0023](0023-durable-intake-and-document-review.md) 取代**——那份 v2 索引与旧文档构建流程换成了
+Docling、v3 候选隔离及正式版本读取；**KnowledgeBase 身份、范围与准入规则继续有效**，就是本文剩下的
+内容。表结构、接口清单与各适配器职责见
+[后端架构说明](../../backend/docs/architecture.md) 的「KnowledgeBase 范围」与「数据库表」节。
 
-KnowledgeBase 从「只交付配置、停用搜索检查延期」的初次切片，扩展为完整的知识库应用边界：Source 绑定、Document 归属与检索、清理过滤成组接入。
+**身份与启停。** 新增 `knowledge_bases` 表，初始化稳定键为 `news` 的启用库；稳定键是业务身份、展示
+名称和说明可以修改。管理 API 由超级用户创建、编辑和启停，列表默认只返回启用库，读取停用配置必须明确
+传参，当前不提供物理删除。停用是可逆的配置变化、不删除已有数据，它拒绝新增绑定、来源导入和检索；
+更新使用行锁和只修改明确字段的请求，稳定键从更新契约中排除（避免任务参数或来源映射失效）。
 
-## 决策
+**为什么用进程内组件而不是独立服务。** 配置是所有数据隔离的共同前置，但它本身足够简单；当前只有一个
+运行时在用它，引入网络调用、部署单元和跨服务事务协调，成本远大于收益。`knowledge/` 内的领域对象、
+契约、应用服务、端口与 PostgreSQL 适配器把配置用例隔离清楚，HTTP、CLI 和任务入口从装配层取同一个
+应用服务，不把 ORM 对象传入领域层。
 
-- 新增 `knowledge_bases` 表，初始化稳定键为 `news` 的启用库；稳定键是业务身份，展示名称和说明可以修改。
-- 通过 `knowledge/` 内的领域对象、契约、应用服务、端口和 PostgreSQL 适配器提供配置用例。HTTP、CLI 和后续任务入口从装配层取得同一个应用服务，不把 ORM 对象传入领域层。
-- 管理 API 由超级用户创建、编辑和启停 KnowledgeBase；列表默认只返回启用库，读取停用配置必须明确传参。当前不提供物理删除。
-- 导入、索引、检索、Source 绑定和清理用例依赖纯数据契约与端口，PostgreSQL、FreshRSS、Qdrant、LangChain/Ollama 留在适配器与装配层。DocumentSnapshot 在数据库事务结束前构造，不让 ORM 生命周期进入索引用例。
-- 停用库拒绝新增绑定、来源导入和检索，已有数据保留且可显式维护清理。同步网络前检查一次，保存时在短事务中锁定并复核；Source 绑定参加 sync/index 持久写协调。
-- 普通内部搜索必须明确范围；新页面显式选择所有启用库或非空 ID 集合，服务端解析一次范围快照后交给 Qdrant 统一分组和排序。旧 HTTP 缺省仍明确传 news，不让旧调用方悄然跨库。范围不存在返回 404，停用或无启用库返回 409，均在 Embedding/Qdrant 之前失败。Agent 新会话默认所有启用库，既有会话迁移保留 news；每次运行取得不可变快照，Tool 只能继续缩小范围。
-- ~~索引和 Payload 采用 v2~~（**已由 [ADR 0022](0022-pluggable-document-processing.md) 取代为 v3**）；多个 KnowledgeBase 共用同规格 Collection。重建占用 sync/index，完整构建并验收新 generation 后发布 current Alias，之后条件更新成功快照。构建失败保留原 Alias，发布或确认不确定时保留占用供人工核实；旧 Collection 不自动删除。
+**范围规则。** 普通内部搜索必须明确范围：新页面显式选择所有启用库或非空 ID 集合，服务端解析一次范围
+快照后交给 Qdrant 统一分组和排序；旧 HTTP 缺省仍明确传 news，不让旧调用方悄然跨库。范围不存在返回
+404，停用或无启用库返回 409，都在 Embedding/Qdrant 之前失败。Agent 新会话默认所有启用库，既有会话
+迁移保留 news；每次运行取得不可变快照，Tool 只能继续缩小范围。空选择或显式 null 不退化为无过滤查询。
 
-## 原因与边界
+**重建与 Alias 发布。** 多个 KnowledgeBase 共用同规格 Collection。重建占用 sync/index，完整构建并验收
+新的 generation 之后才把 current Alias 指过去；构建失败保留原 Alias，发布或确认不确定时保留占用供人工
+核实；旧 Collection 不自动删除。日常索引与重建共用切分、Embedding、Point 写入步骤，只有重建适配器能
+显式指定新 generation。
 
-KnowledgeBase 的配置是所有数据隔离的共同前置。来源页面、清理表单与检索共用同一身份与启停规则，避免配置已经停用但写入或查询仍继续。保留内部组件形态，不增加网络微服务、消息队列或历史回灌平台。
+## Considered Options
 
-停用是可逆的配置变化，不删除已有数据。更新使用行锁和只修改明确字段的请求，重复提交相同值不刷新更新时间；稳定键从更新契约中排除，避免任务参数或来源映射失效。
+**保留两套导入服务并存。** 旧 FreshRSSImportService 转接层与新入口并行一段时间，回退更容易。但两套
+路径共享同一批 Document 与 Qdrant 写入，并存期间谁改了什么说不清；删除转接层后生产装配与行为回归保持
+通过，证明并存没有换来任何东西。
 
-## 检索范围与归属的契约
+**把 KnowledgeBase 配置做成独立服务。** 见上：当前只有一个消费方，网络调用与跨服务事务的成本换不来
+任何隔离收益。
 
-`POST /vector-search` 和 `POST /document-search` 接受显式 `scope`，返回结果与实际知识库展示快照；旧缺省/单库请求保留数组响应和 news 缺省值。新旧范围并存必须一致，空选择或显式 null 不退化为无过滤查询。页面保存各检索记录的选择、实际集合与名称，后续改名或切换选择不改写历史。
+**让搜索接口在缺省时自动跨所有库。** 对旧调用方更「方便」。但那会让一次部署静默改变既有调用的语义，
+旧页面突然开始返回别的库的内容；所以旧缺省明确传 news，跨库必须由调用方显式声明。
 
-Qdrant 搜索过滤器把单个 `knowledge_base_id` 编码为精确匹配，把集合编码为 MatchAny，搜索响应要求每个 Point 携带归属字段；范围端口统一查询数据库启用状态。未知 UUID 与停用目标都明确失败，不退化为全库查询。查询开始后以本次快照解释，下一次重新解析。默认搜索全部不改变定时清理缺省只作用于 news 的边界。
+## Consequences
 
-`mime_type` 与可空 Source/URL 贯穿构建、Payload 和读取响应。
-
-2026-09-08 第二阶段扩展文件入口：文本与 Markdown 通过独立管理用例创建或按 ID/revision 替换 Document，复用既有索引与删除协调。文件没有 Source 也可读取全文；停用库拒绝读取及新增/替换。文件名为可选索引元数据，不因增加该字段清空或重建索引。会话知识库选择独立保存，旧问答与摘要不能作为新运行的证据，见 [ADR 0021](0021-agent-run-evidence-and-replay.md)。
-
-## 消融结论
-
-删除旧 FreshRSSImportService 转接层及未使用的写入口后，生产装配与行为回归保持通过；不需要并存两套导入服务。日常索引与重建共用切分、Embedding、Point 写入步骤，只有重建适配器能够显式指定新 generation。归属字段、条件版本更新和持久写协调仍是必要边界。
+归属字段、条件版本更新和持久写协调是必要边界，不因为组件化而消失。`mime_type` 与可空 Source/URL 贯穿
+构建、Payload 和读取响应；文件没有 Source 也可读取全文，文件名为可选索引元数据，不因增加该字段清空
+或重建索引。会话知识库选择独立保存，旧问答与摘要不能作为新运行的证据，见
+[ADR 0021](0021-agent-run-evidence-and-replay.md)。

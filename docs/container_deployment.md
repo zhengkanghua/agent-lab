@@ -436,6 +436,11 @@ docker image inspect <BACKEND_IMAGE> --format '{{.Architecture}}'   # 应为 arm
 uname -m                                                            # 应为 aarch64
 ```
 
+**前端也在 ARM 上构建，同一原因带来的第二个约束。** 工作流只有一个 job、跑在 ARM runner 上，所以
+`npm ci` 也发生在 arm64 环境里，依赖 `package-lock.json` 中存有 ARM 版原生包（当前是
+`@rolldown/binding-linux-arm64-gnu` 和 `lightningcss-linux-arm64-gnu`）。**换 Vite 或 Tailwind 大版本
+后要复查一次**：包名或平台标签变了而 lock 文件没跟上，`npm ci` 会在 CI 里直接失败。
+
 ### 推镜像失败：`unknown manifest class for application/vnd.oci.empty.v1+json`
 
 ACR 个人版不认 buildx 默认附加的 provenance / SBOM 证明。工作流里已经用

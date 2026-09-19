@@ -182,7 +182,7 @@ function openDocument(result: ReadableResult, trigger: HTMLButtonElement | null)
 
 <style scoped>
 /* 整页占满「视口 - 汉堡条」（桌面端没有 bar，值即视口高）；单列检索流用检索流宽度居中，
-   比 agent 页的阅读宽度宽一档容纳结果卡的混合排版（令牌取舍见 tokens.css 与 ADR 0016）。 */
+   比 agent 页的阅读宽度宽一档容纳结果卡的混合排版（令牌取舍见 tokens.css）。 */
 .workspace {
   display: flex;
   flex-direction: column;
