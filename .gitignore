@@ -81,5 +81,8 @@ $RECYCLE.BIN/
 .gemini/**/cache/
 .zcode/**/cache/
 .pi/**/cache/
+# Claude Code 的项目级个人设置（standing approval 之类的本机许可），官方定义就是只属于这台机器；
+# 共享的 hook 与权限放 .claude/settings.json。
+.claude/settings.local.json
 # 工具的会话记忆保留在本机，不作为项目契约提交。
 /.workbuddy-ai/memory/

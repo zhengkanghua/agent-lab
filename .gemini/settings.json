@@ -1,4 +1,10 @@
 {
+  "context": {
+    "fileName": [
+      "AGENTS.md",
+      "CONTEXT.md"
+    ]
+  },
   "hooks": {
     "BeforeTool": [
       {
