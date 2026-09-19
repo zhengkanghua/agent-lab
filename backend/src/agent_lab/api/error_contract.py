@@ -562,10 +562,12 @@ AGENT_CHAT_ERROR_RULES: tuple[ErrorContractRule, ...] = (
     # 为什么只挂 OperationalError 而不是 psycopg.Error：ProgrammingError 也是 psycopg.Error
     # 的子类，而「漏跑 init-checkpointer 导致表不存在」正是它——那个要留在兜底里报
     # agent_internal_error，不能被说成「连接中断、稍后重试」，否则运维会一直重试一个永远
-    # 好不了的东西（见 docs/container_deployment.md 「三、排查」的前两节）。
+    # 好不了的东西（见 docs/container_deployment.md「三、排查」里 agent_internal_error 500 与
+    # agent_checkpointer_connection_lost 503 那两小节）。
     #
     # 注意这是**原生 psycopg** 的异常，不是 sqlalchemy.exc.OperationalError：checkpointer
-    # 按 ADR 0004 走独立的 psycopg 池，不经过 SQLAlchemy，所以 SQLAlchemyError 那几条规则
+    # 走独立的 psycopg 池（ADR 0004 把这四张表交给上游库自管，它只认 psycopg），不经过
+    # SQLAlchemy，所以 SQLAlchemyError 那几条规则
     # 对它无效。它也不是内置 ConnectionError 的子类，指望 llm_unavailable 那条捞住它同样
     # 不成立——两条路都试过才落到这里单开一条。
     ErrorContractRule(
@@ -589,7 +591,7 @@ AGENT_CHAT_ERROR_RULES: tuple[ErrorContractRule, ...] = (
     ),
     # 业务库（SQLAlchemy 这一侧）不可用。必须有这条：``/agent/chat`` 从「会话归属」这个功能开始
     # 会读写 ``agent_threads``，而本表原有的数据库规则挂的是 ``PsycopgOperationalError``——那是
-    # checkpointer 走的独立 psycopg 池（见 ADR 0004），管不到 SQLAlchemy 抛出的异常。少了这条，
+    # checkpointer 走的独立 psycopg 池（上游库自管的表只认 psycopg，见 ADR 0004），管不到 SQLAlchemy 抛出的异常。少了这条，
     # 业务库故障会落进 ``agent_internal_error`` 兜底，前端只能显示「未分类的服务错误」，
     # 而这其实是一个明确可重试的故障。
     #

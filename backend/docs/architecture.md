@@ -415,7 +415,7 @@ Done 与回放共用 `build_replay_turns`，避免上游重试临时文字、截
 后果不是报错而是 ``--autogenerate`` 生成 ``op.drop_table('checkpoints')``，下一次迁移删掉全部
 会话历史。
 
-它走的是独立的 psycopg 连接池（同上 ADR），因此业务侧 Engine 的 ``pool_pre_ping`` 保护不到它，
+它走的是独立的 psycopg 连接池（上游库自管的表只认 psycopg 连接，见 ADR 0004 与 ``agent/runtime.py`` 的说明），因此业务侧 Engine 的 ``pool_pre_ping`` 保护不到它，
 必须自己配 ``check=AsyncConnectionPool.check_connection`` 做取连接前探活。少了它的表现值得记住，
 因为它不像故障、像抖动：psycopg_pool 的 ``check`` 默认 ``None``，取连接时完全不验活，于是被
 PostgreSQL 单方面掐掉的空闲连接（``idle_session_timeout``、中间代理的空闲回收、PG 重启）会被原样

@@ -118,7 +118,9 @@ class AgentRuntime:
 
         # 3、checkpointer。注入了就直接用（且不建池），否则按配置建 psycopg 池。
         #    两边连的是同一个库，但 SQLAlchemy 走 ORM、checkpointer 走原生 psycopg，
-        #    所以是两个独立连接池，而不是共用一个（见 ADR 0004）。
+        #    所以是两个独立连接池：ADR 0004 把这四张表交给 langgraph-checkpoint-postgres
+        #    自管，它只认 psycopg 连接。坏连接探活的来龙去脉见 backend/docs/architecture.md
+        #    「Agent 对话」一节。
         #    压缩历史用主模型：它已经构造好了，再建一个客户端只是多一个连接池。
         pool: AsyncConnectionPool | None = None
         if checkpointer is None:

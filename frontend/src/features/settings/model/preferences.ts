@@ -16,7 +16,7 @@ import type { RemotePreferences } from '@/api/preferences'
  *
  * 偏好归属于账号、存在后端（`user_preferences` 表），换浏览器或清站点数据都不再丢失。
  * 这里仍然没有任何密钥或凭据——密码与 Token 只存在于 HttpOnly Cookie，绝不落到前端存储
- * （见 frontend/README.md 的登录边界）。
+ * （见 frontend/README.md 开头讲登录与会话恢复的那一段）。
  */
 
 export interface UserPreferences {

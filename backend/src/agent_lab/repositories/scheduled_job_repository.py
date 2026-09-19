@@ -46,7 +46,7 @@ class ScheduledJobRepository:
 
         库里没有 ``ON DELETE SET NULL``，不补这一步会静默留下指向已删配置的 ``job_id``。
         置空只影响 ``job_id`` 这一列：``source_job_id`` 和受理时冻结的 ``config_snapshot``
-        原样保留，历史仍能按原配置身份查询（ADR 0019）。
+        原样保留，历史仍能按原配置身份查询（规则见 backend/docs/architecture.md「公共任务组件」节）。
 
         Args:
             record: 已加行锁的 ``ScheduledJobRecord``。
