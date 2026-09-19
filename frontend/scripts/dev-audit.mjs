@@ -2,7 +2,7 @@
 /* 布局/结构审计：纯前端（route mock），核对渲染结果是否出现可见问题。
  * 用法与 scripts/dev-screenshot.mjs 相同（先起 dev server）。输出文本报告。 */
 import { chromium } from 'playwright'
-import { matchApi, SUPERUSER } from './dev-mocks.mjs'
+import { matchApi } from './dev-mocks.mjs'
 
 const PORT = Number(process.env.DEVSHOT_PORT || 5173)
 const BASE = `http://localhost:${PORT}`
