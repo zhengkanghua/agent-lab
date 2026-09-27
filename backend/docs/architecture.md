@@ -450,7 +450,7 @@ PostgreSQL 单方面掐掉的空闲连接（``idle_session_timeout``、中间代
 
 ## 集中的错误契约：api/error_contract.py
 
-搜索、文档搜索、知识库、账号管理、定时任务和 Agent 路由共用一个错误契约层，映射收在有序的
+搜索、文档搜索、知识库、账号管理、定时任务、Agent 与用量查询路由共用一个错误契约层，映射收在有序的
 ``ErrorContractRule`` 表里；文件与文档审核路由的领域错误按 ``code`` 查两张 ``*_ERROR_DETAILS`` 字典。Pipeline 的业务错误表继续供 Worker 生成脱敏结果；HTTP 受理及任务操作错误由 `api/task_routes.py` 统一映射，业务执行失败从任务详情读取。
 
 三条必须长期保住的设计约束：
@@ -514,6 +514,11 @@ AGENT_CHAT_ERROR_RULES      build_agent_chat_error_response()
 
 AGENT_TOOL_ERROR_RULES      sanitize_tool_error()（结果进模型上下文，不进 HTTP 响应）
     agent_tool_database_unavailable 503 / agent_tool_failed 500
+
+USAGE_ERROR_RULES           build_usage_error_response()
+    usage_runtime_unavailable 503（lifespan 没提供用量库资源）/ usage_database_unavailable 503
+    （用量库当前读不了）。两者分开是因为排查方向不同；都是 503 而不是空列表与零汇总：
+    把「查不到」渲染成 0，正是用量这条链路反复拒绕的事
 
 UNCLASSIFIED_ERROR_RULE     手动流水线与检索的未分类兜底：pipeline_internal_error 500
 INVALID_REQUEST_RULE        请求校验失败：invalid_request 422
@@ -698,6 +703,13 @@ checkpoints、checkpoint_blobs、checkpoint_writes、checkpoint_migrations
 `documents.content_text` 是当前已采用正文，原始字节在 S3，候选和历史快照在各自记录中。
 Chunk 清单与结构作为预览和已采用快照保存在 PostgreSQL，向量仍只在 Qdrant，不另建 Chunk 或 Embedding 关系表。
 作者、标签和图片 URL 使用 PostgreSQL `text[]`；所有时间带时区，数据库连接会话固定为 UTC。
+
+**用量记录不在上面这个库里。** 它在另建的数据库 ``llmops`` 里（单表 ``usage_records``，一次模型调用一行），
+有自己的迁移环境（``backend/alembic_usage.ini`` 与 ``backend/usage_migrations/``）和自己的 Engine，
+理由与代价见 [ADR 0032](../../docs/adr/0032-usage-data-in-separate-database.md)。用量表的 ORM 模型挂在
+自己的 metadata 上，**不能**出现在上面的业务表清单里：一旦出现，业务库的 ``alembic check`` 就会
+在业务库里把它建出来或当成多余的表删掉。采集点、队列、降级与关停排空见
+``backend/src/agent_lab/usage/`` 与 ``agent/usage_recording.py``。
 
 Agent 的会话数据分在两处，边界是「内容 / 归属」：四张 ``checkpoint*`` 表存消息内容，
 ``agent_threads`` 存归属、展示元信息、下一次运行的选择范围和会话级提示词快照。前者由第三方库管、不由 Alembic 管；后者是普通业务表，

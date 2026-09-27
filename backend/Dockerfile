@@ -71,6 +71,12 @@ RUN chmod +x entrypoint.sh
 COPY --chown=agentlab:agentlab alembic/ ./alembic/
 COPY --chown=agentlab:agentlab alembic.ini ./
 
+# 用量库那套迁移环境同样要进镜像：它有自己的 ini、env 与版本目录，部署时在容器里跑
+# `alembic -c alembic_usage.ini upgrade head`。少了这两行，部署要么找不到文件、要么空跑，
+# 两种表现都是「用量表根本没建」。
+COPY --chown=agentlab:agentlab alembic_usage.ini ./
+COPY --chown=agentlab:agentlab usage_migrations/ ./usage_migrations/
+
 USER agentlab
 
 EXPOSE 8000

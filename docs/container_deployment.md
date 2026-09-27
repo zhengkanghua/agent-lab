@@ -124,6 +124,7 @@ URL、API Key 后面多一个看不见的字符。这类故障很难查：日志
    不要用本地开发的 `.cache/...` 路径覆盖它。`DOCUMENT_CHUNK_MAX_TOKENS` 默认 512，包含标题上下文。
 8. 容器必须显式设置 `REDIS_URL`，指向环境已有 Redis；没有配置时 Compose 直接报错。同在 `1panel-network` 时可用已有 Redis 的唯一容器名，否则使用容器可达的地址与端口。不要复制原生开发的 `127.0.0.1`。密码单独填 `REDIS_PASSWORD`，留空表示不需要密码，不把密码拼入 URL。API、Beat、Worker 的 Redis 配置与 `TASK_QUEUE_NAME` 必须一致；队列名同时决定消息及辅助键的前缀，不同环境须区分。连接凭据只放服务端配置，不放任务参数或前端变量。
 9. `WORKER_COUNT` 是 API 进程数，`TASK_WORKER_CONCURRENCY` 是每个 Worker 的 prefork 子进程数。`docker compose up -d --scale task-worker=2` 可增加 Worker 实例，Beat 保持单个。容器关闭宽限用于等待当前工作，不能据此限制清理整次时长。
+10. **`LLMOPS_DATABASE_URL` 必填**，指用量记录所在的**另一个** PostgreSQL 数据库（同一个实例上另建一个库，库名 `llmops`）；连同 `LLMOPS_POOL_SIZE` 等一起照模板填。少了它进程**起不来**（报错会指出缺的是哪一项，而不是静默不记账），所以部署工作流在停旧进程之前会先自检这一项。不要把它写成 `DATABASE_URL` 那个库：两者必须是不同的库，否则用量数据会和业务表共命运（见 [ADR 0032](adr/0032-usage-data-in-separate-database.md)）。
 
 已有 Redis 的部署负责 AOF/everysec、持久盘、容量和 `noeviction`，本项目不创建 Redis、专用网络或数据卷，也不修改共享实例配置。`REDIS_URL` 为项目公共连接，任务消息和后续缓存按各自前缀区分；`noeviction` 作用于整个实例，缓存用 TTL 过期，内存满时新增写入失败。任务发布失败的依据保留在 PostgreSQL，等待补投。运维监控需关注内存占用/上限、AOF 写入状态、持久盘剩余空间和任务投递错误；在现有监控平台配置告警，具体阈值按批准容量设置。Redis 重启不清卷，不对共享服务执行 FLUSHDB 或故障实验。
 
@@ -282,7 +283,27 @@ docker login <your-acr-registry> -u <your-acr-username>
 
 docker compose pull
 docker compose config --quiet
+# 业务库迁移。业务库必须已存在（本页不涵盖它的创建）。
 docker compose run --no-deps --rm backend alembic upgrade head
+# 用量库（ADR 0032 的独立库 llmops）：先建库，再跑它自己那套迁移。部署工作流也做这两步，
+# 手工走一遍主要是确认服务器上的 .env 配全了（少了这一项应用启动就会失败）。
+docker compose run --no-deps --rm -T backend python - <<'PY'
+import psycopg
+from sqlalchemy.engine import make_url
+from agent_lab.config.usage_database import get_usage_database_settings
+
+url = make_url(str(get_usage_database_settings().database_url))
+try:
+    with psycopg.connect(host=url.host, port=url.port, dbname=url.database, user=url.username,
+                         password=url.password, connect_timeout=5, autocommit=True):
+        print("用量库已存在，跳过创建")
+except psycopg.OperationalError:
+    with psycopg.connect(host=url.host, port=url.port, dbname="postgres", user=url.username,
+                         password=url.password, connect_timeout=5, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute(f'CREATE DATABASE "{url.database}"')
+    print("用量库已创建")
+PY
+docker compose run --no-deps --rm backend alembic -c alembic_usage.ini upgrade head
 docker compose run --no-deps --rm backend agent-lab init-checkpointer
 docker compose up -d backend task-worker task-beat
 docker compose logs -f backend
@@ -307,6 +328,8 @@ CI 的完整顺序在 [`.github/workflows/deploy.yml`](../.github/workflows/depl
 3. **`docker compose pull` 不能省**：tag 恒为 `backend-latest`，`up -d` 认为 tag 没变会
    直接复用本地旧镜像——表现是 CI 全绿、容器也重启了，但跑的还是上一版代码。
 4. 候选编排先校验、拉镜像并检查已有 Redis 连接，再按服务器上现有的编排停止 Beat、API、Worker；迁移成功后替换编排并启动新进程。迁移失败保持停止，不自动重启已不兼容的旧进程；已有共享 Redis 始终由其自身部署管理。旧编排备份为 `docker-compose.previous.yml`。
+5. **用量库配置自检在停旧进程之前**（与 Redis 连接检查同一步）：`LLMOPS_DATABASE_URL` 缺失或不合法时应用启动就会失败，把生产停在一半才发现 `.env` 少了一项是完全可以避开的。
+6. **迁移阶段有两条链**：业务库的 `alembic upgrade head`，以及用量库的建库 + `alembic -c alembic_usage.ini upgrade head`。两者都在 `up -d` 之前完成，任一条失败即中止部署（保持停止）。
 
 推送完成后执行 `gh run list --limit 1` 核对最新部署，失败时用 `gh run view <run-id>` 查明原因；修复在本地验证后再推送。Actions 就绪检查覆盖 API、Beat 和 Worker 消息连接，业务验收仍需受控操作与执行编号。
 

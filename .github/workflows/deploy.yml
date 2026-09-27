@@ -240,6 +240,23 @@ jobs:
             print("已有 Redis 连接检查通过")
             PY
 
+            # 用量库配置自检。它必须放在停旧进程之前：用量库配置缺失或不合法时应用启动就会
+            # 失败（配置缺失即启动失败，不是静默不记），把生产停在一半才发现 .env 少了一项
+            # 是完全可以避开的。
+            docker compose -f docker-compose.next.yml run --no-deps --rm -T backend python - <<'PY'
+            import sys
+            from pydantic import ValidationError
+            from agent_lab.config.usage_database import get_usage_database_settings
+
+            try:
+                get_usage_database_settings()
+            except ValidationError as error:
+                print("用量库配置不合法，请核对 .env 里的 LLMOPS_*（键列表见 backend/.env.example）。", file=sys.stderr)
+                print(f"缺失或不合法的键：{sorted('LLMOPS_' + str(item['loc'][0]).upper() for item in error.errors())}", file=sys.stderr)
+                raise SystemExit(1)
+            print("用量库配置自检通过")
+            PY
+
             # 迁移前先按现有编排停掉旧进程，避免旧代码在表结构变化中途继续写入。外部 CLI 和
             # 未决远端写入仍须按部署文档先核实。迁移失败保持停止，不自动重启已不兼容的旧进程；
             # 旧镜像/编排保留作诊断依据。
@@ -253,6 +270,33 @@ jobs:
               cp docker-compose.yml docker-compose.previous.yml
             fi
             docker compose -f docker-compose.next.yml run --no-deps --rm backend alembic upgrade head
+            # 用量数据在独立库 llmops 里（ADR 0032），它有自己的迁移链。库不存在时先建库：
+            # 连接串来自 LLMOPS_DATABASE_URL，而建库只能连同一个实例的维护库 postgres 执行。
+            # 已存在就跳过，所以重复部署安全。
+            docker compose -f docker-compose.next.yml run --no-deps --rm -T backend python - <<'PY'
+            import sys
+            import psycopg
+            from sqlalchemy.engine import make_url
+            from agent_lab.config.usage_database import get_usage_database_settings
+
+            url = make_url(str(get_usage_database_settings().database_url))
+            if url.get_backend_name() != "postgresql":
+                print("用量库连接串必须是 PostgreSQL。", file=sys.stderr)
+                raise SystemExit(1)
+
+            def connect(dbname):
+                return psycopg.connect(host=url.host, port=url.port, dbname=dbname, user=url.username,
+                                       password=url.password, connect_timeout=5, autocommit=True)
+
+            try:
+                with connect(url.database):
+                    print("用量库已存在，跳过创建")
+            except psycopg.OperationalError:
+                with connect("postgres") as conn, conn.cursor() as cursor:
+                    cursor.execute(f'CREATE DATABASE "{url.database}"')
+                print("用量库已创建")
+            PY
+            docker compose -f docker-compose.next.yml run --no-deps --rm backend alembic -c alembic_usage.ini upgrade head
             docker compose -f docker-compose.next.yml run --no-deps --rm backend agent-lab init-checkpointer
             mv docker-compose.next.yml docker-compose.yml
             docker compose up -d backend task-worker task-beat

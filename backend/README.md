@@ -49,6 +49,9 @@ Redis        使用环境已有实例，生产 Compose 不创建 Redis；任务�
 生成式 LLM   仅 /agent/* 需要。OpenAI 兼容中转站或 Ollama，二选一由 LLM_PROVIDER 决定。
              和上面的 Ollama Embedding 是两件事：Embedding 产出向量，这个产出文字，
              即使都指向同一台 Ollama 也是两套配置。不配则只有 /agent/* 返回 503。
+用量库       llmops，模型调用的 token 用量记录，与业务表**不同库**（见
+             ../docs/adr/0032-usage-data-in-separate-database.md）。必须先建库并跑
+             `alembic -c alembic_usage.ini upgrade head`；配置缺失时进程起不来。
 ```
 
 Python 版本固定 `>=3.12,<3.13`，依赖声明与解析版本以 `pyproject.toml`、`uv.lock` 为准。
@@ -66,6 +69,7 @@ Agent 继续使用 LangChain/LangGraph，向量存储使用官方 qdrant-client�
 5. S3 私有桶与原件访问配置可用          （接收文件、FreshRSS 原件和完整删除需要）
 6. tokenizer 资源校验通过               （见「文档处理资源」）
 7. Redis、单个 Beat 与 prefork Worker 可用（文档批次不需要另建 cron）
+8. llmops 库已建且跑过 alembic -c alembic_usage.ini upgrade head（启动不执行 migration）
 ```
 
 第 1 步不到位时 ``/agent/*`` 会返回 503（``agent_thread_database_unavailable``）而不是崩溃：
@@ -121,6 +125,11 @@ LLM_MODEL               必须是 LLM_BASE_URL 那一侧真实存在的模型名
                         比对上游模型列表并失败，只有列表拉不到时才拖到第一次提问。
 LLM_USER_AGENT          默认 agent-lab。留空则沿用 SDK 默认值，此时部分中转站会按
                         User-Agent 把 openai SDK 的默认标识拦成 403，见下文。
+LLMOPS_DATABASE_URL     用量库连接串，**必填**；缺失或不合法时进程起不来（报错会指出
+                        缺的是哪一项），不是静默不记账。它必须与 DATABASE_URL
+                        指向**不同的库**，见 docs/adr/0032-usage-data-in-separate-database.md。
+LLMOPS_ECHO / LLMOPS_CONNECT_TIMEOUT / LLMOPS_POOL_SIZE / LLMOPS_MAX_OVERFLOW
+                        用量库的 SQL 日志、建连超时与连接池，照 .env.example 填。
 LANGSMITH_TRACING       默认 false。设成 true 意味着提问内容和检索到的文档正文会离开
                         本机、发往境外云服务，并且要同时配 LANGSMITH_API_KEY。
 ```
@@ -157,6 +166,9 @@ Copy-Item .env.example .env
 # 要用 Agent 对话页还需 LLM_API_KEY（缺失时只有 /agent/* 返回 503，检索照常）。
 uv run python -m agent_lab.prepare_document_resources
 uv run alembic upgrade head
+# 用量库是独立库（见 .env.example 的 LLMOPS_ 那一段）：先建库，再跑它自己那套迁移。
+#   createdb llmops        或在 psql 里 CREATE DATABASE llmops;
+uv run alembic -c alembic_usage.ini upgrade head
 # 只在要用 Agent 对话页时需要：建四张 checkpoint* 会话历史表，幂等，可重复执行。
 uv run agent-lab init-checkpointer
 uv run agent-lab run-once --limit-per-source 2 --batch-size 20
@@ -502,6 +514,21 @@ $env:RUN_POSTGRES_AGENT_THREAD_INTEGRATION_TEST="1"
 uv run pytest -q tests/test_agent_thread_ownership_integration.py
 ```
 
+真实 PostgreSQL 的用量库（记录真的落进**独立库**、两条索引齐全、唯一约束成立、时刻列按 UTC
+解释、业务库的迁移链不碰用量表，以及明细接口能从真库读出记录）。它需要一个**独立的**连接串
+变量指向用量测试库——复用业务库那个变量是不行的，用量在另一个库；测试只创建随机 schema，
+结束时删掉：
+
+```powershell
+$env:RUN_POSTGRES_LLMOPS_INTEGRATION_TEST="1"
+$env:LLMOPS_TEST_DATABASE_URL="postgresql+psycopg://<user>:<password>@<host>:5432/llmops_test"
+uv run pytest -q tests/test_usage_postgres_integration.py
+```
+
+它的运行规矩与其余真库用例不同：**首次交付前跑一次**；之后改动碰到用量库相关的东西
+（表结构与迁移、采集器的落库路径）时重跑；其它需求的回归不必跑——与「已经通过的检查不重复
+执行」一致。
+
 按主题挑选离线测试：
 
 ```powershell
@@ -562,6 +589,18 @@ uv run alembic revision --autogenerate -m "中文说明 short english summary"
 # 升级到最新版本
 uv run alembic upgrade head
 ```
+
+用量库（`llmops`）有自己一整套迁移环境——独立的 ini、env 与版本目录，与业务库各自独立，
+所以要用 `-c` 指到那一份：
+
+```powershell
+uv run alembic -c alembic_usage.ini upgrade head
+uv run alembic -c alembic_usage.ini current
+uv run alembic -c alembic_usage.ini revision --autogenerate -m "中文说明 short english summary"
+```
+
+用量表的 ORM 模型挂在自己的元数据上，业务侧的迁移环境看不到它，反过来也一样。两边混起来会让
+业务库的 `alembic check` 把用量表当成多余的表删掉，或把业务表当成用量库缺的表建出来。
 
 自动生成的迁移必须人工审查。表清单见
 [`docs/architecture.md`](docs/architecture.md) 的「数据库表」。
