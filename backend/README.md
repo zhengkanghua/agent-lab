@@ -378,7 +378,7 @@ uv run pytest -q
 30 秒连接池超时，而 lifespan 那个 ``except Exception`` 把失败咽掉了，所以测试照常通过、没人
 发现。现在 ``tests/conftest.py`` 默认阻断 psycopg 真实连接和 httpx 真实传输；替身接入遗漏会直接让测试失败，不通过访问真实连接来证明离线。
 
-外部集成测试受环境变量门控，默认跳过。运行前需明确访问范围并获得授权；以下账号、模型和既有远程测试可能使用应用环境。定时任务测试可以使用老板已配置的开发 PostgreSQL/Qdrant，但只创建随机 schema、Collection、Alias 和合成数据，不碰业务数据，也不打印密钥或完整向量。
+外部集成测试受环境变量门控，默认跳过。运行前需明确访问范围并获得授权——**门控只管「跑不跑」，不管「连哪个库」**：这些用例按当前的 `DATABASE_URL` 连接（本机 `.env` 指向服务器上的业务库，见下面「Alembic」一节的提醒），所以「授权跑真库测试」等于「授权在那个库上写临时数据」，即使用例自己会回滚。以下账号、模型和既有远程测试可能使用应用环境。定时任务测试可以使用老板已配置的开发 PostgreSQL/Qdrant，但只创建随机 schema、Collection、Alias 和合成数据，不碰业务数据，也不打印密钥或完整向量。
 
 真实 PostgreSQL 的恢复用超级用户同步与账号管理 Service 行为；使用随机临时记录并自动清理：
 
@@ -578,6 +578,11 @@ uv run pytest -q tests/test_document_processing.py tests/test_ollama_embedding.p
 ```
 
 ## Alembic
+
+> **先确认 `DATABASE_URL` 指向哪个库。** 本机 `backend/.env` 当前指向甲骨文那台服务器的业务库
+> （`news_vector_lc`），所以这里的 `upgrade`、`downgrade`、`revision --autogenerate` **都是生产操作**：
+> 执行前要拿到明确授权。只读的 `current` / `check` 可以直接跑。要真在本地库上试迁移，先临时把
+> `DATABASE_URL` 指到本地实例。
 
 ```powershell
 # 查看当前版本
