@@ -1,5 +1,6 @@
 """检索 Tool 使用本次运行的知识库范围；只返回实际命中的片段与应用建立的引用标识。"""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from uuid import UUID
@@ -11,7 +12,12 @@ from pydantic import Field
 
 from agent_lab.agent.context import AgentContext
 from agent_lab.agent.evidence import DocumentEvidence, ToolEvidence
-from agent_lab.agent.limits import SEARCH_TOOL_MAX_DOCUMENTS, SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT, SEARCH_TOOL_MAX_WITHIN_DAYS
+from agent_lab.agent.limits import (
+    SEARCH_TOOL_MAX_DOCUMENTS,
+    SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT,
+    SEARCH_TOOL_MAX_WITHIN_DAYS,
+    TOOL_CALL_TIMEOUT_SECONDS,
+)
 from agent_lab.knowledge.scope import ResolvedKnowledgeBaseScope
 from agent_lab.schemas.document_search import DocumentSearchRequest
 from agent_lab.schemas.vector_search import MAX_QUERY_CHARACTERS, VectorSearchFilters
@@ -61,10 +67,14 @@ def build_search_documents_tool(service: VectorSearchService) -> BaseTool:
         filters = VectorSearchFilters(
             published_from=datetime.now(UTC) - timedelta(days=within_days) if within_days is not None else None,
         )
-        results = await service.search_documents(DocumentSearchRequest(
-            query=query, document_limit=document_limit,
-            matches_per_document=SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT, filters=filters,
-        ), resolved_scope=scope)
+        # 检索上游不返回的可能性是存在的，而后果很重：这次运行会一直卡在工具上，会话也因此一直
+        # 没法提交新提问（它仍然算「活着」，不会被判成僵尸）。限时后超时会被重试中间件重试几次，
+        # 然后沿工具错误路径交回模型——那段有限耗时换来「这个会话不会长期锁死」。
+        async with asyncio.timeout(TOOL_CALL_TIMEOUT_SECONDS):
+            results = await service.search_documents(DocumentSearchRequest(
+                query=query, document_limit=document_limit,
+                matches_per_document=SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT, filters=filters,
+            ), resolved_scope=scope)
         directory = {item.id: item for item in scope.knowledge_bases}
         evidence: list[DocumentEvidence] = []
         blocks = ["本次检索范围：" + "、".join(item.name for item in scope.knowledge_bases)]

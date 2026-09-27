@@ -61,6 +61,16 @@ SEARCH_TOOL_MAX_WITHIN_DAYS = 365
 # 因为正文是数据不是指令，缺尾部只是信息不全，不会让模型误解任务。
 READ_DOCUMENT_MAX_CHARS = 6000
 
+# 一次工具调用的时长上限。**必须存在**：一次不返回的工具调用会让这次运行卡住，而这次运行
+# 仍然算「活着」（最后活跃时刻照常续期，不会被判成僵尸），于是这个会话一直没法提交新提问——
+# 只能等用户按停止或进程重启。初值与同类检索超时同量级。
+#
+# 超时后走现有的工具错误路径（见 ``api/error_contract.AGENT_TOOL_ERROR_RULES`` 的
+# ``agent_tool_timeout``）：模型收到一句安全文案，自己决定重试还是直接作答，整次运行不失败。
+# 注意重试中间件在内层，所以一次挂住的调用实际上会被重试 ``TOOL_RETRY_MAX`` 次才交回模型，
+# 耗时是「超时 × (1 + 重试次数)」这个有限值，不会无限期挂住。
+TOOL_CALL_TIMEOUT_SECONDS = 30.0
+
 
 # ---- 启动自检 ----
 
@@ -78,7 +88,43 @@ MODEL_CATALOG_TIMEOUT_SECONDS = 5.0
 SSE_HEARTBEAT_INTERVAL_SECONDS = 15.0
 
 
+# ---- 脱离连接的运行（见 ADR 0035 与 0037）----
+
+# 运行驱动者等待下一个事件时的时间片。它同时是「用户按下停止」到「运行开始收尾」这条
+# 路径的上限之一：每等满一个时间片，驱动者就看一眼内存里的停止标志。
+RUN_EVENT_POLL_INTERVAL_SECONDS = 1.0
+
+# 运行驱动者往库里续 ``last_active_at`` 的节奏。续期是驱动者自己的循环在做，与「一次模型
+# 调用跑了多久」无关——那条链路上有重试、降级和工具调用，任何按它推算的阈值都会算错。
+RUN_LIVENESS_UPDATE_INTERVAL_SECONDS = 30.0
+
+# 失活（僵尸）阈值：``last_active_at`` 超过这么久没有续期，就认为那次运行已经中断并释放
+# 会话。**由上面的续期间隔决定，不由操作超时决定**，取四倍余量：偶尔晚一拍不会把还活着的
+# 运行判成僵尸（那会让第二次运行进来写同一个会话），而进程崩溃后最多两分钟会话自动解锁。
+RUN_ZOMBIE_THRESHOLD_SECONDS = 4 * RUN_LIVENESS_UPDATE_INTERVAL_SECONDS
+
+# 删除一个正在运行的会话时，等它收尾的上限与轮询间隔。
+#
+# 「先暂停再删除」听起来像多余的一步，其实那个字就是让暂停**真的生效**：停止是协作式、跨进程的
+# （收到 DELETE 的进程不一定跑着这次运行），所以删除只能先写停止请求，等运行自己释放占位。而运行
+# 在收尾之前一直在往会话历史里写（不只是收尾那一次），不确认它停了就去清历史，它会在我们清空之后
+# 继续写回来，留下一条查不到也删不掉的孤儿会话。
+#
+# 上限不能去掉：万一运行正好卡在一次不响应取消的调用里，无限等会让删除请求挂住，而「删除请求挂住
+# 比留下一次未完成的运行更糟」（见 spec）。正常路径下停止在 1~2 秒内完成，10 秒是五倍余量。
+DELETE_RUNNING_THREAD_WAIT_SECONDS = 10.0
+
+# 等待期间查「占位释放了没有」的间隔。取小值只为让等待结束时尽快返回，不影响正确性。
+DELETE_RUNNING_THREAD_POLL_INTERVAL_SECONDS = 0.2
+
+# 每个 API 进程批量读取「自己手上在跑的那些运行」状态的节奏（在途运行 id、停止请求时刻）。
+# 批量读而不是逐个运行查一次，是为了让负载与「一个进程挂了多次运行」无关。
+RUN_STATE_POLL_INTERVAL_SECONDS = 1.0
+
+
 __all__ = [
+    "DELETE_RUNNING_THREAD_POLL_INTERVAL_SECONDS",
+    "DELETE_RUNNING_THREAD_WAIT_SECONDS",
     "MAX_SYSTEM_PROMPT_CHARS",
     "MAX_USER_MESSAGE_CHARS",
     "MODEL_CALL_RUN_LIMIT",
@@ -86,6 +132,10 @@ __all__ = [
     "MODEL_RETRY_MAX",
     "READ_DOCUMENT_MAX_CHARS",
     "RETRY_INITIAL_DELAY_SECONDS",
+    "RUN_EVENT_POLL_INTERVAL_SECONDS",
+    "RUN_LIVENESS_UPDATE_INTERVAL_SECONDS",
+    "RUN_STATE_POLL_INTERVAL_SECONDS",
+    "RUN_ZOMBIE_THRESHOLD_SECONDS",
     "SEARCH_TOOL_MAX_DOCUMENTS",
     "SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT",
     "SEARCH_TOOL_MAX_WITHIN_DAYS",
@@ -93,5 +143,6 @@ __all__ = [
     "SUMMARIZATION_KEEP_MESSAGES",
     "SUMMARIZATION_TRIGGER_MESSAGES",
     "TOOL_CALL_RUN_LIMIT",
+    "TOOL_CALL_TIMEOUT_SECONDS",
     "TOOL_RETRY_MAX",
 ]

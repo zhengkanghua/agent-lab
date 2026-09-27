@@ -97,6 +97,15 @@ const FALLBACK_COPY: AgentErrorCopy = {
   description: '发生了未分类的服务错误，请稍后重试。',
 }
 
+// 这个会话已经有一次运行在跑。文案要说「正在生成」而不是「出错了」：在一个正在生成的会话里再
+// 发一条是完全自然的动作，用户需要知道的是「等一会」或「先按停止」。
+// retryable 取假：这里唯一能重发的动作就是「再发一次」，而那恰好又会被拒。
+const RUN_IN_PROGRESS_COPY: AgentErrorCopy = {
+  title: '这个会话正在生成回答',
+  description: '等它结束，或者先点停止，再发送新的提问。',
+  retryable: false,
+}
+
 // 错误码来自后端 api/error_contract.py 的 AGENT_CHAT_ERROR_RULES；新增码时两边一起改，
 // 漏了这边只会退到兜底文案，不会崩，但用户就看不到「该怎么办」了。
 const COPY_BY_CODE: Readonly<Partial<Record<string, AgentErrorCopy>>> = {
@@ -129,6 +138,7 @@ const COPY_BY_CODE: Readonly<Partial<Record<string, AgentErrorCopy>>> = {
 
   agent_thread_not_found: THREAD_NOT_FOUND_COPY,
   agent_thread_database_unavailable: THREAD_STORE_UNAVAILABLE_COPY,
+  agent_run_in_progress: RUN_IN_PROGRESS_COPY,
 
   agent_internal_error: FALLBACK_COPY,
   agent_tool_failed: FALLBACK_COPY,

@@ -7,9 +7,11 @@
 """
 
 import asyncio
+import json
 from collections.abc import Sequence
 from typing import Any
 
+from fastapi import FastAPI
 from langchain_core.language_models import BaseChatModel
 from langchain_core.language_models.fake_chat_models import (
     FakeMessagesListChatModel,
@@ -37,6 +39,161 @@ def run(coroutine: Any) -> Any:
     """执行一个测试协程，保持测试环境不依赖 pytest-asyncio。"""
 
     return asyncio.run(coroutine)
+
+
+async def open_chat_stream(
+    app: FastAPI,
+    *,
+    path: str,
+    payload: dict[str, Any],
+) -> tuple[asyncio.Task, "asyncio.Queue[dict[str, Any] | None]"]:
+    """用真实 ASGI 调用入口发起一次请求，并让事件**边到达边进队列**。
+
+    **为什么不能用 ``httpx.ASGITransport``**：它在返回响应之前就把整个响应体收集完（内部是一个
+    列表），所以客户端没法在服务端还在流的时候做别的事。要验证「运行中途请求停止」，那件事恰好就
+    必须在服务端还在流的时候做。
+
+    Args:
+        app: 已经在 lifespan 内的应用。
+        path: 请求路径。
+        payload: JSON 请求体。
+
+    Returns:
+        ``(任务, 队列)``。队列里是解析后的 SSE 事件对象，发完时收到 ``None``。
+        调用方最后要 ``await`` 那个任务，否则未处理的异常会被吞掉。
+
+    Notes:
+        这条连接刻意**不**报告断开：它要一直活到服务端把终态事件发完。要测断开请用
+        ``disconnect_mid_stream``。
+    """
+
+    body = json.dumps(payload).encode("utf-8")
+    events: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+    buffer = ""
+    body_delivered = False
+
+    async def send(message: dict[str, Any]) -> None:
+        """把响应体分块拼起来、切帧、放进队列。"""
+
+        nonlocal buffer
+        if message["type"] != "http.response.body":
+            return
+        buffer += (message.get("body") or b"").decode("utf-8")
+        while "\n\n" in buffer:
+            frame, buffer = buffer.split("\n\n", 1)
+            if frame.startswith("data: "):
+                events.put_nowait(json.loads(frame[len("data: ") :]))
+        if not message.get("more_body", False):
+            events.put_nowait(None)
+
+    async def receive() -> dict[str, Any]:
+        """先交出请求体，之后永远不报告断开。"""
+
+        nonlocal body_delivered
+        if not body_delivered:
+            body_delivered = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        await asyncio.Event().wait()
+        raise AssertionError("这行不可达")
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": _SERVER_SPEC_VERSION},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode("utf-8"),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"host", b"testserver"), (b"content-type", b"application/json")],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+    }
+    return asyncio.create_task(app(scope, receive, send)), events
+
+
+# 生产 ASGI 服务器（uvicorn）声明的协议版本。Starlette 在 ``spec_version >= 2.4`` 时走
+# ``http.disconnect`` 消息那条分支，低于 2.4 时走 task group + ``cancel_scope.cancel()``。
+# 声明它是为了让断连路径与生产一致：测出来的东西必须是真实跑的那一条。
+_SERVER_SPEC_VERSION = "2.3"
+
+
+async def disconnect_mid_stream(
+    app: FastAPI,
+    *,
+    path: str,
+    payload: dict[str, Any],
+    frames_before_disconnect: int = 1,
+    timeout: float = 30.0,
+) -> list[str]:
+    """直接以 ASGI 调用入口发起一次请求，在读到若干响应体分块之后回一个断开事件。
+
+    **为什么不能用 ``httpx.ASGITransport`` 造断连**：它要等响应完成才报告断开，响应体也先
+    全部收集再一次返回，所以「客户端在流中途断开」这个动作在那个传输上根本不存在。用假传输
+    写出来的用例在「运行挂在连接上」的旧实现下也会通过（因为它根本没断），改动失败也不会变红。
+
+    本函数不连数据库、不连向量库、不调真实模型，开销与普通单测相同。
+
+    Args:
+        app: 已经在 lifespan 内的应用。
+        path: 请求路径。
+        payload: JSON 请求体。
+        frames_before_disconnect: 收到几个非空响应体分块后断开。
+        timeout: 整个调用的上限，只用来防止用例自己挂住。
+
+    Returns:
+        断开之前收到的响应体文本，按到达顺序；调用方自己按帧分割。
+
+    Notes:
+        断开必须在**响应真的开始出帧之后**才发出：``receive`` 一上来就回 ``http.disconnect``
+        的话，Starlette 会在任何事件发出去之前就取消掉响应，那测的是「还没开始就断开」而不是
+        「流中途断开」。所以这里用一个事件等到第一个非空分块。
+    """
+
+    body = json.dumps(payload).encode("utf-8")
+    received: list[str] = []
+    body_delivered = False
+    started = asyncio.Event()
+
+    async def send(message: dict[str, Any]) -> None:
+        """收集响应体分块，并在够数时放行断开。"""
+
+        if message["type"] != "http.response.body":
+            return
+        chunk = message.get("body") or b""
+        if not chunk:
+            return
+        received.append(chunk.decode("utf-8"))
+        if len(received) >= frames_before_disconnect:
+            started.set()
+
+    async def receive() -> dict[str, Any]:
+        """先交出请求体，之后等到响应开始出帧再报告断开。"""
+
+        nonlocal body_delivered
+        if not body_delivered:
+            body_delivered = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        await started.wait()
+        return {"type": "http.disconnect"}
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": _SERVER_SPEC_VERSION},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode("utf-8"),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"host", b"testserver"), (b"content-type", b"application/json")],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+    }
+    await asyncio.wait_for(app(scope, receive, send), timeout)
+    return received
 
 
 class ScriptedChatModel(FakeMessagesListChatModel):
@@ -246,6 +403,8 @@ __all__ = [
     "ScriptedChatModel",
     "StreamingChatModel",
     "build_offline_graph",
+    "disconnect_mid_stream",
+    "open_chat_stream",
     "run",
     "tool_call_message",
 ]

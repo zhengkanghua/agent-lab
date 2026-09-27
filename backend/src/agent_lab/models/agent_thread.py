@@ -91,7 +91,30 @@ class AgentThreadRecord(Base):
     last_active_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        comment="最后一次在本会话提问的时刻；会话列表的排序键。",
+        comment=(
+            "最后活动时刻：提问受理时写一次，运行驱动者随后按固定节奏续期；会话列表的排序键，"
+            "也用于判定在途运行是否已经失活。"
+        ),
+    )
+    # 下面两列合起来回答「这个会话有没有在跑的运行」与「有人要求停它吗」，是这件事的唯一真相，
+    # 没有第二份状态副本（见 ADR 0037）。为什么挂在本表而不是单独建 `agent_runs`：会话与在途
+    # 运行是一对一（同一个会话同时最多一次运行），而且删会话、注销账号本来就会删这一行，新列
+    # 跟着走，不必新增任何连带删除代码（见 ADR 0028）。
+    active_run_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        nullable=True,
+        comment=(
+            "在途运行的 id；为空表示这个会话当前没有运行在跑。同一个会话正在跑时，再次提交会被"
+            "拒绝（409 agent_run_in_progress）。超过失活阈值未被续期视为已中断，允许下一次占位。"
+        ),
+    )
+    stop_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment=(
+            "最近一次停止请求的时刻；为空表示无人要求停止。这是会话语义、不指向某次运行：写入端"
+            "只在对得上 active_run_id 时才写，读取端靠下一次占位时一并清掉，见 ADR 0037。"
+        ),
     )
 
 

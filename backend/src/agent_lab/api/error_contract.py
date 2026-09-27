@@ -52,6 +52,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agent_lab.agent.errors import (
     AgentCheckpointerUnavailableError,
+    AgentRunInProgressError,
     AgentRuntimeUnavailableError,
     AgentThreadNotFoundError,
     ModelResponseInvalidError,
@@ -612,6 +613,22 @@ AGENT_CHAT_ERROR_RULES: tuple[ErrorContractRule, ...] = (
         detail="会话不存在或已被删除。",
         retryable=False,
     ),
+    # 这个会话已经有一次运行在跑。409 而不是 403/422：请求本身完全合法，只是当前状态不允许；
+    # 也不是 503——服务没坏，等它结束或先停掉就能提交。
+    #
+    # 文案刻意说「正在生成」而不是「出错了」：用户在一个正在生成的会话里再发一条是完全自然的
+    # 动作，他需要知道的是「等一会」或「先按停止」，而不是去重写提问。retryable=False 是因为
+    # 「重发同一个问题」在这里恰好就是被拒的那个动作，引导重发等于引导他再撞一次。
+    #
+    # 注意：Agent 链路的错误规则表不在跨表不变量的测试覆盖范围内，所以「同一个码对应同一句话」
+    # 这条在 Agent 链路上靠人守，不是靠测试（见 spec 的「错误契约」）。
+    ErrorContractRule(
+        exceptions=(AgentRunInProgressError,),
+        status_code=status.HTTP_409_CONFLICT,
+        code="agent_run_in_progress",
+        detail="这个会话正在生成回答，请等它结束或先停止。",
+        retryable=False,
+    ),
     # 业务库（SQLAlchemy 这一侧）不可用。必须有这条：``/agent/chat`` 从「会话归属」这个功能开始
     # 会读写 ``agent_threads``，而本表原有的数据库规则挂的是 ``PsycopgOperationalError``——那是
     # checkpointer 走的独立 psycopg 池（上游库自管的表只认 psycopg，见 ADR 0004），管不到 SQLAlchemy 抛出的异常。少了这条，
@@ -742,6 +759,19 @@ AGENT_TOOL_ERROR_RULES: tuple[ErrorContractRule, ...] = (
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         code="agent_tool_database_unavailable",
         detail="新闻数据库当前不可用。",
+        retryable=True,
+    ),
+    # 一次工具调用超时。**单独一条而不是落进兑底**：兑底那句是「工具执行时发生未预期的错误」，
+    # 对模型来说不是「可以重试」的语义——它会以为工具坏了、不再试。这条明确说出「超时」，
+    # 模型才有依据决定是换个检索词重试还是直接作答。
+    #
+    # 挂的是内置 ``TimeoutError``（3.11 起 ``asyncio.TimeoutError`` 就是它），工具用
+    # ``asyncio.timeout`` 限时。要排在下面的 ``Exception`` 兑底之前。
+    ErrorContractRule(
+        exceptions=(TimeoutError,),
+        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+        code="agent_tool_timeout",
+        detail="工具调用超时，未能在限定时间内返回，可以换个方式重试。",
         retryable=True,
     ),
     # 兜底行，理由同 AGENT_CHAT_ERROR_RULES：工具体内可能抛出我们没预料到的异常，

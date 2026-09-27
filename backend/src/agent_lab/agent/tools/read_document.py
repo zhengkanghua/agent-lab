@@ -1,5 +1,6 @@
 """有界读取当前 Document；无 Source 的上传资料同样可读，每次使用短事务。"""
 
+import asyncio
 from collections.abc import Callable
 from uuid import UUID
 
@@ -10,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_lab.agent.context import AgentContext
 from agent_lab.agent.evidence import DocumentEvidence, ToolEvidence
-from agent_lab.agent.limits import READ_DOCUMENT_MAX_CHARS
+from agent_lab.agent.limits import READ_DOCUMENT_MAX_CHARS, TOOL_CALL_TIMEOUT_SECONDS
 from agent_lab.agent.tools.search_documents import scope_failure
 from agent_lab.repositories.document_repository import DocumentRepository
 
@@ -35,7 +36,9 @@ def build_read_document_tool(session_factory: SessionFactory) -> BaseTool:
         context = runtime.context
         if context is None or context.scope is None:
             return scope_failure(runtime, "本次知识库范围未确认，请重新选择后提问。")
-        async with session_factory() as session:
+        # 数据库不返回也能挂住这一条链路（连接池耗尽、锁等待、网络半开），后果同样是整个会话
+        # 提交不了新提问。限时后超时走工具错误路径，模型收到安全文案后自己决定怎么做。
+        async with asyncio.timeout(TOOL_CALL_TIMEOUT_SECONDS), session_factory() as session:
             record = await DocumentRepository(session).get_with_source(document_id)
             if record is None:
                 return scope_failure(runtime, f"没有找到 document_id 为 {document_id} 的文档，原文档可能已删除。请重新检索。")

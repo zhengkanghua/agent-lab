@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   AGENT_STREAM_IDLE_TIMEOUT_MS,
   fetchAgentDefaultPrompt,
+  stopAgentRun,
   streamAgentChat,
   type AgentChatEvent,
 } from './agent-chat'
@@ -439,5 +440,51 @@ describe('fetchAgentDefaultPrompt', () => {
     )
 
     await expect(fetchAgentDefaultPrompt()).rejects.toMatchObject({ code: 'response_invalid' })
+  })
+})
+
+describe('stopAgentRun', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('把会话 id 与运行 id 一起发出去', async () => {
+    /* 运行 id 是必须的：服务端只对「在途运行的 id 与请求里的相等」才写停止标志，
+       否则一个迟到的停止请求会把刚开始的新运行停掉。 */
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          thread_id: THREAD_ID,
+          run_id: '30000000-0000-4000-8000-000000000010',
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await stopAgentRun(THREAD_ID, '30000000-0000-4000-8000-000000000010')
+
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(String(url)).toContain('/agent/stop')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({
+      thread_id: THREAD_ID,
+      run_id: '30000000-0000-4000-8000-000000000010',
+    })
+  })
+
+  it('响应形状不对时明确失败，而不是当成受理了', async () => {
+    // 受理了却没受理是这里最危险的静默失败：用户以为停了，服务端继续跑完并计费。
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    )
+
+    await expect(
+      stopAgentRun(THREAD_ID, '30000000-0000-4000-8000-000000000010'),
+    ).rejects.toMatchObject({ code: 'response_invalid' })
   })
 })

@@ -260,6 +260,35 @@ class AgentChatEventEnvelope(RootModel[AgentChatEvent]):
     root: AgentChatEvent
 
 
+class AgentRunStopRequest(BaseModel):
+    """请求停下某一次运行。
+
+    **为什么必须带运行 id**（不只是会话 id）：服务端只对「在途运行的 id 与请求里的相等」才写停止
+    标志，不等就幂等返回成功（视为「没有要停的运行」）。只带会话 id 的话，停止请求可能迟到——用户
+    先点停止 → 旧运行已收尾 → 用户发下一次提问 → 迟到的停止到达，于是刚起步的新运行被它停掉。
+    """
+
+    thread_id: UUID = Field(description="要停的那次运行所属的会话。")
+    run_id: UUID = Field(
+        description="要停的那次运行的 id，取自该会话 ``run_started`` 事件里的 run_id。",
+    )
+
+    model_config = ConfigDict(frozen=True)
+
+
+class AgentRunStopResponse(BaseModel):
+    """停止请求已受理。
+
+    它只说「服务端收到了」，不说「运行已经停了」：真正停下那次运行的是它所在进程的驱动者，最多
+    一个轮询周期之后才开始收尾。前端要保持连接等它的终态事件，而不是凭这个响应自己编一个结局。
+    """
+
+    thread_id: UUID = Field(description="目标会话 id。")
+    run_id: UUID = Field(description="目标运行 id。")
+
+    model_config = ConfigDict(frozen=True)
+
+
 class AgentDefaultPromptResponse(BaseModel):
     """``GET /agent/default-prompt`` 的响应。
 
@@ -282,6 +311,8 @@ __all__ = [
     "AgentDefaultPromptResponse",
     "AgentDoneEvent",
     "AgentErrorEvent",
+    "AgentRunStopRequest",
+    "AgentRunStopResponse",
     "AgentTokenEvent",
     "AgentToolCallEvent",
     "AgentToolResultEvent",

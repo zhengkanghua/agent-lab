@@ -30,10 +30,17 @@ describe('AgentTurnCard', () => {
     expect(wrapper.text()).toContain('部分引用未能对应')
   })
 
-  it('截断回答保留文字并明确未完成', () => {
-    const wrapper = mountCard({ answer: '回答到一半', status: 'incomplete' })
-    expect(wrapper.text()).toContain('回答未完成')
-    expect(wrapper.text()).toContain('回答到一半')
+  it('截断的回答保留文字，但不加结局标签', () => {
+    /* 被中断的那一次运行就是「停在哪里显示到哪里」：不做「回答未完成 / 已停止 / 以上内容不完整」
+       这类提示（2026-09 去掉）。那两句本来也覆盖「达到处理上限」等其他截断情形，一并去掉。 */
+    for (const status of ['incomplete'] as const) {
+      const wrapper = mountCard({ answer: '回答到一半', status })
+
+      expect(wrapper.text()).toContain('回答到一半')
+      expect(wrapper.text()).not.toContain('回答未完成')
+      expect(wrapper.text()).not.toContain('已停止')
+      expect(wrapper.text()).not.toContain('以上内容不完整')
+    }
   })
 
   it('还没收到 token 时显示占位，不留一张空白答案卡', () => {
@@ -77,12 +84,6 @@ describe('AgentTurnCard', () => {
     // 走 Markdown 之后这条尤其要守住：整页只有这一处不是纯文本插值。
     expect(wrapper.find('.answer-body img').exists()).toBe(false)
     expect(wrapper.html()).not.toContain('onerror')
-  })
-
-  it('取消的一轮标出已停止', () => {
-    const wrapper = mountCard({ answer: '半句', status: 'cancelled' })
-
-    expect(wrapper.get('.turn-state').text()).toBe('已停止')
   })
 
   it('错误块给出标题与下一步，并按 role=alert 播报', () => {

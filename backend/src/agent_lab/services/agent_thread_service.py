@@ -18,13 +18,14 @@ docs/adr/0010-sse-routes-use-short-lived-db-sessions.md）：
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from agent_lab.agent.errors import AgentThreadNotFoundError
+from agent_lab.agent.errors import AgentRunInProgressError, AgentThreadNotFoundError
+from agent_lab.agent.limits import RUN_ZOMBIE_THRESHOLD_SECONDS
 from agent_lab.models.agent_thread import AgentThreadRecord
 from agent_lab.knowledge.scope import KnowledgeBaseSelection
 from agent_lab.services.user_preference_service import UserPreferenceService
@@ -87,39 +88,51 @@ class AgentThreadService:
         user_id: UUID,
         thread_id: UUID | None,
         first_message: str,
+        run_id: UUID,
         scope: KnowledgeBaseSelection | None = None,
     ) -> tuple[UUID, str | None]:
-        """确定本轮提问所属的会话 id，并保证它归当前账号所有。
+        """确定本轮提问所属的会话，保证它归当前账号所有，并**原子地占下这次运行的位**。
 
-        ``thread_id`` 为 ``None`` 表示新建会话：服务端生成 id、用首条提问当标题插入一行，
-        并把该账号当前配置的提示词**快照**进这一行。非 ``None`` 表示续聊：校验归属，通过则把
-        ``last_active_at`` 推到当前时间，提示词沿用会话里已存的那份。
+        ``thread_id`` 为 ``None`` 表示新建会话：服务端生成 id、用首条提问当标题插入一行，并把该账号
+        当前配置的提示词**快照**进这一行。非 ``None`` 表示续聊：校验归属，通过则把 ``last_active_at``
+        推到当前时间，提示词沿用会话里已存的那份。
 
-        **提示词在建立时定下、续聊不重读偏好表，这是有意的**：用户在设置页改了提示词只该影响
-        新开的会话，否则会话内的约束会中途变化，前后回答不再可比。注意这与同表 ``scope`` 列的
-        语义相反（scope 续聊时可改），不要顺手把两处「修」成一致——理由见 ADR 0029。
+        **占位与归属校验必须是同一次条件写入。** 先查「这个会话有没有在途运行」再写，会把这个竞态
+        原样留下，而且比改动前更隐蔽：现在是两次运行的结果都能看到，那样改完是「静默丢掉一次运行」。
+        所以条件写在 ``UPDATE`` 的 ``WHERE`` 里：只有 ``active_run_id`` 为空、**或那次运行已超过失活
+        阈值**（进程崩了，没有任何清理动作会执行）时，这一行才被占下。
+
+        占位时**顺势清掉上一次留下的停止请求**。只在运行收尾时清是不够的：进程可能在清之前就被杀掉，
+        留下一个陈旧的停止标记，于是刚起步的新运行一开场就被它停掉——那恰好是写入端用运行 id 比对
+        想防的事，只是从写端挪到了读端（见 ADR 0037）。
+
+        **提示词在建立时定下、续聊不重读偏好表，这是有意的**：用户在设置页改了提示词只该影响新开的
+        会话，否则会话内的约束会中途变化，前后回答不再可比。注意这与同表 ``scope`` 列的语义相反
+        （scope 续聊时可改），不要顺手把两处「修」成一致——理由见 ADR 0029。
 
         Args:
             user_id: 当前登录账号 id。
             thread_id: 前端要续聊的会话 id；``None`` 表示新建。
             first_message: 本轮提问原文，只在新建时用来取标题。
+            run_id: 本次运行的标识；占位写的就是它，停止接口靠比对它才敢写停止标志。
             scope: 本次提交的知识库选择；``None`` 表示沿用/默认。
 
         Returns:
-            ``(会话 id, 该会话的系统提示词)``。提示词为 ``None`` 表示这个会话用服务端内置
-            默认提示词。返回它而不是让调用方再查一次，是为了让「取用会话值」只有一处实现。
+            ``(会话 id, 该会话的系统提示词)``。提示词为 ``None`` 表示这个会话用服务端内置默认提示词。
+            返回它而不是让调用方再查一次，是为了让「取用会话值」只有一处实现。
 
         Raises:
             AgentThreadNotFoundError: ``thread_id`` 在库里没有，或者存在但属于别的账号。
+            AgentRunInProgressError: 这个会话已经有一次运行在跑，且未超过失活阈值。
             SQLAlchemyError: 业务库不可用；由错误契约映射成 503。
 
         Notes:
             执行 PostgreSQL 写入（insert 或 update），一个事务内完成并提交，随后立刻归还连接。
-            调用方必须在**开始流式响应之前** await 它：只有这样失败才能变成正常的 HTTP 状态码，
-            流一旦开始就只能发 error 事件了。
+            调用方必须在**开始运行之前** await 它：只有这样失败才能变成正常的 HTTP 状态码，
+            运行一旦开始就只能走事件了。
 
             为什么续聊也要写一次：``last_active_at`` 是会话列表的排序键，不更新的话「最近聊过的
-            排在最前」就不成立。只在这里写、流结束后不再写，理由见 spec 3.4。
+            排在最前」就不成立；运行期间由驱动者继续续期（见 ADR 0037）。
         """
 
         now = datetime.now(UTC)
@@ -138,37 +151,188 @@ class AgentThreadService:
                         system_prompt=system_prompt,
                         created_at=now,
                         last_active_at=now,
+                        # 新行不存在「上一次运行」这回事，所以占位必定成功。
+                        active_run_id=run_id,
+                        stop_requested_at=None,
                     )
                 )
                 await session.commit()
                 return created_id, system_prompt
 
-            # 用带 user_id 条件的 UPDATE 一次搞定「校验 + 续活 + 取回提示词」：先 SELECT 再
+            # 用带 user_id 条件的 UPDATE 一次搞定「校验 + 续活 + 取值 + 占位」：先 SELECT 再
             # UPDATE 需要两次往返，而且中间存在窗口。rowcount 为 0 同时覆盖「id 不存在」和
             # 「id 属于别人」，正好对应合并成 404 的决定（见 AgentThreadNotFoundError 的 docstring）。
-            # 用 RETURNING 取回提示词，而不是另发一条 SELECT——那会多一次往返，也把「会话值
-            # 从哪读」拆成两处。
+            zombie_cutoff = now - timedelta(seconds=RUN_ZOMBIE_THRESHOLD_SECONDS)
             result = await session.execute(
                 update(AgentThreadRecord)
                 .where(
                     AgentThreadRecord.thread_id == thread_id,
                     AgentThreadRecord.user_id == user_id,
+                    or_(
+                        AgentThreadRecord.active_run_id.is_(None),
+                        AgentThreadRecord.last_active_at < zombie_cutoff,
+                    ),
                 )
-                .values(last_active_at=now, **({"scope": scope.model_dump(mode="json")} if scope is not None else {}))
+                .values(
+                    last_active_at=now,
+                    active_run_id=run_id,
+                    stop_requested_at=None,
+                    **({"scope": scope.model_dump(mode="json")} if scope is not None else {}),
+                )
                 .returning(AgentThreadRecord.system_prompt)
             )
             row = result.first()
             if row is None:
-                await session.rollback()
-                # 只记 id 和账号，不记提问内容。id 是我们自己生成的 UUID，不是用户输入。
-                logger.warning(
-                    "拒绝访问不属于当前账号的会话 thread_id=%s user_id=%s",
-                    thread_id,
-                    user_id,
+                # 条件写入没命中，原因有两种，必须分开报：会话不是这个账号的（404，与「不存在」
+                # 共用一个码，不泄露存在性），或者这个会话正在跑（409，用户知道「正在生成」就行）。
+                # 这一次额外的 SELECT 只在失败路径上发生，不构成「先查后写」的竞态：占位与否早已
+                # 由上面那条条件写入定下。
+                owned = await session.scalar(
+                    select(AgentThreadRecord.thread_id).where(
+                        AgentThreadRecord.thread_id == thread_id,
+                        AgentThreadRecord.user_id == user_id,
+                    )
                 )
-                raise AgentThreadNotFoundError
+                await session.rollback()
+                if owned is None:
+                    # 只记 id 和账号，不记提问内容。id 是我们自己生成的 UUID，不是用户输入。
+                    logger.warning(
+                        "拒绝访问不属于当前账号的会话 thread_id=%s user_id=%s",
+                        thread_id,
+                        user_id,
+                    )
+                    raise AgentThreadNotFoundError
+                logger.info("拒绝重复提交 thread_id=%s run_id=%s", thread_id, run_id)
+                raise AgentRunInProgressError
             await session.commit()
             return thread_id, row[0]
+
+    async def finish_run(self, *, thread_id: UUID, run_id: UUID) -> None:
+        """释放一次运行占下的会话位，并顺手清掉停止请求。
+
+        Args:
+            thread_id: 本次运行所属会话。
+            run_id: 本次运行的标识。
+
+        Raises:
+            SQLAlchemyError: 业务库不可用；由调用方记日志（收尾失败不能反过来中断清理）。
+
+        Notes:
+            条件写的是 ``active_run_id == run_id``，**不是无条件清空**：占位可能已经被失活判定判给
+            了下一次运行，那时这个收尾属于一个已经被顶掉的旧运行，不能把新运行的位子抹掉。
+
+            执行一次 PostgreSQL 写入并提交。调用方是运行驱动者；它必须在发出终态事件**之前**调用
+            这里，否则用户拿到 ``done`` 后立刻追问会被自己刚刚结束的那次运行拦成 409。
+        """
+
+        async with self._session_factory() as session:
+            await session.execute(
+                update(AgentThreadRecord)
+                .where(
+                    AgentThreadRecord.thread_id == thread_id,
+                    AgentThreadRecord.active_run_id == run_id,
+                )
+                .values(active_run_id=None, stop_requested_at=None)
+            )
+            await session.commit()
+
+    async def request_stop(self, *, thread_id: UUID, run_id: UUID, now: datetime | None = None) -> None:
+        """写入一个停止请求。
+
+        **只在「在途运行的 id 与请求里的运行 id 相等」时才写。** 这个标记是会话级的、不指向某次运行，
+        而停止请求可能迟到：用户先点停止 → 旧运行已经收尾 → 用户发下一次提问 → 迟到的停止到达。
+        不做比对的话，那个请求会把刚开始的新运行停掉。不相等就是「没有要停的运行」，幂等成功。
+
+        Args:
+            thread_id: 目标会话。
+            run_id: 前端从 ``run_started`` 事件拿到的运行 id。
+            now: 写入的时刻；省略时取当前时间，测试可以钉住它。
+
+        Raises:
+            SQLAlchemyError: 业务库不可用；由调用方映射成 503。
+
+        Notes:
+            执行一次 PostgreSQL 写入并提交。**不直接取消任何东西**：请求可能落在另一个进程上（生产
+            ``WORKER_COUNT`` 默认大于 1），真正停下那次运行的是它所在进程的驱动者——它按自己的节奏
+            批量读到这个标记，然后自己取消那次模型调用（见 ADR 0037）。
+        """
+
+        async with self._session_factory() as session:
+            await session.execute(
+                update(AgentThreadRecord)
+                .where(
+                    AgentThreadRecord.thread_id == thread_id,
+                    AgentThreadRecord.active_run_id == run_id,
+                )
+                .values(stop_requested_at=now or datetime.now(UTC))
+            )
+            await session.commit()
+
+    async def read_run_states(
+        self,
+        *,
+        thread_ids: list[UUID],
+    ) -> dict[UUID, tuple[UUID | None, datetime | None]]:
+        """批量读取一批会话的在途运行 id 与停止请求时刻。
+
+        每个 API 进程按固定节奏调一次，把自己手上在跑的几次运行的状态读进内存标志；用批量查询
+        而不是逐个运行查一次，是为了让负载与「一个进程挂了多次运行」无关。
+
+        Args:
+            thread_ids: 本进程正在驱动的那几个会话。
+
+        Returns:
+            ``thread_id`` → ``(active_run_id, stop_requested_at)``。查不到的会话不出现在结果里。
+
+        Raises:
+            SQLAlchemyError: 业务库不可用；由调用方记日志后继续下一轮。
+
+        Notes:
+            只读，不写。空列表不发查询。
+        """
+
+        if not thread_ids:
+            return {}
+        async with self._session_factory() as session:
+            rows = await session.execute(
+                select(
+                    AgentThreadRecord.thread_id,
+                    AgentThreadRecord.active_run_id,
+                    AgentThreadRecord.stop_requested_at,
+                ).where(AgentThreadRecord.thread_id.in_(thread_ids))
+            )
+            return {row[0]: (row[1], row[2]) for row in rows.all()}
+
+    async def touch_run(self, *, thread_id: UUID, run_id: UUID, now: datetime) -> int:
+        """把在途运行的会话活跃时间推到 ``now``，供失活判定区分「在跑」与「进程已死」。
+
+        Args:
+            thread_id: 本次运行所属会话。
+            run_id: 本次运行的标识。
+            now: 写入的时刻，由调用方给出（便于测试钉住时间）。
+
+        Returns:
+            实际更新的行数；``0`` 表示这次运行已经不再占着这个会话（被失活判定顶掉了）。
+
+        Raises:
+            SQLAlchemyError: 业务库不可用；由调用方记日志后继续。
+
+        Notes:
+            执行一次 PostgreSQL 写入并提交。续期的节奏由驱动者按常量决定，不由「一次模型调用跑了
+            多久」决定——那条链路上有重试、降级和工具调用，任何按它推算的阈值都会算错（ADR 0037）。
+        """
+
+        async with self._session_factory() as session:
+            result = await session.execute(
+                update(AgentThreadRecord)
+                .where(
+                    AgentThreadRecord.thread_id == thread_id,
+                    AgentThreadRecord.active_run_id == run_id,
+                )
+                .values(last_active_at=now)
+            )
+            await session.commit()
+            return result.rowcount or 0
 
     async def update_scope(self, *, user_id: UUID, thread_id: UUID, scope: KnowledgeBaseSelection) -> None:
         """保存经应用校验的选择；不改正在执行的运行快照，不刷新最近提问时间。"""

@@ -13,7 +13,7 @@ lifespan 就会拿真实的那个去连真实服务。这不是理论风险—�
 本模块不访问网络、不连 PostgreSQL、不碰 Qdrant，也不读 ``.env``。
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -22,7 +22,9 @@ import httpx
 from fastapi import FastAPI
 from langgraph.checkpoint.memory import InMemorySaver
 
-from agent_lab.agent.errors import AgentThreadNotFoundError
+from agent_lab.agent.errors import AgentRunInProgressError, AgentThreadNotFoundError
+from agent_lab.agent.limits import RUN_ZOMBIE_THRESHOLD_SECONDS
+from agent_lab.agent.runs import AgentRunRegistry
 from agent_lab.agent.runtime import AgentRuntime
 from agent_lab.config.llm import LlmProvider, LlmSettings
 from agent_lab.services.agent_thread_service import derive_thread_title
@@ -103,6 +105,35 @@ def offline_agent_runtime_factory(_service: Any, _usage_collector: Any) -> Offli
     return OfflineAgentRuntime()
 
 
+# 离线测试里的运行协调周期。生产值是秒级（见 agent/limits.py），测试把它们压到毫秒级，
+# 否则「停止真的停住」「运行结束后立刻恢复可提交」这类用例每一条都要白等一秒以上。
+OFFLINE_RUN_POLL_INTERVAL_SECONDS = 0.005
+OFFLINE_RUN_LIVENESS_INTERVAL_SECONDS = 0.05
+
+
+def offline_agent_run_registry_factory(
+    threads: "InMemoryAgentThreadService",
+) -> AgentRunRegistry:
+    """返回不做真实 I/O 的进程级运行注册表。
+
+    注册表自己不碰数据库，读写会话状态都交给注入的 Service；离线缺省值要它用**那一份内存替身**，
+    否则它会拿真实的 session 工厂去连库，而那种失败不会让测试报错，只会变成一次超时。
+
+    Args:
+        threads: ``create_offline_app`` 建好的内存会话 Service。
+
+    Returns:
+        全新的 ``AgentRunRegistry``，周期参数为毫秒级。
+    """
+
+    return AgentRunRegistry(
+        threads=threads,
+        event_poll_interval=OFFLINE_RUN_POLL_INTERVAL_SECONDS,
+        liveness_interval=OFFLINE_RUN_LIVENESS_INTERVAL_SECONDS,
+        state_poll_interval=OFFLINE_RUN_POLL_INTERVAL_SECONDS,
+    )
+
+
 class OfflineUsageRuntime:
     """只满足 lifespan 的 ``collector`` / ``close`` 契约的用量库替身。
 
@@ -169,12 +200,18 @@ class InMemoryAgentThreadService:
         user_id: UUID,
         thread_id: UUID | None,
         first_message: str,
+        run_id: UUID,
         scope: KnowledgeBaseSelection | None = None,
     ) -> tuple[UUID, str | None]:
-        """新建或续活一个会话，归属不符时抛 ``AgentThreadNotFoundError``。
+        """新建或续活一个会话并占下这次运行的位，与真实实现的语义对齐。
 
         返回 ``(会话 id, 会话提示词)``。新建时从 ``prompts`` 取该账号的偏好当快照；续聊时
         沿用会话里存的那份，**不回读偏好**——与真实实现同义，这条差异是测试要守住的行为。
+
+        占位规则也照真实实现那一份写：``active_run_id`` 为空、**或那次运行已超过失活阈值**
+        （进程崩了，没有任何清理动作会执行）时才能占；占下时顺手清掉陈旧的停止请求。
+        真实实现把这三件事放在同一条 ``UPDATE`` 的 ``WHERE`` 里（见
+        ``services/agent_thread_service.ensure_thread``），这里只能逐句照抄它的语义。
         """
 
         now = datetime.now(UTC)
@@ -189,16 +226,59 @@ class InMemoryAgentThreadService:
                 system_prompt=system_prompt,
                 created_at=now,
                 last_active_at=now,
+                active_run_id=run_id,
+                stop_requested_at=None,
             )
             return created, system_prompt
 
         record = self.threads.get(thread_id)
         if record is None or record.user_id != user_id:
             raise AgentThreadNotFoundError
+        if not is_claimable(record, now):
+            raise AgentRunInProgressError
         record.last_active_at = now
+        record.active_run_id = run_id
+        record.stop_requested_at = None
         if scope is not None:
             record.scope = scope.model_dump(mode="json")
         return thread_id, record.system_prompt
+
+    async def finish_run(self, *, thread_id: UUID, run_id: UUID) -> None:
+        """释放占位；只有仍然占着位的那个运行能释放。"""
+
+        record = self.threads.get(thread_id)
+        if record is not None and record.active_run_id == run_id:
+            record.active_run_id = None
+            record.stop_requested_at = None
+
+    async def request_stop(
+        self, *, thread_id: UUID, run_id: UUID, now: datetime | None = None
+    ) -> None:
+        """写停止请求；只有在途运行的 id 相等时才写（与真实实现同义）。"""
+
+        record = self.threads.get(thread_id)
+        if record is not None and record.active_run_id == run_id:
+            record.stop_requested_at = now or datetime.now(UTC)
+
+    async def read_run_states(
+        self, *, thread_ids: list[UUID]
+    ) -> dict[UUID, tuple[UUID | None, datetime | None]]:
+        """批量返回在途运行 id 与停止请求时刻。"""
+
+        return {
+            thread_id: (self.threads[thread_id].active_run_id, self.threads[thread_id].stop_requested_at)
+            for thread_id in thread_ids
+            if thread_id in self.threads
+        }
+
+    async def touch_run(self, *, thread_id: UUID, run_id: UUID, now: datetime) -> int:
+        """把在途运行的会话活跃时间推后；不再占位时返回 0。"""
+
+        record = self.threads.get(thread_id)
+        if record is None or record.active_run_id != run_id:
+            return 0
+        record.last_active_at = now
+        return 1
 
     async def update_scope(self, *, user_id, thread_id, scope):
         record = await self.get_owned_thread(user_id=user_id, thread_id=thread_id)
@@ -263,11 +343,17 @@ def create_offline_app(**overrides: Any) -> FastAPI:
     from agent_lab.api.dependencies import get_agent_thread_service
     from agent_lab.main import create_app
 
+    # 0、会话归属 Service 换成内存替身。**必须在 create_app 之前建**：运行注册表在 lifespan
+    #    里装配，它读的必须是同一个替身；晚一步建就只能让注册表拿真实的 session 工厂去连库，
+    #    而那个失败不会让测试报错，只会变成一次超时。
+    offline_threads = InMemoryAgentThreadService()
+
     # 1、先铺离线默认值，再让调用方的 overrides 覆盖，保证「漏写=安全」而不是「漏写=连真库」。
     #    model_catalog_check 也在其中：它的生产实现会向 .env 里那个真实 base_url 发 GET，
     #    漏写的话每个走 lifespan 的测试都要等一次连接超时（本文件开头那段历史正是这么来的）。
     defaults: dict[str, Any] = {
         "agent_runtime_factory": offline_agent_runtime_factory,
+        "agent_run_registry_factory": lambda: offline_agent_run_registry_factory(offline_threads),
         "environment_admin_sync": skip_environment_admin_sync,
         "model_catalog_check": skip_model_catalog_check,
         "task_service_factory": lambda: object(),
@@ -279,7 +365,6 @@ def create_offline_app(**overrides: Any) -> FastAPI:
     # 2、会话归属 Service 换成内存替身。少了这一步，任何请求 /agent/* 的测试都会真去连
     #    PostgreSQL（真实依赖持有绑定 .env 的进程级 session 工厂）。挂到 state 上是为了让用例
     #    既能预置数据、又不用重复写一遍 override。
-    offline_threads = InMemoryAgentThreadService()
     app.state.offline_threads = offline_threads
     app.dependency_overrides[get_agent_thread_service] = lambda: offline_threads
     return app
@@ -435,6 +520,8 @@ def seed_owned_thread(
     title: str = "预置会话",
     last_active_at: datetime | None = None,
     system_prompt: str | None = None,
+    active_run_id: UUID | None = None,
+    stop_requested_at: datetime | None = None,
 ) -> SimpleNamespace:
     """在内存会话表里预置一行归属记录。
 
@@ -444,8 +531,11 @@ def seed_owned_thread(
         user_id: 归属账号，默认与 ``allow_superuser`` 覆盖出的当前账号一致。传别的值即可构造
             「这是别人的会话」。
         title: 会话标题。
-        last_active_at: 最后活跃时间；省略时用当前时间。想构造确定的排序就显式传。
+        last_active_at: 最后活跃时间；省略时用当前时间。想构造确定的排序、或想构造「上一次运行
+            已经失活」就显式传一个很久以前的时刻。
         system_prompt: 该会话的提示词快照；省略等同「用内置默认提示词」。
+        active_run_id: 预置一个在途运行，用来构造「这个会话正在跑」。
+        stop_requested_at: 预置一个陈旧的停止请求，用来验证新一次占位会把它清掉。
 
     Returns:
         刚写进去的那行记录，便于随后修改或断言。
@@ -460,9 +550,27 @@ def seed_owned_thread(
         system_prompt=system_prompt,
         created_at=now,
         last_active_at=last_active_at or now,
+        active_run_id=active_run_id,
+        stop_requested_at=stop_requested_at,
     )
     app.state.offline_threads.threads[thread_id] = record
     return record
+
+
+def is_claimable(record: SimpleNamespace, now: datetime) -> bool:
+    """这行会话能不能被新的运行占下（与真实实现的条件写入同义）。
+
+    Args:
+        record: 内存会话表里的一行。
+        now: 判定用的当前时刻。
+
+    Returns:
+        ``True`` 表示没有在途运行，或那次运行已经超过失活阈值。
+    """
+
+    if record.active_run_id is None:
+        return True
+    return record.last_active_at < now - timedelta(seconds=RUN_ZOMBIE_THRESHOLD_SECONDS)
 
 
 __all__ = [
@@ -474,6 +582,7 @@ __all__ = [
     "OfflineUsageRuntime",
     "create_agent_app",
     "create_offline_app",
+    "offline_agent_run_registry_factory",
     "offline_agent_runtime_factory",
     "offline_usage_runtime_factory",
     "seed_owned_thread",

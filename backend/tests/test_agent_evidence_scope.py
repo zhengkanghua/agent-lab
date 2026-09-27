@@ -13,7 +13,7 @@ from langchain_core.outputs import ChatGenerationChunk
 from agent_lab.agent.context import AgentContext
 from agent_lab.agent.evidence import DocumentEvidence, ToolEvidence, resolve_citations, tool_evidence
 from agent_lab.agent.replay import build_replay_turns
-from agent_lab.agent.streaming import stream_agent_events
+from agent_lab.agent.streaming import PersistedModelMessage, stream_agent_events
 from agent_lab.agent.tools.read_document import build_read_document_tool
 from agent_lab.agent.tools.search_documents import build_search_documents_tool
 from agent_lab.knowledge.application import KnowledgeBaseService
@@ -50,10 +50,16 @@ def question(text, context):
 async def run_and_replay(graph, *, context=None, thread_id=None, message="问题"):
     context = context or AgentContext(scope=NEWS_SCOPE)
     thread_id = thread_id or uuid4()
-    events = [event async for event in stream_agent_events(
-        graph, message=message, thread_id=thread_id, context=context,
-        langsmith_settings=OFFLINE_LANGSMITH_SETTINGS,
-    )]
+    # 只留对外事件：PersistedModelMessage 是给运行驱动者的落库边界，不是发给浏览器的事件
+    # （它没有 ``event`` 字段，也不在 OpenAPI 的联合里），所以断言对外形状的用例不该看到它。
+    events = [
+        event
+        async for event in stream_agent_events(
+            graph, message=message, thread_id=thread_id, context=context,
+            langsmith_settings=OFFLINE_LANGSMITH_SETTINGS,
+        )
+        if not isinstance(event, PersistedModelMessage)
+    ]
     snapshot = await graph.aget_state({"configurable": {"thread_id": str(thread_id)}})
     turns, summarized, summary = build_replay_turns(snapshot.values["messages"])
     return events, turns, summarized, summary

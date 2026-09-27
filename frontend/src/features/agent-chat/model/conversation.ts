@@ -26,7 +26,14 @@ export interface AgentToolTrace {
   scope?: ResolvedKnowledgeBaseScope | null
 }
 
-export type AgentTurnStatus = 'streaming' | 'done' | 'error' | 'cancelled' | 'incomplete'
+/**
+ * 一轮在界面上的结局。
+ *
+ * 刻意没有「已取消」这一档：用户点停止之后，界面用的是**服务端发的终态事件**（状态是
+ * ``completed`` 或 ``incomplete``），本地不再自建一套结局。自建的那套必然与刷新后回放看到的口径
+ * 分叉——而「点停止时看到的」与「刷新后看到的」应该是同一件事。
+ */
+export type AgentTurnStatus = 'streaming' | 'done' | 'error' | 'incomplete'
 
 /** 一问一答。提问是用户的原文，回答是逐 token 拼起来的增量。 */
 export interface AgentTurn {

@@ -3,7 +3,13 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentChatEvent, StreamAgentChatOptions } from '@/api/agent-chat'
 import { ApiError } from '@/api/client'
-import { agentDone, agentStarted, agentEvidence, agentScope } from '@/api/agent-chat.fixture'
+import {
+  agentDone,
+  agentStarted,
+  agentEvidence,
+  agentScope,
+  AGENT_RUN_ID,
+} from '@/api/agent-chat.fixture'
 import { newsKnowledgeBase, techKnowledgeBase } from '@/api/knowledge-bases.fixture'
 import type { KnowledgeBaseSelection } from '@/api/knowledge-scope'
 import {
@@ -73,7 +79,12 @@ function replay(
     status?: 'completed' | 'incomplete'
     citations?: unknown[]
   }>,
-  extra: { summarized?: boolean; summary?: string | null; scope?: KnowledgeBaseSelection } = {},
+  extra: {
+    summarized?: boolean
+    summary?: string | null
+    scope?: KnowledgeBaseSelection
+    activeRunId?: string | null
+  } = {},
 ): ReplayResult {
   return {
     thread_id: THREAD_ID,
@@ -81,6 +92,7 @@ function replay(
     scope: extra.scope ?? { mode: 'all' },
     summarized: extra.summarized ?? false,
     summary: extra.summary ?? null,
+    active_run_id: extra.activeRunId ?? null,
   } as ReplayResult
 }
 
@@ -546,32 +558,85 @@ describe('useAgentChat', () => {
     wrapper.unmount()
   })
 
-  it('取消把这一轮标成 cancelled 并保留已收到的文字', async () => {
+  it('点停止只发请求，并保持连接等到服务端的终态事件', async () => {
+    // 停止不再靠断连接：本地中止只会让界面做出一副「停了」的样子，而服务端继续跑完并计费。
+    // 所以这里断言两件事：请求发出去了，而且连接没被掐掉——终态事件照旧到达并被采纳。
+    const stopRun = vi.fn(async () => {})
     let release: (() => void) | undefined
     const stream = async function* () {
+      yield agentStarted() as AgentChatEvent
       yield { event: 'token', text: '开头' } as AgentChatEvent
       await new Promise<void>((resolve) => (release = resolve))
-      yield { event: 'token', text: '不该出现' } as AgentChatEvent
+      // 服务端停下之后发的终态：答案就是已经推出去的那段，状态是未完成。
+      yield {
+        event: 'done',
+        thread_id: THREAD_ID,
+        answer: '开头',
+        status: 'incomplete',
+        citations: [],
+        invalid_citations: [],
+      } as AgentChatEvent
     } as AgentChatStream
 
-    const { wrapper, chat } = mountHarness(stream)
+    const { wrapper, chat } = mountHarness(stream, undefined, { stopRun })
     chat.draft.value = '问题'
 
     const running = chat.send()
     await flushPromises()
-    expect(chat.turns.value[0]?.answer).toBe('开头')
 
     chat.cancel()
+    await flushPromises()
+
+    // 带的是这一轮的运行 id，服务端靠它比对才敢写停止标志（迟到的停止不能误杀新运行）。
+    expect(stopRun).toHaveBeenCalledWith(THREAD_ID, AGENT_RUN_ID)
+    // 停止期间界面仍在读事件：终态到达后状态与内容都按服务端给的写。
+    expect(chat.status.value).toBe('streaming')
+
     release?.()
     await running
     await flushPromises()
 
-    expect(chat.turns.value[0]).toMatchObject({ answer: '开头', status: 'cancelled' })
+    expect(chat.turns.value[0]).toMatchObject({ answer: '开头', status: 'incomplete' })
     expect(chat.status.value).toBe('idle')
     wrapper.unmount()
   })
 
-  it('取消后的事件不再写进界面', async () => {
+  it('还没拿到运行 id 就点停止时，首帧到了再补发请求', async () => {
+    // run_started 是服务端的第一个事件，但网络上一个往返之前它就是还没到。丢了这次点击
+    // 等于让用户以为自己没点成功。
+    const stopRun = vi.fn(async () => {})
+    let release: (() => void) | undefined
+    const stream = async function* () {
+      await new Promise<void>((resolve) => (release = resolve))
+      yield agentStarted() as AgentChatEvent
+      yield {
+        event: 'done',
+        thread_id: THREAD_ID,
+        answer: '',
+        status: 'incomplete',
+        citations: [],
+        invalid_citations: [],
+      } as AgentChatEvent
+    } as AgentChatStream
+
+    const { wrapper, chat } = mountHarness(stream, undefined, { stopRun })
+    chat.draft.value = '问题'
+
+    const running = chat.send()
+    await flushPromises()
+    chat.cancel()
+    await flushPromises()
+    expect(stopRun).not.toHaveBeenCalled()
+
+    release?.()
+    await running
+    await flushPromises()
+
+    expect(stopRun).toHaveBeenCalledWith(THREAD_ID, AGENT_RUN_ID)
+    wrapper.unmount()
+  })
+
+  it('切走会话之后旧的流不再写进界面', async () => {
     let release: (() => void) | undefined
     const stream = async function* () {
       yield { event: 'token', text: '开头' } as AgentChatEvent
@@ -585,13 +650,14 @@ describe('useAgentChat', () => {
     const running = chat.send()
     await flushPromises()
 
-    chat.cancel()
+    // 「新对话」是本地放弃在途的那一轮，不是向服务端请求停止：服务端那一次运行照旧跑完。
+    chat.startNewConversation()
     release?.()
     await running
     await flushPromises()
 
-    expect(chat.turns.value[0]?.answer).toBe('开头')
-    // done 事件也不能生效：否则会把一个已取消运行的 thread 记成当前会话。
+    expect(chat.turns.value).toHaveLength(0)
+    // done 事件也不能生效：否则会把一个已经放弃的那一轮的 thread 记成当前会话。
     expect(chat.threadId.value).toBeNull()
     wrapper.unmount()
   })
@@ -958,5 +1024,75 @@ describe('useAgentChat', () => {
       expect(chat.isHistoryTruncated.value).toBe(false)
       wrapper.unmount()
     })
+  })
+})
+
+describe('刷新之后知道这一轮还在跑', () => {
+  const IN_FLIGHT = '30000000-0000-4000-8000-000000000020'
+
+  /**
+   * 等一个条件成立。
+   *
+   * 轮询是真实计时器驱动的，所以不能靠「睡一小会儿再断言」：那样在慢机器上会假红，在快机器上会
+   * 假绿（该发生的事还没来得及发生）。这里只等到条件成立为止，上限只防止用例自己挂住。
+   */
+  async function waitFor(check: () => boolean, timeoutMs = 1000): Promise<void> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if (check()) return
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    throw new Error('等待的条件没有在期限内成立')
+  }
+
+  it('服务端说还在跑时禁用发送，等到它结束再换成最终内容', async () => {
+    /* 「有运行在途」只有服务端才知道：在途那一轮还没落库，从 turns 里看不出来。没有这一条，界面会
+       显示「这一轮没有留下回答」，用户再发一条却被服务端以「还在生成中」拒绝——两边各说各话。 */
+    const loader = scriptedLoader(
+      replay([{ question: '之前问过的', answer: '', status: 'incomplete' }], {
+        activeRunId: IN_FLIGHT,
+      }),
+      replay([{ question: '之前问过的', answer: '最终答案。', status: 'completed' }]),
+    )
+    // 轮询间隔取 20ms：比 flushPromises 的耗时大，所以首次断言不会被一次意外的轮询抢在前面改写。
+    const { wrapper, chat } = mountHarness(scriptedStream(), loader, { runWatchIntervalMs: 20 })
+
+    await chat.loadThread(THREAD_ID)
+
+    expect(chat.isAwaitingRun.value).toBe(true)
+    // 哪怕用户写了字也不能发：发出去注定被拒。
+    chat.draft.value = '再问一句'
+    await flushPromises()
+    expect(chat.canSend.value).toBe(false)
+
+    // 轮询到服务端不再报在途运行，界面自动换成最终内容。
+    await waitFor(() => chat.isAwaitingRun.value === false)
+
+    expect(chat.turns.value[0]?.answer).toBe('最终答案。')
+    expect(chat.canSend.value).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('切走会话就不再等上一个会话的运行', async () => {
+    const loader = scriptedLoader(
+      replay([{ question: '之前问过的', answer: '', status: 'incomplete' }], {
+        activeRunId: IN_FLIGHT,
+      }),
+      replay([{ question: '另一个会话', answer: '答。', status: 'completed' }]),
+    )
+    const { wrapper, chat } = mountHarness(scriptedStream(), loader, { runWatchIntervalMs: 20 })
+
+    await chat.loadThread(THREAD_ID)
+    expect(chat.isAwaitingRun.value).toBe(true)
+    expect(loader.calls).toEqual([THREAD_ID])
+
+    // 新会话：不继承上一个会话的在途状态，也不该继续为它轮询。
+    chat.startNewConversation()
+    expect(chat.isAwaitingRun.value).toBe(false)
+
+    // 等够三个轮询周期：还在轮询的话这里必然多出几次调用。
+    await new Promise((resolve) => setTimeout(resolve, 70))
+    expect(loader.calls).toEqual([THREAD_ID])
+    wrapper.unmount()
   })
 })

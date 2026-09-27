@@ -144,6 +144,15 @@ class AgentThreadMessagesResponse(BaseModel):
     """
 
     thread_id: UUID = Field(description="本次回放所属的会话 id。")
+    active_run_id: UUID | None = Field(
+        default=None,
+        description=(
+            "当前在途运行的 id；为空表示这个会话没有运行在跑。\n\n"
+            "它只有一个用途：刷新页面后前端要知道「上一轮还在跑」——否则会出现自相矛盾的组合："
+            "界面显示「这一轮没有留下回答」，用户再发一条却被服务端以「还在生成中」拒绝。"
+            "它不是把运行状态暴露给用户看，也不代表运行会出现在 ``turns`` 里（在途运行的输出还没落库）。"
+        ),
+    )
     scope: KnowledgeBaseSelection = Field(description="会话当前保存的选择，不改写历史轮次的实际范围。")
     turns: tuple[AgentReplayTurn, ...] = Field(
         description="按时间顺序的历史轮次；不包含摘要那条伪提问。",

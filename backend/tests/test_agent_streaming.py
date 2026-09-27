@@ -22,7 +22,7 @@ import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from agent_lab.agent.context import AgentContext
-from agent_lab.agent.streaming import _add_usage, stream_agent_events
+from agent_lab.agent.streaming import PersistedModelMessage, _add_usage, stream_agent_events
 from agent_lab.config.llm import LangSmithSettings
 from agent_lab.schemas.agent_chat import (
     AgentChatEventEnvelope,
@@ -66,6 +66,17 @@ def collect(
         ]
 
     return run(drain())
+
+
+def public(events: list[Any]) -> list[Any]:
+    """滤掉只给运行驱动者看的内部信号，只留对外事件。
+
+    ``PersistedModelMessage`` 是驱动者用来确定「尚未落库的那部分从哪里开始」的边界，它**不在
+    对外事件契约里**（见 ``agent/streaming.py`` 的说明）。断言对外形状的用例必须过这一层，
+    否则会拿一个前端永远收不到的对象去比信封模型。
+    """
+
+    return [event for event in events if not isinstance(event, PersistedModelMessage)]
 
 
 def test_a_plain_answer_streams_tokens_then_done() -> None:
@@ -239,10 +250,12 @@ def test_no_error_event_leaks_the_original_exception_text() -> None:
 
 
 def test_every_event_serializes_through_the_discriminated_union() -> None:
-    """所有事件都能被信封模型序列化。
+    """所有**对外**事件都能被信封模型序列化。
 
     这是前后端契约的最后一道闸：信封是 OpenAPI 里的可辨识联合，前端的 TS 类型由它生成。
     某个事件类型漏出联合的话，生成的类型里就没有它，前端会静默丢掉这类事件。
+
+    只给驱动者看的落库信号不在联合里，所以过 ``public()`` 滤掉；它的存在由下面那条用例守护。
     """
 
     counter = CountingTool("search_documents")
@@ -254,10 +267,38 @@ def test_every_event_serializes_through_the_discriminated_union() -> None:
     )
     events = collect(build_offline_graph(model, [counter.build()]))
 
-    for event in events:
+    for event in public(events):
         payload = AgentChatEventEnvelope(root=event).model_dump(mode="json")
         assert payload["event"] == event.event
         assert AgentChatEventEnvelope.model_validate(payload).root == event
+
+
+def test_each_completed_model_node_reports_its_persisted_text() -> None:
+    """每完成一个模型节点，事件流里就多一条只给驱动者看的落库信号。
+
+    它存在的理由（见 ADR 0036）：一次运行里模型节点会被调用多次，先完成的那些节点已经把文本
+    落库了。驱动者必须能看到这条边界，否则只能按整次运行累积——那会把已经落库的文本再写一遍，
+    补写后的答案出现重复。
+
+    两个断言缺一不可：信号要「出现」（驱动者看得到边界），也要「不在对外契约里」（前端不该
+    收到一个它没有渲染分支的事件）。
+    """
+
+    counter = CountingTool("search_documents")
+    model = ScriptedChatModel(
+        responses=[
+            tool_call_message("search_documents", {"text": "央行降息"}),
+            AIMessage(content="结论如上。"),
+        ]
+    )
+    events = collect(build_offline_graph(model, [counter.build()]))
+
+    signals = [each for each in events if isinstance(each, PersistedModelMessage)]
+    # 第一个模型节点只发了工具调用、没有文本，所以只有第二个节点发出信号。
+    assert [each.text for each in signals] == ["结论如上。"]
+    # 反方向：它不能被信封（也就是 OpenAPI 里的可辨识联合）接受。
+    with pytest.raises(Exception):
+        AgentChatEventEnvelope(root=signals[0])
 
 
 def test_the_done_event_carries_the_thread_id() -> None:
@@ -598,7 +639,7 @@ def test_the_system_prompt_stays_out_of_messages_and_event_definitions() -> None
     assert str(model.received_messages[0][0].content).startswith(prompt)
 
     # 2、SSE 事件里没有任何地方带着它。
-    for event in events:
+    for event in public(events):
         assert prompt not in AgentChatEventEnvelope(root=event).model_dump_json()
 
     # 3、事件联合类型的字段里没有新增提示词位——加了字段的话这里会看到。

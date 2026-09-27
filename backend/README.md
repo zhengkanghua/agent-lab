@@ -7,6 +7,8 @@ Qdrant 保存候选索引，准备成功后切换 PostgreSQL 中的已采用版�
 
 在检索之上还有一条 Agent 对话链路（``POST /agent/chat``，SSE）：一个 LangGraph 工具调用
 Agent 把上面的检索能力当工具用，在本次知识库范围内由生成式 LLM 组织带证据引用的答案。
+**一次运行由服务端自己驱动，不挂在浏览器连接上**：关页面、断网、切走会话都不会中断它，要停下它
+得调 ``POST /agent/stop``（见 [一次运行不因订阅者离开而中止](../docs/adr/0035-run-outlives-its-subscriber.md)）。
 Tool 不修改 Document 或 Qdrant；会话归属和范围写 ``agent_threads``，消息及证据写四张 ``checkpoint*`` 表（见
 [ADR 0003 agent-v1-is-read-only](../docs/adr/0003-agent-v1-is-read-only.md)）。**没配 ``LLM_API_KEY``
 时只有 ``/agent/*`` 返回 503，检索接口照常工作**，所以只想用检索可以完全不管 LLM 配置。
@@ -542,9 +544,10 @@ uv run pytest -q tests/test_vector_search_api.py tests/test_document_search.py `
 # 错误码、HTTP 状态、重试提示、脱敏及跨表一致性（不起 app）
 uv run pytest -q tests/test_error_contract.py
 
-# Agent 链路：工具、中间件、SSE 事件序列与 /agent/chat 契约（fake 模型，不联网、不连库）
+# Agent 链路：工具、中间件、SSE 事件序列、运行生命周期与 /agent 契约（fake 模型，不联网、不连库）
 uv run pytest -q tests/test_agent_tools.py tests/test_agent_middleware.py `
   tests/test_agent_streaming.py tests/test_agent_chat_api.py `
+  tests/test_agent_runs.py tests/test_agent_thread_deletion.py `
   tests/test_agent_checkpointer.py
 
 # 第二阶段：文件入口、多库范围与证据跨流式/回放验证

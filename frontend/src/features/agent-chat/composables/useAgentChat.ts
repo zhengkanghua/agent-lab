@@ -1,6 +1,10 @@
 import { computed, onScopeDispose, ref, watch } from 'vue'
-import { streamAgentChat, type AgentChatEvent } from '@/api/agent-chat'
-import { getAgentThreadMessages, updateAgentThreadScope } from '@/api/agent-threads'
+import { stopAgentRun, streamAgentChat, type AgentChatEvent } from '@/api/agent-chat'
+import {
+  getAgentThreadMessages,
+  updateAgentThreadScope,
+  type AgentThreadMessagesDto,
+} from '@/api/agent-threads'
 import { copySelection, isSelection, type KnowledgeBaseSelection } from '@/api/knowledge-scope'
 import { ApiError, isAbortError } from '@/api/client'
 import { presentAgentError, type AgentErrorPresentation } from '../model/agent-error'
@@ -24,15 +28,27 @@ export type AgentChatStream = typeof streamAgentChat
 /** 注入回放实现，同上。 */
 export type AgentThreadLoader = typeof getAgentThreadMessages
 
+/** 注入停止实现，测试里可以不打桩 fetch 就驱动「点停止」这条路。 */
+export type AgentRunStopper = typeof stopAgentRun
+
 export interface UseAgentChatOptions {
   stream?: AgentChatStream
   loadThreadMessages?: AgentThreadLoader
+  stopRun?: AgentRunStopper
+  /** 轮询「在途运行结束了吗」的间隔。只为让测试不必真的等三秒，生产不要传。 */
+  runWatchIntervalMs?: number
   getScopeError?: () => string | null
   saveScope?: typeof updateAgentThreadScope
   onThreadCreated?: (threadId: string) => void
 }
 
-const CANCELLED_TRACE_NOTE = '本轮对话已取消，这次工具调用的结果未送达。'
+/**
+ * 刷新/切回来时，服务端还报「有运行在途」的话，多久重读一次会话历史。
+ *
+ * 只用来知道它什么时候结束，不接续正在生成的实时文字（那是刻意的：见 spec 的「超出范围」）。
+ */
+export const RUN_WATCH_INTERVAL_MS = 3000
+
 const FAILED_TRACE_NOTE = '本轮对话中断，这次工具调用的结果未送达。'
 // 回放专用：历史里那次调用没有结果，是当时就断了，不是现在还在查。
 const HISTORY_TRACE_NOTE = '这次工具调用没有结果记录，当时的对话中断了。'
@@ -51,6 +67,8 @@ const HISTORY_TRACE_NOTE = '这次工具调用没有结果记录，当时的对�
 export function useAgentChat({
   stream = streamAgentChat,
   loadThreadMessages = getAgentThreadMessages,
+  stopRun = stopAgentRun,
+  runWatchIntervalMs = RUN_WATCH_INTERVAL_MS,
   getScopeError = () => null,
   saveScope = updateAgentThreadScope,
   onThreadCreated,
@@ -71,6 +89,9 @@ export function useAgentChat({
   const isHistoryTruncated = ref(false)
   const historySummary = ref<string | null>(null)
   const historySyncError = ref<string | null>(null)
+  // 服务端报告的「这个会话有在途运行」。刷新或切回来时，它是唯一能区分「这一轮没有回答」与
+  // 「这一轮还在生成」的渠道：在途那一轮还没落库，从消息里看不出来。
+  const awaitingRunId = ref<string | null>(null)
   const selection = ref<KnowledgeBaseSelection>({ mode: 'all' })
   const savingScope = ref(false)
   const scopeSaveError = ref<string | null>(null)
@@ -79,8 +100,12 @@ export function useAgentChat({
 
   let runSequence = 0
   let loadSequence = 0
+  let watchSequence = 0
   let activeController: AbortController | null = null
   let activeLoadController: AbortController | null = null
+  // 用户已点停止、但还没拿到运行 id。``run_started`` 是第一个事件，这个窗口极小，
+  // 但留一个意图位比让那次点击静默丢掉要好。
+  let stopPending = false
 
   const remainingCharacters = computed(() => MAX_MESSAGE_CHARACTERS - draft.value.length)
   // 读历史期间也不许发送：那时 threadId 还没设上，发出去会被当成新会话，用户以为自己在
@@ -91,9 +116,13 @@ export function useAgentChat({
       status.value !== 'streaming' &&
       !isLoadingThread.value &&
       !savingScope.value &&
+      // 服务端还在跑这一轮时不能发：发出去会被它以 409 拒掉，而界面上看起来就像模型出错。
+      awaitingRunId.value === null &&
       !getScopeError(),
   )
   const isStreaming = computed(() => status.value === 'streaming')
+  /** 服务端确认这个会话有运行在跑——但当前这条连接不是它的订阅者（刚刷新/刚切回来）。 */
+  const isAwaitingRun = computed(() => awaitingRunId.value !== null)
 
   watch(draft, (value) => {
     if (inputError.value && !validateMessage(value) && !getScopeError()) {
@@ -107,7 +136,10 @@ export function useAgentChat({
       inputError.value ||
       status.value === 'streaming' ||
       isLoadingThread.value ||
-      savingScope.value
+      savingScope.value ||
+      // 服务端还在跑这一轮时不能发（见 canSend 的说明）。retry() 也会走到这里，所以这一道
+      // 不能只写在 canSend 里。
+      awaitingRunId.value !== null
     )
       return
 
@@ -156,12 +188,6 @@ export function useAgentChat({
     } catch (error) {
       if (runId !== runSequence) return
 
-      if (isAbortError(error)) {
-        live.status = 'cancelled'
-        settlePendingTraces(live, CANCELLED_TRACE_NOTE)
-        return
-      }
-
       live.status = 'error'
       live.error = presentAgentError(
         error instanceof ApiError
@@ -194,6 +220,8 @@ export function useAgentChat({
         turn.runId = event.run_id
         turn.scope = event.scope
         scopeSaveError.value = null
+        // 点停止早于首帧时，现在才拿得到运行 id。
+        if (stopPending) requestStop(event.thread_id, event.run_id)
         break
       case 'token':
         turn.answer += event.text
@@ -271,9 +299,7 @@ export function useAgentChat({
     try {
       const replay = await loadThreadMessages(target, activeController?.signal)
       if (runId !== runSequence || target !== threadId.value) return
-      turns.value = turnsFromReplay(replay.turns, HISTORY_TRACE_NOTE)
-      isHistoryTruncated.value = replay.summarized
-      historySummary.value = replay.summary ?? null
+      applyReplay(replay, target)
       historySyncError.value = null
     } catch {
       if (runId === runSequence && target === threadId.value)
@@ -281,15 +307,85 @@ export function useAgentChat({
     }
   }
 
-  /** 取消在途的这一轮。已经收到的回答保留，状态标成 cancelled。 */
+  /**
+   * 把一份回放结果灌进界面，并在服务端还报「有运行在途」时开始等它结束。
+   *
+   * 两条路会用到（打开会话、一次运行结束后的同步），所以只有这一处实现。「还有在途运行」必须在这里
+   * 接上轮询：漏了的话界面会停在「禁用发送」上而且没人去解开它。
+   */
+  function applyReplay(replay: AgentThreadMessagesDto, targetThreadId: string): void {
+    turns.value = turnsFromReplay(replay.turns ?? [], HISTORY_TRACE_NOTE)
+    isHistoryTruncated.value = replay.summarized
+    historySummary.value = replay.summary ?? null
+    awaitingRunId.value = replay.active_run_id ?? null
+    if (awaitingRunId.value !== null) void watchPendingRun(targetThreadId)
+  }
+
+  /**
+   * 等这个会话的在途运行结束，然后换成最终内容。
+   *
+   * **刻意不设放弃上限**：失活判定（服务端那条超时释放）会结束服务端的上报，所以这个轮询必然终止。
+   * 而前端设的上限如果短于服务端的失活窗口，就会出现界面与服务端相反的情况——界面已经放弃「正在
+   * 生成」，服务端却仍以「还在生成中」拒绝提交。
+   *
+   * 轮询只用来知道它什么时候结束，**不接续正在生成的实时文字**（与 ChatGPT / Claude 一致）：
+   * 刷新后能看到「正在生成」并等它结束，但中间的字不会实时补发。
+   */
+  async function watchPendingRun(targetThreadId: string): Promise<void> {
+    const watchId = ++watchSequence
+    while (threadId.value === targetThreadId && watchId === watchSequence) {
+      await new Promise((resolve) => setTimeout(resolve, runWatchIntervalMs))
+      if (threadId.value !== targetThreadId || watchId !== watchSequence) return
+      try {
+        const replay = await loadThreadMessages(targetThreadId)
+        if (threadId.value !== targetThreadId || watchId !== watchSequence) return
+        turns.value = turnsFromReplay(replay.turns ?? [], HISTORY_TRACE_NOTE)
+        isHistoryTruncated.value = replay.summarized
+        historySummary.value = replay.summary ?? null
+        awaitingRunId.value = replay.active_run_id ?? null
+        if (awaitingRunId.value === null) return
+      } catch {
+        // 一次读失败不放弃：这是一条「等它结束」的循环，下一轮再试就好。
+      }
+    }
+  }
+
+  /**
+   * 停下来这一轮：请求服务端真的停下它，并**保持连接等它的终态事件**。
+   *
+   * 刻意不在本地造结局。运行已经不在连接上，本地中止只会让界面白白做出一副「停了」的样子，
+   * 而服务端继续跑完并计费；所以这里只发一个停止请求，之后照旧读事件直到服务端给出 ``done``。
+   * 于是「点停止时看到的」与「刷新后看到的」是同一份口径（两边都取自服务端的终态与回放）。
+   *
+   * 重复点击无害：服务端只对「在途运行的 id 与请求里的相等」才写停止标志，不等一律幂等成功。
+   */
   function cancel(): void {
     if (status.value !== 'streaming') return
-    cancelActiveRun()
     const last = turns.value[turns.value.length - 1]
-    if (last && last.status === 'streaming') {
-      last.status = 'cancelled'
-      settlePendingTraces(last, CANCELLED_TRACE_NOTE)
+    if (!threadId.value || !last?.runId) {
+      stopPending = true
+      return
     }
+    requestStop(threadId.value, last.runId)
+  }
+
+  /** 发一次停止请求。失败只记在意图位上，不弹错：用户再点一次就是了。 */
+  function requestStop(targetThreadId: string, runId: string): void {
+    stopPending = false
+    void stopRun(targetThreadId, runId).catch(() => {
+      // 不做别的。本地中止连接是假停止（服务端会继续跑完），所以不能拿它当兼容路径。
+    })
+  }
+
+  /**
+   * 放弃本地这条流：不再读它，但**不**请求服务端停止。
+   *
+   * 用在「用户离开这条连接」的场合（退出登录）。按 ADR 0035，离开只意味着少一个订阅者，
+   * 那次运行照旧跑完并落进会话历史——用户下次打开这个会话能看到完整答案。要真的停下运行，
+   * 用 ``cancel()``，两者的区别就是「我走了但活干完」与「不要了」。
+   */
+  function abandonRun(): void {
+    cancelActiveRun()
     status.value = 'idle'
   }
 
@@ -314,6 +410,8 @@ export function useAgentChat({
     // 切会话等于放弃在途的那一轮。不取消的话，旧会话的 token 会继续写进新会话的界面。
     cancelActiveRun()
     cancelActiveLoad()
+    // 也不再等上一个会话的在途运行。
+    watchSequence += 1
 
     const loadId = ++loadSequence
     const controller = new AbortController()
@@ -327,6 +425,7 @@ export function useAgentChat({
     isHistoryTruncated.value = false
     historySummary.value = null
     historySyncError.value = null
+    awaitingRunId.value = null
     scopeSaveError.value = null
     scopeEditVersion += 1
     savingScope.value = false
@@ -337,11 +436,9 @@ export function useAgentChat({
       const replay = await loadThreadMessages(targetThreadId, controller.signal)
       if (loadId !== loadSequence) return
 
-      turns.value = turnsFromReplay(replay.turns ?? [], HISTORY_TRACE_NOTE)
-      isHistoryTruncated.value = replay.summarized
-      historySummary.value = replay.summary ?? null
-      selection.value = copySelection(replay.scope)
       threadId.value = targetThreadId
+      applyReplay(replay, targetThreadId)
+      selection.value = copySelection(replay.scope)
     } catch (error) {
       if (loadId !== loadSequence || isAbortError(error)) return
 
@@ -373,6 +470,8 @@ export function useAgentChat({
   function startNewConversation(): void {
     cancelActiveRun()
     cancelActiveLoad()
+    // 新会话不继承上一个会话的在途状态。
+    watchSequence += 1
     turns.value = []
     draft.value = ''
     threadId.value = null
@@ -381,6 +480,7 @@ export function useAgentChat({
     isHistoryTruncated.value = false
     historySummary.value = null
     historySyncError.value = null
+    awaitingRunId.value = null
     selection.value = { mode: 'all' }
     scopeEditVersion += 1
     savingScope.value = false
@@ -397,6 +497,7 @@ export function useAgentChat({
 
   function cancelActiveRun(): void {
     runSequence += 1
+    stopPending = false
     activeController?.abort()
     activeController = null
   }
@@ -404,6 +505,7 @@ export function useAgentChat({
   onScopeDispose(() => {
     cancelActiveRun()
     cancelActiveLoad()
+    watchSequence += 1
   })
 
   return {
@@ -425,8 +527,10 @@ export function useAgentChat({
     remainingCharacters,
     canSend,
     isStreaming,
+    isAwaitingRun,
     send,
     cancel,
+    abandonRun,
     retry,
     loadThread,
     startNewConversation,

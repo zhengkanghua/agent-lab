@@ -87,4 +87,15 @@ describe('presentAgentError', () => {
     // 与模型不可用区分：用户能做的事不同，混成一句会让人以为模型也挂了。
     expect(copy.title).not.toBe(presentAgentError(apiError('llm_unavailable', 503, true)).title)
   })
+
+  it('重复提交说的是「正在生成」，不引导用户重发', () => {
+    // 后端在这个会话已经有运行在跑时回 409 agent_run_in_progress。用户需要知道的是
+    // 「等一会」或「先按停止」，不是「出错了」；而这里唯一能重发的动作恰好又会被拒，
+    // 所以文案不能引导重发（retryable 取假，界面上也就不给「重发这一轮」按钮）。
+    const copy = presentAgentError(apiError('agent_run_in_progress', 409, false))
+
+    expect(copy.title).toContain('正在生成')
+    expect(copy.retryable).toBe(false)
+    expect(copy.description).not.toContain('重试')
+  })
 })

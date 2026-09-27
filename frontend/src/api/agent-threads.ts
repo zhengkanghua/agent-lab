@@ -69,7 +69,9 @@ export async function getAgentThreadMessages(
     !isSelection(response.scope) ||
     !Array.isArray(response.turns) ||
     !response.turns.every(isReplayTurn) ||
-    typeof response.summarized !== 'boolean'
+    typeof response.summarized !== 'boolean' ||
+    // 在途运行的 id：可能是 null（没有在跑），但不接受别的类型的值。
+    (response.active_run_id != null && !isUuid(response.active_run_id))
   ) {
     throw invalidThreadResponse('会话服务返回的历史记录格式不正确。')
   }

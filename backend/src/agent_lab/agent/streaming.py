@@ -13,6 +13,7 @@
 
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -29,6 +30,7 @@ from agent_lab.api.error_contract import (
     resolve_error_contract,
 )
 from agent_lab.config.llm import LangSmithSettings
+from agent_lab.knowledge.scope import ResolvedKnowledgeBaseScope
 from agent_lab.schemas.agent_chat import (
     AgentChatEvent,
     AgentDoneEvent,
@@ -44,8 +46,30 @@ logger = logging.getLogger(__name__)
 
 # LangGraph 给每个流事件带的节点名。模型节点和工具节点的产出要分开处理：
 # 模型节点的 AIMessageChunk 是给用户看的回答增量，工具节点的 ToolMessage 是调用结果。
-_MODEL_NODE = "model"
-_TOOLS_NODE = "tools"
+# 名字公开了一份：运行驱动者补写未落库的文本时要把它当 ``as_node`` 传给 ``aupdate_state``，
+# 而那个字符串必须与图里的节点名对得上。
+MODEL_NODE = "model"
+TOOLS_NODE = "tools"
+
+
+@dataclass(frozen=True, slots=True)
+class PersistedModelMessage:
+    """内部信号：一个模型节点已完整结束，它的文本从这一刻起算「已经落库」。
+
+    **它不进对外事件契约**（不在 ``schemas.agent_chat`` 那个可判别联合里）：浏览器不需要
+    知道这条边界，让前端多认一种事件只会多一套它永远用不到的渲染分支。它只给运行驱动者看
+    ——驱动者要按「最近一次已落库的模型消息」这个界限累积尚未落库的文本，用于运行被中断时
+    的补写（见 ADR 0036）。
+
+    为什么需要单独发一个信号：``updates`` 流里的模型消息本来就在事件流里经过，但当前只把
+    「带工具调用的那些」翻成对外的 ``tool_call`` 事件，纯文本的模型消息被丢掉了。驱动者因此
+    看不到那条边界，只能按整次运行累积——那会把先完成的节点已经落库的文本再写一遍。
+
+    Attributes:
+        text: 这个节点产出的模型文本；与 ``token`` 事件拼出来的那段是同一串字符。
+    """
+
+    text: str
 
 
 def _build_tracing_client(settings: LangSmithSettings) -> LangSmithClient | None:
@@ -78,11 +102,36 @@ def _build_tracing_client(settings: LangSmithSettings) -> LangSmithClient | None
     return LangSmithClient(api_key=api_key, api_url=str(settings.endpoint))
 
 
-def _token_event(chunk: AIMessage) -> AgentTokenEvent | None:
-    """从模型输出增量里取出纯文本部分。
+def _message_text(chunk: AIMessage) -> str:
+    """取出一条模型消息里可显示的纯文本部分。
 
     为什么要过滤：``content`` 在工具调用阶段可能是空串，或是包含 ``tool_use`` 块的列表
     结构。把这些原样发给前端会让用户看到半截 JSON，所以只取文本块。
+
+    Args:
+        chunk: 模型节点产出的一个输出增量或一条完整消息。
+
+    Returns:
+        可显示的文本；没有可显示内容时是空串。
+
+    Notes:
+        纯内存转换，不执行 I/O。``token`` 事件和内部落库信号共用它，两条路径拼出来的字符
+        才会是同一份——分成两份实现的话，边界处少算了几个字就会让补写内容出现或丢掉一截。
+    """
+
+    content = chunk.content
+    if isinstance(content, str):
+        return content
+    # 列表形态：多模态/工具调用块混排，只保留 type == "text" 的部分。
+    return "".join(
+        part.get("text", "")
+        for part in content
+        if isinstance(part, dict) and part.get("type") == "text"
+    )
+
+
+def _token_event(chunk: AIMessage) -> AgentTokenEvent | None:
+    """从模型输出增量里取出纯文本部分，包成 ``token`` 事件。
 
     Args:
         chunk: 模型节点产出的一个输出增量。支持流式的 provider 给的是
@@ -97,19 +146,34 @@ def _token_event(chunk: AIMessage) -> AgentTokenEvent | None:
         纯内存转换，不执行 I/O。
     """
 
-    content = chunk.content
-    if isinstance(content, str):
-        text = content
-    else:
-        # 列表形态：多模态/工具调用块混排，只保留 type == "text" 的部分。
-        text = "".join(
-            part.get("text", "")
-            for part in content
-            if isinstance(part, dict) and part.get("type") == "text"
-        )
+    text = _message_text(chunk)
     if not text:
         return None
     return AgentTokenEvent(text=text)
+
+
+def _persisted_model_texts(update: dict[str, Any]) -> list[str]:
+    """取出一次节点更新里「刚写完 checkpoint」的模型文本。
+
+    Args:
+        update: ``updates`` 模式给出的 ``{节点名: 状态增量}`` 字典。
+
+    Returns:
+        本次更新里模型节点产出的非空文本，按出现顺序。非模型节点的更新返回空列表。
+
+    Notes:
+        纯内存转换，不执行 I/O。只认模型节点：工具节点的 ``ToolMessage`` 是调用结果而不是
+        模型输出，把它当成边界会把边界推错位置。
+    """
+
+    payload = update.get(MODEL_NODE)
+    if not isinstance(payload, dict):
+        return []
+    return [
+        text
+        for message in payload.get("messages") or ()
+        if isinstance(message, AIMessage) and (text := _message_text(message))
+    ]
 
 
 def _add_usage(totals: dict[str, int], chunk: AIMessage) -> None:
@@ -161,7 +225,7 @@ def _tool_events(update: dict[str, Any], context: AgentContext) -> list[AgentCha
     events: list[AgentChatEvent] = []
     # 1、只看模型节点和工具节点的更新，其余节点（如中间件内部状态）与工具轨迹无关。
     for node, payload in update.items():
-        if node not in {_MODEL_NODE, _TOOLS_NODE} or not isinstance(payload, dict):
+        if node not in {MODEL_NODE, TOOLS_NODE} or not isinstance(payload, dict):
             continue
         for message in payload.get("messages") or ():
             # 2、模型节点：AIMessage 带 tool_calls 表示它决定要调工具。
@@ -190,6 +254,51 @@ def _tool_events(update: dict[str, Any], context: AgentContext) -> list[AgentCha
     return events
 
 
+async def build_terminal_event(
+    graph: CompiledStateGraph,
+    *,
+    thread_id: UUID,
+    run_id: UUID,
+    scope: ResolvedKnowledgeBaseScope | None,
+) -> AgentDoneEvent:
+    """按持久化状态算出这次运行的终态 ``done`` 事件。
+
+   正常跑完和协作式停止共用它，所以「点停止时看到的」与「刷新后看到的」是同一份口径：两条路都从
+   同一份 checkpoint 消息里取答案、完成状态与引用，不各自编一套。
+
+   为什么要从持久化结果现算而不是拿流式累计的文本：重试会留下临时输出（被弃用的那一次的文本已经
+   发给用户了），预算耗尽与上游截断也都会让实际落库的内容与累计文本不同。以落库结果为准，回放与
+   终态才不会分叉。
+
+   Args:
+       graph: 进程级共享的已编译 Agent 图，用 ``aget_state`` 读最新状态。
+       thread_id: 本次运行所属会话。
+       run_id: 本次运行的标识；据此在同一会话的多轮里找到这一轮。
+       scope: 本次运行的实际范围；为 ``None`` 表示归属未知（不取轮次，退化成最后一轮）。
+
+   Returns:
+       可直接发给订阅者的 ``AgentDoneEvent``；找不到这一轮时答案是空串、状态为 ``incomplete``。
+
+   Notes:
+       执行会话历史读取（checkpointer 的读 I/O），不写任何东西。
+   """
+
+    snapshot = await graph.aget_state({"configurable": {"thread_id": str(thread_id)}})
+    turns, _, _ = build_replay_turns((snapshot.values or {}).get("messages") or [])
+    turn = (
+        next((item for item in turns if item.run_id == run_id), None)
+        if scope is not None
+        else (turns[-1] if turns else None)
+    )
+    return AgentDoneEvent(
+        thread_id=thread_id,
+        answer=turn.answer if turn else "",
+        status=turn.status if turn else "incomplete",
+        citations=turn.citations if turn else (),
+        invalid_citations=turn.invalid_citations if turn else (),
+    )
+
+
 async def stream_agent_events(
     graph: CompiledStateGraph,
     *,
@@ -197,7 +306,7 @@ async def stream_agent_events(
     thread_id: UUID,
     context: AgentContext,
     langsmith_settings: LangSmithSettings,
-) -> AsyncIterator[AgentChatEvent]:
+) -> AsyncIterator[AgentChatEvent | PersistedModelMessage]:
     """跑一次 Agent，把过程翻译成事件流。
 
     正常结束时最后一个事件是 ``done``；已分类的失败以 ``error`` 事件结束，**不抛异常**。
@@ -212,7 +321,8 @@ async def stream_agent_events(
         langsmith_settings: 追踪开关与凭据。
 
     Yields:
-        ``token`` / ``tool_call`` / ``tool_result`` 事件，最后是 ``done`` 或 ``error``。
+        ``token`` / ``tool_call`` / ``tool_result`` 事件，最后是 ``done`` 或 ``error``；
+        中间还可能夹着只给运行驱动者看的 ``PersistedModelMessage`` 落库信号。
 
     Notes:
         本函数执行模型 HTTP I/O、Qdrant 检索、PostgreSQL 读取和会话历史读写，但不写任何
@@ -255,7 +365,7 @@ async def stream_agent_events(
                     part, metadata = chunk
                     if (
                         isinstance(part, AIMessage)
-                        and metadata.get("langgraph_node") == _MODEL_NODE
+                        and metadata.get("langgraph_node") == MODEL_NODE
                     ):
                         # 记录实际模型名：只记一次，从第一个 AIMessage 的 response_metadata 取。
                         if actual_model_name is None and hasattr(part, "response_metadata"):
@@ -270,14 +380,16 @@ async def stream_agent_events(
                 elif stream_mode == "updates":
                     for event in _tool_events(chunk, context):
                         yield event
+                    # 节点结束时这条模型消息已经随 checkpoint 落库，所以它的文本从此刻起
+                    # 不再属于「尚未落库」的部分。驱动者靠这个信号把累积边界推到这里之后。
+                    for text in _persisted_model_texts(chunk):
+                        yield PersistedModelMessage(text=text)
             # 以本次持久化结果校正流式重试的临时输出；回放与终态从同一份消息计算。
-            snapshot = await graph.aget_state(config)
-            turns, _, _ = build_replay_turns((snapshot.values or {}).get("messages") or [])
-            turn = next((item for item in turns if item.run_id == context.run_id), None) if context.scope is not None else (turns[-1] if turns else None)
-            terminal = AgentDoneEvent(
-                thread_id=thread_id, answer=turn.answer if turn else "",
-                status=turn.status if turn else "incomplete",
-                citations=turn.citations if turn else (), invalid_citations=turn.invalid_citations if turn else (),
+            terminal = await build_terminal_event(
+                graph,
+                thread_id=thread_id,
+                run_id=context.run_id,
+                scope=context.scope,
             )
     except Exception as exc:
         # 6、失败翻成一个 error 事件送出去，不往上抛。第一个 token 发走时响应头就定了，
@@ -322,4 +434,9 @@ async def stream_agent_events(
     yield terminal
 
 
-__all__ = ["stream_agent_events"]
+__all__ = [
+    "MODEL_NODE",
+    "PersistedModelMessage",
+    "build_terminal_event",
+    "stream_agent_events",
+]

@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from agent_lab.agent.errors import AgentError
 from agent_lab.agent.model_catalog import verify_configured_models
+from agent_lab.agent.runs import AgentRunRegistry
 from agent_lab.agent.runtime import AgentRuntime
 from agent_lab.api.agent_chat import router as agent_chat_router
 from agent_lab.api.agent_threads import router as agent_threads_router
@@ -59,6 +60,7 @@ from agent_lab.tasks.service import TaskService
 from agent_lab.tasks.cron import CronSchedule
 from agent_lab.task_assembly import build_task_service
 from agent_lab.api.task_runs import router as task_runs_router, policy_router as task_policy_router
+from agent_lab.services.agent_thread_service import AgentThreadService
 from agent_lab.services.vector_search_service import VectorSearchService
 from agent_lab.usage.assembly import UsageRuntime
 from agent_lab.usage.contracts import UsageCollector
@@ -199,6 +201,23 @@ def build_agent_runtime(
     )
 
 
+def build_agent_run_registry() -> AgentRunRegistry:
+    """装配进程级运行注册表（只构造对象，不建任务、不连任何服务）。
+
+    它只碰 ``agent_threads`` 一张表（占位、续活、释放、读停止请求），所以只依赖会话 Service；
+    会话历史与模型调用都不经过它。``AgentThreadService`` 自己无状态（真正贵的是数据库连接，
+    而连接归它内部按需开关），所以这里现造一个不会有额外开销。
+
+    Returns:
+        尚未 ``start()`` 的注册表；启动与关闭都由 lifespan 负责。
+
+    Notes:
+        不执行 I/O。
+    """
+
+    return AgentRunRegistry(threads=AgentThreadService(async_session_factory))
+
+
 def build_usage_runtime() -> UsageRuntime:
     """从环境配置装配进程级用量库资源（只构造对象，不建任何连接）。
 
@@ -246,6 +265,7 @@ def create_app(
     agent_runtime_factory: Callable[[VectorSearchService, UsageCollector], AgentRuntime] = (
         build_agent_runtime
     ),
+    agent_run_registry_factory: Callable[[], AgentRunRegistry] = build_agent_run_registry,
     usage_runtime_factory: Callable[[], UsageRuntime] = build_usage_runtime,
     environment_admin_sync: Callable[
         [], Awaitable[EnvironmentAdminSyncResult]
@@ -263,6 +283,7 @@ def create_app(
         runtime: VectorSearchRuntime | None = None
         usage_runtime: UsageRuntime | None = None
         agent_runtime: AgentRuntime | None = None
+        run_registry: AgentRunRegistry | None = None
         shutdown_error: Exception | None = None
         try:
             # 1、migration 已由部署步骤完成；先同步唯一的环境托管超级用户。
@@ -288,11 +309,17 @@ def create_app(
                 agent_runtime = None
             else:
                 application.state.agent_runtime = agent_runtime
-            # 5、yield 之后是「运行期」：ASGI Server 在这里处理并发 HTTP 请求。
+            # 5、脱离连接的后台运行注册表。它排在 Agent Runtime 之后：运行要图才能跑，而它
+            #    自己只读写 agent_threads，所以装配失败的影响面比 Agent 装配失败小。
+            run_registry = agent_run_registry_factory()
+            await run_registry.start()
+            application.state.agent_run_registry = run_registry
+            # 6、yield 之后是「运行期」：ASGI Server 在这里处理并发 HTTP 请求。
             yield
         finally:
-            # 先释放依赖搜索的 Agent，再释放用量库与搜索资源。
-            for resource in (agent_runtime, usage_runtime, runtime):
+            # 先停掉还在跑的后台运行（收尾可能来不及，那段窗口已确认为接受的边界），
+            # 再释放依赖搜索的 Agent，最后释放用量库与搜索资源。
+            for resource in (run_registry, agent_runtime, usage_runtime, runtime):
                 if resource is None:
                     continue
                 try:
@@ -320,6 +347,7 @@ def create_app(
                 application.state.usage_runtime = None
                 application.state.vector_search_runtime = None
                 application.state.agent_runtime = None
+                application.state.agent_run_registry = None
             if shutdown_error is not None:
                 raise shutdown_error
 

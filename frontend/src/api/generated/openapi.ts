@@ -984,8 +984,34 @@ export interface paths {
          *     响应体不是一个 JSON 文档，而是一串 SSE 帧，每帧形如 `data: {...}`；下面这个 schema 描述的是**单帧里那个 JSON 对象**，按 `event` 字段判别。
          *
          *     注意：流一旦开始，HTTP 状态码就固定为 200——响应头在第一个事件发出时已经送出，之后的失败只能作为 error 事件送达，不会改变状态码。
+         *
+         *     **这条连接只是本次运行的一个订阅者。** 浏览器断开（关页面、断网、切走会话）不会取消这次运行：它照旧跑完，结果落进会话历史，下次打开这个会话能读到完整答案。真的要不做这次回答了，用 `POST /agent/stop` 停它。
          */
         post: operations["agent_chat_agent_chat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 停下某一次正在跑的 Agent 运行
+         * @description 请求服务端停下 ``run_id`` 指定的那一次运行。响应只表示**已受理**：真正停下它的是运行所在进程的驱动者，最多一个轮询周期之后才开始收尾。调用方要保持原连接等它的终态事件，不要在本地自建结局。
+         *
+         *     ``run_id`` 取自该会话 ``run_started`` 事件。它与当前在途运行的 id 不相等时一律幂等返回成功（视为「没有要停的运行」），因此重复调用与迟到的停止都不会误伤新一次运行。
+         *
+         *     会话不存在或不属于当前账号时返回 404（与读会话历史同一形状）。
+         */
+        post: operations["agent_stop_run_agent_stop_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1087,6 +1113,8 @@ export interface paths {
         /**
          * 删除一个会话及其历史
          * @description 删除会话记录，并清掉 checkpointer 里对应的全部历史。删除后同一个 id 无法续聊。
+         *
+         *     如果这个会话有运行在跑，先请求停下它并等它收尾，再清历史；等不到（可能卡在一次不响应取消的调用里）就按已中断继续删，不让删除请求挂住。
          */
         delete: operations["delete_agent_thread_agent_threads__thread_id__delete"];
         options?: never;
@@ -1495,6 +1523,49 @@ export interface components {
             scope: components["schemas"]["ResolvedKnowledgeBaseScope"];
         };
         /**
+         * AgentRunStopRequest
+         * @description 请求停下某一次运行。
+         *
+         *     **为什么必须带运行 id**（不只是会话 id）：服务端只对「在途运行的 id 与请求里的相等」才写停止
+         *     标志，不等就幂等返回成功（视为「没有要停的运行」）。只带会话 id 的话，停止请求可能迟到——用户
+         *     先点停止 → 旧运行已收尾 → 用户发下一次提问 → 迟到的停止到达，于是刚起步的新运行被它停掉。
+         */
+        AgentRunStopRequest: {
+            /**
+             * Thread Id
+             * Format: uuid
+             * @description 要停的那次运行所属的会话。
+             */
+            thread_id: string;
+            /**
+             * Run Id
+             * Format: uuid
+             * @description 要停的那次运行的 id，取自该会话 ``run_started`` 事件里的 run_id。
+             */
+            run_id: string;
+        };
+        /**
+         * AgentRunStopResponse
+         * @description 停止请求已受理。
+         *
+         *     它只说「服务端收到了」，不说「运行已经停了」：真正停下那次运行的是它所在进程的驱动者，最多
+         *     一个轮询周期之后才开始收尾。前端要保持连接等它的终态事件，而不是凭这个响应自己编一个结局。
+         */
+        AgentRunStopResponse: {
+            /**
+             * Thread Id
+             * Format: uuid
+             * @description 目标会话 id。
+             */
+            thread_id: string;
+            /**
+             * Run Id
+             * Format: uuid
+             * @description 目标运行 id。
+             */
+            run_id: string;
+        };
+        /**
          * AgentThreadDeletionResponse
          * @description ``DELETE /agent/threads/{thread_id}`` 的响应。
          *
@@ -1548,6 +1619,13 @@ export interface components {
              * @description 本次回放所属的会话 id。
              */
             thread_id: string;
+            /**
+             * Active Run Id
+             * @description 当前在途运行的 id；为空表示这个会话没有运行在跑。
+             *
+             *     它只有一个用途：刷新页面后前端要知道「上一轮还在跑」——否则会出现自相矛盾的组合：界面显示「这一轮没有留下回答」，用户再发一条却被服务端以「还在生成中」拒绝。它不是把运行状态暴露给用户看，也不代表运行会出现在 ``turns`` 里（在途运行的输出还没落库）。
+             */
+            active_run_id?: string | null;
             /** @description 会话当前保存的选择，不改写历史轮次的实际范围。 */
             scope: components["schemas"]["KnowledgeBaseSelection"];
             /**
@@ -7201,6 +7279,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_stop_run_agent_stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentRunStopRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRunStopResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentChatErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentChatErrorResponse"];
                 };
             };
         };

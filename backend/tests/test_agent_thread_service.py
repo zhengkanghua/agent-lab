@@ -21,7 +21,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.dialects import postgresql
 
-from agent_lab.agent.errors import AgentThreadNotFoundError
+from agent_lab.agent.errors import AgentRunInProgressError, AgentThreadNotFoundError
 from agent_lab.models.agent_thread import AgentThreadRecord
 from agent_lab.services.agent_thread_service import (
     FALLBACK_THREAD_TITLE,
@@ -173,6 +173,7 @@ def test_new_thread_is_inserted_with_the_calling_account_as_owner() -> None:
         service_with(session).ensure_thread(
             user_id=user_id,
             thread_id=None,
+            run_id=uuid4(),
             first_message="央行降息了吗",
         )
     )
@@ -203,7 +204,7 @@ def test_new_thread_snapshots_the_account_preference_prompt() -> None:
 
     created, prompt = run(
         service_with(session).ensure_thread(
-            user_id=user_id, thread_id=None, first_message="问题"
+            user_id=user_id, thread_id=None, run_id=uuid4(), first_message="问题"
         )
     )
 
@@ -221,12 +222,12 @@ def test_new_thread_id_is_generated_server_side_not_taken_from_input() -> None:
 
     first, _ = run(
         service_with(FakeSession()).ensure_thread(
-            user_id=uuid4(), thread_id=None, first_message="问题"
+            user_id=uuid4(), thread_id=None, run_id=uuid4(), first_message="问题"
         )
     )
     second, _ = run(
         service_with(FakeSession()).ensure_thread(
-            user_id=uuid4(), thread_id=None, first_message="问题"
+            user_id=uuid4(), thread_id=None, run_id=uuid4(), first_message="问题"
         )
     )
 
@@ -248,6 +249,7 @@ def test_continuing_a_thread_filters_by_both_thread_id_and_user_id() -> None:
         service_with(session).ensure_thread(
             user_id=user_id,
             thread_id=thread_id,
+            run_id=uuid4(),
             first_message="继续",
         )
     )
@@ -279,7 +281,7 @@ def test_continuing_a_thread_never_writes_the_prompt_column() -> None:
 
     run(
         service_with(session).ensure_thread(
-            user_id=user_id, thread_id=thread_id, first_message="继续"
+            user_id=user_id, thread_id=thread_id, run_id=uuid4(), first_message="继续"
         )
     )
 
@@ -308,12 +310,177 @@ def test_continuing_someone_elses_thread_rolls_back_and_raises() -> None:
             service_with(session).ensure_thread(
                 user_id=uuid4(),
                 thread_id=uuid4(),
+                run_id=uuid4(),
                 first_message="继续",
             )
         )
 
     assert (session.commits, session.rollbacks) == (0, 1)
     assert session.added == []
+
+
+def test_claiming_a_thread_requires_no_live_run_and_clears_the_stale_stop_request() -> None:
+    """占位的条件写在 UPDATE 的 WHERE 里，并在同一次写入里清掉陈旧的停止请求。
+
+    **不能先查后写**：那样会把这个竞态原样留下，而且比改动前更隐蔽（现在是两次运行的结果都能
+    看到，那样改完是「静默丢掉一次运行」）。所以这里断言的是语句文本本身：
+
+    - WHERE 里同时有「没有被占」与「上次运行已经失活」两个出口，它们用 OR 连；
+    - SET 里把 ``stop_requested_at`` 置空。只在运行收尾时清是不够的——进程可能在清之前就被
+      杀掉，留下一个陈旧的停止标记，于是刚起步的新运行一开场就被它停掉。
+    """
+
+    session = FakeSession(rowcount=1, returning_row=(None,))
+    run_id = uuid4()
+
+    run(
+        service_with(session).ensure_thread(
+            user_id=uuid4(),
+            thread_id=uuid4(),
+            run_id=run_id,
+            first_message="继续",
+        )
+    )
+
+    sql = compiled(session.statements[0]).upper()
+    assignments = sql.split(" SET ", 1)[1].split(" WHERE ", 1)[0]
+    conditions = sql.split(" WHERE ", 1)[1]
+    assert "ACTIVE_RUN_ID" in assignments
+    assert "STOP_REQUESTED_AT=NULL" in assignments
+    assert str(run_id).upper() in assignments
+    assert "ACTIVE_RUN_ID IS NULL" in conditions
+    assert "LAST_ACTIVE_AT <" in conditions
+    assert " OR " in conditions
+
+
+def test_a_live_run_on_the_thread_rejects_the_second_submission() -> None:
+    """条件写入没命中、但会话确实存在时，报的是「正在生成」而不是 404。
+
+    这两种失败必须分开：会话不是这个账号的要报 404（与「不存在」共用一个码，不泄露存在性），
+    而会话在跑要报 409——用户需要知道的是「等一会」或「先按停止」。两者的区分只能靠拿到
+    rowcount 之后补的那一次 SELECT，它用的是同一个归属条件，所以对别人的会话仍然报 404。
+    """
+
+    thread_id = uuid4()
+    # 那一次补查（scalar）返回了行：说明会话存在且属于本账号，只是被占着。
+    session = FakeSession(rowcount=0, scalar_result=thread_id)
+
+    with pytest.raises(AgentRunInProgressError):
+        run(
+            service_with(session).ensure_thread(
+                user_id=uuid4(),
+                thread_id=thread_id,
+                run_id=uuid4(),
+                first_message="继续",
+            )
+        )
+
+    assert (session.commits, session.rollbacks) == (0, 1)
+    assert session.added == []
+
+
+def test_finishing_a_run_only_releases_its_own_claim() -> None:
+    """收尾只释放「占位的就是这次运行」的那个位。
+
+    无条件清空会在被失活判定顶掉的旧运行收尾时，把新运行刚占的位抹掉——那时两个运行都能写
+    同一个会话。所以条件里必须有 ``active_run_id == run_id``。
+    """
+
+    session = FakeSession()
+    thread_id, run_id = uuid4(), uuid4()
+
+    run(service_with(session).finish_run(thread_id=thread_id, run_id=run_id))
+
+    sql = compiled(session.statements[0]).upper()
+    assignments = sql.split(" SET ", 1)[1].split(" WHERE ", 1)[0]
+    conditions = sql.split(" WHERE ", 1)[1]
+    assert "ACTIVE_RUN_ID=NULL" in assignments
+    assert "STOP_REQUESTED_AT=NULL" in assignments
+    assert "ACTIVE_RUN_ID =" in conditions and str(run_id).upper() in conditions
+    assert str(thread_id).upper() in conditions
+    assert session.commits == 1
+
+
+def test_touching_a_run_only_extends_a_claim_it_still_holds() -> None:
+    """续活只写「占位的就是这次运行」的那一行，并把活跃时间推到给定时时刻。"""
+
+    session = FakeSession(rowcount=1)
+    thread_id, run_id = uuid4(), uuid4()
+    now = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
+
+    updated = run(
+        service_with(session).touch_run(thread_id=thread_id, run_id=run_id, now=now)
+    )
+
+    assert updated == 1
+    sql = compiled(session.statements[0]).upper()
+    assignments = sql.split(" SET ", 1)[1].split(" WHERE ", 1)[0]
+    conditions = sql.split(" WHERE ", 1)[1]
+    assert "LAST_ACTIVE_AT" in assignments
+    assert "ACTIVE_RUN_ID =" in conditions and str(run_id).upper() in conditions
+
+
+def test_requesting_a_stop_only_touches_the_run_it_names() -> None:
+    """写停止标志的条件里必须有运行 id。
+
+    停止请求可能迟到：用户先点停止 → 旧运行已经收尾 → 用户发下一次提问 → 那个请求才到达。少了
+    这个条件，刚起步的新运行会被一开场就停掉——而「界面看起来停了、模型继续烧钱」正是这条链路要
+    防的事。这里只能证明条件写在语句里；它在真库上真的只命中那一行由
+    ``test_agent_thread_ownership_integration.py`` 的串行占位用例覆盖。
+    """
+
+    session = FakeSession()
+    thread_id, run_id = uuid4(), uuid4()
+    now = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
+
+    run(service_with(session).request_stop(thread_id=thread_id, run_id=run_id, now=now))
+
+    sql = compiled(session.statements[0]).upper()
+    assignments = sql.split(" SET ", 1)[1].split(" WHERE ", 1)[0]
+    conditions = sql.split(" WHERE ", 1)[1]
+    assert "STOP_REQUESTED_AT" in assignments
+    assert str(run_id).upper() in conditions
+    assert str(thread_id).upper() in conditions
+    assert session.commits == 1
+
+
+def test_reading_run_states_batches_by_the_given_threads() -> None:
+    """批量读那两列，并且只读本进程手上在跑的那几个会话。
+
+    「批量」而不是逐个查一次，是为了让负载与「一个进程挂了多次运行」无关（ADR 0037）。
+    """
+
+    thread_id = uuid4()
+
+    class _Result:
+        """只实现 Service 用到的 ``.all()`` 的行集替身。"""
+
+        def all(self):
+            return [(thread_id, None, None)]
+
+    class _Session(FakeSession):
+        """让 ``execute`` 返回可 ``.all()`` 的结果。"""
+
+        async def execute(self, statement):  # type: ignore[override]
+            self.statements.append(statement)
+            return _Result()
+
+    fake = _Session()
+    states = run(service_with(fake).read_run_states(thread_ids=[thread_id]))
+
+    assert states == {thread_id: (None, None)}
+    sql = compiled(fake.statements[0]).upper()
+    assert sql.lstrip().startswith("SELECT")
+    assert str(thread_id).upper() in sql
+
+
+def test_reading_run_states_with_no_runs_does_not_query() -> None:
+    """没有在途运行时一次查询都不发（那个协程每秒都要跑一遍）。"""
+
+    session = FakeSession()
+
+    assert run(service_with(session).read_run_states(thread_ids=[])) == {}
+    assert session.statements == []
 
 
 def test_reading_one_thread_filters_by_owner() -> None:
@@ -505,7 +672,7 @@ def test_new_thread_title_comes_from_the_same_rule_as_the_helper() -> None:
 
     run(
         service_with(session).ensure_thread(
-            user_id=uuid4(), thread_id=None, first_message=message
+            user_id=uuid4(), thread_id=None, run_id=uuid4(), first_message=message
         )
     )
 

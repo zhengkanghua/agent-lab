@@ -180,6 +180,33 @@ export async function* streamAgentChat({
   }
 }
 
+/**
+ * 请求服务端停下某一次运行。
+ *
+ * **为什么必须有这个接口**：运行不再挂在浏览器连接上之后，原先那条「中止本地请求」的路对服务端不再
+ * 有任何作用——断开只减少一个订阅者。没有它，停止就是假的：界面看起来停了，模型继续烧钱。
+ *
+ * 返回值只表示「已受理」：真正停下它的是运行所在进程的驱动者，最多一个轮询周期之后才开始收尾。
+ * 所以调用方要**保持原连接**等服务端的终态事件，不要在本地自建结局——本地编的那个结局与刷新后
+ * 回放看到的口径必然分叉。
+ *
+ * ``runId`` 取自该会话 ``run_started`` 事件；它与当前在途运行的 id 不相等时服务端幂等返回成功，
+ * 所以重复点击与迟到的停止都不会误伤新一次运行。
+ */
+export async function stopAgentRun(threadId: string, runId: string): Promise<void> {
+  const response = await requestJson<unknown>('/agent/stop', {
+    method: 'POST',
+    body: JSON.stringify({ thread_id: threadId, run_id: runId }),
+  })
+
+  if (!isRecord(response) || !isUuid(response.thread_id) || !isUuid(response.run_id)) {
+    throw new ApiError({
+      message: 'The agent service returned an unexpected stop result.',
+      code: 'response_invalid',
+    })
+  }
+}
+
 /** 取默认系统提示词，用于把自定义提示词输入框预填成可编辑的起点。 */
 export async function fetchAgentDefaultPrompt(signal?: AbortSignal): Promise<string> {
   const response = await requestJson<unknown>('/agent/default-prompt', { method: 'GET', signal })

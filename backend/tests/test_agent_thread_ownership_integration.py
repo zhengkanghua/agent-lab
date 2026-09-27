@@ -22,13 +22,15 @@ RUN_POSTGRES_AGENT_THREAD_INTEGRATION_TEST=1 pytest tests/test_agent_thread_owne
 
 import asyncio
 import os
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from agent_lab.agent.errors import AgentThreadNotFoundError
+from agent_lab.agent.errors import AgentRunInProgressError, AgentThreadNotFoundError
+from agent_lab.agent.limits import RUN_ZOMBIE_THRESHOLD_SECONDS
 from agent_lab.db.session import engine
 from agent_lab.models.agent_thread import AgentThreadRecord
 from agent_lab.models.user import AccessTokenRecord, UserRecord
@@ -105,25 +107,28 @@ def test_ownership_filter_really_isolates_two_accounts() -> None:
             threads = AgentThreadService(factory)
 
             # 1、Alice 建两个会话，Bob 建一个。返回值是 (会话 id, 会话提示词)。
+            alice_first_run = uuid4()
             alice_first, _ = await threads.ensure_thread(
-                user_id=alice.id, thread_id=None, first_message="Alice 的第一个会话"
+                user_id=alice.id, thread_id=None, run_id=alice_first_run, first_message="Alice 的第一个会话"
             )
             alice_second, _ = await threads.ensure_thread(
-                user_id=alice.id, thread_id=None, first_message="Alice 的第二个会话"
+                user_id=alice.id, thread_id=None, run_id=uuid4(), first_message="Alice 的第二个会话"
             )
             bob_only, _ = await threads.ensure_thread(
-                user_id=bob.id, thread_id=None, first_message="Bob 的会话"
+                user_id=bob.id, thread_id=None, run_id=uuid4(), first_message="Bob 的会话"
             )
             assert len({alice_first, alice_second, bob_only}) == 3
+            # 释放 Alice 第一次运行占的位，下面才能验证续聊：同一个会话同时只允许一次运行。
+            await threads.finish_run(thread_id=alice_first, run_id=alice_first_run)
 
             # 2、续聊：Bob 拿 Alice 的 id 续不了。**这就是语句级测试证明不了的那一步。**
             with pytest.raises(AgentThreadNotFoundError):
                 await threads.ensure_thread(
-                    user_id=bob.id, thread_id=alice_first, first_message="偷看"
+                    user_id=bob.id, thread_id=alice_first, run_id=uuid4(), first_message="偷看"
                 )
             # 自己的能续，返回同一个 id。
             resumed, _ = await threads.ensure_thread(
-                user_id=alice.id, thread_id=alice_first, first_message="接着聊"
+                user_id=alice.id, thread_id=alice_first, run_id=uuid4(), first_message="接着聊"
             )
             assert resumed == alice_first
 
@@ -185,6 +190,69 @@ def test_ownership_filter_really_isolates_two_accounts() -> None:
     asyncio.run(verify(), loop_factory=asyncio.SelectorEventLoop)
 
 
+def test_a_thread_holds_exactly_one_run_and_stale_claims_expire() -> None:
+    """真库上验「同一个会话同时只允许一次运行」，以及失活判定真的能放行。
+
+    语句级测试只能证明条件写在 SQL 文本里；这条证明它在 PostgreSQL 上真的按预期命中：第一次占位
+    成功、第二次拿到 ``AgentRunInProgressError``、被失活判定放行之后又能占下。
+
+    最后那一段用 ``touch_run`` 把活跃时间退到阈值之外，而不是直接改库：它正是真实故障里会发生
+    的事——进程崩了，没有任何清理动作执行，于是这一行停在最后一次续期的时刻。
+    """
+
+    async def verify() -> None:
+        suffix = uuid4().hex
+        connection = await engine.connect()
+        outer_transaction = await connection.begin()
+        factory = async_sessionmaker(
+            bind=connection,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
+        try:
+            owner = await _create_user(factory, f"serial-{suffix}@example.com")
+            threads = AgentThreadService(factory)
+
+            first_run = uuid4()
+            thread_id, _ = await threads.ensure_thread(
+                user_id=owner.id, thread_id=None, run_id=first_run, first_message="第一轮"
+            )
+
+            # 1、同一个会话第二次提交被拒，而且没有把它自己的运行 id 写进去。
+            with pytest.raises(AgentRunInProgressError):
+                await threads.ensure_thread(
+                    user_id=owner.id, thread_id=thread_id, run_id=uuid4(), first_message="第二轮"
+                )
+            async with factory() as session:
+                assert (await session.get(AgentThreadRecord, thread_id)).active_run_id == first_run
+
+            # 2、结算之后立刻可以再提交（这就是「运行结束后同一会话恢复可提交」在真库上的形态）。
+            await threads.finish_run(thread_id=thread_id, run_id=first_run)
+            second_run = uuid4()
+            await threads.ensure_thread(
+                user_id=owner.id, thread_id=thread_id, run_id=second_run, first_message="再问一次"
+            )
+
+            # 3、不结算、而是把活跃时间退到失活阈值之外：下一次占位能抢过来（进程崩了那条路）。
+            stale_at = datetime.now(UTC) - timedelta(seconds=RUN_ZOMBIE_THRESHOLD_SECONDS * 2)
+            assert await threads.touch_run(thread_id=thread_id, run_id=second_run, now=stale_at) == 1
+            third_run = uuid4()
+            await threads.ensure_thread(
+                user_id=owner.id, thread_id=thread_id, run_id=third_run, first_message="崩溃之后"
+            )
+            # 4、旧运行收尾时不能把新运行刚占的位抹掉（条件写的是它自己的 run_id）。
+            await threads.finish_run(thread_id=thread_id, run_id=second_run)
+            async with factory() as session:
+                assert (await session.get(AgentThreadRecord, thread_id)).active_run_id == third_run
+        finally:
+            await outer_transaction.rollback()
+            await connection.close()
+            await engine.dispose()
+
+    asyncio.run(verify(), loop_factory=asyncio.SelectorEventLoop)
+
+
 def test_thread_snapshots_the_account_prompt_on_a_real_database() -> None:
     """真库上验「建会话时快照提示词、续聊不重读偏好」。
 
@@ -217,13 +285,17 @@ def test_thread_snapshots_the_account_prompt_on_a_real_database() -> None:
                         matches_per_document=3,
                     ),
                 )
+            first_run = uuid4()
             thread_id, prompt = await threads.ensure_thread(
-                user_id=owner.id, thread_id=None, first_message="第一轮"
+                user_id=owner.id, thread_id=None, run_id=first_run, first_message="第一轮"
             )
             assert prompt == "第一版提示词。"
             async with factory() as session:
                 stored = await session.get(AgentThreadRecord, thread_id)
                 assert stored is not None and stored.system_prompt == "第一版提示词。"
+            # 第一轮没有真实运行在跑，它的占位要自己结算掉，否则下面的续聊会被判成重复提交。
+            # 走 Service 的释放路径，不直接改库：这样测的才是产品实际走的那条路。
+            await threads.finish_run(thread_id=thread_id, run_id=first_run)
 
             # 2、改偏好之后续聊：会话里那份不变。
             async with factory() as session:
@@ -236,21 +308,21 @@ def test_thread_snapshots_the_account_prompt_on_a_real_database() -> None:
                     ),
                 )
             same_thread, resumed_prompt = await threads.ensure_thread(
-                user_id=owner.id, thread_id=thread_id, first_message="第二轮"
+                user_id=owner.id, thread_id=thread_id, run_id=uuid4(), first_message="第二轮"
             )
             assert same_thread == thread_id
             assert resumed_prompt == "第一版提示词。"
 
             # 3、新开的会话用改过之后的那份。
             _, new_prompt = await threads.ensure_thread(
-                user_id=owner.id, thread_id=None, first_message="新会话"
+                user_id=owner.id, thread_id=None, run_id=uuid4(), first_message="新会话"
             )
             assert new_prompt == "第二版提示词。"
 
             # 4、没配过提示词的账号：快照为空，运行时回落到内置默认。
             other = await _create_user(factory, f"noprefs-{suffix}@example.com")
             _, empty_prompt = await threads.ensure_thread(
-                user_id=other.id, thread_id=None, first_message="没配过"
+                user_id=other.id, thread_id=None, run_id=uuid4(), first_message="没配过"
             )
             assert empty_prompt is None
         finally:
@@ -288,7 +360,7 @@ def test_deregistering_an_account_keeps_its_thread_rows() -> None:
             doomed = await _create_user(factory, f"doomed-{suffix}@example.com")
             threads = AgentThreadService(factory)
             thread_id, _ = await threads.ensure_thread(
-                user_id=doomed.id, thread_id=None, first_message="注销后仍然在"
+                user_id=doomed.id, thread_id=None, run_id=uuid4(), first_message="注销后仍然在"
             )
             # 也把这个账号的偏好与登录 Token 备齐：注销之后偏好必须还在，
             # 而 Token 必须一条不剩（否则已签发的 Cookie 还能继续用）。

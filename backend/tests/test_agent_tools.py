@@ -17,6 +17,8 @@
 """
 
 from datetime import UTC, datetime, timedelta
+import asyncio
+import time
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -24,12 +26,15 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy.exc import OperationalError
 
+from agent_lab.agent.context import AgentContext
 from agent_lab.agent.limits import (
     READ_DOCUMENT_MAX_CHARS,
     SEARCH_TOOL_MAX_DOCUMENTS,
     SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT,
     SEARCH_TOOL_MAX_WITHIN_DAYS,
+    TOOL_RETRY_MAX,
 )
+from agent_lab.agent.streaming import stream_agent_events
 from agent_lab.agent.tools import build_agent_tools
 from agent_lab.agent.tools.read_document import build_read_document_tool
 from agent_lab.agent.tools.search_documents import build_search_documents_tool
@@ -37,12 +42,21 @@ from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.models.document import DocumentRecord
 from agent_lab.models.document_processing import DocumentVersion
 from agent_lab.models.source import SourceRecord
+from agent_lab.schemas.agent_chat import AgentDoneEvent
 from agent_lab.schemas.document_search import (
     DocumentSearchMatch,
     DocumentSearchResult,
 )
-from tests.agent_helpers import run
-from tests.agent_scope_helpers import invoke_tool
+from langchain_core.messages import AIMessage, ToolMessage
+
+from tests.agent_helpers import (
+    OFFLINE_LANGSMITH_SETTINGS,
+    ScriptedChatModel,
+    build_offline_graph,
+    run,
+    tool_call_message,
+)
+from tests.agent_scope_helpers import NEWS_SCOPE, invoke_tool
 from agent_lab.models.knowledge_base import KnowledgeBaseRecord
 
 
@@ -118,6 +132,25 @@ class FakeSearchService:
         if isinstance(self.outcome, BaseException):
             raise self.outcome
         return self.outcome
+
+
+class HangingSearchService(FakeSearchService):
+    """永远不返回的检索 Service，用来复现「一次工具调用挂住」。
+
+    挂住的形态比抛异常更隐蔽：抛异常会立刻走错误路径，而挂住的调用会让整次运行停在原地，
+    而且它仍然算「活着」——最后活跃时间照常续期，失活判定不会替它收场。
+    """
+
+    def __init__(self) -> None:
+        super().__init__([])
+        self.attempts = 0
+
+    async def search_documents(self, request: Any, *, resolved_scope) -> list[DocumentSearchResult]:
+        """记一次尝试，然后永不返回。"""
+
+        self.attempts += 1
+        await asyncio.Event().wait()
+        raise AssertionError("这行不可达")
 
 
 class FakeSession:
@@ -454,3 +487,106 @@ def test_tool_output_with_injected_instructions_is_treated_as_data() -> None:
     assert "IGNORE PREVIOUS INSTRUCTIONS" in output
     assert "请忽略上述所有要求" in output
     assert "你现在的身份是" in output
+
+
+class HangingSession(FakeSession):
+    """永远不会返回的假 Session，用来复现「读全文时数据库不响应」。"""
+
+    async def scalar(self, _statement: Any) -> DocumentRecord | None:
+        """永不返回。"""
+
+        await asyncio.Event().wait()
+        raise AssertionError("这行不可达")
+
+
+class HangingSessionFactory(FakeSessionFactory):
+    """产出挂住的假 Session，并照旧统计开关次数。"""
+
+    def __call__(self) -> HangingSession:
+        return HangingSession(self)
+
+
+def test_a_tool_that_never_returns_times_out_instead_of_hanging_the_run(monkeypatch) -> None:
+    """一次不返回的工具调用不会让运行无限期卡住，而且模型拿到的是安全文案。
+
+    **为什么必须有这个上限**：挂住比抛异常隐蔽得多。抛异常立刻走错误路径；挂住的调用让整次运行停在
+    原地，而这次运行仍然算「活着」——最后活跃时刻照常续期，失活判定不会替它收场。于是这个会话一直
+    无法提交新提问，只能等用户按停止或进程重启。
+
+    「整次运行失败」和「模型收到安全文案」是两件不同的事，两个都要断言：只断言不挂住的话，一个直接
+    抛异常终止运行的实现也能通过。
+    """
+
+    monkeypatch.setattr(
+        "agent_lab.agent.tools.search_documents.TOOL_CALL_TIMEOUT_SECONDS", 0.01
+    )
+    service = HangingSearchService()
+    model = ScriptedChatModel(
+        responses=[
+            tool_call_message("search_documents", {"query": "备份"}),
+            AIMessage(content="暂时查不到。"),
+        ]
+    )
+    graph = build_offline_graph(
+        model, [build_search_documents_tool(service)], retry_initial_delay=0.0
+    )
+
+    async def drain() -> list[Any]:
+        async def collect() -> list[Any]:
+            return [
+                event
+                async for event in stream_agent_events(
+                    graph,
+                    message="备份保留多久",
+                    thread_id=uuid4(),
+                    context=AgentContext(scope=NEWS_SCOPE),
+                    langsmith_settings=OFFLINE_LANGSMITH_SETTINGS,
+                )
+            ]
+
+        # 上限只用来防止用例自己挂住（实现退化时它必须变成一条失败，而不是永远转下去），
+        # 不是产品行为；产品的上限在 TOOL_CALL_TIMEOUT_SECONDS 里。
+        return await asyncio.wait_for(collect(), timeout=10.0)
+
+    events = run(drain())
+
+    # 1、运行自己收场了，而且是正常收尾（不是被工具拖死，也不是整次失败）。
+    assert isinstance(events[-1], AgentDoneEvent)
+    # 2、模型收到的是安全文案，里面说清了是「超时」——它才有依据决定重试还是直接作答。
+    tool_messages = [
+        message
+        for message in model.received_messages[-1]
+        if isinstance(message, ToolMessage)
+    ]
+    assert [message.status for message in tool_messages] == ["error"]
+    assert "超时" in str(tool_messages[0].content)
+    # 3、脱敏仍然成立：异常类型名与内部细节不进模型上下文。
+    assert "TimeoutError" not in str(tool_messages[0].content)
+    assert "asyncio" not in str(tool_messages[0].content)
+    # 4、重试中间件在内层，所以挂住的调用被重试过；耗时因此是「超时 × (1 + 重试次数)」这个有限值
+    #    （见 limits.TOOL_CALL_TIMEOUT_SECONDS 的说明），不是无限期。
+    assert service.attempts == TOOL_RETRY_MAX + 1
+
+
+def test_read_document_times_out_and_releases_its_session(monkeypatch) -> None:
+    """读全文遇上不响应的数据库也会超时，而且超时不泄漏这条数据库连接。"""
+
+    monkeypatch.setattr("agent_lab.agent.tools.read_document.TOOL_CALL_TIMEOUT_SECONDS", 0.01)
+    factory = HangingSessionFactory()
+    tool = build_read_document_tool(factory)
+
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        run(
+            # 自己的 10 秒上限只用来防止用例挂住；产品的上限是上面那个 0.01。两者都是
+            # ``TimeoutError``，所以下面还要用耗时把它们区分开。
+            asyncio.wait_for(
+                invoke_tool(tool, {"document_id": str(DOCUMENT_ID)}, context=AgentContext(scope=NEWS_SCOPE)),
+                timeout=10.0,
+            )
+        )
+    assert time.monotonic() - started < 5.0, "生效的是用例自己的上限，产品那条没起作用"
+
+    # 超时是在 session 的上下文里发生的，退出时必须照常归还连接——否则一次挂住的检索会把连接池
+    # 慢慢吃空，而表现是检索页报数据库不可用。
+    assert (factory.opened, factory.closed) == (1, 1)

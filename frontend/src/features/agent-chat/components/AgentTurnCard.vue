@@ -78,10 +78,6 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
     <h3 class="question-text">{{ turn.question }}</h3>
 
     <div class="answer-region">
-      <p v-if="turn.status === 'cancelled' || turn.status === 'incomplete'" class="turn-state-line">
-        <span class="turn-state">{{ turn.status === 'cancelled' ? '已停止' : '回答未完成' }}</span>
-      </p>
-
       <p v-if="turn.scope" class="run-scope">本次范围：{{ scopeLabel(turn.scope) }}</p>
       <AgentToolTraceList :traces="turn.traces" :streaming="isStreaming" />
 
@@ -114,9 +110,6 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
       </ol>
       <p v-if="turn.invalidCitations?.length" class="citation-warning" role="status">
         部分引用未能对应本次取得的资料，无法核验，请勿据此确认结论。
-      </p>
-      <p v-if="turn.status === 'incomplete' && turn.answer" class="citation-warning" role="status">
-        本次回答中断或达到处理上限，以上内容不完整。
       </p>
 
       <BaseCallout
@@ -182,16 +175,6 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
 
 .answer-region {
   min-width: 0;
-}
-
-.turn-state-line {
-  margin-bottom: 6px;
-}
-
-.turn-state {
-  color: var(--warning);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-semibold);
 }
 
 .run-scope {

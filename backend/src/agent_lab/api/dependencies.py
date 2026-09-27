@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     # 从不构造 Runtime，也不 isinstance 它。
     # ``AgentRuntimeUnavailableError`` 可以照常运行时导入——``agent.errors`` 是叶子模块，
     # 一行 import 都没有。
+    from agent_lab.agent.runs import AgentRunRegistry
     from agent_lab.agent.runtime import AgentRuntime
 
     from agent_lab.tasks.service import TaskService
@@ -116,6 +117,33 @@ def get_agent_runtime(request: Request) -> "AgentRuntime":
     return runtime
 
 
+def get_agent_run_registry(request: Request) -> "AgentRunRegistry":
+    """从应用 lifespan 状态取出进程级运行注册表（FastAPI 依赖注入函数）。
+
+    为什么和 ``get_agent_runtime`` 分开：两者可以各自缺失。Agent Runtime 装配失败时
+    ``/agent/*`` 全部返 503；而注册表只管「运行由谁驱动」，它自己不碰模型和向量库。
+    合成一个依赖会让两种故障只能报同一个原因，排查时少一条线索。
+
+    Args:
+        request: 当前 HTTP 请求，用于访问所属应用的 ``state``。
+
+    Returns:
+        lifespan 启动时装配、由该进程所有并发请求共享的 ``AgentRunRegistry``。
+
+    Raises:
+        AgentRuntimeUnavailableError: 应用未经 lifespan 启动，或注册表装配失败。映射成
+            和「Agent 运行时不可用」同一个 503：对调用方来说都是「现在没法发起运行」。
+
+    Notes:
+        只读取进程内对象，不构造注册表，也不执行模型、Qdrant 或 PostgreSQL I/O。
+    """
+
+    registry = getattr(request.app.state, "agent_run_registry", None)
+    if registry is None:
+        raise AgentRuntimeUnavailableError("Agent 运行时不可用。")
+    return registry
+
+
 def get_agent_thread_service() -> AgentThreadService:
     """构造会话归属 Service（FastAPI 依赖注入函数）。
 
@@ -180,6 +208,7 @@ __all__ = [
     "SchedulerRuntimeUnavailableError",
     "UsageDatabaseUnavailableError",
     "VectorSearchRuntimeUnavailableError",
+    "get_agent_run_registry",
     "get_agent_runtime",
     "get_agent_thread_service",
     "get_task_service",

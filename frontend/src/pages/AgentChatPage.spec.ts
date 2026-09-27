@@ -8,6 +8,7 @@ import { newsKnowledgeBase, techKnowledgeBase } from '@/api/knowledge-bases.fixt
 
 const api = vi.hoisted(() => ({
   streamAgentChat: vi.fn(),
+  stopAgentRun: vi.fn(async () => {}),
   fetchAgentDefaultPrompt: vi.fn(),
   // 设置中心从这一模块读提示词上界；mock 里补齐，避免 undefined 参与运算。
   MAX_SYSTEM_PROMPT_CHARACTERS: 4000,
@@ -545,6 +546,23 @@ describe('AgentChatPage', () => {
       expect(threadsApi.getAgentThreadMessages).toHaveBeenCalledWith(THREAD_ID, expect.anything())
       expect(wrapper.text()).toContain('之前问过的')
       expect(wrapper.text()).toContain('之前答过的')
+      wrapper.unmount()
+    })
+
+    it('刷新后上一轮还在跑时说明「正在生成」并禁用发送', async () => {
+      /* 没有这一条，界面会显示「这一轮没有留下回答」，用户再发一条却被服务端以「还在生成中」拒绝
+         ——两边各说各话。这里只断言刷新那一刻的状态：自动等到结束由 useAgentChat 的用例负责。 */
+      threadsApi.getAgentThreadMessages.mockResolvedValue({
+        ...REPLAY,
+        turns: [{ question: '之前问过的', answer: '', status: 'incomplete' }],
+        active_run_id: '30000000-0000-4000-8000-000000000020',
+      })
+      const { wrapper } = await mountThreadPage()
+
+      expect(wrapper.text()).toContain('正在生成')
+      await wrapper.get('.message-input').setValue('再问一句')
+      await flushPromises()
+      expect(wrapper.get('.send-button').attributes('disabled')).toBeDefined()
       wrapper.unmount()
     })
 

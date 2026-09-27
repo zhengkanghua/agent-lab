@@ -53,9 +53,21 @@ class AgentThreadNotFoundError(AgentError):
     """
 
 
+class AgentRunInProgressError(AgentError):
+    """这个会话已经有一次运行在跑，不能同时再开一次。
+
+    抛出点在会话占位那次条件写入：同一行上的 ``active_run_id`` 已经有值，且没有超过失活阈值。
+    两个并发提交只有一个能占上位，另一个拿到这个错误、由错误表映射成 409。
+
+    与「重复提交」不同，它不是调用方写错了什么——用户在一个正在生成的会话里再发一条是完全自然的
+    动作，只是服务端只能跑一次。所以文案要说明「正在生成」而不是「出错了」。
+    """
+
+
 __all__ = [
     "AgentCheckpointerUnavailableError",
     "AgentError",
+    "AgentRunInProgressError",
     "AgentRuntimeUnavailableError",
     "AgentThreadNotFoundError",
     "ModelResponseInvalidError",

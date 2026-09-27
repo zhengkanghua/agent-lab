@@ -33,7 +33,7 @@ from agent_lab.agent.middleware import (
     select_system_prompt,
 )
 from agent_lab.agent.prompts import DEFAULT_SYSTEM_PROMPT
-from agent_lab.agent.streaming import stream_agent_events
+from agent_lab.agent.streaming import PersistedModelMessage, stream_agent_events
 from agent_lab.schemas.agent_chat import AgentErrorEvent, AgentToolResultEvent
 from tests.agent_helpers import (
     OFFLINE_LANGSMITH_SETTINGS,
@@ -167,7 +167,11 @@ def test_tool_failure_never_leaks_exception_text() -> None:
 
     events = run(collect(graph))
 
-    payload = str([event.model_dump() for event in events])
+    # 滤掉只给运行驱动者看的落库信号：它不是对外事件，没有 model_dump，也不该被当成
+    # 「发给前端的内容」来断言。它的存在由 tests/test_agent_streaming.py 单独守护。
+    payload = str(
+        [event.model_dump() for event in events if not isinstance(event, PersistedModelMessage)]
+    )
     assert "secret" not in payload
     assert "postgresql://" not in payload
     assert "RuntimeError" not in payload

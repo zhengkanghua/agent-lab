@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { History, ShieldCheck } from '@lucide/vue'
+import { History, LoaderCircle, ShieldCheck } from '@lucide/vue'
 import AppShell from '@/layouts/AppShell.vue'
 import { useLogout } from '@/features/auth'
 import { usePreferences } from '@/features/settings'
@@ -69,8 +69,10 @@ const threadList = useThreadList({
   },
 })
 
-// beforeLogout 里掐掉在途的流：留着它会在退出后继续读一条已经没有权限的连接。
-const { loggingOut, logoutError, logout } = useLogout({ beforeLogout: chat.cancel })
+// beforeLogout 里掐掉本地这条流：留着它会在退出后继续读一条已经没有权限的连接。**但不清求服务端
+// 停止**：按 ADR 0035，离开只是少一个订阅者，那次运行照旧跑完并落进会话历史；要真的停下它，走
+// 输入条上的停止键（chat.cancel）。
+const { loggingOut, logoutError, logout } = useLogout({ beforeLogout: chat.abandonRun })
 
 const transcriptEndRef = ref<HTMLElement | null>(null)
 
@@ -246,6 +248,16 @@ async function chooseExample(value: string): Promise<void> {
             >
           </BaseCallout>
 
+          <BaseCallout
+            v-if="chat.isAwaitingRun.value"
+            class="run-note"
+            tone="neutral"
+            title="正在生成"
+            description="上一轮回答还在服务端生成，完成后会自动显示最终内容。"
+          >
+            <template #icon><LoaderCircle :size="14" aria-hidden="true" /></template>
+          </BaseCallout>
+
           <AgentTranscript
             :turns="chat.turns.value"
             :streaming="chat.isStreaming.value"
@@ -345,6 +357,12 @@ async function chooseExample(value: string): Promise<void> {
 }
 
 .history-note {
+  margin-bottom: 14px;
+}
+
+/* 刷新之后如果上一轮还在跑，这里如实说出来并等它结束。不设放弃上限：服务端的失活判定会
+   结束这个状态，界面与服务端因此不会各说各话。 */
+.run-note {
   margin-bottom: 14px;
 }
 

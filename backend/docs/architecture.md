@@ -40,7 +40,8 @@ GET  /document-management/{document_id}/versions/{version_id}  已采用历史�
 GET  /document-management/{document_id}/reviews     审核结论（超级用户）
 DELETE /document-management/{document_id}          完整删除文档（超级用户）
 POST /pipeline/run-once                   持久受理手动 Pipeline，返回 202 和执行编号（超级用户）
-POST /agent/chat                          Agent 对话，SSE 流式
+POST /agent/chat                          Agent 对话，SSE 流式；运行不随连接中断
+POST /agent/stop                          停下某一次正在跑的运行，请求体带会话 id 与运行 id
 GET  /agent/default-prompt                默认系统提示词
 GET    /agent/threads                     列出自己的会话，分页
 GET    /agent/threads/{thread_id}/messages 回放一个会话的历史问答
@@ -356,6 +357,21 @@ Python 中重排；同一 Document 的多个 Chunk 可以分别返回，不做 d
 增量返回。它**复用**只读的 ``VectorSearchService`` 与 ``DocumentRepository`` 作为工具实现，
 不复制检索逻辑；但走自己的路由、权限和响应形状。
 
+**一次运行不随连接中断，也不随连接存在而推进。** 请求受理后由 ``agent/runs.py`` 的驱动者把事件流
+读到结束并收尾（回放写入、释放会话占位），HTTP 响应退化成它的一个可选订阅者：浏览器在就把事件转给
+它，浏览器走了照旧跑完，结果自然落进会话历史。要真的停下这次运行，走 ``POST /agent/stop``（带会话 id
+与运行 id，幂等），不能靠断开连接。
+
+并发与失活：同一个会话同时只允许一次运行，靠 ``agent_threads`` 上的 ``active_run_id`` 一次条件写入
+占位（再来一次返回 409 ``agent_run_in_progress``）；``last_active_at`` 由驱动者按固定节奏续期，超过阈值
+未续期视为已中断并允许下一次占位（阈值由续期间隔决定，不由操作超时决定，见 ADR 0037）。每个 API 进程
+有一个轮询协程批量读自己手上在跑的那几次运行的停止请求，写进内存标志；驱动者每轮只看那个标志，不为此
+碰数据库。
+
+被中断的运行会把**尚未落库**的那部分模型输出补写进会话（见 ADR 0036）：累积以「最近一次已落库的模型
+消息」为界，边界由 ``streaming.PersistedModelMessage`` 这个只给驱动者看的信号给出。没有文本就不写；
+写入失败只记日志，不让收尾失败反过来中断清理。
+
 ``agent/`` 的模块分工：
 
 ```text
@@ -369,6 +385,7 @@ agent/evidence.py   Tool artifact 与引用核验，SSE 和回放共用
 agent/replay.py     从保留消息得到问答、范围、完成状态和引用
 agent/middleware.py 中间件流水线；顺序有语义，见 ADR 0005
 agent/runtime.py    组装根：编译一次图，进程级共享
+agent/runs.py       脱离连接的运行驱动者与订阅者、停止标志、失活续期（见 ADR 0035/0037）
 agent/streaming.py  翻译 LangGraph 事件，从持久状态确定 Done
 agent/checkpointer.py  四张 checkpointer 表名的唯一真源 + Alembic 的 include_object
 agent/model_catalog.py 启动期向上游拉模型列表，校验配置的模型名确实存在
@@ -392,15 +409,17 @@ Agent 装配失败**不致命**：lifespan 捕获、只记异常类型、``app.s
 给人看的分页上限；``READ_DOCUMENT_MAX_CHARS`` 这里截断是对的，正文是数据不是指令；
 ``SSE_HEARTBEAT_INTERVAL_SECONDS`` 是心跳间隔，前端的空闲超时按它的倍数留余量。
 
-SSE 侧的两个实现约束：
+SSE 侧的实现约束（心跳与订阅在 ``api/agent_chat.py``，事件流在 ``agent/runs.py``）：
 
 - 响应类是 ``ServerSentEventResponse`` 子类，不是给 ``StreamingResponse`` 传
   ``media_type``。传参数只改真实响应头、不改 OpenAPI——FastAPI 按
   ``response_class.media_type`` 决定把 ``responses`` 里的模型挂到哪个 content key 下，
   否则事件 schema 会被挂到 ``application/json`` 上，而这个接口从不返回 JSON 响应体。
 - 心跳用 ``asyncio.wait`` 而不是 ``wait_for``：后者超时会取消任务，等于每发一次心跳就丢掉一个
-  正在生成的事件。``wait`` 超时后不取消，下一轮接着等同一次 ``__anext__``；``finally`` 里再
-  收拾悬空的那次，否则客户端中途断开时会漏掉模型连接。
+  已经到达的事件。``wait`` 超时后不取消，下一轮接着等同一次队列取值；``finally`` 里再收拾悬空的那次，
+  并退订（断开时 ASGI 服务器是**取消**这个生成器，不是正常关闭，见 ADR 0035）。
+- 驱动者那侧用同样的形状等 ``__anext__``：它的超时时间片就是「看一眼停止标志」的节奏。取消的
+  只是那一次模型调用，驱动者自己不被取消，所以收尾写入不会发生在被取消的上下文里。
 
 事件模型在 ``schemas/agent_chat.py``，用 ``event`` 字段做 discriminated union
 （``AgentChatEventEnvelope``），所以生成的前端类型是可穷尽的联合：
@@ -682,8 +701,9 @@ document_versions           已采用的正文、结构、Chunk、元数据、�
 document_review_records     人工或自动审核结论及当时正文依据
 users            内部登录邮箱、Argon2 密码 Hash、启用/超级用户状态和唯一环境托管标记
 access_tokens    浏览器登录产生的可撤销随机 Token、创建时间和所属用户
-agent_threads    Agent 会话的账号归属、选择范围、会话级系统提示词快照、标题与最后活跃时间；
-                 不含任何消息内容
+agent_threads    Agent 会话的账号归属、选择范围、会话级系统提示词快照、标题、最后活动时刻
+                 （提问受理时写一次、运行期间由驱动者续期）与运行协调两列（在途运行 id、
+                 停止请求时刻）；不含任何消息内容
 user_preferences 账号级个人偏好：自定义系统提示词与两个检索数量参数；一行一个账号，
                  system_prompt 为空表示用服务端内置默认提示词
 scheduled_jobs   周期配置：key 唯一、类型、cron、params、启停、配置版本与下一计划时刻
