@@ -58,6 +58,7 @@ from agent_lab.agent.errors import (
 )
 from agent_lab.api.dependencies import (
     SchedulerRuntimeUnavailableError,
+    UsageDatabaseUnavailableError,
     VectorSearchRuntimeUnavailableError,
 )
 from agent_lab.ingestion.freshrss_client import (
@@ -477,6 +478,28 @@ KNOWLEDGE_BASE_ERROR_RULES: tuple[ErrorContractRule, ...] = (
 )
 
 
+# 用量查询链路（/usage/*）的错误表。本链路只有一种基础设施失败——用量库读不了——但把它拆成
+# 两个 code：装配缺失（进程没经过 lifespan 起、或用量库根本没装）与库当前读不了，排查方向不同。
+# 它们都是可重试的（换一个进程、或等库恢复），而**不**返回空列表与零汇总：把「查不到」渲染成 0，
+# 正是这份功能反复拒绝的事（迁移没跑、库被摘掉都会变成「这个月没花钱」）。
+USAGE_ERROR_RULES: tuple[ErrorContractRule, ...] = (
+    ErrorContractRule(
+        exceptions=(UsageDatabaseUnavailableError,),
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="usage_runtime_unavailable",
+        detail="用量查询运行时不可用。",
+        retryable=True,
+    ),
+    ErrorContractRule(
+        exceptions=(SQLAlchemyError,),
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="usage_database_unavailable",
+        detail="用量库当前不可用。",
+        retryable=True,
+    ),
+)
+
+
 # 定时任务管理链路（/scheduled-jobs）的错误表。与账号管理同构：基础设施失败只有数据库
 # 一类；领域错误（任务不存在、cron 无效、正在运行中冲突等）自带稳定 code 与安全中文
 # detail，由路由的 _domain_error 映射成 404/409/422，不进本表。
@@ -850,6 +873,28 @@ def build_agent_chat_error_response(error: BaseException) -> JSONResponse:
     """
 
     rule = resolve_error_contract(error, AGENT_CHAT_ERROR_RULES)
+    return build_error_response(
+        rule.status_code,
+        rule.code,
+        rule.detail,
+        retryable=rule.retryable,
+    )
+
+
+def build_usage_error_response(error: BaseException) -> JSONResponse:
+    """把用量查询链路的基础设施失败映射成稳定的 503 JSON 响应。
+
+    Args:
+        error: 已捕获的用量库异常；只读其类型。
+
+    Returns:
+        含稳定 ``code/detail/retryable`` 的 JSON 响应。
+
+    Notes:
+        纯内存查表，不读异常文本（连接串里有密码），不执行任何 I/O。
+    """
+
+    rule = resolve_error_contract(error, USAGE_ERROR_RULES)
     return build_error_response(
         rule.status_code,
         rule.code,

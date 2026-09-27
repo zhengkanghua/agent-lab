@@ -26,6 +26,7 @@ from agent_lab.agent.errors import AgentThreadNotFoundError
 from agent_lab.agent.runtime import AgentRuntime
 from agent_lab.config.llm import LlmProvider, LlmSettings
 from agent_lab.services.agent_thread_service import derive_thread_title
+from agent_lab.usage.collector import NoopUsageCollector
 from agent_lab.knowledge.scope import KnowledgeBaseSelection, ResolvedKnowledgeBaseScope
 from agent_lab.knowledge.domain import KnowledgeBaseNotFoundError
 from tests.agent_scope_helpers import NEWS_SCOPE
@@ -88,17 +89,53 @@ async def skip_model_catalog_check() -> None:
     return None
 
 
-def offline_agent_runtime_factory(_service: Any) -> OfflineAgentRuntime:
-    """忽略检索 Service，返回不做 I/O 的 Agent Runtime 替身。
+def offline_agent_runtime_factory(_service: Any, _usage_collector: Any) -> OfflineAgentRuntime:
+    """忽略检索 Service 与用量采集器，返回不做 I/O 的 Agent Runtime 替身。
 
     Args:
         _service: lifespan 传入的检索 Service；替身不需要它，留参数只为匹配工厂签名。
+        _usage_collector: lifespan 传入的用量采集器；替身同样不需要它。
 
     Returns:
         全新的 ``OfflineAgentRuntime``。
     """
 
     return OfflineAgentRuntime()
+
+
+class OfflineUsageRuntime:
+    """只满足 lifespan 的 ``collector`` / ``close`` 契约的用量库替身。
+
+    刻意不带 engine 与 session：它给的是「不测用量链路的文件」用的，让那些用例不必设置
+    ``LLMOPS_DATABASE_URL`` 就能起应用（不设覆盖时，lifespan 会去读真实配置并直接失败）。
+    真要测用量链路的用例自己注入真实 ``UsageRuntime``。
+
+    Attributes:
+        collector: 空实现，记下的东西不落任何地方。
+        session_factory: 可选的用量库会话工厂。不传就与真装配的"用量库连不上"同形（属性在、
+            值缺），查询接口据此返回 503；要测查询链路时由用例传入真实（内存 SQLite）的工厂。
+        closed: 是否被 lifespan 关过；用来断言释放顺序。
+    """
+
+    def __init__(self, session_factory: Any = None) -> None:
+        self.collector = NoopUsageCollector()
+        self.session_factory = session_factory
+        self.closed = False
+
+    async def close(self) -> None:
+        """标记已释放，不碰任何外部资源。"""
+
+        self.closed = True
+
+
+def offline_usage_runtime_factory() -> OfflineUsageRuntime:
+    """返回不做 I/O 的用量库替身。
+
+    Returns:
+        全新的 ``OfflineUsageRuntime``。
+    """
+
+    return OfflineUsageRuntime()
 
 
 class InMemoryAgentThreadService:
@@ -234,6 +271,8 @@ def create_offline_app(**overrides: Any) -> FastAPI:
         "environment_admin_sync": skip_environment_admin_sync,
         "model_catalog_check": skip_model_catalog_check,
         "task_service_factory": lambda: object(),
+        # 用量库替身：不覆盖它就会去读真实的 LLMOPS_DATABASE_URL，而离线测试没有那份配置。
+        "usage_runtime_factory": offline_usage_runtime_factory,
     }
     app = create_app(**{**defaults, **overrides})  # type: ignore[arg-type]
 
@@ -292,6 +331,8 @@ def create_agent_app(
     anonymous: bool = False,
     agent_build_error: Exception | None = None,
     model_catalog_error: Exception | None = None,
+    usage_collector: Any = None,
+    usage_runtime: Any = None,
 ) -> tuple[FastAPI, FakeSearchRuntime]:
     """创建装着**真实** ``AgentRuntime`` 的离线应用。
 
@@ -309,6 +350,10 @@ def create_agent_app(
         model_catalog_error: 非空时让启动时的模型名校验抛这个异常，模拟「配置的模型不在上游列表里」。
             它和 ``agent_build_error`` 走的是 lifespan 里同一个 ``try``，对外表现应当完全一致
             （``/agent/*`` 返回 503、检索照常），传这个参数就是为了证明这一点。
+        usage_collector: 非空时用它替掉 lifespan 传进来的用量采集器，供需要断言「这次对话记了
+            什么」的用例注入记录用的假采集器。
+        usage_runtime: 非空时用它替掉离线用量库替身，供需要走完整用量链路的用例注入带真实
+            会话工厂与采集器的资源（例如跑完一轮对话再查用量接口）。
 
     Returns:
         ``(应用, 假检索 Runtime)``。检索 Runtime 用来断言关闭顺序，或在装配失败时当只读探针。
@@ -320,7 +365,7 @@ def create_agent_app(
 
     search_runtime = FakeSearchRuntime()
 
-    def agent_factory(service: Any) -> AgentRuntime:
+    def agent_factory(service: Any, lifespan_collector: Any) -> AgentRuntime:
         if agent_build_error is not None:
             raise agent_build_error
         # 断言 Agent 复用的是同一个检索 Service 实例，而不是自己另建一个——另建的那个不会被
@@ -333,6 +378,7 @@ def create_agent_app(
             database_url="postgresql+psycopg://unused/unused",
             checkpointer=InMemorySaver(),
             model=model,
+            usage_collector=usage_collector if usage_collector is not None else lifespan_collector,
             # 退避是真 sleep。这些用例断言的是 HTTP 契约，不需要等。
             retry_initial_delay=0.0,
         )
@@ -345,6 +391,9 @@ def create_agent_app(
         runtime_factory=lambda: search_runtime,
         agent_runtime_factory=agent_factory,
         model_catalog_check=catalog_check,
+        usage_runtime_factory=(
+            (lambda: usage_runtime) if usage_runtime is not None else offline_usage_runtime_factory
+        ),
     )
     if not anonymous:
         app = (allow_superuser if superuser else allow_reader)(app)
@@ -422,9 +471,11 @@ __all__ = [
     "FakeSearchService",
     "InMemoryAgentThreadService",
     "OfflineAgentRuntime",
+    "OfflineUsageRuntime",
     "create_agent_app",
     "create_offline_app",
     "offline_agent_runtime_factory",
+    "offline_usage_runtime_factory",
     "seed_owned_thread",
     "send",
     "skip_model_catalog_check",

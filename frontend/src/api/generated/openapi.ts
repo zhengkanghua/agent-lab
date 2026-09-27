@@ -1094,6 +1094,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/usage/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 列出当前账号用过的模型名
+         * @description 返回当前账号实际用过的模型名，按名称排序，供筛选栏取值。不需要用户手输，也不包含
+         *     别人用过的模型。
+         *
+         *     它不接受时间与模型筛选：跟着时间范围走的话，选了某个模型再改时间范围，选项里那个模型
+         *     可能消失，而当前选中值仍在界面上。
+         */
+        get: operations["list_usage_models_usage_models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/usage/records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 列出当前账号的用量明细
+         * @description 按发生时刻倒序分页返回当前账号的模型调用明细。只返回自己的记录；`has_more` 表示还有没有下一页，不返回精确总数。
+         *
+         *     `start` 含、`end` 不含（闭开区间），`model` 按模型名精确匹配，三者可同时使用。时间参数按 UTC 传入，省略表示不限。
+         *
+         *     刚发生的调用可能还没出现：写入先入队、按秒批量落库，查询结果有一秒左右的延迟。
+         */
+        get: operations["list_usage_records_usage_records_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/usage/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 汇总当前账号的用量
+         * @description 返回当前账号在筛选范围内的输入、输出、缓存、合计四个 token 各自的总和，以及调用次数。筛选参数与 `GET /usage/records` 完全一致；同一组参数下这里的四个合计逐列等于明细里全部记录的对应值之和。
+         *
+         *     `cached_tokens` 为 null 表示范围内有记录、但上游一次都没报过缓存；范围内没有记录时四个合计都是 0。
+         *
+         *     聚合不受明细分页影响：换页不会改变这四个数字。
+         */
+        get: operations["summarize_usage_usage_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3161,6 +3233,161 @@ export interface components {
             params?: {
                 [key: string]: unknown;
             };
+        };
+        /**
+         * UsageErrorResponse
+         * @description 用量查询接口失败时的响应体（固定三字段，与其它链路的错误契约同形）。
+         *
+         *     用量库不可用时返回稳定的 503，**不返回空列表、不返回零汇总**：把「查不到」渲染成 0，
+         *     正是这份功能反复拒绝的事——迁移没跑、库被摘掉都会变成「这个月没花钱」。
+         */
+        UsageErrorResponse: {
+            /**
+             * Code
+             * @description 稳定机器错误码，前端据此选择提示文案。
+             */
+            code: string;
+            /**
+             * Detail
+             * @description 安全中文概述，不含异常文本、连接串或第三方原始响应。
+             */
+            detail: string;
+            /**
+             * Retryable
+             * @description 是否「不改请求、稍后重试可能成功」。
+             */
+            retryable: boolean;
+        };
+        /**
+         * UsageRecordItem
+         * @description 用量明细里的一行。
+         *
+         *     不带账号：这三条接口都只返回当前账号的记录，把账号 id 回给调用方没有信息量。带会话与运行
+         *     的引用是为了满足「一笔消耗能追到具体哪次提问」；带 ``call_id`` 是因为它是这条记录的稳定
+         *     身份，分页核对与排查都靠它。
+         */
+        UsageRecordItem: {
+            /**
+             * Call Id
+             * Format: uuid
+             * @description 这条用量记录自己的标识；同一条记录跨页不会变。
+             */
+            call_id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             * @description 调用进入采集点的 UTC 时刻（带时区）。
+             */
+            occurred_at: string;
+            /**
+             * Model Name
+             * @description 这次调用实际使用的模型名；null 表示取不到。
+             */
+            model_name: string | null;
+            /**
+             * Status
+             * @description 结束方式：completed 为正常跑完，failed 为上游报错、超时或被取消。
+             * @enum {string}
+             */
+            status: "completed" | "failed";
+            /**
+             * Source
+             * @description 这批数字的来源：upstream 为上游自报（哪怕总量是 0），missing 为上游没报。
+             * @enum {string}
+             */
+            source: "upstream" | "missing";
+            /**
+             * Input Tokens
+             * @description 上游报的输入 token；已包含缓存命中的部分。
+             */
+            input_tokens: number;
+            /**
+             * Output Tokens
+             * @description 上游报的输出 token。
+             */
+            output_tokens: number;
+            /**
+             * Cached Tokens
+             * @description 上游报的缓存命中 token；null 表示上游没报这一项，与「报了 0」是两件事。
+             */
+            cached_tokens: number | null;
+            /**
+             * Total Tokens
+             * @description 上游报的合计 token；上游没报时由输入加输出补齐。
+             */
+            total_tokens: number;
+            /**
+             * Duration Ms
+             * @description 这次调用的耗时毫秒数。
+             */
+            duration_ms: number;
+            /**
+             * Thread Id
+             * @description 所属 Agent 会话；null 表示归属未知。
+             */
+            thread_id: string | null;
+            /**
+             * Run Id
+             * @description 所属运行（一次提问到最终回答）；null 表示归属未知。
+             */
+            run_id: string | null;
+        };
+        /**
+         * UsageRecordPage
+         * @description ``GET /usage/records`` 的响应。
+         *
+         *     ``has_more`` 由「多取一条」探测得出，不是靠总数算的。offset 分页的已知取舍：一边翻页一边
+         *     有新记录写入时，整页会被往后顶，某一条可能在两页里重复、另一条被跳过；本期不处理这条漂移。
+         */
+        UsageRecordPage: {
+            /**
+             * Items
+             * @description 本页明细，按发生时刻倒序、同一时刻按记录主键倒序。
+             */
+            items: components["schemas"]["UsageRecordItem"][];
+            /**
+             * Has More
+             * @description 是否还有下一页；为 false 表示本页就是最后一页。
+             */
+            has_more: boolean;
+        };
+        /**
+         * UsageSummaryResponse
+         * @description ``GET /usage/summary`` 的响应。
+         *
+         *     形状固定：四个 token 合计加调用次数。它**不受明细分页影响**——口径是「筛选范围内的全部
+         *     记录」，不是「当前页」。
+         *
+         *     ``cached_tokens`` 是这里唯一可空的字段，因为它是唯一一个「上游可能整段没报」的量：为 null
+         *     表示范围内有记录、但上游一次都没报过缓存；范围内没有记录时它是 0（零消耗必然零缓存，那是
+         *     事实而不是未知）。区分这两种情况与记录层的「缺失不是 0」是同一条原则。
+         */
+        UsageSummaryResponse: {
+            /**
+             * Input Tokens
+             * @description 范围内输入 token 之和。
+             */
+            input_tokens: number;
+            /**
+             * Output Tokens
+             * @description 范围内输出 token 之和。
+             */
+            output_tokens: number;
+            /**
+             * Cached Tokens
+             * @description 范围内缓存命中 token 之和；null 表示上游一次都没报过这一项。
+             */
+            cached_tokens: number | null;
+            /**
+             * Total Tokens
+             * @description 范围内合计 token 之和。
+             */
+            total_tokens: number;
+            /**
+             * Call Count
+             * @description 同一筛选条件下的调用次数，等于明细的行数。
+             */
+            call_count: number;
         };
         /**
          * UserAdminCreateRequest
@@ -7170,6 +7397,129 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentChatErrorResponse"];
+                };
+            };
+        };
+    };
+    list_usage_models_usage_models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageErrorResponse"];
+                };
+            };
+        };
+    };
+    list_usage_records_usage_records_get: {
+        parameters: {
+            query?: {
+                /** @description 本页最多返回几条。 */
+                limit?: number;
+                /** @description 跳过前几条。 */
+                offset?: number;
+                /** @description 只看某个模型的记录；省略表示不筛这一维。 */
+                model?: string | null;
+                /** @description 时间范围起点（UTC，含）；省略表示不限。 */
+                start?: string | null;
+                /** @description 时间范围终点（UTC，不含）；省略表示不限。 */
+                end?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageRecordPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageErrorResponse"];
+                };
+            };
+        };
+    };
+    summarize_usage_usage_summary_get: {
+        parameters: {
+            query?: {
+                /** @description 只看某个模型的记录；省略表示不筛这一维。 */
+                model?: string | null;
+                /** @description 时间范围起点（UTC，含）；省略表示不限。 */
+                start?: string | null;
+                /** @description 时间范围终点（UTC，不含）；省略表示不限。 */
+                end?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageSummaryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageErrorResponse"];
                 };
             };
         };

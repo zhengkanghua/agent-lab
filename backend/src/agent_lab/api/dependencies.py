@@ -14,6 +14,7 @@ Ollama/Embedding 或 Qdrant I/O；取不到组件时抛出分类异常，由错�
 from typing import TYPE_CHECKING
 
 from fastapi import Request
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent_lab.agent.errors import AgentRuntimeUnavailableError
 from agent_lab.db.session import async_session_factory
@@ -40,6 +41,15 @@ class VectorSearchRuntimeUnavailableError(RuntimeError):
 
 class SchedulerRuntimeUnavailableError(RuntimeError):
     """应用状态缺少任务受理服务时的内部异常（会被映射成 503）。"""
+
+
+class UsageDatabaseUnavailableError(RuntimeError):
+    """应用状态缺少用量库资源时的内部异常（会被映射成 503）。
+
+    它与「用量库报错」（``SQLAlchemyError``）分开成两个 code：前者是进程没经过 lifespan 启动、
+    或用量库装配根本没发生；后者是装配过、但库当前读不了。两者的排查方向不同（一个查部署，
+    一个查数据库），合在一起会把运维带偏。
+    """
 
 
 def get_vector_search_service(request: Request) -> VectorSearchService:
@@ -128,6 +138,36 @@ def get_agent_thread_service() -> AgentThreadService:
     return AgentThreadService(async_session_factory)
 
 
+def get_usage_session_factory(
+    request: Request,
+) -> async_sessionmaker[AsyncSession]:
+    """从应用 lifespan 状态取出用量库的短会话工厂（FastAPI 依赖注入函数）。
+
+    为什么交出去的是**工厂**而不是 Session：这三条只读接口都是一次查询就结束，每次开一个短
+    会话、用完归还连接，与 Agent 流式路由不用请求级 Session 是同一个理由（见
+    ``docs/adr/0010-sse-routes-use-short-lived-db-sessions.md``）。
+
+    Args:
+        request: 当前 HTTP 请求，用于访问所属应用的 ``state``。
+
+    Returns:
+        lifespan 装配的用量库会话工厂。
+
+    Raises:
+        UsageDatabaseUnavailableError: 应用未经过 lifespan 启动，或用量库资源缺失；
+            错误契约层会把它映射成稳定的 503（**不**返回空列表）。
+
+    Notes:
+        只读取进程内对象，不建连、不查库；用量库连不上由查询时的 ``SQLAlchemyError`` 暴露。
+    """
+
+    runtime = getattr(request.app.state, "usage_runtime", None)
+    session_factory = getattr(runtime, "session_factory", None)
+    if session_factory is None:
+        raise UsageDatabaseUnavailableError("用量查询运行时不可用。")
+    return session_factory
+
+
 def get_task_service(request: Request) -> "TaskService":
     """只取已经装配的公共任务受理服务，API 不直接执行业务。"""
     service = getattr(request.app.state, "task_service", None)
@@ -138,9 +178,11 @@ def get_task_service(request: Request) -> "TaskService":
 
 __all__ = [
     "SchedulerRuntimeUnavailableError",
+    "UsageDatabaseUnavailableError",
     "VectorSearchRuntimeUnavailableError",
     "get_agent_runtime",
     "get_agent_thread_service",
     "get_task_service",
+    "get_usage_session_factory",
     "get_vector_search_service",
 ]

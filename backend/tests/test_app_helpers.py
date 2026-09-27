@@ -13,10 +13,15 @@ Agent 装配失败**咽掉**——只记一行日志，把 state 留成 ``None``
 的回归测试：把 ``app_helpers`` 里的 agent 默认替身去掉，本文件会红。
 
 不连接 PostgreSQL、Qdrant，也不访问任何大模型。
+
+除了应用工厂的默认值，本文件还守一件事：离线阻断必须盖住模型 SDK 实际走的那条 HTTP 链路。
 """
 
 import asyncio
 from typing import Any
+
+import httpx2
+import pytest
 
 from tests.app_helpers import OfflineAgentRuntime, create_offline_app
 
@@ -63,7 +68,7 @@ def test_an_explicit_agent_factory_still_wins_over_the_default() -> None:
 
     sentinel = OfflineAgentRuntime()
 
-    def explicit_factory(_service: Any) -> OfflineAgentRuntime:
+    def explicit_factory(_service: Any, _usage_collector: Any) -> OfflineAgentRuntime:
         return sentinel
 
     app = create_offline_app(
@@ -76,3 +81,25 @@ def test_an_explicit_agent_factory_still_wins_over_the_default() -> None:
             assert app.state.agent_runtime is sentinel
 
     asyncio.run(verify())
+
+
+def test_the_offline_guard_blocks_the_transport_the_llm_sdk_uses() -> None:
+    """离线阻断必须盖住模型 SDK 真正走的那条 HTTP 链路。
+
+    openai 3.x 的传输层改用 httpx2（独立发行包），仓库直接依赖的是 httpx，两者不是同一条
+    链路。只补 httpx 时这道保护对模型调用失效，而失效的表现很隐蔽：漏注入假模型的用例会真的
+    发出请求，失败又被 lifespan 的 ``except Exception`` 咽掉，测试照常绿。所以这里直接朝 SDK
+    的传输类发一次请求，用「被拦住」本身作为断言。
+    """
+
+    async def call() -> None:
+        transport = httpx2.AsyncHTTPTransport()
+        try:
+            await transport.handle_async_request(
+                httpx2.Request("POST", "https://example.invalid/v1/chat/completions")
+            )
+        finally:
+            await transport.aclose()
+
+    with pytest.raises(pytest.fail.Exception):
+        asyncio.run(call())

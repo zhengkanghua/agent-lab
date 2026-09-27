@@ -30,11 +30,21 @@ class AgentContext:
 
             注意它的来源是会话而非请求体：同一次运行的多次模型调用拿到的是同一份值，
             而会话内不同轮次之间也保持一致。
+        user_id: 发起本次运行的账号；``None`` 表示归属未知。用量采集点从当前运行的上下文里
+            读它，把每条用量记录归到账号上——查询接口按账号过滤，读不到就谁都查不到。
+            有默认值是为了让离线测试与不关心归属的调用点不必构造它；填值由 Agent 对话入口
+            负责。
+        thread_id: 本次运行所属的会话（``agent_threads`` 的主键）；``None`` 表示归属未知。
+            同样供用量记录留一个可追到具体哪次提问的引用，默认空表示未知。
+        run_id: 本次运行的标识，由本类在构造时生成。同一次运行的多次模型调用（含中间件内部
+            的历史摘要压缩调用）拿到的是同一个值。
     """
 
     system_prompt: str | None = None
     run_id: UUID = field(default_factory=uuid4)
     scope: ResolvedKnowledgeBaseScope | None = None
+    user_id: UUID | None = None
+    thread_id: UUID | None = None
 
 
 __all__ = ["AgentContext"]

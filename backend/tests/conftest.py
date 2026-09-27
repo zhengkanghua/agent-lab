@@ -3,6 +3,9 @@
 import os
 
 import httpx
+# openai 3.x（模型 SDK）的传输层改用 httpx2 这个独立发行包，与仓库直接依赖的 httpx 不是同一条
+# 链路；下面两处都要补，否则这道阻断对模型调用失效（见本文件末尾的自检用例）。
+import httpx2
 import psycopg
 import pytest
 
@@ -29,6 +32,7 @@ INTEGRATION_SWITCHES = {
     "test_knowledge_answer_acceptance.py": "RUN_KNOWLEDGE_ANSWER_ACCEPTANCE_TEST",
     "test_scheduler_retention_integration.py": "RUN_SCHEDULER_QDRANT_INTEGRATION_TEST",
     "test_agent_thread_ownership_integration.py": "RUN_POSTGRES_AGENT_THREAD_INTEGRATION_TEST",
+    "test_usage_postgres_integration.py": "RUN_POSTGRES_LLMOPS_INTEGRATION_TEST",
 }
 
 
@@ -74,3 +78,5 @@ def offline_connections_only(request, monkeypatch):
     monkeypatch.setattr(psycopg.AsyncConnection, "connect", async_blocked)
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", blocked)
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", async_blocked)
+    monkeypatch.setattr(httpx2.HTTPTransport, "handle_request", blocked)
+    monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", async_blocked)

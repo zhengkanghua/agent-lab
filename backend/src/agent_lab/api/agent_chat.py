@@ -246,7 +246,15 @@ async def agent_chat(
         scope=selection,
     )
     # 2、把会话提示词装进本次运行的上下文；为 None 时中间件会用默认那份。
-    context = AgentContext(system_prompt=session_prompt, scope=resolved_scope)
+    #    账号与会话标识一起带上：用量采集点从当前运行的上下文读这两个值，三条查询接口都按
+    #    账号过滤，读不到就谁都查不到这笔消耗。运行标识由上下文自己生成，同一次运行里的
+    #    多次模型调用（含中间件内部的历史摘要压缩调用）拿到的是同一个。
+    context = AgentContext(
+        system_prompt=session_prompt,
+        scope=resolved_scope,
+        user_id=user.id,
+        thread_id=thread_id,
+    )
     # 3、只记 id 和「有没有自定义提示词」，不记提问原文——日志里不该有用户输入。
     logger.info(
         "Agent 对话开始 thread_id=%s custom_prompt=%s",

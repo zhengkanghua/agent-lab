@@ -87,6 +87,12 @@ def _build_openai_compatible_model(settings: LlmSettings, model: str) -> BaseCha
         # 关掉客户端自带重试：重试统一由 ModelRetryMiddleware 负责，两层都开会让实际
         # 请求次数变成乘积（2×3=6），超时和额度都不可预期。
         max_retries=0,
+        # 显式打开「流式响应里回传用量」。ChatOpenAI 只在 base_url 与客户端都是默认值时才
+        # 默认打开它，而本项目走的是自建 base_url（中转站），于是默认关闭；偏偏 Agent 的
+        # 生产入口本来就是流式调用（graph.astream 的 messages 模式会挂上流式回调处理器），
+        # 按 OpenAI 官方契约上游此时就不回 usage，用量会被静默记成 0。这里把它变成本项目
+        # 的主动契约，而不是依赖上游“宽容”。Ollama 分支没有这个参数，用量来自响应里的计数。
+        stream_usage=True,
     )
 
 

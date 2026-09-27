@@ -69,6 +69,28 @@ def test_client_retries_are_off_so_middleware_owns_retrying() -> None:
     assert build_chat_model(make_settings()).max_retries == 0
 
 
+def test_the_openai_branch_asks_the_upstream_to_report_usage() -> None:
+    """OpenAI 兼容分支必须显式打开「流式响应里回传用量」。
+
+    自建 base_url（本项目的中转站）下 ``stream_usage`` 默认是 False，而 Agent 的生产入口
+    本来就是流式调用，按官方契约上游此时不会回 usage，用量会被静默记成 0。真实请求体里是否
+    带上这个开关由 ``tests/test_agent_usage_recording.py`` 走生产入口断言。
+    """
+
+    assert build_chat_model(make_settings()).stream_usage is True
+
+
+def test_the_ollama_branch_has_no_stream_usage_switch() -> None:
+    """Ollama 分支没有这个概念，构造参数不能被顺手塞一个。
+
+    它的用量来自响应里的提示与生成计数，不需要请求侧开关；多传一个未知字段会在构造时就炸。
+    """
+
+    model = build_chat_model(make_settings(provider=LlmProvider.OLLAMA))
+
+    assert not hasattr(model, "stream_usage")
+
+
 def test_an_empty_api_key_fails_before_any_request_is_made() -> None:
     """openai_compatible 分支缺 Key 时立刻报配置错误，不推迟到第一次调用。"""
 

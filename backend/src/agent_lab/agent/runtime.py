@@ -29,8 +29,11 @@ from agent_lab.agent.errors import AgentCheckpointerUnavailableError
 from agent_lab.agent.limits import RETRY_INITIAL_DELAY_SECONDS
 from agent_lab.agent.middleware import build_agent_middleware
 from agent_lab.agent.tools import build_agent_tools
+from agent_lab.agent.usage_recording import wrap_with_usage_recording
 from agent_lab.config.llm import LlmSettings
 from agent_lab.services.vector_search_service import VectorSearchService
+from agent_lab.usage.collector import NoopUsageCollector
+from agent_lab.usage.contracts import UsageCollector
 
 
 logger = logging.getLogger(__name__)
@@ -66,6 +69,7 @@ class AgentRuntime:
         database_url: str,
         checkpointer: BaseCheckpointSaver | None = None,
         model: BaseChatModel | None = None,
+        usage_collector: UsageCollector | None = None,
         retry_initial_delay: float = RETRY_INITIAL_DELAY_SECONDS,
     ) -> "AgentRuntime":
         """组装模型、工具、中间件和 checkpointer，编译出可共享的图。
@@ -81,6 +85,9 @@ class AgentRuntime:
             checkpointer: 可选的会话历史存储；离线测试注入 ``InMemorySaver``，省略时按
                 ``database_url`` 建 PostgreSQL 连接池。
             model: 可选的主模型客户端；离线测试注入 fake，省略时按配置构造。
+            usage_collector: 用量记录的接收方。省略时用空实现（什么都不记），因此离线测试
+                不传它既不会要求用量库配置，也不会去连库，而模型包装本身照常发生。生产由
+                API 进程的 lifespan 注入真实采集器。
             retry_initial_delay: 重试首次退避秒数，透传给中间件；只为让测试传 0 免掉真
                 ``sleep``，生产不要传。
 
@@ -104,10 +111,21 @@ class AgentRuntime:
         """
 
         # 1、主模型与备用模型。备用模型只在主模型重试耗尽后才会被调用。
-        primary_model = model or build_chat_model(llm_settings)
-        fallback_model = model or build_chat_model(
-            llm_settings,
-            model=llm_settings.fallback_model,
+        #    采集点包在这里、而不是包进 build_chat_model：注入假模型的路径也必须被包住，
+        #    否则端到端测试一条记录也不会有，而「生产在被记账、测试没在记账」会让测试失去
+        #    意义。两个模型共用同一个采集器，这样一次运行里的多次调用（含降级）进同一个账本。
+        #    摘要压缩用的也是主模型实例（见下面第 4 步），它已经是包装实例，不需要额外装配。
+        collector = usage_collector or NoopUsageCollector()
+        primary_model = wrap_with_usage_recording(
+            model or build_chat_model(llm_settings),
+            collector,
+        )
+        fallback_model = wrap_with_usage_recording(
+            model or build_chat_model(
+                llm_settings,
+                model=llm_settings.fallback_model,
+            ),
+            collector,
         )
 
         # 2、只读工具。search 用共享 Service，read 用 Session 工厂。

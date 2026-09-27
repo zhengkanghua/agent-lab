@@ -24,16 +24,21 @@ from agent_lab.knowledge.files import FileDocumentError
 from agent_lab.knowledge.processing.lifecycle import ProcessingApplicationError
 from agent_lab.api.document_search import router as document_search_router
 from agent_lab.api.documents import router as documents_router
-from agent_lab.api.dependencies import VectorSearchRuntimeUnavailableError
+from agent_lab.api.dependencies import (
+    UsageDatabaseUnavailableError,
+    VectorSearchRuntimeUnavailableError,
+)
 from agent_lab.api.error_contract import (
     build_agent_chat_error_response,
     build_knowledge_base_error_response,
+    build_usage_error_response,
     build_vector_search_error_response,
 )
 from agent_lab.api.pipeline import router as pipeline_router
 from agent_lab.api.scheduled_jobs import router as scheduled_jobs_router
 from agent_lab.api.vector_search import router as vector_search_router
 from agent_lab.api.user_admin import router as user_admin_router
+from agent_lab.api.usage import router as usage_router
 from agent_lab.auth.dependencies import current_active_user, current_superuser
 from agent_lab.auth.bootstrap import (
     EnvironmentAdminSyncResult,
@@ -46,6 +51,7 @@ from agent_lab.config.ollama_embedding import (
 from agent_lab.config.qdrant import get_qdrant_settings
 from agent_lab.config.scheduler import get_scheduler_settings
 from agent_lab.config.settings import get_settings
+from agent_lab.config.usage_database import get_usage_database_settings
 from agent_lab.db.session import async_session_factory, engine
 from agent_lab.knowledge.domain import KnowledgeBaseError
 from agent_lab.qdrant.runtime import VectorSearchRuntime
@@ -54,6 +60,8 @@ from agent_lab.tasks.cron import CronSchedule
 from agent_lab.task_assembly import build_task_service
 from agent_lab.api.task_runs import router as task_runs_router, policy_router as task_policy_router
 from agent_lab.services.vector_search_service import VectorSearchService
+from agent_lab.usage.assembly import UsageRuntime
+from agent_lab.usage.contracts import UsageCollector
 
 
 logger = logging.getLogger(__name__)
@@ -113,6 +121,13 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "返回。会话历史存 PostgreSQL，但不写任何新闻业务数据。"
         ),
     },
+    {
+        "name": "usage",
+        "description": (
+            "只读查询当前账号的模型调用用量（token 数与调用次数）；记录，不拦截："
+            "不设额度、不做限制、不算金额。"
+        ),
+    },
 ]
 
 
@@ -145,7 +160,10 @@ def build_vector_search_runtime() -> VectorSearchRuntime:
     )
 
 
-def build_agent_runtime(search_service: VectorSearchService) -> AgentRuntime:
+def build_agent_runtime(
+    search_service: VectorSearchService,
+    usage_collector: UsageCollector,
+) -> AgentRuntime:
     """从环境配置组装进程级 Agent Runtime（只构造对象，不连接任何服务）。
 
     为什么参数是「已建好的搜索 Service」而不是自己再建一个：Agent 的 ``search_documents``
@@ -153,8 +171,12 @@ def build_agent_runtime(search_service: VectorSearchService) -> AgentRuntime:
     入口的检索行为一致，也避免多出一套 Ollama/Qdrant 连接池。这也是 Agent Runtime 必须
     在搜索 Runtime 之后装配的原因。
 
+    用量库的采集器同样从外面传进来（而不是在这里读用量库配置）：Agent 装配失败只让
+    ``/agent/*`` 返 503，而用量库配置缺失必须让进程起不来，两者是不同的失败边界。
+
     Args:
         search_service: lifespan 已创建的进程级只读检索 Service。
+        usage_collector: 用量记录接收方，由 lifespan 从用量库资源里取出。
 
     Returns:
         尚未建连的 Agent Runtime；调用方还要 ``await open()``。
@@ -173,7 +195,28 @@ def build_agent_runtime(search_service: VectorSearchService) -> AgentRuntime:
         search_service=search_service,
         session_factory=async_session_factory,
         database_url=str(get_settings().database_url),
+        usage_collector=usage_collector,
     )
+
+
+def build_usage_runtime() -> UsageRuntime:
+    """从环境配置装配进程级用量库资源（只构造对象，不建任何连接）。
+
+    配置缺失或不合法在这里就抛，而且调用点在 lifespan 的外层 try 里，所以结果是**进程起不来**
+    ——这正是「配置缺失不能表现为静默不记账」想要的行为。建 Engine 本身不建连，所以用量库
+    暂时不可达不影响启动，只影响那之后每次刷写的成败。
+
+    Returns:
+        尚未建连的 ``UsageRuntime``；lifespan 负责 ``close``。
+
+    Raises:
+        pydantic.ValidationError: 缺 ``LLMOPS_DATABASE_URL`` 或不合法。
+
+    Notes:
+        必须在事件循环里调用：采集器要把待写协程排到当前循环上（见 ``UsageRuntime.build``）。
+    """
+
+    return UsageRuntime.build(get_usage_database_settings())
 
 
 async def verify_configured_llm_models() -> None:
@@ -200,9 +243,10 @@ def create_app(
     *,
     runtime_factory: Callable[[], VectorSearchRuntime] = build_vector_search_runtime,
     task_service_factory: Callable[[], TaskService] = build_task_service,
-    agent_runtime_factory: Callable[[VectorSearchService], AgentRuntime] = (
+    agent_runtime_factory: Callable[[VectorSearchService, UsageCollector], AgentRuntime] = (
         build_agent_runtime
     ),
+    usage_runtime_factory: Callable[[], UsageRuntime] = build_usage_runtime,
     environment_admin_sync: Callable[
         [], Awaitable[EnvironmentAdminSyncResult]
     ] = sync_configured_environment_admin,
@@ -217,18 +261,26 @@ def create_app(
         """管理 API 自己的认证、Agent 与搜索资源；不启动调度器或后台消费者。"""
 
         runtime: VectorSearchRuntime | None = None
+        usage_runtime: UsageRuntime | None = None
         agent_runtime: AgentRuntime | None = None
         shutdown_error: Exception | None = None
         try:
-            # 1、migration 已由部署步骤完成；先同步唯一的环境托管超级用户，再构造只读 Runtime。
+            # 1、migration 已由部署步骤完成；先同步唯一的环境托管超级用户。
             await environment_admin_sync()
+            # 2、用量库资源。**配置读取与装配刻意放在这一层 try、Agent 装配之外**：
+            #    配置缺失或不合法必须让进程起不来，而 Agent 装配失败的处置是「只让 /agent/*
+            #    返 503」。把读取点放进内层，配置缺失就会变成静默不记账——那正是这条配置
+            #    要避免的结果。用量库暂时连不上不进这里：建 Engine 不建连。
+            usage_runtime = usage_runtime_factory()
+            application.state.usage_runtime = usage_runtime
+            # 3、只读搜索 Runtime。
             runtime = runtime_factory()
             application.state.vector_search_runtime = runtime
-            # 3、Agent 复用上面那个检索 Service，所以必须排在它之后。
+            # 4、Agent 复用上面那个检索 Service，所以必须排在它之后。
             application.state.agent_runtime = None
             try:
                 await model_catalog_check()
-                agent_runtime = agent_runtime_factory(runtime.service)
+                agent_runtime = agent_runtime_factory(runtime.service, usage_runtime.collector)
                 await agent_runtime.open()
             except Exception as exc:
                 # 只记类型：LLM 配置和数据库连接串里都有凭据，异常文本可能带出来。
@@ -236,11 +288,11 @@ def create_app(
                 agent_runtime = None
             else:
                 application.state.agent_runtime = agent_runtime
-            # 4、yield 之后是「运行期」：ASGI Server 在这里处理并发 HTTP 请求。
+            # 5、yield 之后是「运行期」：ASGI Server 在这里处理并发 HTTP 请求。
             yield
         finally:
-            # 先释放依赖搜索的 Agent，再释放搜索资源。
-            for resource in (agent_runtime, runtime):
+            # 先释放依赖搜索的 Agent，再释放用量库与搜索资源。
+            for resource in (agent_runtime, usage_runtime, runtime):
                 if resource is None:
                     continue
                 try:
@@ -265,6 +317,7 @@ def create_app(
                 else:
                     raise
             finally:
+                application.state.usage_runtime = None
                 application.state.vector_search_runtime = None
                 application.state.agent_runtime = None
             if shutdown_error is not None:
@@ -349,6 +402,26 @@ def create_app(
         """
 
         return build_vector_search_error_response(error)
+
+    @application.exception_handler(UsageDatabaseUnavailableError)
+    async def usage_runtime_unavailable(
+        _request: Request,
+        error: UsageDatabaseUnavailableError,
+    ) -> JSONResponse:
+        """把「lifespan 未提供用量库资源」映射成稳定的 503。
+
+        什么时候会触发：应用没走 lifespan 启动（比如测试只 import 了 app），或用量库装配
+        根本没发生。它不拾「用量库当前读不了」那类异常——那类在路由里 catch ``SQLAlchemyError``
+        后自己映射，两条路径共用同一张表，所以对外 code 一致。
+
+        Returns:
+            含稳定 ``code/detail/retryable`` 的 503 JSON 响应。
+
+        Notes:
+            只做进程内异常映射，不读异常文本，不执行任何 I/O。
+        """
+
+        return build_usage_error_response(error)
 
     @application.exception_handler(AgentError)
     async def agent_error(_request: Request, error: AgentError) -> JSONResponse:
@@ -435,6 +508,12 @@ def create_app(
     # 所以两者必须同开同关，不能只放一个。
     application.include_router(
         agent_threads_router,
+        dependencies=[Depends(current_active_user)],
+    )
+    # 用量查询与对话、会话记录同一道门：它只返回当前账号自己的记录，所以对全部登录账号开放，
+    # 不需要额外的角色判断。
+    application.include_router(
+        usage_router,
         dependencies=[Depends(current_active_user)],
     )
     return application
