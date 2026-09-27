@@ -25,8 +25,17 @@ export interface ResetUserPasswordOptions {
   password: string
 }
 
-export async function listUsers(signal?: AbortSignal): Promise<UserAdminDto[]> {
-  const response = await requestJson<unknown>('/admin/users', { method: 'GET', signal })
+export interface ListUsersOptions {
+  /** 是否连已注销的账号一起返回；默认只返回未注销的账号。 */
+  includeDeleted?: boolean
+}
+
+export async function listUsers(
+  signal?: AbortSignal,
+  { includeDeleted = false }: ListUsersOptions = {},
+): Promise<UserAdminDto[]> {
+  const query = includeDeleted ? '?include_deleted=true' : ''
+  const response = await requestJson<unknown>(`/admin/users${query}`, { method: 'GET', signal })
   if (!Array.isArray(response) || !response.every(isUserAdminDto)) {
     throw invalidAdminResponse('The account service returned an invalid user list.')
   }
@@ -76,11 +85,11 @@ export async function resetUserPassword({
 }
 
 /**
- * 删除一个账号。
+ * 注销一个账号。
  *
  * 后端返回 204 空体，所以走 `requestVoid` 而不是 `requestJson`——后者会把空响应
- * 当成 `response_invalid` 抛出来。删除会连带清掉该账号的会话归属与登录 Token，
- * 确认文案由调用方负责。
+ * 当成 `response_invalid` 抛出来。注销不会删掉那一行：账号仍在库里，只是不能再登录，
+ * 它的会话归属与个人偏好都保留；确认文案由调用方负责。
  */
 export async function deleteUser(userId: string): Promise<void> {
   await requestVoid(`/admin/users/${encodeURIComponent(userId)}`, { method: 'DELETE' })
@@ -114,6 +123,7 @@ function isUserAdminDto(value: unknown): value is UserAdminDto {
     typeof value.is_superuser === 'boolean' &&
     typeof value.is_verified === 'boolean' &&
     typeof value.is_environment_admin === 'boolean' &&
+    (value.deleted_at === null || isIsoDateTime(value.deleted_at)) &&
     isIsoDateTime(value.created_at) &&
     isIsoDateTime(value.updated_at)
   )

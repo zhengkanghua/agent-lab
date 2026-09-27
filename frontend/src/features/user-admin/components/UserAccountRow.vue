@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { KeyRound, RefreshCw, ShieldCheck, Trash2, UserRound } from '@lucide/vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import type { UserAdminDto } from '@/api/user-admin'
-import { formatCreatedAt } from '../model/user-account'
+import { formatAccountDate } from '../model/user-account'
 import UserPasswordResetForm from './UserPasswordResetForm.vue'
 
 /* 账号目录里的一行。
@@ -39,15 +39,21 @@ const emit = defineEmits<{
 const managed = computed(() => props.user.is_environment_admin)
 const isCurrentUser = computed(() => props.user.id === props.currentUserId)
 const resetOpen = computed(() => props.resetPassword !== null)
+/* 已注销：终态，数据保留但不能登录。它和环境托管不会同时成立——环境托管账号被库里那条
+   约束挡着注销不了。 */
+const deregistered = computed(() => props.user.deleted_at !== null)
+const deregisteredAt = computed(() =>
+  props.user.deleted_at === null ? '' : formatAccountDate(props.user.deleted_at),
+)
 
-/* 自己那一行的删除键禁用：删完自己这个页面就没了，让管理员先删别人更顺。
+/* 自己那一行的注销键禁用：注销完自己这个页面就没了，让管理员先处理别人更顺。
    环境托管超级用户另有 managed 挡着，两件事分开判断，因为禁用理由不同、提示也不同。 */
 const deleteBlocked = computed(() => managed.value || isCurrentUser.value)
 
 const deleteTitle = computed(() => {
   if (managed.value) return '请修改部署 Secret 后重启服务'
-  if (isCurrentUser.value) return '不能删除当前登录账号，请换一个账号操作'
-  return '删除账号'
+  if (isCurrentUser.value) return '不能注销当前登录账号，请换一个账号操作'
+  return '注销账号：账号不再能登录，记录全部保留'
 })
 
 /* 两个开关各写一个转发函数，不合成「传事件名进来」的那一个：
@@ -91,30 +97,39 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
           <ShieldCheck :size="11" aria-hidden="true" />
           环境托管
         </small>
+        <small v-else-if="deregistered" class="deregistered-badge">已注销</small>
         <small v-else-if="isCurrentUser">当前账号</small>
         <small v-else>数据库账号</small>
       </span>
     </div>
 
     <div class="status-cell" role="cell">
-      <label
-        class="switch-control"
-        :class="{ 'switch-disabled': managed }"
-        :title="managed ? '由部署 Secret 管理' : '允许或停止账号使用'"
-      >
-        <input
-          type="checkbox"
-          :checked="user.is_active"
-          :disabled="managed || busy"
-          :aria-label="`${user.email} 使用状态`"
-          :data-testid="`active-${user.id}`"
-          @change="onActiveToggle"
-        />
-        <span aria-hidden="true"></span>
-      </label>
-      <span class="status-chip" :class="user.is_active ? 'is-on' : 'is-off'" role="status">
-        {{ user.is_active ? '启用' : '停用' }}
-      </span>
+      <!-- 已注销的行没有开关：注销是终态，没有「改回去」这个动作，
+           给一个只能停在那里的开关只会让人以为能动。 -->
+      <template v-if="deregistered">
+        <span class="status-chip is-deregistered" role="status">已注销</span>
+        <small class="deregistered-at">{{ deregisteredAt }} 注销</small>
+      </template>
+      <template v-else>
+        <label
+          class="switch-control"
+          :class="{ 'switch-disabled': managed }"
+          :title="managed ? '由部署 Secret 管理' : '允许或停止账号使用'"
+        >
+          <input
+            type="checkbox"
+            :checked="user.is_active"
+            :disabled="managed || busy"
+            :aria-label="`${user.email} 使用状态`"
+            :data-testid="`active-${user.id}`"
+            @change="onActiveToggle"
+          />
+          <span aria-hidden="true"></span>
+        </label>
+        <span class="status-chip" :class="user.is_active ? 'is-on' : 'is-off'" role="status">
+          {{ user.is_active ? '启用' : '停用' }}
+        </span>
+      </template>
     </div>
 
     <div class="status-cell" role="cell">
@@ -139,12 +154,15 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
     </div>
 
     <div class="created-cell" role="cell">
-      <span>{{ formatCreatedAt(user.created_at) }}</span>
+      <span>{{ formatAccountDate(user.created_at) }}</span>
       <small>{{ user.is_verified ? '已确认' : '待确认' }}</small>
     </div>
 
     <div class="row-actions" role="cell">
+      <!-- 已注销的行只留「撤销会话」：改密码对一个登不进来的账号没有意义，
+           注销本身也已经到终态。撤销会话是实际动作（第二遍删 0 行），保留它。 -->
       <button
+        v-if="!deregistered"
         type="button"
         :disabled="managed || busy"
         :title="managed ? '请修改部署 Secret 后重启服务' : '重置密码'"
@@ -165,6 +183,7 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
         撤销会话
       </button>
       <button
+        v-if="!deregistered"
         type="button"
         class="action-danger"
         :disabled="deleteBlocked || busy"
@@ -173,7 +192,7 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
         @click="emit('delete-account')"
       >
         <Trash2 :size="15" aria-hidden="true" />
-        删除账号
+        注销账号
       </button>
     </div>
 
@@ -294,6 +313,16 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
   font-size: var(--fs-xs);
 }
 
+/* 已注销徽章用 danger 色：它和「停用」不一样，是回不去的那个终态。 */
+.deregistered-badge {
+  width: fit-content;
+  padding: 1px 7px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  color: var(--danger);
+  font-size: var(--fs-xs);
+}
+
 .status-cell {
   display: flex;
   align-items: center;
@@ -317,6 +346,15 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
 .status-chip.is-off {
   color: var(--text-secondary);
   background: var(--surface-sunken);
+}
+
+.status-chip.is-deregistered {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.deregistered-at {
+  white-space: nowrap;
 }
 
 .switch-control {

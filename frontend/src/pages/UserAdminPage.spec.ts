@@ -43,6 +43,7 @@ const environmentAdmin = {
   is_superuser: true,
   is_verified: true,
   is_environment_admin: true,
+  deleted_at: null,
   created_at: '2026-08-17T00:00:00Z',
   updated_at: '2026-08-18T00:00:00Z',
 }
@@ -54,6 +55,7 @@ const regularUser = {
   is_superuser: false,
   is_verified: true,
   is_environment_admin: false,
+  deleted_at: null,
   created_at: '2026-08-18T00:00:00Z',
   updated_at: '2026-08-18T00:00:00Z',
 }

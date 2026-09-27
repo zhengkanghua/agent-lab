@@ -342,9 +342,16 @@ def test_deregistering_an_account_keeps_its_thread_rows() -> None:
                     )
                 ).all()
                 assert tokens == []
-                # 5、默认列表不再返回它。
+                # 5、默认列表不再返回它；显式带上已注销时能看到，且带着注销时间。
                 listed = await UserAdminService(session).list_users()
                 assert doomed.id not in {user.id for user in listed}
+                with_deleted = {
+                    user.id: user
+                    for user in await UserAdminService(session).list_users(include_deleted=True)
+                }
+                assert doomed.id in with_deleted
+                assert with_deleted[doomed.id].deleted_at is not None
+                assert with_deleted[doomed.id].is_active is False
         finally:
             await outer_transaction.rollback()
             await connection.close()

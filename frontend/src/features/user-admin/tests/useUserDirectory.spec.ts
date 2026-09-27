@@ -25,6 +25,7 @@ const environmentAdmin: UserAdminDto = {
   is_superuser: true,
   is_verified: true,
   is_environment_admin: true,
+  deleted_at: null,
   created_at: '2026-08-17T00:00:00Z',
   updated_at: '2026-08-18T00:00:00Z',
 }
@@ -36,6 +37,7 @@ const reader: UserAdminDto = {
   is_superuser: false,
   is_verified: true,
   is_environment_admin: false,
+  deleted_at: null,
   created_at: '2026-08-18T00:00:00Z',
   updated_at: '2026-08-18T00:00:00Z',
 }
@@ -327,7 +329,7 @@ describe('useUserDirectory', () => {
     wrapper.unmount()
   })
 
-  it('删除成功后把该行摘掉并给出反馈', async () => {
+  it('注销成功后那一行变成已注销：默认口径下不再出现在列表里', async () => {
     vi.stubGlobal(
       'confirm',
       vi.fn(() => true),
@@ -342,6 +344,43 @@ describe('useUserDirectory', () => {
     expect(api.deleteUser).toHaveBeenCalledWith(reader.id)
     expect(directory.users.value.map((user) => user.id)).toEqual([environmentAdmin.id])
     expect(directory.feedback.value).toContain(reader.email)
+    wrapper.unmount()
+  })
+
+  it('开关打开时注销，那一行留在原位并显示成已注销', async () => {
+    // 这一条与上一条是同一份实现的两面：默认那份要把行移出（它不含已注销），
+    // 开关那份要把它留在原位（它本来就包含已注销）。写成「无差别把行摘掉」的话，
+    // 开关打开时那一行会直接消失，与「行还在、只是已注销」矛盾。
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true),
+    )
+    api.deleteUser.mockResolvedValue(undefined)
+    const { wrapper, directory } = mountHarness()
+    await directory.load()
+
+    directory.setIncludeDeleted(true)
+    await flushPromises()
+    await directory.deleteAccount(reader)
+
+    const retained = directory.users.value.find((user) => user.id === reader.id)
+    expect(retained?.deleted_at).not.toBeNull()
+    expect(retained?.is_active).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('切换「显示已注销」会换一份数据，不重用默认那份缓存', async () => {
+    const { wrapper, directory } = mountHarness()
+    await directory.load()
+    expect(directory.includeDeleted.value).toBe(false)
+    expect(api.listUsers).toHaveBeenCalledTimes(1)
+
+    directory.setIncludeDeleted(true)
+    await flushPromises()
+
+    // 参数没进查询键的话，这里只会重新渲染那份 10 秒新鲜期里的旧数据，不会发请求。
+    expect(api.listUsers).toHaveBeenCalledTimes(2)
+    expect(api.listUsers.mock.calls[1]?.[1]).toEqual({ includeDeleted: true })
     wrapper.unmount()
   })
 

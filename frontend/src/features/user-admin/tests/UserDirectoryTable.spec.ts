@@ -14,6 +14,7 @@ function user(id: string, overrides: Partial<UserAdminDto> = {}): UserAdminDto {
     is_superuser: false,
     is_verified: true,
     is_environment_admin: false,
+    deleted_at: null,
     created_at: '2026-08-14T08:00:00Z',
     updated_at: '2026-08-14T08:00:00Z',
     ...overrides,
@@ -29,6 +30,7 @@ function mountTable(props: Partial<InstanceType<typeof UserDirectoryTable>['$pro
       busyUserIds: new Set<string>(),
       rowErrors: {},
       currentUserId: FIRST_ID,
+      includeDeleted: false,
       resetUserId: null,
       resetPassword: '',
       resetError: '',
@@ -166,5 +168,34 @@ describe('UserDirectoryTable', () => {
     await wrapper.get('button').trigger('click')
 
     expect(wrapper.emitted('refresh')).toHaveLength(1)
+  })
+
+  it('「显示已注销」开关把新值往上转，默认是关的', async () => {
+    const wrapper = mountTable()
+    const toggle = wrapper.get<HTMLInputElement>('[data-testid="include-deleted"]')
+
+    expect(toggle.element.checked).toBe(false)
+    await toggle.setValue(true)
+
+    expect(wrapper.emitted('update:includeDeleted')).toEqual([[true]])
+  })
+
+  it('已注销的行显示标记与注销时间，且不提供停用/启用、注销、重置密码', () => {
+    const wrapper = mountTable({
+      users: [
+        user(FIRST_ID),
+        user(SECOND_ID, { is_active: false, deleted_at: '2026-09-01T00:00:00Z' }),
+      ],
+    })
+    const row = wrapper.get(`[data-user-id="${SECOND_ID}"]`)
+
+    expect(row.text()).toContain('已注销')
+    expect(row.text()).toContain('2026')
+    // 注销是终态：没有改回去的开关，也不再有可改的密码或可再走一次的注销。
+    expect(row.find(`[data-testid="active-${SECOND_ID}"]`).exists()).toBe(false)
+    expect(row.find(`[data-testid="reset-${SECOND_ID}"]`).exists()).toBe(false)
+    expect(row.find(`[data-testid="delete-${SECOND_ID}"]`).exists()).toBe(false)
+    // 撤销会话是实际动作，保留。
+    expect(row.find(`[data-testid="sessions-${SECOND_ID}"]`).exists()).toBe(true)
   })
 })

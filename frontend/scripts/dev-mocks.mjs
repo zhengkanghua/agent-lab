@@ -31,6 +31,7 @@ export const SUPERUSER = {
   is_superuser: true,
   is_verified: true,
   is_environment_admin: true,
+  deleted_at: null,
   created_at: '2026-08-17T00:00:00Z',
   updated_at: '2026-08-17T00:00:00Z',
 }
@@ -43,12 +44,14 @@ const REGULAR_USER = {
   is_superuser: false,
   is_verified: true,
   is_environment_admin: false,
+  deleted_at: null,
   created_at: '2026-08-18T00:00:00Z',
   updated_at: '2026-08-18T00:00:00Z',
 }
 
-/* 账号目录的可变副本。删除要真的从列表里消失，否则删完刷新一下又回来了，
-   看的人会以为删除没生效。进程内保存，重启 mock 即还原。 */
+/* 账号目录的可变副本。注销要真的把那一行改成已注销——否则刷新一下它又变回正常账号，
+   看的人会以为注销没生效。默认口径（不含已注销）由 include_deleted 参数筛掉它。
+   进程内保存，重启 mock 即还原。 */
 const ACCOUNTS = [ENV_ADMIN, REGULAR_USER].map((user) => ({ ...user }))
 
 /* 当前账号的个人偏好。字段名与后端一致（下划线），与账号目录同一个理由：
@@ -289,7 +292,10 @@ export async function matchApi(url, authed, options = {}) {
         (item) => requestUrl.searchParams.get('include_inactive') === 'true' || item.is_active,
       ),
     )
-  if (suffix === '/admin/users') return json(ACCOUNTS)
+  if (suffix === '/admin/users') {
+    const includeDeleted = requestUrl.searchParams.get('include_deleted') === 'true'
+    return json(includeDeleted ? ACCOUNTS : ACCOUNTS.filter((user) => user.deleted_at === null))
+  }
   const accountId = /^\/admin\/users\/([^/]+)$/.exec(suffix)?.[1]
   if (accountId && method === 'DELETE') {
     const index = ACCOUNTS.findIndex((user) => user.id === accountId)
@@ -306,17 +312,24 @@ export async function matchApi(url, authed, options = {}) {
         },
         409,
       )
-    const activeSuperusers = ACCOUNTS.filter((user) => user.is_active && user.is_superuser)
+    const activeSuperusers = ACCOUNTS.filter(
+      (user) => user.is_active && user.is_superuser && user.deleted_at === null,
+    )
     if (ACCOUNTS[index].is_active && ACCOUNTS[index].is_superuser && activeSuperusers.length <= 1)
       return json(
         {
           code: 'last_superuser_protected',
-          detail: '最后一个活跃超级管理员不能被删除。',
+          detail: '最后一个活跃超级管理员不能被注销。',
           retryable: false,
         },
         409,
       )
-    ACCOUNTS.splice(index, 1)
+    // 注销不删行：改成盖上注销时间并置为不可用，与后端行为一致。
+    ACCOUNTS[index] = {
+      ...ACCOUNTS[index],
+      is_active: false,
+      deleted_at: new Date().toISOString(),
+    }
     return { status: 204, contentType: 'text/plain', body: '' }
   }
   if (suffix === '/sources') return json(SOURCES)

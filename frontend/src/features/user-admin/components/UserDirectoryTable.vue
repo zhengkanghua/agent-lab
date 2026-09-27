@@ -21,6 +21,8 @@ const props = defineProps<{
   /** 行 id 到该行上一次失败原因的映射。 */
   rowErrors: Readonly<Record<string, string>>
   currentUserId: string | undefined
+  /** 是否连已注销的账号一起显示；默认关。 */
+  includeDeleted: boolean
   /** 展开了密码重置表单的那一行，没有展开则为 null。 */
   resetUserId: string | null
   resetPassword: string
@@ -29,6 +31,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   refresh: []
+  'update:includeDeleted': [value: boolean]
   'set-active': [user: UserAdminDto, value: boolean]
   'set-superuser': [user: UserAdminDto, value: boolean]
   'open-reset': [user: UserAdminDto]
@@ -43,6 +46,10 @@ const emit = defineEmits<{
 function resetPasswordFor(user: UserAdminDto): string | null {
   return props.resetUserId === user.id ? props.resetPassword : null
 }
+
+function onIncludeDeletedChange(event: Event): void {
+  emit('update:includeDeleted', (event.target as HTMLInputElement).checked)
+}
 </script>
 
 <template>
@@ -52,17 +59,31 @@ function resetPasswordFor(user: UserAdminDto): string | null {
         <p>账号目录</p>
         <h2 id="directory-title">当前访问成员</h2>
       </div>
-      <BaseButton
-        variant="ghost"
-        size="sm"
-        :disabled="loadState === 'loading'"
-        @click="emit('refresh')"
-      >
-        <template #icon>
-          <RefreshCw :class="{ spin: loadState === 'loading' }" :size="15" aria-hidden="true" />
-        </template>
-        刷新
-      </BaseButton>
+      <div class="directory-tools">
+        <!-- 开关是控件、不是过滤器：它只决定列表要不要带上已注销的那一份，
+             并把参数送进查询键（那才是它真会重新取数的原因）。 -->
+        <label class="include-deleted">
+          <input
+            type="checkbox"
+            :checked="includeDeleted"
+            :disabled="loadState === 'loading'"
+            data-testid="include-deleted"
+            @change="onIncludeDeletedChange"
+          />
+          <span>显示已注销</span>
+        </label>
+        <BaseButton
+          variant="ghost"
+          size="sm"
+          :disabled="loadState === 'loading'"
+          @click="emit('refresh')"
+        >
+          <template #icon>
+            <RefreshCw :class="{ spin: loadState === 'loading' }" :size="15" aria-hidden="true" />
+          </template>
+          刷新
+        </BaseButton>
+      </div>
     </div>
 
     <div v-if="loadState === 'loading'" class="directory-state" role="status">
@@ -145,6 +166,37 @@ function resetPasswordFor(user: UserAdminDto): string | null {
   margin-top: 4px;
   font-size: var(--fs-xl);
   font-weight: var(--fw-bold);
+}
+
+.directory-tools {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* 「显示已注销」：一个普通勾选框，字重与刷新键同档，不给它开关外观——
+   它调的是列表口径，不是某一行的状态。 */
+.include-deleted {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+
+.include-deleted input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.include-deleted input:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 /* 刷新键走 BaseButton（ghost），三处目录/历史面板同款。刷新键上那圈转动用共享的

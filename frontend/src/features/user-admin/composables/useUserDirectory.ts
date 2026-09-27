@@ -11,7 +11,7 @@ import {
 import { presentAdminError } from '../model/admin-error'
 import { validatePassword, type DirectoryLoadState } from '../model/admin-validation'
 import { sortUsers, summarizeUsers } from '../model/user-account'
-import { userAdminKeys } from '../constants/query-keys'
+import { userAdminKeys, includeDeletedOf } from '../constants/query-keys'
 
 export interface UseUserDirectoryOptions {
   /**
@@ -49,11 +49,15 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
   const resetUserId = ref<string | null>(null)
   const resetPassword = ref('')
   const resetError = ref('')
+  /** 是否连已注销的账号一起看；默认关，对应接口上的 `include_deleted`。 */
+  const includeDeleted = ref(false)
 
   const query = useQuery({
-    queryKey: userAdminKeys.users(),
+    // 键用 computed：参数进键之后，切换开关就是换一个键、换一份数据，
+    // 不会命中 10 秒新鲜期里那份旧缓存。
+    queryKey: computed(() => userAdminKeys.users(includeDeleted.value)),
     queryFn: async ({ signal }) => {
-      const loadedUsers = await listUsers(signal)
+      const loadedUsers = await listUsers(signal, { includeDeleted: includeDeleted.value })
       return sortUsers(loadedUsers)
     },
     staleTime: 10_000,
@@ -75,6 +79,10 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
   })
 
   const stats = computed(() => summarizeUsers(users.value))
+
+  function setIncludeDeleted(value: boolean): void {
+    includeDeleted.value = value
+  }
 
   function load(): Promise<void> {
     loadErrorOverride.value = ''
@@ -174,27 +182,45 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
   })
 
   /**
-   * 删除一个账号。环境托管超级用户与当前登录账号都不允许删。
+   * 注销一个账号。环境托管超级用户与当前登录账号都不允许注销。
    *
-   * 当前账号自己不能删，不是因为后端拦得住（后端只挡最后一个活跃超管），而是这个页面
-   * 会立刻失去意义：删完自己的会话就没了，接下来要么跳登录页要么跳检索页，让管理员
-   * 先删别人、再让别人来删自己更顺。要删自己得换一个账号操作。
+   * 当前账号自己不能注销，不是因为后端拦得住（后端挡的是最后一个活跃超管），而是这个页面
+   * 会立刻失去意义：注销完自己的会话就没了，接下来要么跳登录页要么跳检索页，让管理员
+   * 先处理别人、再让别人来处理自己更顺。要注销自己得换一个账号操作。
    */
   async function deleteAccount(user: UserAdminDto): Promise<void> {
     if (isBusy(user.id)) return
     if (user.is_environment_admin || user.id === options.currentUserId()) return
-    if (!window.confirm(`删除账号 ${user.email}？该账号的会话与登录状态会一并清除，且无法恢复。`))
+    if (
+      !window.confirm(
+        `注销账号 ${user.email}？它将无法再登录，已登录的会话也会失效；` +
+          `账号记录、会话归属与个人偏好都会保留，且这是不可恢复的终态。`,
+      )
+    )
       return
 
     await runRowAction({
       userId: user.id,
-      fallback: '账号删除失败，请稍后重试。',
+      fallback: '账号注销失败，请稍后重试。',
       run: async () => {
         await deleteMutation.mutateAsync(user.id)
-        removeUser(user.id)
-        feedback.value = `已删除账号 ${user.email}。`
+        markDeregistered(user)
+        feedback.value = `已注销账号 ${user.email}。`
       },
     })
+  }
+
+  /**
+   * 把缓存里的这一行改成已注销，而不是把它从列表里摘掉。
+   *
+   * 摘掉在开关打开时是错的：那一行并没有消失，只是状态变了。后端返回 204 空体、
+   * 拿不到它盖的注销时间，所以按刚刚这一刻补一个；缓存 10 秒过期后重新取数会换成
+   * 服务端的值。
+   */
+  function markDeregistered(user: UserAdminDto): void {
+    replaceUser({ ...user, is_active: false, deleted_at: new Date().toISOString() })
+    // 这一行可能正展开着密码重置表单，收起它：它已经注销，不再有可重置的密码。
+    if (resetUserId.value === user.id) cancelPasswordReset()
   }
 
   /**
@@ -240,10 +266,7 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
 
   /** 创建成功后把新行并进列表。创建表单自己不碰列表。 */
   function acceptCreatedUser(created: UserAdminDto): void {
-    queryClient.setQueryData(userAdminKeys.users(), (oldData: UserAdminDto[] | undefined) => {
-      const existing = oldData ?? []
-      return sortUsers([...existing, created])
-    })
+    updateCachedDirectories((users) => sortUsers([...users, created]))
     feedback.value = `已创建账号 ${created.email}。`
   }
 
@@ -251,20 +274,33 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
     feedback.value = ''
   }
 
-  /** 删除成功后把该行摘掉。不重新拉列表：这一行已经不存在，重拉只会多一次往返。 */
-  function removeUser(userId: string): void {
-    queryClient.setQueryData(userAdminKeys.users(), (oldData: UserAdminDto[] | undefined) =>
-      (oldData ?? []).filter((user) => user.id !== userId),
-    )
-    // 被删那一行可能正展开着密码重置表单，收起它，否则残留状态会跟到下一行。
-    if (resetUserId.value === userId) cancelPasswordReset()
+  function replaceUser(updated: UserAdminDto): void {
+    updateCachedDirectories((users, includeDeleted) => {
+      // 注销之后这一行仍然存在，只是状态变了：默认口径（不含已注销）下它不该再出现，
+      // 而开关打开的那一份里它必须留在原位、显示成「已注销」。
+      if (updated.deleted_at !== null && !includeDeleted) {
+        return users.filter((user) => user.id !== updated.id)
+      }
+      return sortUsers(users.map((user) => (user.id === updated.id ? updated : user)))
+    })
   }
 
-  function replaceUser(updated: UserAdminDto): void {
-    queryClient.setQueryData(userAdminKeys.users(), (oldData: UserAdminDto[] | undefined) => {
-      const existing = oldData ?? []
-      return sortUsers(existing.map((user) => (user.id === updated.id ? updated : user)))
-    })
+  /**
+   * 把一次改动写进**所有已缓存**的账号列表。
+   *
+   * 列表最多有两份缓存：默认的（不含已注销）与开关打开时的（含已注销）。写完之后两份都要
+   * 各自成立，所以按「这个键有没有带上已注销」分派两种处理，而不是三处各写一遍
+   * `setQueryData(userAdminKeys.users())`——键带上参数之后，那种写法会写到一份没人读的缓存上。
+   */
+  function updateCachedDirectories(
+    update: (users: UserAdminDto[], includeDeleted: boolean) => UserAdminDto[],
+  ): void {
+    for (const cached of queryClient.getQueryCache().findAll({ queryKey: userAdminKeys.all })) {
+      const includeDeleted = includeDeletedOf(cached.queryKey)
+      queryClient.setQueryData<UserAdminDto[]>(cached.queryKey, (oldData) =>
+        oldData === undefined ? oldData : update(oldData, includeDeleted),
+      )
+    }
   }
 
   function isBusy(userId: string): boolean {
@@ -302,6 +338,8 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
     resetUserId,
     resetPassword,
     resetError,
+    includeDeleted,
+    setIncludeDeleted,
     load,
     setActive,
     setSuperuser,

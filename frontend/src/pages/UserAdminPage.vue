@@ -48,7 +48,8 @@ onMounted(() => {
   <section class="admin-page" aria-labelledby="admin-title" style="container-type: inline-size">
     <div class="page-bar">
       <p class="page-intro">
-        创建平台账号、调整使用权限，并在需要时重置密码、撤销登录会话或删除账号。
+        创建平台账号、调整使用权限，并在需要时重置密码、撤销登录会话或注销账号。
+        注销之后账号记录仍然在，可以用目录里的「显示已注销」把它找出来。
       </p>
       <BaseButton v-if="!createForm.expanded.value" variant="primary" @click="createForm.open">
         <template #icon><Plus :size="18" aria-hidden="true" /></template>
@@ -77,6 +78,7 @@ onMounted(() => {
 
     <UserDirectoryTable
       v-model:reset-password="directory.resetPassword.value"
+      v-model:include-deleted="directory.includeDeleted.value"
       :users="directory.users.value"
       :load-state="directory.loadState.value"
       :load-error="directory.loadError.value"

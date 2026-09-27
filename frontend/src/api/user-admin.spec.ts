@@ -15,6 +15,7 @@ const user = {
   is_superuser: false,
   is_verified: true,
   is_environment_admin: false,
+  deleted_at: null,
   created_at: '2026-08-18T00:00:00Z',
   updated_at: '2026-08-18T00:00:00Z',
 }
@@ -37,6 +38,20 @@ describe('user admin API', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/admin/users',
       expect.objectContaining({ method: 'GET', credentials: 'same-origin' }),
+    )
+  })
+
+  it('把「显示已注销」作为查询参数发出去，不在前端本地过滤', async () => {
+    // 参数没真的进请求的话，开关就只是把同一份默认列表又渲染了一遍，
+    // 表现是「开关像坏了、列表没变」。
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([user]))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await listUsers(undefined, { includeDeleted: true })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/admin/users?include_deleted=true',
+      expect.objectContaining({ method: 'GET' }),
     )
   })
 

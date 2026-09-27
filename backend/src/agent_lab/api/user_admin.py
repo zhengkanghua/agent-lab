@@ -12,7 +12,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,15 +62,24 @@ def get_user_admin_service(
 )
 async def list_users(
     service: Annotated[UserAdminService, Depends(get_user_admin_service)],
+    include_deleted: Annotated[
+        bool,
+        Query(
+            description=(
+                "是否连已注销的账号一起返回。默认只返回未注销的账号；"
+                "已注销的账号仍在库里，但日常管理不需要看到它们。"
+            )
+        ),
+    ] = False,
 ) -> list[UserAdminResponse] | JSONResponse:
-    """返回不含密码和 Token 的账号列表。"""
+    """返回不含密码和 Token 的账号列表；默认不含已注销账号。"""
 
     # 六条路由的形状一样：调 Service，把两类失败翻成同构 JSON，成功的结果过一遍
     # response schema。model_validate 在这里不只是转换——UserAdminResponse 没有
     # hashed_password 字段，走一遍它就等于确保密码 Hash 不会被顺出去。
     # 只有这条不会抛领域错误：列表查询没有「目标不存在」之类的前提。
     try:
-        users = await service.list_users()
+        users = await service.list_users(include_deleted=include_deleted)
     except SQLAlchemyError as error:
         return _database_error(error)
     return [UserAdminResponse.model_validate(user) for user in users]

@@ -61,10 +61,10 @@ class FakeAdminService:
         self.calls: list[tuple[str, object]] = []
         self.error: UserAdminDomainError | None = None
 
-    async def list_users(self) -> list[object]:
-        """返回固定账号列表。"""
+    async def list_users(self, include_deleted: bool = False) -> list[object]:
+        """返回固定账号列表，并记录路由有没有把「带上已注销」传下来。"""
 
-        self.calls.append(("list", ""))
+        self.calls.append(("list", include_deleted))
         return [self.user]
 
     async def create_user(self, request: UserAdminCreateRequest) -> object:
@@ -155,6 +155,8 @@ def test_user_admin_http_commands_use_typed_bodies_and_safe_responses() -> None:
 
     async def verify() -> None:
         listed = await request(app, "GET", "/admin/users")
+        # 带上参数的一次单独取：只验 Service 参数的话，「接口上没暴露这个参数」会从缝里滑过去。
+        listed_with_deleted = await request(app, "GET", "/admin/users?include_deleted=true")
         created = await request(
             app,
             "POST",
@@ -185,19 +187,22 @@ def test_user_admin_http_commands_use_typed_bodies_and_safe_responses() -> None:
 
         assert listed.status_code == 200
         assert listed.json()[0]["email"] == "managed@example.com"
+        assert listed_with_deleted.status_code == 200
+        assert listed_with_deleted.json()[0]["email"] == "managed@example.com"
         assert created.status_code == 201
         assert updated.status_code == 200
         assert password.status_code == 200
         assert revoked.json() == {"revoked_sessions": 2}
         combined = "".join(
-            [listed.text, created.text, updated.text, password.text, revoked.text]
+            [listed.text, listed_with_deleted.text, created.text, updated.text, password.text, revoked.text]
         )
         assert "never-echo-this-password" not in combined
         assert "another-private-password" not in combined
 
     run(verify())
     assert service.calls == [
-        ("list", ""),
+        ("list", False),
+        ("list", True),
         ("create", ("new@example.com", True, 24)),
         ("update", (service.user_id, False, None)),
         ("password", (service.user_id, 24)),

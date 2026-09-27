@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import type { UserAdminDto } from '@/api/user-admin'
-import { formatCreatedAt, sortUsers, summarizeUsers } from '../model/user-account'
+import { formatAccountDate, sortUsers, summarizeUsers } from '../model/user-account'
 
 function makeUser(overrides: Partial<UserAdminDto> & Pick<UserAdminDto, 'email'>): UserAdminDto {
   return {
@@ -10,6 +10,7 @@ function makeUser(overrides: Partial<UserAdminDto> & Pick<UserAdminDto, 'email'>
     is_superuser: false,
     is_verified: true,
     is_environment_admin: false,
+    deleted_at: null,
     created_at: '2026-08-18T00:00:00Z',
     updated_at: '2026-08-18T00:00:00Z',
     ...overrides,
@@ -53,14 +54,30 @@ describe('summarizeUsers', () => {
     expect(stats).toEqual({ total: 4, active: 2, superusers: 2 })
   })
 
+  it('已注销的超管不算进「超级用户」', () => {
+    // 注销保留 is_superuser（将来若要恢复，恢复出来的权限是对的），所以直接数它会把一个
+    // 登不进来的账号算成超级用户，与旁边那个「启用」口径矛盾。
+    const stats = summarizeUsers([
+      makeUser({ email: 'a@example.com', is_superuser: true }),
+      makeUser({
+        email: 'b@example.com',
+        is_superuser: true,
+        is_active: false,
+        deleted_at: '2026-08-19T00:00:00Z',
+      }),
+    ])
+
+    expect(stats).toEqual({ total: 2, active: 1, superusers: 1 })
+  })
+
   it('空列表给出三个零', () => {
     expect(summarizeUsers([])).toEqual({ total: 0, active: 0, superusers: 0 })
   })
 })
 
-describe('formatCreatedAt', () => {
+describe('formatAccountDate', () => {
   it('把后端的 ISO 时间戳格式化成年月日', () => {
-    expect(formatCreatedAt('2026-08-18T12:34:56Z')).toMatch(/2026/)
-    expect(formatCreatedAt('2026-08-18T12:34:56Z')).not.toMatch(/12:34/)
+    expect(formatAccountDate('2026-08-18T12:34:56Z')).toMatch(/2026/)
+    expect(formatAccountDate('2026-08-18T12:34:56Z')).not.toMatch(/12:34/)
   })
 })

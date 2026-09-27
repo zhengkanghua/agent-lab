@@ -609,7 +609,7 @@ export interface paths {
         };
         /**
          * 列出内部账号
-         * @description 返回不含密码和 Token 的账号列表。
+         * @description 返回不含密码和 Token 的账号列表；默认不含已注销账号。
          */
         get: operations["list_users_admin_users_get"];
         put?: never;
@@ -635,8 +635,8 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * 删除内部账号
-         * @description 删除账号，并连带清理它的会话归属与登录 Token、置空换版决策留痕的操作者。成功时无响应体。
+         * 注销内部账号
+         * @description 注销账号：账号不再能登录，已签发的登录会话同时失效；账号行、会话归属、个人偏好与换版决策留痕全部保留，不会从列表里消失。成功时无响应体。
          */
         delete: operations["delete_user_admin_users__user_id__delete"];
         options?: never;
@@ -1641,7 +1641,7 @@ export interface components {
             email: string;
             /**
              * Is Active
-             * @description 账号当前是否启用；该接口只返回启用账号。
+             * @description 账号当前是否可用（能否登录）；该接口只返回可用账号。
              */
             is_active: boolean;
             /**
@@ -2428,6 +2428,9 @@ export interface components {
         /**
          * KnowledgeBaseUpdateRequest
          * @description 仅修改明确提交的配置；description 为 null 时清空说明。
+         *
+         *     稳定键 ``key`` 刻意不在这里：它是知识库的业务身份，定时任务参数和来源映射都按它引用，
+         *     允许改它会让那些引用静默失效。要换身份就新建一个库。
          */
         KnowledgeBaseUpdateRequest: {
             /**
@@ -3233,7 +3236,7 @@ export interface components {
             email: string;
             /**
              * Is Active
-             * @description 账号是否允许登录和继续使用已有会话。
+             * @description 账号是否可用（能否登录）；要和注销时间一起读才能判出活跃、停用、注销三种情形。
              */
             is_active: boolean;
             /**
@@ -3248,9 +3251,14 @@ export interface components {
             is_verified: boolean;
             /**
              * Is Environment Admin
-             * @description 是否由 AUTH_ADMIN_EMAIL/AUTH_ADMIN_PASSWORD 托管且不可网页降级。
+             * @description 是否由 AUTH_ADMIN_EMAIL/AUTH_ADMIN_PASSWORD 托管且不可网页停用、改密或注销。
              */
             is_environment_admin: boolean;
+            /**
+             * Deleted At
+             * @description 账号注销时间；为空表示账号未被注销。有值时 is_active 必为假。
+             */
+            deleted_at: string | null;
             /**
              * Created At
              * Format: date-time
@@ -5616,7 +5624,10 @@ export interface operations {
     };
     list_users_admin_users_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 是否连已注销的账号一起返回。默认只返回未注销的账号；已注销的账号仍在库里，但日常管理不需要看到它们。 */
+                include_deleted?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -5630,6 +5641,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserAdminResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
             /** @description Service Unavailable */

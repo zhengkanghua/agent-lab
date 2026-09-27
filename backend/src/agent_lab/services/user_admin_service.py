@@ -65,24 +65,28 @@ class UserAdminService:
         self._session = session
         self._password_helper = PasswordHelper()
 
-    async def list_users(self) -> list[UserRecord]:
-        """按环境托管超级用户优先、邮箱升序返回全部未注销的内部账号。
+    async def list_users(self, include_deleted: bool = False) -> list[UserRecord]:
+        """按环境托管超级用户优先、邮箱升序返回内部账号，默认不含已注销的。
 
-        **已注销的账号默认不返回。** 它们仍然在库里（注销保留账号行），只是在日常管理里不需要
-        看到。要连它们一起看是另一个问题，不在本方法的职责里。
+        **已注销的账号默认不返回**：它们仍然在库里（注销保留账号行），只是日常管理里不需要
+        看到。要连它们一起看，由调用方显式传 ``include_deleted=True``。
+
+        Args:
+            include_deleted: 是否连已注销的账号一起返回；默认 ``False``。
 
         Returns:
-            当前 users 表中未注销的 ORM 用户列表，不包含密码 Hash 的额外加载。
+            当前 users 表中符合条件的 ORM 用户列表，不包含密码 Hash 的额外加载。
 
         Notes:
             执行一次 PostgreSQL 只读查询，不访问 access_tokens 或外部服务。
         """
 
+        statement = select(UserRecord)
+        if not include_deleted:
+            statement = statement.where(UserRecord.deleted_at.is_(None))
         return list(
             await self._session.scalars(
-                select(UserRecord)
-                .where(UserRecord.deleted_at.is_(None))
-                .order_by(
+                statement.order_by(
                     UserRecord.is_environment_admin.desc(),
                     UserRecord.email.asc(),
                 )
