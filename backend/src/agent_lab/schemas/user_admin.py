@@ -15,11 +15,16 @@ class UserAdminResponse(BaseModel):
 
     id: UUID = Field(description="内部用户稳定 UUID。")
     email: EmailStr = Field(description="大小写不敏感的登录邮箱。")
-    is_active: bool = Field(description="账号是否允许登录和继续使用已有会话。")
+    is_active: bool = Field(
+        description="账号是否可用（能否登录）；要和注销时间一起读才能判出活跃、停用、注销三种情形。"
+    )
     is_superuser: bool = Field(description="账号是否有账号管理和 Pipeline 权限。")
     is_verified: bool = Field(description="账号是否已经由管理员确认。")
     is_environment_admin: bool = Field(
-        description="是否由 AUTH_ADMIN_EMAIL/AUTH_ADMIN_PASSWORD 托管且不可网页降级。",
+        description="是否由 AUTH_ADMIN_EMAIL/AUTH_ADMIN_PASSWORD 托管且不可网页停用、改密或注销。",
+    )
+    deleted_at: datetime | None = Field(
+        description="账号注销时间；为空表示账号未被注销。有值时 is_active 必为假。",
     )
     created_at: datetime = Field(description="账号首次写入 PostgreSQL 的时间。")
     updated_at: datetime = Field(description="账号最近一次通过 ORM 更新的时间。")

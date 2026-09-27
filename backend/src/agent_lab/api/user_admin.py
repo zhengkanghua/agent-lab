@@ -163,19 +163,19 @@ async def reset_user_password(
         409: {"model": UserAdminErrorResponse},
         503: {"model": UserAdminErrorResponse},
     },
-    summary="删除内部账号",
+    summary="注销内部账号",
     # 显式给 description，docstring 就不进 OpenAPI（`description or cleandoc(__doc__)`）——
     # 下面那段讲的是「为什么不能写返回类型标注」，属于维护者的话，不该出现在对外契约里。
     description=(
-        "删除账号，并连带清理它的会话归属与登录 Token、置空换版决策留痕的操作者。"
-        "成功时无响应体。"
+        "注销账号：账号不再能登录，已签发的登录会话同时失效；账号行、会话归属、"
+        "个人偏好与换版决策留痕全部保留，不会从列表里消失。成功时无响应体。"
     ),
 )
 async def delete_user(
     user_id: UUID,
     service: Annotated[UserAdminService, Depends(get_user_admin_service)],
 ):
-    """删除账号，并连带清理它的会话归属、登录 Token 与换版决策留痕的操作者。
+    """注销账号，不删账号行；只清掉它的登录 Token。
 
     成功时 ``204`` 无响应体。这里刻意不写返回类型标注：``204`` 不允许有响应体，
     标上 ``JSONResponse`` 会被 FastAPI 当成响应模型而直接报错；错误分支返回的

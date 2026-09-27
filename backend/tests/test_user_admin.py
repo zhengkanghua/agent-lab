@@ -54,6 +54,7 @@ class FakeAdminService:
             is_superuser=False,
             is_verified=True,
             is_environment_admin=False,
+            deleted_at=None,
             created_at=now,
             updated_at=now,
         )
@@ -205,7 +206,7 @@ def test_user_admin_http_commands_use_typed_bodies_and_safe_responses() -> None:
 
 
 def test_delete_account_is_superuser_only_and_returns_no_body() -> None:
-    """删账号挂在鉴权之后，成功时是 204 空响应。
+    """注销账号挂在鉴权之后，成功时是 204 空响应。
 
     两件只有 HTTP 层才成立的事：未登录时 Service 根本不被调用；成功时没有任何响应体
     （前端按 204 读空体，多一个 body 反而要额外处理）。
@@ -232,12 +233,12 @@ def test_delete_account_is_superuser_only_and_returns_no_body() -> None:
 
 
 def test_delete_account_maps_domain_error_to_stable_response() -> None:
-    """删账号的领域错误按稳定 code 返回，不泄露内部状态。"""
+    """注销账号的领域错误按稳定 code 返回，不泄露内部状态。"""
 
     service = FakeAdminService()
     service.error = UserAdminDomainError(
         "last_superuser_protected",
-        "最后一个活跃超级管理员不能被删除。",
+        "最后一个活跃超级管理员不能被注销。",
     )
 
     response = run(
@@ -247,7 +248,7 @@ def test_delete_account_maps_domain_error_to_stable_response() -> None:
     assert response.status_code == 409
     assert response.json() == {
         "code": "last_superuser_protected",
-        "detail": "最后一个活跃超级管理员不能被删除。",
+        "detail": "最后一个活跃超级管理员不能被注销。",
         "retryable": False,
     }
 

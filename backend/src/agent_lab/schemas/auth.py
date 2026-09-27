@@ -29,7 +29,7 @@ class AuthUserResponse(schemas.BaseUser[UUID]):
 
     id: UUID = Field(description="当前登录用户的稳定 UUID。")
     email: EmailStr = Field(description="当前登录账号的邮箱标识。")
-    is_active: bool = Field(description="账号当前是否启用；该接口只返回启用账号。")
+    is_active: bool = Field(description="账号当前是否可用（能否登录）；该接口只返回可用账号。")
     is_superuser: bool = Field(description="账号是否有权执行手动 Pipeline。")
     is_verified: bool = Field(description="账号是否已由管理员确认。")
     is_environment_admin: bool = Field(

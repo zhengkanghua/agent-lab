@@ -678,16 +678,3 @@ def test_service_replace_upserts_and_returns_the_stored_value() -> None:
     # 一条语句完成插入或更新：ON CONFLICT 必须先存在才能生成，否则并发下会撞主键。
     sql = compiled(session.executed[0]).upper()
     assert "ON CONFLICT" in sql
-
-
-def test_service_delete_for_removes_the_row_without_committing() -> None:
-    """删账号时清偏好：只删不提交，事务归调用方——不能出现「账号没了、配置还在」的窗口。"""
-
-    session = PreferenceSession(None)
-    service = UserPreferenceService(session)  # type: ignore[arg-type]
-
-    run(service.delete_for(READER_ID))
-
-    assert len(session.executed) == 1
-    assert compiled(session.executed[0]).lstrip().upper().startswith("DELETE")
-    assert session.commit_count == 0

@@ -4,9 +4,10 @@
 「这个会话用服务端内置默认提示词」——那正是它们建立时的真实情况，不需要回填。存量账号在
 ``user_preferences`` 里没有行，含义是「还没配过」，读出来用契约默认值。
 
-**不建数据库外键。** ``user_preferences.user_id`` 是指向 ``users.id`` 的逻辑外键，删账号时
-由 ``UserAdminService.delete_user`` 在同一事务里显式删除这一行（见 ADR 0028）。这一列同时
-是主键，所以它自带唯一索引，不需要再为查询单独建。
+**不建数据库外键。** ``user_preferences.user_id`` 是指向 ``users.id`` 的逻辑外键；账号注销
+不删这一行，个人偏好是这个人留下的记录（见 ADR 0034）。这一列同时是主键，所以它自带唯一索引，
+不需要再为查询单独建。注：本迁移落库时注销还是硬删除，文件中那两句 DDL 注释说的是当时的语义；
+改成注销的那条迁移会把它们刷新成同一份文案。
 
 **``agent_threads.system_prompt`` 与同表 ``scope`` 列的写入语义相反**（续聊时 scope 可改、
 system_prompt 不可改），这不是漏写，理由见 ADR 0029。
@@ -24,9 +25,9 @@ down_revision = "d4b7c1e93a58"
 branch_labels = None
 depends_on = None
 
-TABLE_COMMENT = "账号级个人偏好；一行一个账号，删账号时由业务层清理。"
+TABLE_COMMENT = "账号级个人偏好；一行一个账号，注销账号时这一行保留。"
 COLUMN_COMMENTS = (
-    ("user_id", "该偏好所属的 users.id；业务层维护的逻辑外键，库上无约束。删账号时由业务层清理。"),
+    ("user_id", "该偏好所属的 users.id；业务层维护的逻辑外键，库上无约束。注销账号时这一行保留。"),
     ("system_prompt", "自定义系统提示词；为空表示使用服务端内置默认提示词。"),
     ("document_limit", "检索默认返回的文档数；写入前由应用层按契约边界归一化。"),
     ("matches_per_document", "每篇文档默认保留的片段数；写入前由应用层按契约边界归一化。"),

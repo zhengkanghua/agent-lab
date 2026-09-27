@@ -2,8 +2,8 @@
 
 三张表都带指向 ``documents``、``document_processing_records`` 和 ``users`` 的**逻辑外键**：
 列与索引在，库上没有 ``FOREIGN KEY`` 约束。连带删除的顺序由
-``DocumentRetentionRepository.finish`` 显式保证；删账号只置空
-``document_review_records.actor_id``，决策记录本身保留。
+``DocumentRetentionRepository.finish`` 显式保证；注销账号**不改写**
+``document_review_records.actor_id``，决策记录与操作者都原样保留（见 ADR 0034）。
 """
 
 from __future__ import annotations

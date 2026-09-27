@@ -494,8 +494,8 @@ try {
 自动检查范围与出处身份后，仍须逐题核对结论是否被原文支持、推断是否标注、冲突是否说明；
 报告中的人工语义核对状态初始为 pending，不能用引用 ID 校验通过代替。
 
-真实 PostgreSQL 的会话归属（验证归属过滤只匹配自己的行、建会话时快照账号提示词、删账号连带
-清掉归属行；需已跑过 ``alembic upgrade head``）：
+真实 PostgreSQL 的会话归属（验证归属过滤只匹配自己的行、建会话时快照账号提示词、注销后归属行
+仍在；需已跑过 ``alembic upgrade head``）：
 
 ```powershell
 $env:RUN_POSTGRES_AGENT_THREAD_INTEGRATION_TEST="1"

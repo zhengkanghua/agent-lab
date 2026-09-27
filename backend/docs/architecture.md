@@ -51,7 +51,7 @@ PUT  /auth/me/preferences                 整体覆盖当前账号的个人偏�
 GET    /admin/users                       账号列表（超级用户）
 POST   /admin/users                       创建账号（超级用户）
 PATCH  /admin/users/{user_id}             改启用状态与超级用户位（超级用户）
-DELETE /admin/users/{user_id}             删除账号，连带清会话归属与登录 Token（超级用户）
+DELETE /admin/users/{user_id}             注销账号，只撤销它的登录 Token（超级用户）
 POST   /admin/users/{user_id}/password    重置密码（超级用户）
 DELETE /admin/users/{user_id}/sessions    撤销该账号全部登录会话（超级用户）
 GET    /scheduled-jobs                    定时任务列表，含下次执行时间与最近一次执行（超级用户）
@@ -134,10 +134,20 @@ Agent 新会话默认所有启用库，迁移旧会话保留 news；每次运行
 
 应用启动时在构造搜索 Runtime 之前同步 ``.env`` 中配置的那个超级用户
 （``sync_configured_environment_admin()``）。该账号带环境托管标记，**不能**通过 API 停用、
-降级或重置密码（``environment_admin_protected``）；网页创建的其他账号可正常管理。
+降级、重置密码或注销（``environment_admin_protected``）；网页创建的其他账号可正常管理。
 它是网页入口不可用时的恢复通道，登录后与普通超级用户权限相同。
 ``UserAdminService`` 另外保护「最后一个超级用户」（``last_superuser_protected``），并对
 重复邮箱和弱密码返回 ``user_already_exists`` / ``invalid_password``。
+
+**注销与停用是两个字段。** ``is_active``（框架原有）说「这个账号能不能用」，``deleted_at``
+（可空时刻）说「这个人还在不在」。两个字段组合出三种情形：活跃 = ``is_active``；停用 =
+``is_active`` 为假且未注销，可以重新启用；注销 = ``deleted_at`` 有值（此时 ``is_active``
+必为假），第一版不可恢复。注销**必须同时写这两个字段**：登录与认证两条路都只看 ``is_active``，
+只盖时间戳挡不住登录。库上两条约束兜底：``ck_users_deleted_at_implies_inactive`` 拦「已注销却
+仍可登录」，``ck_users_environment_admin_privileges`` 里那句 ``deleted_at IS NULL`` 拦「环境
+托管账号被注销」。注销保留账号行、会话归属与个人偏好，只撤销登录 Token；账号列表默认不返回已
+注销的账号。终态与代价见 [ADR 0034](../../docs/adr/0034-account-deletion-is-soft-delete.md),
+术语见 [CONTEXT.md](../../CONTEXT.md)。
 
 ## FreshRSS 增量同步
 
@@ -679,9 +689,10 @@ Chunk 清单与结构作为预览和已采用快照保存在 PostgreSQL，向量
 
 Agent 的会话数据分在两处，边界是「内容 / 归属」：四张 ``checkpoint*`` 表存消息内容，
 ``agent_threads`` 存归属、展示元信息、下一次运行的选择范围和会话级提示词快照。前者由第三方库管、不由 Alembic 管；后者是普通业务表，
-``user_id`` 是指向 ``users`` 的**逻辑外键**（库上无约束，连带清理由
-``UserAdminService.delete_user`` 在同一事务内显式完成，见
-[ADR 0028](../../docs/adr/0028-drop-database-foreign-keys.md)），并有 ``(user_id, last_active_at DESC)`` 索引。
+``user_id`` 是指向 ``users`` 的**逻辑外键**（库上无约束；注销账号**不删**这些归属行，
+``UserAdminService.delete_user`` 在同一个事务里只撤销登录 Token，见
+[ADR 0028](../../docs/adr/0028-drop-database-foreign-keys.md) 与
+[ADR 0034](../../docs/adr/0034-account-deletion-is-soft-delete.md)），并有 ``(user_id, last_active_at DESC)`` 索引。
 分开的理由见 [ADR 0009](../../docs/adr/0009-agent-thread-ownership-in-own-table.md)。
 
 ``agent_threads`` 的两列写入语义**相反**，这不是疏漏：``scope`` 续聊时可被请求覆盖（另有专门的
@@ -701,7 +712,7 @@ Repository/Service 里，不新建抽象模块。**本节是该清单唯一的�
 | 入口 | 删什么 | 连带处理（同一个事务内） |
 | --- | --- | --- |
 | ``DocumentRetentionRepository.finish()`` | ``documents`` 与它的删除待办 | 先断开 ``current_version_id`` / ``latest_processing_id`` / ``draft_processing_id`` 三处指向并 flush，再按次序删 ``document_review_records``、``document_versions``、``document_processing_records``（``processing_id`` 仍指向后者，所以它必须最后删），最后删文档与待办、推进知识库的 ``visibility_revision`` |
-| ``UserAdminService.delete_user()`` | ``users`` 那一行 | 删 ``agent_threads`` 与 ``access_tokens``、删 ``user_preferences``、置空 ``document_review_records.actor_id``（保留决策记录本身）。**账号正在从硬删除改为注销**，改成注销后只删 ``access_tokens``，其余保留——见 ``docs/specs/0002-soft-delete-accounts.md`` |
+| ``UserAdminService.delete_user()`` | 不再删任何行——账号改为**注销** | 只删 ``access_tokens``；``agent_threads`` 的会话归属、``user_preferences`` 的个人偏好、``document_review_records.actor_id`` 全部保留。账号行本身加上 ``deleted_at`` 并置 ``is_active=false``（见 [ADR 0034](../../docs/adr/0034-account-deletion-is-soft-delete.md)）|
 | ``ScheduledJobRepository.delete_job()`` | ``scheduled_jobs`` 那一行 | 把 ``scheduled_job_runs.job_id`` 置空（``source_job_id`` 与受理时的 ``config_snapshot`` 原样保留） |
 | ``TaskRepository`` 的到期清理 | 终态且到期的 ``scheduled_job_runs`` | 只选**没有子行**的记录（``child.retry_of == JobRunRecord.id`` 不存在）才删 |
 

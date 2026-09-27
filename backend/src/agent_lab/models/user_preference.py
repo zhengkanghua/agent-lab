@@ -3,9 +3,9 @@
 本模块位于 SQLAlchemy 持久层，只保存「某个账号的自身操作默认值」；不保存已开始会话的系统提示词
 （那是 ``agent_threads.system_prompt``），也不保存全局业务配置（那张表按全站一份）。
 
-``user_id`` 是**逻辑外键**：列、类型、索引在，库上没有 ``FOREIGN KEY`` 约束，删账号时由
-``UserAdminService.delete_user`` 在同一事务里显式删除这一行（见 ADR 0028）。配置尤其不能
-指望运维命令兜底——会话有 ``prune-orphan-threads``，配置没有对应的清理命令。
+``user_id`` 是**逻辑外键**：列、类型、索引在，库上没有 ``FOREIGN KEY`` 约束。注销账号
+**不删这一行**：个人偏好是这个人在系统里留下的记录，不是账号的附属数据，账号注销后它原样保留
+（根因与代价见 ``docs/adr/0034-account-deletion-is-soft-delete.md``）。
 """
 
 from __future__ import annotations
@@ -41,12 +41,12 @@ class UserPreferenceRecord(TimestampMixin, Base):
             "matches_per_document >= 1",
             name="ck_user_preferences_matches_positive",
         ),
-        {"comment": "账号级个人偏好；一行一个账号，删账号时由业务层清理。"},
+        {"comment": "账号级个人偏好；一行一个账号，注销账号时这一行保留。"},
     )
 
     user_id: Mapped[UUID] = mapped_column(
         primary_key=True,
-        comment="该偏好所属的 users.id；业务层维护的逻辑外键，库上无约束。删账号时由业务层清理。",
+        comment="该偏好所属的 users.id；业务层维护的逻辑外键，库上无约束。注销账号时这一行保留。",
     )
     system_prompt: Mapped[str | None] = mapped_column(
         Text,

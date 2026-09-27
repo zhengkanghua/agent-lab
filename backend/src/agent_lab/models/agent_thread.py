@@ -28,8 +28,9 @@ class AgentThreadRecord(Base):
 
     一行对应一个会话（``CONTEXT.md`` 的「会话（thread）」）。``thread_id`` 与 checkpointer
     用的那个 id 同值，所以本表既是归属真源，也是「这个 id 是谁开的」唯一可查处。
-    ``user_id`` 是逻辑外键：库上没有约束，删账号时由 ``UserAdminService`` 在同一事务里
-    显式删掉该账号的归属记录。
+    ``user_id`` 是逻辑外键：库上没有约束，注销账号时由 ``UserAdminService`` 在同一事务里
+    只撤销登录 Token，**归属记录本身保留**——它是「这个人做过什么」的记录，
+    不是账号的附属数据（见 ``docs/adr/0034-account-deletion-is-soft-delete.md``）。
 
     刻意不继承 ``TimestampMixin``：它给的是 ``created_at`` 加 ``updated_at``，而这里需要的第二个
     时间是「最后一次有人在这个会话里提问」，语义不是「ORM 最后一次更新」。混用会让排序键
@@ -60,7 +61,7 @@ class AgentThreadRecord(Base):
     user_id: Mapped[UUID] = mapped_column(
         Uuid,
         nullable=False,
-        comment="该会话所属的 users.id；业务层维护的逻辑外键，库上无约束。删账号时由业务层清理归属记录。",
+        comment="该会话所属的 users.id；业务层维护的逻辑外键，库上无约束。注销账号时归属记录保留。",
     )
     title: Mapped[str] = mapped_column(
         String(60),

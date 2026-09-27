@@ -35,16 +35,33 @@ class UserRecord(SQLAlchemyBaseUserTableUUID, TimestampMixin, Base):
     忽略大小写。``hashed_password`` 只保存 pwdlib/Argon2 Hash。``is_active`` 控制账号
     是否可登录，``is_superuser`` 只用于授权高风险 Pipeline。继承的时间字段记录账号
     创建和最近一次 ORM 更新；本表与新闻表没有逻辑外键或 relationship，指向本表的
-    ``access_tokens``、``agent_threads``、``document_review_records`` 三列都是逻辑外键，
-    删账号的连带清理由 ``UserAdminService`` 在同一事务内显式完成。超级用户同时拥有
-    手动 Pipeline 和账号管理权限，环境托管标记用于区分不可由网页降级的那个超级用户。
+    ``access_tokens``、``agent_threads``、``document_review_records``、``user_preferences``
+    四列都是逻辑外键。超级用户同时拥有手动 Pipeline 和账号管理权限，环境托管标记用于区分
+    不可由网页改动的那个超级用户。
+
+    **账号不再硬删除，只注销。** ``deleted_at`` 有值表示这个账号已经注销：账号行、会话归属、
+    个人偏好和换版决策留痕全部保留，只有 ``access_tokens`` 在该事务里被清掉（决策见
+    ``docs/adr/0034-account-deletion-is-soft-delete.md``）。注销必须
+    **同时**写 ``is_active=false`` 与 ``deleted_at``：登录与认证两条路都只看前者，只写时间戳
+    挡不住登录。两个字段的组合由 ``ck_users_deleted_at_implies_inactive`` 在库层兜底。
+
+    三个状态由这两个字段组合出来：活跃 = ``is_active``；停用 = ``is_active`` 为假且未注销；
+    注销 = ``deleted_at`` 有值（此时 ``is_active`` 必为假）。
     """
 
     __tablename__ = "users"
     __table_args__ = (
         CheckConstraint(
-            "NOT is_environment_admin OR (is_active AND is_superuser AND is_verified)",
+            "NOT is_environment_admin OR "
+            "(is_active AND is_superuser AND is_verified AND deleted_at IS NULL)",
             name="ck_users_environment_admin_privileges",
+        ),
+        # 配对约束：拦住「已注销却仍可登录」这一种组合。它的值在于不拦任何正常写入，而防的是
+        # 那条静默的越权登录——``is_active`` 有多个写者（启动同步、两类建号、改状态），任何
+        # 一个漏掉与 ``deleted_at`` 配对，表现都是「列表显示已注销、这个人照常登录」且没有报错。
+        CheckConstraint(
+            "NOT (deleted_at IS NOT NULL AND is_active)",
+            name="ck_users_deleted_at_implies_inactive",
         ),
         Index("uq_users_email_lower", func.lower(text("email")), unique=True),
         Index(
@@ -99,8 +116,14 @@ class UserRecord(SQLAlchemyBaseUserTableUUID, TimestampMixin, Base):
         default=False,
         server_default=text("false"),
         comment=(
-            "是否由 AUTH_ADMIN_EMAIL/AUTH_ADMIN_PASSWORD 托管；全库最多一行，网页不可降级。"
+            "是否由 AUTH_ADMIN_EMAIL/AUTH_ADMIN_PASSWORD 托管；全库最多一行，网页不可停用或注销。"
         ),
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+        comment="账号注销时间；为空表示账号未被注销。注销时与 is_active=false 成对写入。",
     )
 
 
@@ -108,7 +131,7 @@ class AccessTokenRecord(SQLAlchemyBaseAccessTokenTableUUID, Base):
     """access_tokens 表：一个浏览器登录会话对应的一枚可撤销随机 Token。
 
     ``token`` 是 FastAPI Users 生成的 43 字符随机主键，也是 Cookie 携带的业务唯一键；
-    ``user_id`` 是逻辑外键，指向 users.id，库上没有约束，删账号时由业务层清理这些 Token。
+    ``user_id`` 是逻辑外键，指向 users.id，库上没有约束，注销账号时由业务层撤销这些 Token。
     用户索引用于批量撤销账号会话，创建时间索引用于有效期查询和清理过期记录。本实体没有
     ORM relationship，因为认证只按 Token 或用户 ID 定位，不需要隐式加载用户对象。
     """
@@ -134,5 +157,5 @@ class AccessTokenRecord(SQLAlchemyBaseAccessTokenTableUUID, Base):
     user_id: Mapped[UUID] = mapped_column(
         Uuid,
         nullable=False,
-        comment="该登录 Token 所属的 users.id；业务层维护的逻辑外键，库上无约束。删账号时由业务层撤销。",
+        comment="该登录 Token 所属的 users.id；业务层维护的逻辑外键，库上无约束。注销账号时由业务层撤销。",
     )

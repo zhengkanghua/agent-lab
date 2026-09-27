@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from agent_lab.agent.errors import AgentThreadNotFoundError
 from agent_lab.db.session import engine
 from agent_lab.models.agent_thread import AgentThreadRecord
-from agent_lab.models.user import UserRecord
+from agent_lab.models.user import AccessTokenRecord, UserRecord
 from agent_lab.models.user_preference import UserPreferenceRecord
 from agent_lab.schemas.user_preference import UserPreferenceUpdateRequest
 from agent_lab.services.agent_thread_service import AgentThreadService
@@ -261,17 +261,17 @@ def test_thread_snapshots_the_account_prompt_on_a_real_database() -> None:
     asyncio.run(verify(), loop_factory=asyncio.SelectorEventLoop)
 
 
-def test_deleting_an_account_clears_its_thread_rows() -> None:
-    """删账号会清掉它的会话归属记录，靠的是业务代码而不是数据库。
+def test_deregistering_an_account_keeps_its_thread_rows() -> None:
+    """注销账号不再清掉它的会话归属与个人偏好，只揣销登录 Token。
 
-    这条用例**必须走** ``UserAdminService.delete_user``，不能直接 ``session.delete(UserRecord)``。
-    库上已经没有 ``ON DELETE CASCADE`` 了（见 ADR 0028），直接删 ``users`` 那一行不会带走
-    ``agent_threads``——那样测出来的是「删账号会留下孤儿」，正好是反的。改走业务路径之后，
-    断言验的是业务代码的清理结果，这才是这次改动要保护的东西。
+    这条用例**必须走** ``UserAdminService.delete_user``，不能直接写库改字段：方法名不改，
+    要保护的就是「走这条路径之后留下什么」——账号行还在且盖上注销时间、会话归属与个人偏好
+    原样保留、登录 Token 清空。这正是本次改动的验收核心，也只有真库能同时观测这四张表。
 
-    注意清理只清业务表这一行，**不清 checkpointer 里的历史**：那四张表不在我们的表里。
-    删账号后残留的历史由 ``prune-orphan-threads`` 回收，这也是那个命令存在的理由之一。
-    **本用例不覆盖 checkpointer**——它跑在真实 PostgreSQL 上，但断言只涉及业务表。
+    为什么不删会话归属：归属是「这个人做过什么」的记录，不是账号的附属数据。
+    注意注销同样**不清 checkpointer 里的历史**：那四张表不在我们的表里，
+    残留历史由 ``prune-orphan-threads`` 回收，这一点与改动前一致。
+    本用例不覆盖 checkpointer。
     """
 
     async def verify() -> None:
@@ -288,39 +288,63 @@ def test_deleting_an_account_clears_its_thread_rows() -> None:
             doomed = await _create_user(factory, f"doomed-{suffix}@example.com")
             threads = AgentThreadService(factory)
             thread_id, _ = await threads.ensure_thread(
-                user_id=doomed.id, thread_id=None, first_message="随账号一起消失"
+                user_id=doomed.id, thread_id=None, first_message="注销后仍然在"
             )
-            # 也给这个账号配一份偏好：删账号时它必须一起清掉。配置没有运维清理命令可兜底，
-            # 漏了就是一条永远查不到也删不掉的孤儿行。
+            # 也把这个账号的偏好与登录 Token 备齐：注销之后偏好必须还在，
+            # 而 Token 必须一条不剩（否则已签发的 Cookie 还能继续用）。
             async with factory() as session:
                 await UserPreferenceService(session).replace(
                     doomed.id,
                     UserPreferenceUpdateRequest(
-                        system_prompt="随账号一起消失。",
+                        system_prompt="注销后仍然在。",
                         document_limit=10,
                         matches_per_document=3,
                     ),
                 )
+                session.add(
+                    AccessTokenRecord(
+                        token=f"t{suffix}"[:43], user_id=doomed.id
+                    )
+                )
+                await session.commit()
 
             async with factory() as session:
                 assert await session.get(AgentThreadRecord, thread_id) is not None
 
-            # 走业务层那条唯一的删账号路径，它在一个事务里清完归属记录、Token 和
-            # 决策留痕的 actor_id，最后才删账号。
+            # 走业务层那条唯一的注销路径。
             async with factory() as session:
                 await UserAdminService(session).delete_user(doomed.id)
 
             async with factory() as session:
-                assert await session.get(UserRecord, doomed.id) is None
-                assert await session.get(AgentThreadRecord, thread_id) is None
+                # 1、账号行还在，且带上注销时间、处于不可用状态。
+                deregistered = await session.get(UserRecord, doomed.id)
+                assert deregistered is not None
+                assert deregistered.deleted_at is not None
+                assert deregistered.is_active is False
+                # 2、会话归属仍在。
+                assert await session.get(AgentThreadRecord, thread_id) is not None
                 remaining = await session.scalar(
                     select(func.count())
                     .select_from(AgentThreadRecord)
                     .where(AgentThreadRecord.user_id == doomed.id)
                 )
-                assert remaining == 0
-                # 偏好行也必须一起消失：库里没有外键，删账号不会带走它。
-                assert await session.get(UserPreferenceRecord, doomed.id) is None
+                assert remaining == 1
+                # 3、偏好行仍在，内容一字未改。
+                preferences = await session.get(UserPreferenceRecord, doomed.id)
+                assert preferences is not None
+                assert preferences.system_prompt == "注销后仍然在。"
+                # 4、登录 Token 一条不剩。
+                tokens = (
+                    await session.scalars(
+                        select(AccessTokenRecord.token).where(
+                            AccessTokenRecord.user_id == doomed.id
+                        )
+                    )
+                ).all()
+                assert tokens == []
+                # 5、默认列表不再返回它。
+                listed = await UserAdminService(session).list_users()
+                assert doomed.id not in {user.id for user in listed}
         finally:
             await outer_transaction.rollback()
             await connection.close()

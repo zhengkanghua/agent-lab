@@ -33,6 +33,7 @@ from alembic import command
 from alembic.config import Config
 import pytest
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -63,7 +64,10 @@ CURRENT = "d4b7c1e93a58"
 # 且业务层清理真的生效」，那是**当前**库的形态。若停在 CURRENT，之后任何一条加了外键的迁移都能
 # 悄悄溜过这条断言。升级到 head 之后才能跑删除路径——``agent_threads.system_prompt`` 是后续
 # 迁移加的列，停在 CURRENT 上跑 ORM 会报「列不存在」。
-HEAD = "e2c8f14b7a30"
+HEAD = "c1f4a7d92e60"
+# 「账号注销」那条迁移之前的 head。需要在旧结构下造存量账号的用例先停在这里，
+# 才能验「升级不动存量数据、回退能还原结构」。
+BEFORE_SOFT_DELETE = "e2c8f14b7a30"
 
 
 def run(coroutine):
@@ -128,6 +132,63 @@ def migrated_database():
         yield SimpleNamespace(engine=engine, sessions=sessions, schema=schema, up=up, down=down)
     finally:
         run(cleanup())
+
+
+@pytest.fixture
+def database_before_soft_delete():
+    """在随机 schema 里升到「账号注销」迁移之前的那一版，供存量数据迁移用例使用。
+
+    与 ``migrated_database`` 的区别只有一点：它停在旧 head，测试才有机会先造出「存量账号」，
+    再走一次真实的 ``alembic upgrade``。回退也只退一步，不是退到拆约束之前——
+    这一条验的是本次那一条迁移能不能原样退回去。
+    """
+
+    dsn = os.environ.get("SCHEDULER_TEST_DATABASE_URL", "")
+    if not dsn.startswith("postgresql+psycopg://"):
+        pytest.fail("必须提供 SCHEDULER_TEST_DATABASE_URL（允许随机 schema 的测试 PostgreSQL）。", pytrace=False)
+    schema = f"scheduler_test_{uuid4().hex}"
+    engine, sessions = _database(dsn, schema)
+    config = Config()
+    config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
+
+    def up(connection, revision):
+        config.attributes["connection"] = connection
+        command.upgrade(config, revision)
+
+    def down(connection, revision):
+        config.attributes["connection"] = connection
+        command.downgrade(config, revision)
+
+    async def create():
+        async with engine.begin() as connection:
+            await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+            await connection.run_sync(up, BEFORE_SOFT_DELETE)
+
+    async def cleanup():
+        try:
+            async with engine.begin() as connection:
+                await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        finally:
+            await engine.dispose()
+
+    try:
+        run(create())
+        yield SimpleNamespace(engine=engine, sessions=sessions, schema=schema, up=up, down=down)
+    finally:
+        run(cleanup())
+
+
+async def _check_constraint_definition(connection, name: str) -> str | None:
+    """读出某条 CHECK 约束在库里的定义文本，不存在则返回 ``None``。"""
+
+    return await connection.scalar(
+        text(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE contype = 'c' AND connamespace = current_schema()::regnamespace "
+            "AND conname = :name"
+        ),
+        {"name": name},
+    )
 
 
 def _run_row(*, job_id, source_job_id, now):
@@ -219,14 +280,15 @@ def test_migration_removes_every_foreign_key_and_business_cleanup_still_works(mi
 
 
 def test_deleting_an_account_leaves_no_orphans_on_the_constraint_free_schema(migrated_database):
-    """删账号把指向它的三类数据都处理干净，且全程没有数据库兜底。
+    """注销账号留下的是一行带注销时间的账号，不再清掉任何引用它的记录。
 
-    这条是「拆掉 CASCADE 与 SET NULL 之后不许留孤儿」的验收：库上已经没有任何
-    ``ON DELETE`` 行为，删 ``users`` 那一行不会带走别的表，全靠
-    ``UserAdminService.delete_user`` 在同一个事务里显式做完。
+    改动前这条是「拆掉 CASCADE 与 SET NULL 之后不许留孤儿」的验收：库上已经没有任何
+    ``ON DELETE`` 行为，全靠 ``UserAdminService.delete_user`` 在同一个事务里显式清完。
+    改成注销之后验收翻了一面——**六项一次断言**：那一行仍在、带上注销时间、处于不可用状态；
+    登录凭据已清空、会话归属与个人偏好仍在、换版决策记录的操作者未变。
 
-    断言的是**外部可观察结果**——归属记录查不到、Token 查不到、决策留痕的
-    ``actor_id`` 变空但记录还在、个人偏好被删掉——不去断言删了几条语句、按什么顺序删。
+    这四项数据分在四张表上，只有真库能同时观测到，所以它是本次的验收核心。
+    断言的是**外部可观察结果**，不去断言删了几条语句、按什么顺序删。
     """
 
     async def verify():
@@ -236,7 +298,7 @@ def test_deleting_an_account_leaves_no_orphans_on_the_constraint_free_schema(mig
         # 另一个账号的会话用来证明清理是「按 user_id」而不是「清全表」。
         bystander_id, bystander_thread_id = uuid4(), uuid4()
 
-        # 1、造数据。三张表都要覆盖：CASCADE 关系的两张、SET NULL 关系的一张。
+        # 1、造数据。四张表都要覆盖：从此不再被清理的三张、仍然要清的一张。
         async with env.sessions() as session:
             for account_id, email in ((user_id, "doomed"), (bystander_id, "bystander")):
                 session.add(UserRecord(
@@ -253,7 +315,7 @@ def test_deleting_an_account_leaves_no_orphans_on_the_constraint_free_schema(mig
             document_id = uuid4()
             session.add(DocumentRecord(
                 id=document_id, knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID,
-                title="待删除账号曾拍板的文档", mime_type="text/plain",
+                title="待注销账号曾拍板的文档", mime_type="text/plain",
             ))
             await session.commit()
             review = DocumentReviewRecord(
@@ -262,10 +324,9 @@ def test_deleting_an_account_leaves_no_orphans_on_the_constraint_free_schema(mig
                 actor_id=user_id, content_snapshot={"text": "历史结论"},
             )
             session.add(review)
-            # 个人偏好：第四张要清理的表。它没有运维清理命令可兜底，漏了就是一条永远
-            # 查不到也删不掉的孤儿配置。
+            # 个人偏好：注销后必须保留的三类记录之一。
             session.add(UserPreferenceRecord(
-                user_id=user_id, system_prompt="随账号一起消失。",
+                user_id=user_id, system_prompt="注销后仍然在。",
                 document_limit=20, matches_per_document=5,
             ))
             session.add(UserPreferenceRecord(
@@ -282,30 +343,38 @@ def test_deleting_an_account_leaves_no_orphans_on_the_constraint_free_schema(mig
                 ))
             await session.commit()
 
-        # 2、走业务层那条删账号路径。
+        # 2、走业务层那条注销路径。
         async with env.sessions() as session:
             await UserAdminService(session).delete_user(user_id)
 
-        # 3、账号没了，它名下的三类数据都没留下指向它的引用。
+        # 3、六项验收：账号行、注销时间、可用状态、登录凭据、会话归属与偏好、决策留痕。
         async with env.sessions() as session:
-            assert await session.get(UserRecord, user_id) is None
-            remaining_threads = (await session.scalars(
-                select(AgentThreadRecord.thread_id).where(AgentThreadRecord.user_id == user_id)
-            )).all()
-            assert remaining_threads == []
+            deregistered = await session.get(UserRecord, user_id)
+            assert deregistered is not None
+            assert deregistered.deleted_at is not None
+            assert deregistered.is_active is False
+            # 配对不变量的另一面：注销时间非空时 is_active 必须为假。
+            assert not (deregistered.deleted_at is not None and deregistered.is_active)
             remaining_tokens = (await session.scalars(
                 select(AccessTokenRecord.token).where(AccessTokenRecord.user_id == user_id)
             )).all()
             assert remaining_tokens == []
+            remaining_threads = (await session.scalars(
+                select(AgentThreadRecord.thread_id).where(AgentThreadRecord.user_id == user_id)
+            )).all()
+            assert sorted(remaining_threads) == sorted([thread_id, other_thread_id])
 
-            # 决策留痕**保留**，只是操作者不再可回溯——这是「置空而不是删除」的原语义。
+            # 决策留痕**保留原操作者**：账号行还在、指向仍有意义，置空反而把人工决定
+            # 伪装成自动决策。
             kept = await session.get(DocumentReviewRecord, review_id)
             assert kept is not None
-            assert kept.actor_id is None
+            assert kept.actor_id == user_id
             assert kept.decision == "adopt" and kept.content_snapshot == {"text": "历史结论"}
 
-            # 偏好行也必须一起消失：库里没有外键，删账号不会带走它。
-            assert await session.get(UserPreferenceRecord, user_id) is None
+            # 偏好行仍然在，且内容一字未改。
+            preferences = await session.get(UserPreferenceRecord, user_id)
+            assert preferences is not None
+            assert preferences.system_prompt == "注销后仍然在。"
 
             # 4、别人名下的东西一点没动。
             assert await session.get(UserRecord, bystander_id) is not None
@@ -316,6 +385,59 @@ def test_deleting_an_account_leaves_no_orphans_on_the_constraint_free_schema(mig
                 select(AccessTokenRecord.token).where(AccessTokenRecord.user_id == bystander_id)
             )).all()
             assert len(bystander_tokens) == 1
+
+    run(verify())
+
+
+def test_database_rejects_deregistered_environment_admin_and_loginable_deregistered_account(
+    migrated_database,
+):
+    """数据层兜底：两条约束拦得住两种坏组合，且不拦任何正常写入。
+
+    这条只能真库验：约束是库上的对象，用模型元数据建库的用例得不到它。
+    它防的是一个**静默的越权登录**——``is_active`` 有多个写者（启动同步的建号与拉回活跃、
+    两类建号、改状态），任何一个漏掉与 ``deleted_at`` 配对，表现都是「列表显示已注销、
+    这个人照常登录」而没有报错。
+    """
+
+    async def verify():
+        env = migrated_database
+        now = datetime.now(UTC)
+
+        def account(**overrides):
+            values = {
+                "id": uuid4(),
+                "email": f"constraint-{uuid4().hex}@example.com",
+                "hashed_password": "not-a-real-hash-integration-only",
+                "is_active": True,
+                "is_superuser": False,
+                "is_verified": True,
+                "is_environment_admin": False,
+                "deleted_at": None,
+            }
+            values.update(overrides)
+            return UserRecord(**values)
+
+        # 1、环境托管且已注销：写不进去。
+        async with env.sessions() as session:
+            session.add(account(
+                is_active=False, is_superuser=True, is_environment_admin=True, deleted_at=now,
+            ))
+            with pytest.raises(IntegrityError):
+                await session.commit()
+
+        # 2、已注销却仍可登录：写不进去。
+        async with env.sessions() as session:
+            session.add(account(is_active=True, deleted_at=now))
+            with pytest.raises(IntegrityError):
+                await session.commit()
+
+        # 3、三个正常组合全部通过：停用、注销、活跃的环境托管超管。
+        async with env.sessions() as session:
+            session.add(account(is_active=False))
+            session.add(account(is_active=False, deleted_at=now))
+            session.add(account(is_active=True, is_superuser=True, is_environment_admin=True))
+            await session.commit()
 
     run(verify())
 
@@ -351,5 +473,121 @@ def test_downgrade_rebuilds_all_foreign_keys_and_blocks_on_orphans(migrated_data
         # 失败不能偷偷改版本号：回滚整体没生效，库仍停在当前 head 上。
         async with env.engine.begin() as connection:
             assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == HEAD
+
+    run(verify())
+
+
+def test_soft_delete_migration_keeps_existing_accounts_and_reverses_cleanly(
+    database_before_soft_delete,
+):
+    """注销那条迁移可进可退：升级不动存量账号，回退把结构与约束文案还原。
+
+    三件事分开验，因为它们会各自坏：
+    ``deleted_at`` 若是不可空的列或者带了非 NULL 默认值，存量账号升级时会被标成「已注销」；
+    CHECK 若是漏改，库里就拦不住「环境托管且已注销」与「已注销却仍可用」；
+    回退若是漏还原旧的 CHECK 文案，下次升级会因为约束已经存在而失败。
+
+    **回退不动数据**：已注销的账号退化成「不可登录的停用账号」，行、归属与偏好都还在。
+    """
+
+    async def verify():
+        env = database_before_soft_delete
+        active_id, active_thread_id, suspended_id = uuid4(), uuid4(), uuid4()
+        now = datetime.now(UTC)
+
+        # 1、在旧结构下造存量账号：一个活跃、一个停用，各带一条会话归属。
+        #    这一步用原生 SQL 而不是 ORM：此刻库里还没有 ``deleted_at`` 列，而模型已经有，
+        #    拿 ORM 插入会直接报「列不存在」——那样这条用例就不是断言失败，而是自己坏了。
+        active_email = f"legacy-active-{uuid4().hex}@example.com"
+        suspended_email = f"legacy-suspended-{uuid4().hex}@example.com"
+        async with env.engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO users (id, email, hashed_password, is_active, is_superuser, "
+                    "is_verified, is_environment_admin) VALUES "
+                    "(:active_id, :active_email, 'not-a-real-hash-integration-only', true, false, true, false), "
+                    "(:suspended_id, :suspended_email, 'not-a-real-hash-integration-only', false, false, true, false)"
+                ),
+                {
+                    "active_id": active_id,
+                    "active_email": active_email,
+                    "suspended_id": suspended_id,
+                    "suspended_email": suspended_email,
+                },
+            )
+        async with env.sessions() as session:
+            session.add(AgentThreadRecord(
+                thread_id=active_thread_id, user_id=active_id, title="存量会话",
+                created_at=now, last_active_at=now,
+            ))
+            await session.commit()
+
+        # 2、升级到当前 head。
+        async with env.engine.begin() as connection:
+            await connection.run_sync(env.up, HEAD)
+
+        # 3、存量账号的可用状态不变，且都没有被标成已注销；行数一条不多一条不少。
+        async with env.sessions() as session:
+            active = await session.get(UserRecord, active_id)
+            suspended = await session.get(UserRecord, suspended_id)
+            assert active is not None and active.is_active is True
+            assert active.deleted_at is None
+            assert suspended is not None and suspended.is_active is False
+            assert suspended.deleted_at is None
+            assert await session.get(AgentThreadRecord, active_thread_id) is not None
+
+        # 4、两条约束都在，且写法就是目标里那两句。
+        async with env.engine.begin() as connection:
+            columns = (await connection.execute(text(
+                "SELECT column_name, is_nullable, data_type FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = 'users' "
+                "AND column_name = 'deleted_at'"
+            ))).all()
+            assert columns == [("deleted_at", "YES", "timestamp with time zone")]
+            environment_admin = await _check_constraint_definition(
+                connection, "ck_users_environment_admin_privileges"
+            )
+            paired = await _check_constraint_definition(
+                connection, "ck_users_deleted_at_implies_inactive"
+            )
+            assert environment_admin is not None and "deleted_at IS NULL" in environment_admin
+            assert paired is not None
+            assert "deleted_at IS NOT NULL" in paired and "is_active" in paired
+
+        # 5、回退一步：新列删掉、配对约束删掉、环境托管约束的旧文案恢复，数据不动。
+        async with env.engine.begin() as connection:
+            await connection.run_sync(env.down, BEFORE_SOFT_DELETE)
+            assert await connection.scalar(
+                text("SELECT version_num FROM alembic_version")
+            ) == BEFORE_SOFT_DELETE
+            assert await _check_constraint_definition(
+                connection, "ck_users_deleted_at_implies_inactive"
+            ) is None
+            restored = await _check_constraint_definition(
+                connection, "ck_users_environment_admin_privileges"
+            )
+            assert restored is not None and "deleted_at" not in restored
+            remaining = (await connection.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = 'users' "
+                "AND column_name = 'deleted_at'"
+            ))).all()
+            assert remaining == []
+
+        # 回退之后模型又与库不一致（模型有 ``deleted_at``、库没有了），所以这一段同样用
+        # 原生 SQL 读数据，不用 ORM。
+        async with env.engine.begin() as connection:
+            rows = (await connection.execute(
+                text("SELECT id, is_active FROM users WHERE id IN (:active_id, :suspended_id)"),
+                {"active_id": active_id, "suspended_id": suspended_id},
+            )).all()
+            assert {(row[0], row[1]) for row in rows} == {
+                (active_id, True),
+                (suspended_id, False),
+            }
+            assert await connection.scalar(
+                text("SELECT count(*) FROM agent_threads WHERE thread_id = :thread_id"),
+                {"thread_id": active_thread_id},
+            ) == 1
 
     run(verify())

@@ -4,13 +4,17 @@
 要求把「当前登录账号」整个传进来，不接受一个可以指向别人的 id 参数。这是有意的形状约束——
 只要接口里存在目标账号 id，就迟早有人在某条路径上忘记校验它属不属于调用者。
 
+注销账号**不会删这张表里的行**：个人偏好是这个人留下的记录，注销后仍然保留（见
+``docs/adr/0034-account-deletion-is-soft-delete.md``）。所以这里没有任何「供删账号连带清理」
+的方法，偏好与账号行同生共死这件事已经不再成立。
+
 它同时也是「建会话时该用哪份提示词」的读取入口：``AgentThreadService`` 不直接碰这张表，
 而是经由本 Service 取值，免得「偏好从哪来」出现第二处实现。
 """
 
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -139,24 +143,6 @@ class UserPreferenceService:
         )
         await self._session.commit()
         return await self.get(user_id)
-
-    async def delete_for(self, user_id: UUID) -> None:
-        """删除该账号的偏好行，不提交。
-
-        供 ``UserAdminService.delete_user`` 在同一事务里调用：拆掉数据库外键之后，删账号
-        不会带走这一行，必须由业务层显式处理。不在这里 commit 是有意的——调用方要把
-        「删偏好」和「删账号」放进同一个事务，中间不能出现「账号没了、配置还在」的窗口。
-
-        Args:
-            user_id: 被删除的账号 id。
-
-        Notes:
-            一次 PostgreSQL ``DELETE``，事务由调用方提交。
-        """
-
-        await self._session.execute(
-            delete(UserPreferenceRecord).where(UserPreferenceRecord.user_id == user_id)
-        )
 
 
 __all__ = ["UserPreferenceService"]
