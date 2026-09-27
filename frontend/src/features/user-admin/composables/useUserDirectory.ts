@@ -17,15 +17,11 @@ export interface UseUserDirectoryOptions {
   /**
    * 当前登录账号的 id。取成 getter 而不是 Ref：调用点是
    * `() => authSession.user.value?.id`，本 feature 因此不必 import 另一个 feature。
+   *
+   * 只用于「自己那一行不提供停用/启用与注销」这一层体验；真正的边界在后端：
+   * 对调用者本人停用或注销会被 `account_self_protected` 拒掉。
    */
   currentUserId: () => string | undefined
-  /**
-   * 当前账号把自己停用或降级之后执行。刷新会话与跳转都归页面：
-   * 它们涉及 auth 与 router，而 feature 之间不互相 import、也不 import 布局与页面。
-   *
-   * 删除自己不在本回调的范围内——那条路在 `deleteAccount` 里就被挡掉了，见那里的说明。
-   */
-  onSelfDowngraded: () => Promise<void>
 }
 
 /** 一次行内操作。错误默认落到该行的错误位，密码重置传自己的 sink。 */
@@ -90,41 +86,32 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
   }
 
   function setActive(user: UserAdminDto, isActive: boolean): Promise<void> {
-    return updateAccount(user, { isActive })
-  }
-
-  function setSuperuser(user: UserAdminDto, isSuperuser: boolean): Promise<void> {
-    return updateAccount(user, { isSuperuser })
+    return updateAccount(user, isActive)
   }
 
   const updateMutation = useMutation({
-    mutationFn: ({
-      user,
-      change,
-    }: {
-      user: UserAdminDto
-      change: { isActive?: boolean; isSuperuser?: boolean }
-    }) => updateUser({ userId: user.id, ...change }),
+    mutationFn: ({ user, isActive }: { user: UserAdminDto; isActive: boolean }) =>
+      updateUser({ userId: user.id, isActive }),
     onSuccess: (updated) => {
       replaceUser(updated)
       feedback.value = `已更新账号 ${updated.email}。`
-      if (updated.id === options.currentUserId() && (!updated.is_active || !updated.is_superuser)) {
-        options.onSelfDowngraded()
-      }
     },
   })
 
-  async function updateAccount(
-    user: UserAdminDto,
-    change: { isActive?: boolean; isSuperuser?: boolean },
-  ): Promise<void> {
+  /**
+   * 停用或启用一个账号。环境托管超级用户不动（界面上那个开关也是禁用的）。
+   *
+   * 「停用自己」不在这里额外挡一道：界面不给自己那一行这个开关，真打接口也会被后端拒，
+   * 错误码会落到那一行上。
+   */
+  async function updateAccount(user: UserAdminDto, isActive: boolean): Promise<void> {
     if (user.is_environment_admin) return
 
     await runRowAction({
       userId: user.id,
       fallback: '账号状态更新失败，请稍后重试。',
       run: async () => {
-        await updateMutation.mutateAsync({ user, change })
+        await updateMutation.mutateAsync({ user, isActive })
       },
     })
   }
@@ -184,9 +171,9 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
   /**
    * 注销一个账号。环境托管超级用户与当前登录账号都不允许注销。
    *
-   * 当前账号自己不能注销，不是因为后端拦得住（后端挡的是最后一个活跃超管），而是这个页面
-   * 会立刻失去意义：注销完自己的会话就没了，接下来要么跳登录页要么跳检索页，让管理员
-   * 先处理别人、再让别人来处理自己更顺。要注销自己得换一个账号操作。
+   * 当前账号自己不提供这个动作，不是因为后端拦不住（后端会回 `account_self_protected`），
+   * 而是这个页面会立刻失去意义：注销完自己的会话就没了，接下来要么跳登录页要么跳检索页，
+   * 让管理员先处理别人、再让别人来处理自己更顺。这里的守卫是第二道，界面已经不给按钮。
    */
   async function deleteAccount(user: UserAdminDto): Promise<void> {
     if (isBusy(user.id)) return
@@ -342,7 +329,6 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
     setIncludeDeleted,
     load,
     setActive,
-    setSuperuser,
     openPasswordReset,
     cancelPasswordReset,
     submitPasswordReset,

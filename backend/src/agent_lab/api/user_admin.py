@@ -17,12 +17,14 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_lab.auth.dependencies import current_superuser
 from agent_lab.api.error_contract import (
     SanitizedValidationRoute,
     build_error_response,
     build_user_admin_error_response,
 )
 from agent_lab.db.session import get_db_session
+from agent_lab.models.user import UserRecord
 from agent_lab.schemas.user_admin import (
     UserAdminCreateRequest,
     UserAdminErrorResponse,
@@ -119,17 +121,21 @@ async def create_user(
         409: {"model": UserAdminErrorResponse},
         503: {"model": UserAdminErrorResponse},
     },
-    summary="修改账号权限",
+    summary="停用或启用账号",
 )
 async def update_user(
     user_id: UUID,
     body: UserAdminUpdateRequest,
+    actor: Annotated[UserRecord, Depends(current_superuser)],
     service: Annotated[UserAdminService, Depends(get_user_admin_service)],
 ) -> UserAdminResponse | JSONResponse:
-    """修改启用/超级用户状态，受环境托管超级用户和最后超级用户保护。"""
+    """停用或启用账号，受环境托管超级用户、自己和最后一个活跃超管保护。"""
 
+    # ``current_superuser`` 在这一路由上出现两次（路由级依赖挂鉴权、这里把调用者交给处理函数）
+    # 不是重复检查：FastAPI 按依赖可调用对象缓存结果，一个请求只认一次证。
+    # 维护者的话写成注释而不是 docstring：没给 ``description=`` 时 docstring 会整份进 OpenAPI。
     try:
-        user = await service.update_user(user_id, body)
+        user = await service.update_user(user_id, body, actor.id)
     except UserAdminDomainError as error:
         return _domain_error(error)
     except SQLAlchemyError as error:
@@ -182,6 +188,7 @@ async def reset_user_password(
 )
 async def delete_user(
     user_id: UUID,
+    actor: Annotated[UserRecord, Depends(current_superuser)],
     service: Annotated[UserAdminService, Depends(get_user_admin_service)],
 ):
     """注销账号，不删账号行；只清掉它的登录 Token。
@@ -192,7 +199,7 @@ async def delete_user(
     """
 
     try:
-        await service.delete_user(user_id)
+        await service.delete_user(user_id, actor.id)
     except UserAdminDomainError as error:
         return _domain_error(error)
     except SQLAlchemyError as error:

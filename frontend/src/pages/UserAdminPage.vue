@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { Check, Plus } from '@lucide/vue'
-import { useRouter } from 'vue-router'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseDialog from '@/shared/ui/BaseDialog.vue'
 import { authSession } from '@/features/auth'
@@ -17,21 +16,12 @@ import {
  * 侧边栏、顶部标题栏、退出登录都由 AdminShell 提供；本页只负责账号管理的正文内容。
  * 页面标题「账号管理」写在路由 meta，AdminShell 据此渲染顶栏标题。 */
 
-const router = useRouter()
-
 const currentUserId = computed(() => authSession.user.value?.id)
 
+/* 「管理员把自己停用/降级之后重新取会话、跳转」那套处理已经删掉：停用自己被后端拒、
+   降权这个动作本身取消（见 docs/adr/0038），它服务的两个触发条件都不存在了。 */
 const directory = useUserDirectory({
   currentUserId: () => currentUserId.value,
-  onSelfDowngraded: async () => {
-    /* 管理员把自己停用或降级了。重新取一次会话拿到服务端的真实结论，再按结论落地：
-       还认这个身份就退回检索页（这一页已经进不去了），不认就去登录页。
-       两个动作都属于路由与会话，所以留在页面，不进 feature。 */
-    await authSession.initialize(true)
-    await router.replace(
-      authSession.status.value === 'authenticated' ? { name: 'search' } : { name: 'login' },
-    )
-  },
 })
 
 const createForm = useAccountCreateForm({
@@ -48,8 +38,9 @@ onMounted(() => {
   <section class="admin-page" aria-labelledby="admin-title" style="container-type: inline-size">
     <div class="page-bar">
       <p class="page-intro">
-        创建平台账号、调整使用权限，并在需要时重置密码、撤销登录会话或注销账号。
-        注销之后账号记录仍然在，可以用目录里的「显示已注销」把它找出来。
+        创建平台账号、调整启用状态，并在需要时重置密码、撤销登录会话或注销账号。
+        超级用户身份只在建号时决定，之后不能修改。注销之后账号记录仍然在，
+        可以用目录里的「显示已注销」把它找出来。
       </p>
       <BaseButton v-if="!createForm.expanded.value" variant="primary" @click="createForm.open">
         <template #icon><Plus :size="18" aria-hidden="true" /></template>
@@ -89,7 +80,6 @@ onMounted(() => {
       :reset-error="directory.resetError.value"
       @refresh="directory.load"
       @set-active="directory.setActive"
-      @set-superuser="directory.setSuperuser"
       @open-reset="directory.openPasswordReset"
       @submit-reset="directory.submitPasswordReset"
       @cancel-reset="directory.cancelPasswordReset"

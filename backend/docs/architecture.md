@@ -50,7 +50,7 @@ GET  /auth/me/preferences                 读取当前账号的个人偏好
 PUT  /auth/me/preferences                 整体覆盖当前账号的个人偏好
 GET    /admin/users                       账号列表（超级用户）
 POST   /admin/users                       创建账号（超级用户）
-PATCH  /admin/users/{user_id}             改启用状态与超级用户位（超级用户）
+PATCH  /admin/users/{user_id}             停用或启用账号（超级用户）
 DELETE /admin/users/{user_id}             注销账号，只撤销它的登录 Token（超级用户）
 POST   /admin/users/{user_id}/password    重置密码（超级用户）
 DELETE /admin/users/{user_id}/sessions    撤销该账号全部登录会话（超级用户）
@@ -134,8 +134,13 @@ Agent 新会话默认所有启用库，迁移旧会话保留 news；每次运行
 
 应用启动时在构造搜索 Runtime 之前同步 ``.env`` 中配置的那个超级用户
 （``sync_configured_environment_admin()``）。该账号带环境托管标记，**不能**通过 API 停用、
-降级、重置密码或注销（``environment_admin_protected``）；网页创建的其他账号可正常管理。
+改密或注销（``environment_admin_protected``）；网页创建的其他账号可正常管理。
 它是网页入口不可用时的恢复通道，登录后与普通超级用户权限相同。
+**超管身份只在建号时决定。** 取消「降权」之后，管理权只有「建号时给」与「注销时收」两个口子
+（见 [ADR 0038](../../docs/adr/0038-superuser-identity-fixed-at-creation.md)）：建号接口仍可指定
+超管身份，那是唯一的授予口子；改状态接口只剩停用/启用一个动作，不接受超管标记。因此
+「不能丢掉最后一个活跃超管」那条保护的触发动作是**停用**与注销，不再包含降级。
+
 ``UserAdminService`` 另外保护「最后一个活跃超级用户」（``last_superuser_protected``），对
 重复邮箱和弱密码返回 ``user_already_exists`` / ``invalid_password``，对已注销账号上的停用/启用
 与重置密码返回 ``account_already_deleted``（注销本身则幂等成功，不重复写时间戳、不重复清 Token），

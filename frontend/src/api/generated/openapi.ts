@@ -642,8 +642,8 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * 修改账号权限
-         * @description 修改启用/超级用户状态，受环境托管超级用户和最后超级用户保护。
+         * 停用或启用账号
+         * @description 停用或启用账号，受环境托管超级用户、自己和最后一个活跃超管保护。
          */
         patch: operations["update_user_admin_users__user_id__patch"];
         trace?: never;
@@ -3241,7 +3241,7 @@ export interface components {
             is_active: boolean;
             /**
              * Is Superuser
-             * @description 账号是否有账号管理和 Pipeline 权限。
+             * @description 账号是否有账号管理和 Pipeline 权限；仅在建号时决定。
              */
             is_superuser: boolean;
             /**
@@ -3274,19 +3274,16 @@ export interface components {
         };
         /**
          * UserAdminUpdateRequest
-         * @description 修改普通数据库账号的启用状态或超级用户权限。
+         * @description 修改一个账号的启用状态。
+         *
+         *     只有一个维度：超级用户身份在建号时定下、之后不能改（ADR 0038），所以这里没有超管标记。
          */
         UserAdminUpdateRequest: {
             /**
              * Is Active
-             * @description 新的账号启用状态。
+             * @description 目标启用状态；传 false 就是停用。
              */
-            is_active?: boolean | null;
-            /**
-             * Is Superuser
-             * @description 新的超级用户权限状态。
-             */
-            is_superuser?: boolean | null;
+            is_active: boolean;
         };
         /**
          * UserPreferenceResponse

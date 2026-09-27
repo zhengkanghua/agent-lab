@@ -44,14 +44,13 @@ const reader: UserAdminDto = {
 
 /** 与 useAgentDefaultPrompt 的用例同理：onScopeDispose 的取消语义需要真实的 effect scope。 */
 function mountHarness(currentUserId: string | undefined = environmentAdmin.id) {
-  const onSelfDowngraded = vi.fn(async () => undefined)
   let composable: ReturnType<typeof useUserDirectory> | undefined
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   const Harness = defineComponent({
     setup() {
-      composable = useUserDirectory({ currentUserId: () => currentUserId, onSelfDowngraded })
+      composable = useUserDirectory({ currentUserId: () => currentUserId })
       return () => h('div')
     },
   })
@@ -59,7 +58,7 @@ function mountHarness(currentUserId: string | undefined = environmentAdmin.id) {
     global: { plugins: [[VueQueryPlugin, { queryClient }]] },
   })
   if (!composable) throw new Error('Test harness did not initialize composable')
-  return { wrapper, directory: composable, onSelfDowngraded, queryClient }
+  return { wrapper, directory: composable, queryClient }
 }
 
 describe('useUserDirectory', () => {
@@ -123,7 +122,6 @@ describe('useUserDirectory', () => {
     await directory.load()
 
     await directory.setActive(environmentAdmin, false)
-    await directory.setSuperuser(environmentAdmin, false)
     directory.openPasswordReset(environmentAdmin)
 
     expect(api.updateUser).not.toHaveBeenCalled()
@@ -161,39 +159,6 @@ describe('useUserDirectory', () => {
     expect(api.updateUser).toHaveBeenCalledTimes(1)
     settle?.({ ...reader, is_active: false })
     await pending
-    wrapper.unmount()
-  })
-
-  it('当前账号把自己降级后交给页面处理', async () => {
-    api.updateUser.mockResolvedValue({ ...reader, is_superuser: false })
-    const { wrapper, directory, onSelfDowngraded } = mountHarness(reader.id)
-    await directory.load()
-
-    await directory.setSuperuser(reader, false)
-
-    expect(onSelfDowngraded).toHaveBeenCalledTimes(1)
-    wrapper.unmount()
-  })
-
-  it('降级别人不触发自降级处理', async () => {
-    api.updateUser.mockResolvedValue({ ...reader, is_superuser: false })
-    const { wrapper, directory, onSelfDowngraded } = mountHarness(environmentAdmin.id)
-    await directory.load()
-
-    await directory.setSuperuser(reader, false)
-
-    expect(onSelfDowngraded).not.toHaveBeenCalled()
-    wrapper.unmount()
-  })
-
-  it('把自己从停用改回启用不算降级', async () => {
-    api.updateUser.mockResolvedValue({ ...reader, is_active: true, is_superuser: true })
-    const { wrapper, directory, onSelfDowngraded } = mountHarness(reader.id)
-    await directory.load()
-
-    await directory.setActive(reader, true)
-
-    expect(onSelfDowngraded).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

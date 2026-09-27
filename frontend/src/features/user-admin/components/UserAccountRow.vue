@@ -27,7 +27,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'set-active': [value: boolean]
-  'set-superuser': [value: boolean]
   'open-reset': []
   'update:resetPassword': [value: string]
   'submit-reset': []
@@ -46,24 +45,24 @@ const deregisteredAt = computed(() =>
   props.user.deleted_at === null ? '' : formatAccountDate(props.user.deleted_at),
 )
 
-/* 自己那一行的注销键禁用：注销完自己这个页面就没了，让管理员先处理别人更顺。
-   环境托管超级用户另有 managed 挡着，两件事分开判断，因为禁用理由不同、提示也不同。 */
-const deleteBlocked = computed(() => managed.value || isCurrentUser.value)
+/* 自己那一行的注销键由 deregisterVisible 整只拿掉，剩下的禁用条件只有环境托管。 */
+const deleteBlocked = computed(() => managed.value)
 
 const deleteTitle = computed(() => {
   if (managed.value) return '请修改部署 Secret 后重启服务'
-  if (isCurrentUser.value) return '不能注销当前登录账号，请换一个账号操作'
   return '注销账号：账号不再能登录，记录全部保留'
 })
+
+/* 自己那一行不提供停用/启用与注销：这两个动作都会让操作者当场失去权限。
+   后端各有一条 `account_self_protected` 规则拦它们——界面不提供只是体验，
+   真正的边界在后端。 */
+const stopVisible = computed(() => !isCurrentUser.value && !deregistered.value)
+const deregisterVisible = computed(() => !isCurrentUser.value && !deregistered.value)
 
 /* 两个开关各写一个转发函数，不合成「传事件名进来」的那一个：
    defineEmits 的重载签名把事件名与载荷绑在一起，传进来的联合类型两个重载都不匹配。 */
 function onActiveToggle(event: Event): void {
   emit('set-active', checkedOf(event, props.user.is_active))
-}
-
-function onSuperuserToggle(event: Event): void {
-  emit('set-superuser', checkedOf(event, props.user.is_superuser))
 }
 
 function checkedOf(event: Event, confirmed: boolean): boolean {
@@ -110,7 +109,7 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
         <span class="status-chip is-deregistered" role="status">已注销</span>
         <small class="deregistered-at">{{ deregisteredAt }} 注销</small>
       </template>
-      <template v-else>
+      <template v-else-if="stopVisible">
         <label
           class="switch-control"
           :class="{ 'switch-disabled': managed }"
@@ -126,28 +125,20 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
           />
           <span aria-hidden="true"></span>
         </label>
-        <span class="status-chip" :class="user.is_active ? 'is-on' : 'is-off'" role="status">
-          {{ user.is_active ? '启用' : '停用' }}
-        </span>
       </template>
+      <span
+        v-if="!deregistered"
+        class="status-chip"
+        :class="user.is_active ? 'is-on' : 'is-off'"
+        role="status"
+      >
+        {{ user.is_active ? '启用' : '停用' }}
+      </span>
     </div>
 
     <div class="status-cell" role="cell">
-      <label
-        class="switch-control"
-        :class="{ 'switch-disabled': managed }"
-        :title="managed ? '环境托管超级用户必须保持超级用户' : '授予账号管理权限'"
-      >
-        <input
-          type="checkbox"
-          :checked="user.is_superuser"
-          :disabled="managed || busy"
-          :aria-label="`${user.email} 超级用户权限`"
-          :data-testid="`superuser-${user.id}`"
-          @change="onSuperuserToggle"
-        />
-        <span aria-hidden="true"></span>
-      </label>
+      <!-- 管理权限只剩一个只读标记：超管身份只在建号时决定，之后不能改，所以这里
+           不该有可操作的控件（见 docs/adr/0038）。 -->
       <span class="status-chip" :class="user.is_superuser ? 'is-on' : 'is-off'" role="status">
         {{ user.is_superuser ? '超级用户' : '普通用户' }}
       </span>
@@ -183,7 +174,7 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
         撤销会话
       </button>
       <button
-        v-if="!deregistered"
+        v-if="deregisterVisible"
         type="button"
         class="action-danger"
         :disabled="deleteBlocked || busy"

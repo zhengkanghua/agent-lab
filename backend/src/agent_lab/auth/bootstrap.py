@@ -190,8 +190,8 @@ async def _synchronize_once(
     if released:
         await session.flush()
 
-    # 7、强制把目标账号拉回「可用的超管」状态。这是恢复通道的意义所在：账号在库里被禁用、
-    #    降权或标成未验证都不影响，改配置重启就能恢复。
+    # 7、强制把目标账号拉回「可用的超管」状态。这是恢复通道的意义所在：账号在库里被停用、
+    #    改过密码或标成未验证都不影响，改配置重启就能恢复。
     target.email = email
     target.is_active = True
     target.is_superuser = True

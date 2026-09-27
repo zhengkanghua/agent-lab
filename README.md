@@ -28,7 +28,7 @@ LangGraph checkpointer 存在 PostgreSQL 的四张 `checkpoint*` 表里。Agent 
 Vite 去掉 `/api` 前缀后代理到
 `http://127.0.0.1:8000` 的对应 FastAPI 路由。浏览器访问搜索前必须使用内部账号登录；
 后端使用 PostgreSQL 可撤销 Token 和 HttpOnly Cookie，不开放注册。部署 Secret 或
-`backend/.env` 托管唯一的恢复用超级用户，服务启动时自动创建/同步，不能从网页降级、改密或停用；该账号登录后可在
+`backend/.env` 托管唯一的恢复用超级用户，服务启动时自动创建/同步，不能从网页改密、停用或注销；该账号登录后可在
 `/admin/users` 创建和管理其他账号。检索、Agent 对话与个人偏好对所有登录账号开放，
 超级用户额外拥有账号管理、知识库/来源/文件管理与手动 Pipeline 权限。日常操作都在网页上；CLI 是并行的维护入口（同步、索引、重建、会话清理），完整清单见 `docs/FEATURE_MAP.md` 的「命令行能力」。
 

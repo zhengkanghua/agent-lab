@@ -515,9 +515,9 @@ docker compose stop task-beat backend task-worker
 - 修改 `AUTH_ADMIN_PASSWORD`：启动同步 Argon2 Hash；若密码真的变化，撤销该账号所有
   现有会话。新密码可立即登录。
 - 修改 `AUTH_ADMIN_EMAIL`：新邮箱被创建/同步为唯一带环境托管标记的超级用户；旧邮箱账号保留其密码、
-  active 和 superuser 状态，仍可由新管理员在网页管理，不会被删除或自动降权。
-- 删除 `AUTH_ADMIN_EMAIL` 和 `AUTH_ADMIN_PASSWORD` 两行：启动释放环境托管标记，但不删
-  除、不降级旧账号；它仍按数据库中的普通超级用户规则存在。
+  active 和 superuser 状态，仍可由新管理员在网页管理，不会被注销、也不会被自动改动角色。
+- 删除 `AUTH_ADMIN_EMAIL` 和 `AUTH_ADMIN_PASSWORD` 两行：启动释放环境托管标记，但不注
+  销、也不改动它的角色；它仍按数据库中的普通超级用户规则存在。
 - 只删除其中一项：配置校验失败，服务不会以半配置状态启动；请同时恢复两项或同时移除。
 
 推荐的轮换顺序是：先确认新 Secret 已写入并备份，再执行迁移（如版本有变化），最后

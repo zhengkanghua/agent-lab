@@ -7,7 +7,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class UserAdminResponse(BaseModel):
@@ -18,7 +18,7 @@ class UserAdminResponse(BaseModel):
     is_active: bool = Field(
         description="账号是否可用（能否登录）；要和注销时间一起读才能判出活跃、停用、注销三种情形。"
     )
-    is_superuser: bool = Field(description="账号是否有账号管理和 Pipeline 权限。")
+    is_superuser: bool = Field(description="账号是否有账号管理和 Pipeline 权限；仅在建号时决定。")
     is_verified: bool = Field(description="账号是否已经由管理员确认。")
     is_environment_admin: bool = Field(
         description="是否由 AUTH_ADMIN_EMAIL/AUTH_ADMIN_PASSWORD 托管且不可网页停用、改密或注销。",
@@ -50,20 +50,14 @@ class UserAdminCreateRequest(BaseModel):
 
 
 class UserAdminUpdateRequest(BaseModel):
-    """修改普通数据库账号的启用状态或超级用户权限。"""
+    """修改一个账号的启用状态。
 
-    is_active: bool | None = Field(default=None, description="新的账号启用状态。")
-    is_superuser: bool | None = Field(default=None, description="新的超级用户权限状态。")
+    只有一个维度：超级用户身份在建号时定下、之后不能改（ADR 0038），所以这里没有超管标记。
+    """
+
+    is_active: bool = Field(description="目标启用状态；传 false 就是停用。")
 
     model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="after")
-    def require_change(self) -> "UserAdminUpdateRequest":
-        """拒绝没有任何实际字段的空更新。"""
-
-        if self.is_active is None and self.is_superuser is None:
-            raise ValueError("至少需要提供一个账号字段。")
-        return self
 
 
 class UserAdminPasswordRequest(BaseModel):

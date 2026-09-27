@@ -23,7 +23,7 @@ from agent_lab.services.user_admin_service import (
     UserAdminService,
 )
 from tests.app_helpers import create_offline_app
-from tests.auth_helpers import authenticated_superuser
+from tests.auth_helpers import SUPERUSER_ID, authenticated_superuser
 
 
 def run(coroutine: Any) -> Any:
@@ -82,13 +82,14 @@ class FakeAdminService:
         self,
         user_id: UUID,
         request: UserAdminUpdateRequest,
+        actor_id: UUID,
     ) -> object:
-        """记录状态更新，或抛出预置领域错误。"""
+        """记录停用/启用命令，含路由传下来的调用者身份。"""
 
         if self.error is not None:
             raise self.error
         self.calls.append(
-            ("update", (user_id, request.is_active, request.is_superuser))
+            ("update", (user_id, request.is_active, actor_id))
         )
         return self.user
 
@@ -102,12 +103,12 @@ class FakeAdminService:
         self.calls.append(("password", (user_id, len(request.password))))
         return self.user
 
-    async def delete_user(self, user_id: UUID) -> None:
-        """记录删账号，或抛出预置领域错误。"""
+    async def delete_user(self, user_id: UUID, actor_id: UUID) -> None:
+        """记录注销命令，含路由传下来的调用者身份。"""
 
         if self.error is not None:
             raise self.error
-        self.calls.append(("delete", user_id))
+        self.calls.append(("delete", (user_id, actor_id)))
 
     async def revoke_sessions(self, user_id: UUID) -> int:
         """记录会话撤销并返回固定删除数。"""
@@ -204,7 +205,9 @@ def test_user_admin_http_commands_use_typed_bodies_and_safe_responses() -> None:
         ("list", False),
         ("list", True),
         ("create", ("new@example.com", True, 24)),
-        ("update", (service.user_id, False, None)),
+        # 第三个元素是调用者 id：路由把当前登录账号交给了 Service。漏传的话
+        # 「不能停用或注销自己」就静默失效，而整套离线用例照样全绿。
+        ("update", (service.user_id, False, SUPERUSER_ID)),
         ("password", (service.user_id, 24)),
         ("sessions", service.user_id),
     ]
@@ -234,7 +237,7 @@ def test_delete_account_is_superuser_only_and_returns_no_body() -> None:
     )
     assert response.status_code == 204
     assert response.content == b""
-    assert service.calls == [("delete", service.user_id)]
+    assert service.calls == [("delete", (service.user_id, SUPERUSER_ID))]
 
 
 def test_delete_account_maps_domain_error_to_stable_response() -> None:
@@ -259,7 +262,7 @@ def test_delete_account_maps_domain_error_to_stable_response() -> None:
 
 
 def test_environment_admin_domain_error_has_stable_conflict_response() -> None:
-    """环境托管账号不能从 HTTP 管理入口降级，响应不泄露内部状态。"""
+    """环境托管账号不能从 HTTP 管理入口停用，响应不泄露内部状态。"""
 
     service = FakeAdminService()
     service.error = UserAdminDomainError(
@@ -271,7 +274,7 @@ def test_environment_admin_domain_error_has_stable_conflict_response() -> None:
             build_app(service, authenticated=True),
             "PATCH",
             f"/admin/users/{service.user_id}",
-            json={"is_superuser": False},
+            json={"is_active": False},
         )
     )
 
@@ -311,6 +314,12 @@ def test_user_admin_validation_error_is_stable_and_does_not_echo_password() -> N
     assert private_password not in response.text
 
 
+# 直接打 Service 的那些用例里，调用者必须与目标账号**不同**：写成同一个 id 会先命中
+# 「不能停用或注销自己」，那几条用例就不再验原来那件事了（保护码会从环境托管/最后超管
+# 变成 account_self_protected，而它们本来的意图正是要验那两个）。
+OPERATOR_ID = UUID("00000000-0000-4000-8000-0000000000ff")
+
+
 class SingleAccountSession:
     """模拟只返回一个预置账号的请求级数据库 Session。
 
@@ -339,13 +348,20 @@ class SingleAccountSession:
         self.rollback_count += 1
 
     async def commit(self) -> None:
-        """记录不应发生的提交。"""
+        """记录提交次数。"""
 
         self.commit_count += 1
 
+    async def refresh(self, _instance: object) -> None:
+        """什么都不做：刷新只为取回数据库生成的列，这里没有数据库。"""
+
 
 def test_service_protects_last_active_superuser() -> None:
-    """最后一个启用超级用户不能被禁用或降级。"""
+    """最后一个活跃超管不能被停用。
+
+    这条守的需求与改动前一样（不能把管理入口锁死），只是触发它的动作变了：降权这个动作
+    已经取消（见 ADR 0038），能让人退出活跃超管的只剩停用与注销。
+    """
 
     current = UserRecord(
         id=uuid4(),
@@ -360,7 +376,7 @@ def test_service_protects_last_active_superuser() -> None:
     service = UserAdminService(session)  # type: ignore[arg-type]
 
     with pytest.raises(UserAdminDomainError) as error:
-        run(service.update_user(current.id, UserAdminUpdateRequest(is_active=False)))
+        run(service.update_user(current.id, UserAdminUpdateRequest(is_active=False), OPERATOR_ID))
 
     assert error.value.code == "last_superuser_protected"
     assert session.rollback_count == 1
@@ -383,7 +399,7 @@ def test_service_rolls_back_before_protecting_environment_admin() -> None:
     service = UserAdminService(session)  # type: ignore[arg-type]
 
     with pytest.raises(UserAdminDomainError) as error:
-        run(service.update_user(current.id, UserAdminUpdateRequest(is_superuser=False)))
+        run(service.update_user(current.id, UserAdminUpdateRequest(is_active=False), OPERATOR_ID))
 
     assert error.value.code == "environment_admin_protected"
     assert session.rollback_count == 1
@@ -391,9 +407,9 @@ def test_service_rolls_back_before_protecting_environment_admin() -> None:
 
 
 def test_service_protects_last_active_superuser_from_deletion() -> None:
-    """最后一个启用超级用户连删都不能删，且失败时不留半截事务。
+    """最后一个活跃超管连注销都不行，且失败时不留半截事务。
 
-    与 ``update_user`` 那条同源但更硬：降权至少还有别的超管能把它改回来，删掉连入口都没了。
+    与 ``update_user`` 那条同源但更硬：停用至少还有别的超管能把它启用回来，注销连入口都没了。
     """
 
     current = UserRecord(
@@ -409,7 +425,7 @@ def test_service_protects_last_active_superuser_from_deletion() -> None:
     service = UserAdminService(session)  # type: ignore[arg-type]
 
     with pytest.raises(UserAdminDomainError) as error:
-        run(service.delete_user(current.id))
+        run(service.delete_user(current.id, OPERATOR_ID))
 
     assert error.value.code == "last_superuser_protected"
     assert session.rollback_count == 1
@@ -417,7 +433,11 @@ def test_service_protects_last_active_superuser_from_deletion() -> None:
 
 
 def test_service_refuses_to_delete_environment_managed_admin() -> None:
-    """环境托管账号删不得：删了下次启动还会被配置重新建出来。"""
+    """环境托管账号注销不得：注销了下次启动还会被配置拉回来。
+
+    这个保护与降权无关，所以降权动作取消之后它仍在——只是触发它的动作从「取消超管」换成了
+    「停用」与「注销」。
+    """
 
     current = UserRecord(
         id=uuid4(),
@@ -432,7 +452,7 @@ def test_service_refuses_to_delete_environment_managed_admin() -> None:
     service = UserAdminService(session)  # type: ignore[arg-type]
 
     with pytest.raises(UserAdminDomainError) as error:
-        run(service.delete_user(current.id))
+        run(service.delete_user(current.id, OPERATOR_ID))
 
     assert error.value.code == "environment_admin_protected"
     assert session.rollback_count == 1
@@ -500,7 +520,7 @@ def test_service_refuses_status_change_and_password_reset_on_deregistered_accoun
 
         with pytest.raises(UserAdminDomainError) as error:
             if action == "update":
-                run(service.update_user(account.id, request))
+                run(service.update_user(account.id, request, OPERATOR_ID))
             else:
                 run(service.reset_password(account.id, request))
 
@@ -524,7 +544,7 @@ def test_service_deregistering_twice_succeeds_and_leaves_the_first_timestamp() -
     session = SingleAccountSession(account)
     service = UserAdminService(session)  # type: ignore[arg-type]
 
-    run(service.delete_user(account.id))
+    run(service.delete_user(account.id, OPERATOR_ID))
 
     assert account.deleted_at == original_timestamp
     assert account.is_active is False
@@ -554,3 +574,72 @@ def test_new_account_domain_errors_map_to_conflict(code: str) -> None:
         "detail": "该操作不被允许。",
         "retryable": False,
     }
+
+
+def test_service_refuses_to_stop_or_deregister_the_caller_itself() -> None:
+    """停用自己与注销自己都被拒，报的是 `account_self_protected`。
+
+    这是**后端规则**，不靠界面隐藏：客户端不可信，直接打接口也必须被拒。写日志、
+    脚本、别的前端都可能绕过那个「自己那一行不显示开关」的界面约定。
+    """
+
+    current = UserRecord(
+        id=uuid4(),
+        email="operator@example.com",
+        hashed_password="not-used",
+        is_active=True,
+        is_superuser=True,
+        is_verified=True,
+        is_environment_admin=False,
+    )
+
+    for action in ("stop", "deregister"):
+        session = SingleAccountSession(current)
+        service = UserAdminService(session)  # type: ignore[arg-type]
+
+        with pytest.raises(UserAdminDomainError) as error:
+            if action == "stop":
+                run(
+                    service.update_user(
+                        current.id,
+                        UserAdminUpdateRequest(is_active=False),
+                        current.id,
+                    )
+                )
+            else:
+                run(service.delete_user(current.id, current.id))
+
+        assert error.value.code == "account_self_protected"
+        assert "换一个账号" in error.value.detail
+        assert session.rollback_count == 1
+        assert session.commit_count == 0
+    # 失败之后账号状态一个字节都没动。
+    assert current.is_active is True
+    assert current.deleted_at is None
+
+
+def test_service_allows_enabling_yourself_again() -> None:
+    """「启用自己」不在保护范围内：它不会让人失去权限，也不会绕过任何边界。
+
+    只有停用与注销需要调用者身份；把启用也挡掉会让「最后一步只能由别人来做」这种
+    无关的情况多出一条规则。
+    """
+
+    current = UserRecord(
+        id=uuid4(),
+        email="operator@example.com",
+        hashed_password="not-used",
+        is_active=False,
+        is_superuser=False,
+        is_verified=True,
+        is_environment_admin=False,
+    )
+    session = SingleAccountSession(current)
+    service = UserAdminService(session)  # type: ignore[arg-type]
+
+    updated = run(
+        service.update_user(current.id, UserAdminUpdateRequest(is_active=True), current.id)
+    )
+
+    assert updated.is_active is True
+    assert session.commit_count == 1

@@ -16,8 +16,8 @@ export interface CreateUserOptions {
 
 export interface UpdateUserOptions {
   userId: string
-  isActive?: boolean
-  isSuperuser?: boolean
+  /** 目标启用状态。只有一个维度：超管身份只在建号时给。 */
+  isActive: boolean
 }
 
 export interface ResetUserPasswordOptions {
@@ -58,15 +58,8 @@ export async function createUser({
   })
 }
 
-export async function updateUser({
-  userId,
-  isActive,
-  isSuperuser,
-}: UpdateUserOptions): Promise<UserAdminDto> {
-  const payload: UserAdminUpdateRequest = {
-    ...(isActive === undefined ? {} : { is_active: isActive }),
-    ...(isSuperuser === undefined ? {} : { is_superuser: isSuperuser }),
-  }
+export async function updateUser({ userId, isActive }: UpdateUserOptions): Promise<UserAdminDto> {
+  const payload: UserAdminUpdateRequest = { is_active: isActive }
   return requestUser(`/admin/users/${encodeURIComponent(userId)}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),

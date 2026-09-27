@@ -122,12 +122,12 @@ describe('UserAdminPage', () => {
 
     expect(wrapper.text()).toContain('admin@example.com')
     expect(wrapper.text()).toContain('环境托管')
-    expect(
-      wrapper.get(`[data-testid="active-${environmentAdmin.id}"]`).attributes(),
-    ).toHaveProperty('disabled')
-    expect(
-      wrapper.get(`[data-testid="superuser-${environmentAdmin.id}"]`).attributes(),
-    ).toHaveProperty('disabled')
+    // 环境托管那一行同时是当前登录账号（这个 mock 里 authSession.user 就是它），
+    // 所以停用/启用与注销两个键根本不渲染——不提供，而不是禁用。
+    expect(wrapper.find(`[data-testid="active-${environmentAdmin.id}"]`).exists()).toBe(false)
+    expect(wrapper.find(`[data-testid="delete-${environmentAdmin.id}"]`).exists()).toBe(false)
+    // 改超管身份的开关整个删了：授予只在建号时做。
+    expect(wrapper.find(`[data-testid="superuser-${environmentAdmin.id}"]`).exists()).toBe(false)
     expect(wrapper.get(`[data-testid="reset-${environmentAdmin.id}"]`).attributes()).toHaveProperty(
       'disabled',
     )

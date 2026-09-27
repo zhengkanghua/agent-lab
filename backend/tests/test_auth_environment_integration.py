@@ -117,9 +117,12 @@ def test_environment_admin_sync_and_account_management_transactions() -> None:
 
                 service = UserAdminService(session)
                 with pytest.raises(UserAdminDomainError) as protected:
+                    # 调用者用一个与目标不同的账号：撞上自己那条规则的话，这条用例就会
+                    # 从环境托管保护变成 account_self_protected，不再验原来那件事。
                     await service.update_user(
                         second.id,
-                        UserAdminUpdateRequest(is_superuser=False),
+                        UserAdminUpdateRequest(is_active=False),
+                        first.id,
                     )
                 assert protected.value.code == "environment_admin_protected"
 

@@ -105,10 +105,12 @@ describe('UserDirectoryTable', () => {
     expect(first.find('[role="alert"]').exists()).toBe(false)
   })
 
-  it.each([
-    { field: 'active', event: 'set-active', confirmed: true },
-    { field: 'superuser', event: 'set-superuser', confirmed: false },
-  ])('$field 开关等待确认，失败后仍可重试同一目标状态', async ({ field, event, confirmed }) => {
+  it('启用状态开关等待确认，失败后仍可重试同一目标状态', async () => {
+    // 「开关显示的是服务端已确认的状态」：点击先改变原生控件，请求在途或失败时
+    // 显示值仍是接口确认的那个，否则界面会先说自己成功、再被打回来。
+    const field = 'active'
+    const event = 'set-active'
+    const confirmed = true
     const wrapper = mountTable()
     const input = wrapper.get<HTMLInputElement>(`[data-testid="${field}-${SECOND_ID}"]`)
     await input.setValue(!confirmed)
@@ -131,35 +133,45 @@ describe('UserDirectoryTable', () => {
     // 转错对象的后果最严重：点第二行的开关，改的是第一行的账号。
     const wrapper = mountTable()
     await wrapper.get(`[data-testid="active-${SECOND_ID}"]`).setValue(false)
-    await wrapper.get(`[data-testid="superuser-${SECOND_ID}"]`).setValue(true)
     await wrapper.get(`[data-testid="reset-${SECOND_ID}"]`).trigger('click')
     await wrapper.get(`[data-testid="sessions-${SECOND_ID}"]`).trigger('click')
     await wrapper.get(`[data-testid="delete-${SECOND_ID}"]`).trigger('click')
 
     expect(wrapper.emitted('set-active')?.[0]?.[0]).toMatchObject({ id: SECOND_ID })
     expect(wrapper.emitted('set-active')?.[0]?.[1]).toBe(false)
-    expect(wrapper.emitted('set-superuser')?.[0]).toEqual([
-      expect.objectContaining({ id: SECOND_ID }),
-      true,
-    ])
     expect(wrapper.emitted('open-reset')?.[0]?.[0]).toMatchObject({ id: SECOND_ID })
     expect(wrapper.emitted('revoke-sessions')?.[0]?.[0]).toMatchObject({ id: SECOND_ID })
     expect(wrapper.emitted('delete-account')?.[0]?.[0]).toMatchObject({ id: SECOND_ID })
   })
 
-  it('环境托管超级用户与当前账号的注销键禁用，其余行可用', () => {
-    // currentUserId 是 FIRST_ID，所以第一行（当前账号）禁用、第二行可用。
+  it('当前账号那一行不提供停用/启用与注销键，其余行提供', () => {
+    // currentUserId 是 FIRST_ID：那一行是操作者自己，两个动作都会让他当场失去权限。
+    // 界面不提供只是体验，真正的边界是后端那条 account_self_protected。
     const wrapper = mountTable()
-    expect(wrapper.get(`[data-testid="delete-${FIRST_ID}"]`).attributes('disabled')).toBeDefined()
-    expect(
-      wrapper.get(`[data-testid="delete-${SECOND_ID}"]`).attributes('disabled'),
-    ).toBeUndefined()
 
+    expect(wrapper.find(`[data-testid="active-${FIRST_ID}"]`).exists()).toBe(false)
+    expect(wrapper.find(`[data-testid="delete-${FIRST_ID}"]`).exists()).toBe(false)
+    // 状态本身还是要看得见：只撤控件，不撤信息。
+    expect(wrapper.text()).toContain('启用')
+    // 撤销会话与重置密码不在这条规则里：它们不会让人失去权限。
+    expect(wrapper.find(`[data-testid="reset-${FIRST_ID}"]`).exists()).toBe(true)
+    expect(wrapper.find(`[data-testid="sessions-${FIRST_ID}"]`).exists()).toBe(true)
+    // 别人那一行照常。
+    expect(wrapper.find(`[data-testid="active-${SECOND_ID}"]`).exists()).toBe(true)
+    expect(wrapper.find(`[data-testid="delete-${SECOND_ID}"]`).exists()).toBe(true)
+  })
+
+  it('环境托管账号的启用键与注销键禁用，且界面里不再有改超管身份的入口', () => {
     const managed = mountTable({
-      users: [user(FIRST_ID, { is_environment_admin: true })],
+      users: [user(FIRST_ID, { is_environment_admin: true, is_superuser: true })],
       currentUserId: undefined,
     })
+
+    expect(managed.get(`[data-testid="active-${FIRST_ID}"]`).attributes('disabled')).toBeDefined()
     expect(managed.get(`[data-testid="delete-${FIRST_ID}"]`).attributes('disabled')).toBeDefined()
+    // 超管身份只在建号时决定，行里没有能改它的控件——任何一行都没有。
+    expect(managed.find(`[data-testid="superuser-${FIRST_ID}"]`).exists()).toBe(false)
+    expect(managed.text()).toContain('超级用户')
   })
 
   it('刷新键发出 refresh', async () => {

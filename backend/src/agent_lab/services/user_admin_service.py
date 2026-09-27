@@ -48,8 +48,8 @@ class UserAdminService:
     的事务边界，每个公开方法自己 commit 或 rollback，调用方不需要再管事务。
 
     两条贯穿全类的业务约束：带环境托管标记的超级用户（``is_environment_admin``）不能被本层
-    降级、改密、停用或注销，只能通过服务端密钥改；任何操作都不能让系统失去最后一个「活跃且是
-    超管」的账号，否则没人能再进管理页。
+    改密、停用或注销，只能通过服务端密钥改；任何操作都不能让系统失去最后一个「活跃且是超管」
+    的账号，否则没人能再进管理页。另外，停用与注销都要知道**调用者是谁**：不能停用或注销自己。
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -151,27 +151,32 @@ class UserAdminService:
         self,
         user_id: UUID,
         request: UserAdminUpdateRequest,
+        actor_id: UUID,
     ) -> UserRecord:
-        """修改普通账号状态，并在降权时撤销全部现有会话。
+        """停用或启用一个账号，并在停用时撤销它的全部现有会话。
 
-        两个字段都是可选的：``None`` 表示「这次不改这一项」，不是「改成 False」。所以先算
-        出目标状态，再和当前状态比，才能判断这次改动是不是一次降权。
+        只有启用状态一个维度：超级用户身份在建号时定下、之后不能改（见
+        ``docs/adr/0038-superuser-identity-fixed-at-creation.md``），所以这里没有「降权」这个
+        动作，也就没有「不能降掉最后一个活跃超管」那条保护——留下来的是「不能**停用**最后一个
+        活跃超管」。
 
-        为什么降权必须连带撤销会话：权限判定发生在登录时，已经签发的 Token 不会因为库里
-        的标志位变了就自动失效。不撤销的话，被降权的人只要不退出登录，就还能继续用超管
-        功能直到 Token 自己过期。
+        为什么停用必须连带撤销会话：权限判定发生在登录时，已经签发的 Token 不会因为库里的
+        标志位变了就自动失效。不撤销的话，被停用的人只要不退出登录就还能继续用。
 
         Args:
             user_id: 目标账号 id。
-            request: 可选的 ``is_active`` 与 ``is_superuser``。
+            request: 目标启用状态。
+            actor_id: 发起这次操作的账号 id。**必填、无默认值**：写成可选的话，任何漏传的
+                调用方都会静默绕过「不能停用自己」，而现有那几条用例恰好都是单参数调用、
+                会继续通过。
 
         Returns:
             已更新并刷新的 ``UserRecord``。
 
         Raises:
             UserAdminDomainError: ``user_not_found``、``environment_admin_protected``、
-                ``account_already_deleted``，或 ``last_superuser_protected``（这次改动会让系统
-                失去最后一个活跃超管）。
+                ``account_self_protected``（目标就是调用者本人）、``account_already_deleted``，
+                或 ``last_superuser_protected``（这次停用会让系统失去最后一个活跃超管）。
 
         Notes:
             一次 PostgreSQL 写入事务。行锁在第一步就拿，见 ``_get_user_for_update``。
@@ -181,7 +186,17 @@ class UserAdminService:
         user = await self._get_user_for_update(user_id)
         await self._ensure_not_environment_managed(user)
 
-        # 2、已注销的账号上做写动作一律拒绝，且要说清是「已注销」而不是「不存在」：
+        # 2、不能停用自己。这是**后端规则**，不靠界面隐藏：客户端不可信，直接打接口也必须
+        #    被拒。放在状态检查之前——「目标是不是调用者本人」与目标当前是什么状态无关。
+        #    启用自己不在规则里：那个方向不会让人失去权限，也是个实际无效的动作。
+        if actor_id == user_id and not request.is_active:
+            await self._session.rollback()
+            raise UserAdminDomainError(
+                "account_self_protected",
+                "不能停用自己的账号，请换一个账号操作。",
+            )
+
+        # 3、已注销的账号上做写动作一律拒绝，且要说清是「已注销」而不是「不存在」：
         #    调用方分得清这两个，界面才能给出不同的下一步。
         if user.deleted_at is not None:
             await self._session.rollback()
@@ -190,32 +205,20 @@ class UserAdminService:
                 "该账号已经注销，不能再修改状态。",
             )
 
-        # 3、算目标状态：字段为 None 表示不改这一项，沿用当前值。
-        next_active = request.is_active if request.is_active is not None else user.is_active
-        next_superuser = (
-            request.is_superuser
-            if request.is_superuser is not None
-            else user.is_superuser
-        )
-        # 3、判断这次是不是「丢掉活跃超管身份」——原本是活跃超管，改完不再是。
-        loses_active_superuser = user.is_active and user.is_superuser and not (
-            next_active and next_superuser
-        )
-        # 4、是降权的话，数一下还剩几个活跃超管。判据与行锁都在 _lock_active_superuser_ids
-        #    里，与注销那条共用。
-        if loses_active_superuser:
+        # 4、停用会让一个人退出活跃超管，所以停用前先数一下还剩几个。判据与行锁都在
+        #    _lock_active_superuser_ids 里，与注销那条共用。
+        if user.is_active and user.is_superuser and not request.is_active:
             active_superusers = await self._lock_active_superuser_ids()
             if len(active_superusers) <= 1:
                 await self._session.rollback()
                 raise UserAdminDomainError(
                     "last_superuser_protected",
-                    "最后一个活跃超级管理员不能被禁用或降级。",
+                    "最后一个活跃超级管理员不能被停用。",
                 )
 
-        # 5、落状态。降权或禁用都要连带撤销会话，理由见上面 docstring。
-        user.is_active = next_active
-        user.is_superuser = next_superuser
-        if loses_active_superuser or not next_active:
+        # 5、落状态。停用要连带撤销会话，理由见上面 docstring。
+        user.is_active = request.is_active
+        if not request.is_active:
             await self._delete_sessions(user.id)
         await self._session.commit()
         await self._session.refresh(user)
@@ -276,7 +279,7 @@ class UserAdminService:
         await self._session.refresh(user)
         return user
 
-    async def delete_user(self, user_id: UUID) -> None:
+    async def delete_user(self, user_id: UUID, actor_id: UUID) -> None:
         """注销账号：账号行与它留下过的记录全部保留，只揣销登录 Token。
 
         这是账号不再使用时**唯一**的入口，方法名与 HTTP 路径都不改（前端那个动作对使用者的
@@ -298,10 +301,12 @@ class UserAdminService:
 
         Args:
             user_id: 目标账号 id。
+            actor_id: 发起这次操作的账号 id。**必填、无默认值**，理由同 ``update_user``。
 
         Raises:
-            UserAdminDomainError: ``user_not_found``、``environment_admin_protected``，
-                或 ``last_superuser_protected``（注销他之后没人能再进管理页）。
+            UserAdminDomainError: ``user_not_found``、``environment_admin_protected``、
+                ``account_self_protected``（目标就是调用者本人），或
+                ``last_superuser_protected``（注销他之后没人能再进管理页）。
         Notes:
             一次 PostgreSQL 写入事务。注销不改写指向本账号的任何引用，因此没有连带删除；
             之前那批硬删除语义的清理（删会话归属、删偏好、置空决策留痕）是本次刻意去掉的。
@@ -310,18 +315,27 @@ class UserAdminService:
         # 1、锁行取人。
         user = await self._get_user_for_update(user_id)
 
-        # 2、已经注销过的账号直接返回成功。注销是「同一个目标状态」，重复到达它算成功，
+        # 2、不能注销自己。与停用自己同源，同样放在状态检查之前：注销自己会当场把管理页
+        #    变成下一个人的事，而「目标是不是调用者本人」与目标当前状态无关。
+        if actor_id == user_id:
+            await self._session.rollback()
+            raise UserAdminDomainError(
+                "account_self_protected",
+                "不能注销自己的账号，请换一个账号操作。",
+            )
+
+        # 3、已经注销过的账号直接返回成功。注销是「同一个目标状态」，重复到达它算成功，
         #    不该报错；但也不要再做一遍：注销时间保持第一次那个值（那才是事情发生的时刻），
         #    登录 Token 也不重复清（注销那一步已经清空）。
         if user.deleted_at is not None:
             await self._session.rollback()
             return
 
-        # 3、挡掉环境托管账号。它的身份来自服务端配置，注销之后下次启动还会被拉回来，
+        # 4、挡掉环境托管账号。它的身份来自服务端配置，注销之后下次启动还会被拉回来，
         #    等于做了个「看起来生效、实际没有」的动作。
         await self._ensure_not_environment_managed(user)
 
-        # 4、最后一个活跃超管不能注销。与 update_user 里那条同源，共用同一段判据与行锁：
+        # 5、最后一个活跃超管不能注销。与 update_user 里那条同源，共用同一段判据与行锁：
         #    注销他之后没人能再进管理页，而注销连「把状态改回来」的入口都没有。
         if user.is_active and user.is_superuser:
             remaining = await self._lock_active_superuser_ids()
@@ -332,11 +346,11 @@ class UserAdminService:
                     "最后一个活跃超级管理员不能被注销。",
                 )
 
-        # 5、盖注销时间戳，并同时置 is_active=false。两次赋值在同一个事务里提交，
+        # 6、盖注销时间戳，并同时置 is_active=false。两次赋值在同一个事务里提交，
         #    「只写一半」的中间态不会落库。
         user.is_active = False
         user.deleted_at = datetime.now(UTC)
-        # 6、注销的人不该再有活着的会话。它是本次唯一要清的连带数据。
+        # 7、注销的人不该再有活着的会话。它是本次唯一要清的连带数据。
         await self._delete_sessions(user.id)
         await self._session.commit()
 
@@ -457,7 +471,7 @@ class UserAdminService:
         """删掉某账号的全部数据库登录 Token，不提交。
 
         不在这里 commit 是有意的：调用方要把「改状态」和「踢下线」放进同一个事务，中间不能
-        出现「已降权但旧会话还活着」的窗口。
+        出现「已停用但旧会话还活着」的窗口。
 
         Args:
             user_id: 目标账号 id。

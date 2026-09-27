@@ -33,7 +33,6 @@ const emit = defineEmits<{
   refresh: []
   'update:includeDeleted': [value: boolean]
   'set-active': [user: UserAdminDto, value: boolean]
-  'set-superuser': [user: UserAdminDto, value: boolean]
   'open-reset': [user: UserAdminDto]
   'update:resetPassword': [value: string]
   'submit-reset': [user: UserAdminDto]
@@ -131,7 +130,6 @@ function onIncludeDeletedChange(event: Event): void {
         :reset-password="resetPasswordFor(user)"
         :reset-error="resetError"
         @set-active="emit('set-active', user, $event)"
-        @set-superuser="emit('set-superuser', user, $event)"
         @open-reset="emit('open-reset', user)"
         @update:reset-password="emit('update:resetPassword', $event)"
         @submit-reset="emit('submit-reset', user)"
