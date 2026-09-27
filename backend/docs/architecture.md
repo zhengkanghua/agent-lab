@@ -689,6 +689,25 @@ PATCH 路由），``system_prompt`` 在会话建立时从该账号的 ``user_pre
 偏好表——设置页改提示词只影响新开的会话。改动其中一列前先读
 [ADR 0029](../../docs/adr/0029-session-scoped-system-prompt.md)。
 
+## 删父表必须连带子表：当前的删除入口清单
+
+库里**没有数据库级外键约束**，删一行父表不会带走或断开任何子表行（决策与代价见
+[ADR 0028](../../docs/adr/0028-drop-database-foreign-keys.md)）。连带逻辑写在各聚合自己的
+Repository/Service 里，不新建抽象模块。**本节是该清单唯一的一份**；``AGENTS.md`` 只写规则、
+指向这里，不在那边重列（两个位置各存一份必然漂移）。
+
+改动前先确认有没有第二条删除路径；测试也走这些路径，不要绕开它们直接 ``session.delete()``。
+
+| 入口 | 删什么 | 连带处理（同一个事务内） |
+| --- | --- | --- |
+| ``DocumentRetentionRepository.finish()`` | ``documents`` 与它的删除待办 | 先断开 ``current_version_id`` / ``latest_processing_id`` / ``draft_processing_id`` 三处指向并 flush，再按次序删 ``document_review_records``、``document_versions``、``document_processing_records``（``processing_id`` 仍指向后者，所以它必须最后删），最后删文档与待办、推进知识库的 ``visibility_revision`` |
+| ``UserAdminService.delete_user()`` | ``users`` 那一行 | 删 ``agent_threads`` 与 ``access_tokens``、删 ``user_preferences``、置空 ``document_review_records.actor_id``（保留决策记录本身）。**账号正在从硬删除改为注销**，改成注销后只删 ``access_tokens``，其余保留——见 ``docs/specs/0002-soft-delete-accounts.md`` |
+| ``ScheduledJobRepository.delete_job()`` | ``scheduled_jobs`` 那一行 | 把 ``scheduled_job_runs.job_id`` 置空（``source_job_id`` 与受理时的 ``config_snapshot`` 原样保留） |
+| ``TaskRepository`` 的到期清理 | 终态且到期的 ``scheduled_job_runs`` | 只选**没有子行**的记录（``child.retry_of == JobRunRecord.id`` 不存在）才删 |
+
+``knowledge_bases`` 与 ``sources`` **没有物理删除路径**（它们被引用的场景当前不可达），因此不需要
+为它们新增级联判断代码。
+
 **归属校验是访问控制，不是凭据检查。** 每条 ``/agent/*`` 路由先经
 ``AgentThreadService`` 确认目标会话属于当前账号，不属于就 404；``WHERE user_id`` 只写在那一个
 Service 里。``AgentChatRequest.thread_id`` 仍允许客户端填，但填别人的会拿到 404 而不是别人的历史。

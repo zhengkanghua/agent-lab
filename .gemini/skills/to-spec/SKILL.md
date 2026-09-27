@@ -76,6 +76,8 @@ Spec 存放在 `docs/specs/` 下，文件名 `NNNN-slug.md`，编号扫该目录
 
 ## Spec 的生命周期
 
-**Spec 不是文档，是工单。** 它的读者是下一个 session 的助手，不是几个月后翻文档的人。活干完、验证通过后，Spec 就该删除。
+**Spec 不是长期文档。** 它的读者是下一个 session 的助手，不是几个月后翻文档的人。活干完、验证通过后，Spec 就该删除。
 
-交付说明里必须报告「已删除 spec docs/specs/NNNN-slug.md」。如果忘了删，下次动工前检查 `docs/specs/` 并清理已完成的 spec。
+Spec 写的是已经定稿的决策，不随施工进度改动。施工跨多个 session 时，它拆出的工单文件（`docs/specs/NNNN-slug/issues/`，见 `to-tickets` skill）承载进度和验收勾选——「工单」指那些文件，Spec 本身不是工单。
+
+交付说明里必须报告「已删除 spec docs/specs/NNNN-slug.md」，有配套工单目录的一并删除并一起报告。如果忘了删，下次动工前检查 `docs/specs/` 并清理已完成的 spec。
