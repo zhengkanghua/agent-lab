@@ -156,7 +156,9 @@ Agent 新会话默认所有启用库，迁移旧会话保留 news；每次运行
 只盖时间戳挡不住登录。库上两条约束兜底：``ck_users_deleted_at_implies_inactive`` 拦「已注销却
 仍可登录」，``ck_users_environment_admin_privileges`` 里那句 ``deleted_at IS NULL`` 拦「环境
 托管账号被注销」。注销保留账号行、会话归属与个人偏好，只撤销登录 Token；账号列表默认不返回已
-注销的账号。终态与代价见 [ADR 0034](../../docs/adr/0034-account-deletion-is-soft-delete.md)，
+注销的账号。**邮箱唯一性不变**：已注销账号仍占着同一个邮箱（行还在），所以同一邮箱建不了第二个号，
+建号冲突的文案因此要说明「可能是已注销的账号」。终态与代价见
+[ADR 0034](../../docs/adr/0034-account-deletion-is-soft-delete.md)，
 术语见 [CONTEXT.md](../../CONTEXT.md)。
 
 ## FreshRSS 增量同步

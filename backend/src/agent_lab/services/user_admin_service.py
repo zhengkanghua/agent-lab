@@ -141,7 +141,10 @@ class UserAdminService:
             await self._session.rollback()
             raise UserAdminDomainError(
                 "user_already_exists",
-                "该邮箱的账号已存在。",
+                # 这句话不承诺「占用者是不是已注销」：建号判重靠唯一索引抛出的完整性冲突，
+                # 异常里没有这个信息，而先查再插在并发下必然漏。注销之后邮箱仍然占着索引
+                # （邮箱唯一性不变），所以把这种可能直接写进文案，不让管理员去猜。
+                "该邮箱已被使用（可能是已注销的账号），不能重复建号。",
             ) from error
         # 4、refresh 取回数据库生成的列（id、created_at 这些）。
         await self._session.refresh(user)

@@ -39,6 +39,15 @@ describe('presentAdminError', () => {
     expect(message).not.toContain('删除')
   })
 
+  it('邮箱冲突的文案说出「可能是已注销的账号」', () => {
+    // 注销不改邮箱唯一性，所以同一邮箱建不了第二个号；不说清这一点，超管会遇到
+    // 「列表里查不到这个人、建号却说邮箱被占用」而无处可查。
+    const message = presentAdminError(apiError('user_already_exists'), FALLBACK)
+
+    expect(message).toContain('已注销')
+    expect(message).not.toBe(FALLBACK)
+  })
+
   it('认不出的码才退到兜底文案', () => {
     expect(presentAdminError(apiError('something_new'), FALLBACK)).toBe(FALLBACK)
   })

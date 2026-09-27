@@ -312,8 +312,10 @@ def test_deregistering_an_account_keeps_its_thread_rows() -> None:
                 assert await session.get(AgentThreadRecord, thread_id) is not None
 
             # 走业务层那条唯一的注销路径。
+            # 调用者用一个与目标不同的账号：撞上「不能注销自己」的话，这条用例就不再验
+            # 它本来要验的事。
             async with factory() as session:
-                await UserAdminService(session).delete_user(doomed.id)
+                await UserAdminService(session).delete_user(doomed.id, uuid4())
 
             async with factory() as session:
                 # 1、账号行还在，且带上注销时间、处于不可用状态。

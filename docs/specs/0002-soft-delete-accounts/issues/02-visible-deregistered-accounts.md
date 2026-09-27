@@ -20,6 +20,8 @@
 - 静态客户端用后端 `/openapi.json` 重新生成；顺带带进一处之前的漂移（`KnowledgeBaseUpdateRequest` 的 docstring 描述，后端改了但客户端没重生）。
 - 本地可视化工具 `scripts/dev-mocks.mjs` 的账号 mock 同步：加 `deleted_at`、按 `include_deleted` 筛、注销改为盖时间戳而不是移出行（否则开发工具里的行为与后端相反）。
 - 能力地图用户管理那一行的能力名与测试列随本工单改。
+- 收尾复核时发现 spec 里有一条没有任何工单覆盖的要求：建号邮箱冲突的文案要说明「可能是已注销的账号」。
+  已在后端 detail 与前端文案表两处改成同一句话，各配一条断言（邮箱唯一性不变，已注销账号仍占着邮箱）。
 
 **已运行验证：** `npm run test:run`（661 passed）；`npm run typecheck`；`npx eslint`（改动文件，0 warning）；`uv run pytest -q tests/test_user_admin.py`；`RUN_POSTGRES_AGENT_THREAD_INTEGRATION_TEST=1 uv run pytest -q -k deregistering tests/test_agent_thread_ownership_integration.py`（真库，含 `include_deleted` 两条口径）。
 

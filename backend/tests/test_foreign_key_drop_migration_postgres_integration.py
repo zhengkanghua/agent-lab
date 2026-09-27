@@ -343,9 +343,10 @@ def test_deleting_an_account_leaves_no_orphans_on_the_constraint_free_schema(mig
                 ))
             await session.commit()
 
-        # 2、走业务层那条注销路径。
+        # 2、走业务层那条注销路径。调用者用一个与目标不同的账号：撞上「不能注销自己」
+        #    的话，这条用例就不再验它本来要验的事。
         async with env.sessions() as session:
-            await UserAdminService(session).delete_user(user_id)
+            await UserAdminService(session).delete_user(user_id, uuid4())
 
         # 3、六项验收：账号行、注销时间、可用状态、登录凭据、会话归属与偏好、决策留痕。
         async with env.sessions() as session:

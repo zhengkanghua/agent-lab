@@ -149,6 +149,9 @@ def test_environment_admin_sync_and_account_management_transactions() -> None:
                         )
                     )
                 assert duplicate.value.code == "user_already_exists"
+                # 文案要把「可能是已注销的账号」说出来：注销不改邮箱唯一性，而管理员
+                # 在默认列表里看不到已注销的那一行。
+                assert "已注销" in duplicate.value.detail
 
             async with factory() as session:
                 session.add(

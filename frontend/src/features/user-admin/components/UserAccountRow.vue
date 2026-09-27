@@ -45,7 +45,7 @@ const deregisteredAt = computed(() =>
   props.user.deleted_at === null ? '' : formatAccountDate(props.user.deleted_at),
 )
 
-/* 自己那一行的注销键由 deregisterVisible 整只拿掉，剩下的禁用条件只有环境托管。 */
+/* 自己那一行的注销键由 stateControlsVisible 整只拿掉，剩下的禁用条件只有环境托管。 */
 const deleteBlocked = computed(() => managed.value)
 
 const deleteTitle = computed(() => {
@@ -53,11 +53,12 @@ const deleteTitle = computed(() => {
   return '注销账号：账号不再能登录，记录全部保留'
 })
 
-/* 自己那一行不提供停用/启用与注销：这两个动作都会让操作者当场失去权限。
-   后端各有一条 `account_self_protected` 规则拦它们——界面不提供只是体验，
-   真正的边界在后端。 */
-const stopVisible = computed(() => !isCurrentUser.value && !deregistered.value)
-const deregisterVisible = computed(() => !isCurrentUser.value && !deregistered.value)
+/* 停用/启用与注销两个键在这些行上都不渲染：
+   - 自己那一行：两个动作都会让操作者当场失去权限；
+   - 已注销那一行：没有可改的状态，也没有可再走一次的注销。
+   后端各有规则拦它们（`account_self_protected` / `account_already_deleted`），
+   界面不提供只是体验，真正的边界在后端。 */
+const stateControlsVisible = computed(() => !isCurrentUser.value && !deregistered.value)
 
 /* 两个开关各写一个转发函数，不合成「传事件名进来」的那一个：
    defineEmits 的重载签名把事件名与载荷绑在一起，传进来的联合类型两个重载都不匹配。 */
@@ -109,7 +110,7 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
         <span class="status-chip is-deregistered" role="status">已注销</span>
         <small class="deregistered-at">{{ deregisteredAt }} 注销</small>
       </template>
-      <template v-else-if="stopVisible">
+      <template v-else-if="stateControlsVisible">
         <label
           class="switch-control"
           :class="{ 'switch-disabled': managed }"
@@ -174,7 +175,7 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
         撤销会话
       </button>
       <button
-        v-if="deregisterVisible"
+        v-if="stateControlsVisible"
         type="button"
         class="action-danger"
         :disabled="deleteBlocked || busy"

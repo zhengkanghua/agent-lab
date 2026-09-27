@@ -23,6 +23,9 @@
 - 前端：删掉行内「超级用户」开关与 `setSuperuser`、「停用/降级自己之后的重新取会话与跳转」那套处理及它的三条用例；自己那一行不渲染停用/启用与注销键；`updateUser` 只发 `is_active`。静态客户端重新生成（`UserAdminUpdateRequest` 不再有 `is_superuser`）。
 - 文档：后端架构说明的接口清单、环境托管保护段与错误码列表（新增「超管身份只在建号时决定」一段并指向 ADR 0038）、两份 README、部署文档与 `bootstrap.py`/`dependencies.py` 里提到「降级」的注释一并改口。`CONTEXT.md` 里「环境托管」词条仍写着「不可网页降级」——它是术语表，写入受仓库门禁约束，本会话不动。
 
+- 收尾全量复核时发现：`actor_id` 变成必填之后，两份真库用例里还有两个 `delete_user(...)` 调用点没跟上，
+  离线套件覆盖不到它们（真库用例默认跳过）。已补上「与目标不同」的调用者 id 并重跑通过。
+
 **已运行验证：** `uv run pytest -q`（760 passed, 66 skipped）；`RUN_POSTGRES_AUTH_INTEGRATION_TEST=1 uv run pytest -q tests/test_auth_environment_integration.py`（真库，环境托管保护改用停用触发）；`npm run test:run`（662 passed）、`npm run typecheck`、`npx eslint`、`npx prettier --check`。反证：把 `backend/src` 回退到开工状态，`tests/test_user_admin.py` 14 条失败（含调用者参数与自己那条规则）。
 
 **验收说明：** 两件事并成一条，因为它们的触发面重合：那套「自降级后续处理」的两个触发条件（降级、停用自己）正好分别由这两件事打死，拆开会让那段删除被劈成两半。第三条的调用者参数若写成可选，漏传的调用方会静默绕过规则，而现有那几条直接打 Service 的用例恰好都是单参数调用、会继续通过——所以每条用例的调用者要显式传。另有一个陷阱：现有直接打 Service 的几条用例，目标账号都是调用者自己，补调用者参数时必须换成一个不同的账号，否则新规则会先命中、它们就不再验原来那件事了。
