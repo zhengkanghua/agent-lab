@@ -1,12 +1,16 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
-  // 设置页会经 useDefaultAgentPrompt 拉默认提示词；还会读写个人偏好。
+  // 设置页会经 useDefaultAgentPrompt 拉默认提示词；会读写个人偏好；也会读用量。
   fetchAgentDefaultPrompt: vi.fn(),
   fetchPreferences: vi.fn(),
   savePreferences: vi.fn(),
+  fetchUsageSummary: vi.fn(),
+  fetchUsageRecords: vi.fn(),
+  fetchUsageModels: vi.fn(),
 }))
 
 vi.mock('@/api/agent-chat', () => ({
@@ -17,6 +21,13 @@ vi.mock('@/api/agent-chat', () => ({
 vi.mock('@/api/preferences', () => ({
   fetchPreferences: api.fetchPreferences,
   savePreferences: api.savePreferences,
+}))
+
+vi.mock('@/api/usage', () => ({
+  USAGE_PAGE_SIZE: 50,
+  fetchUsageSummary: api.fetchUsageSummary,
+  fetchUsageRecords: api.fetchUsageRecords,
+  fetchUsageModels: api.fetchUsageModels,
 }))
 
 /** 后端那一份的形状：字段名与前端不同，默认是「未配置 + 默认数量参数」。 */
@@ -57,7 +68,20 @@ async function mountAt(path: string) {
     { template: '<RouterView />' },
     {
       attachTo: document.body,
-      global: { plugins: [router] },
+      global: {
+        // 用量分区走 Vue Query；其余分区用不到它，装上也不影响。
+        plugins: [
+          router,
+          [
+            VueQueryPlugin,
+            {
+              queryClient: new QueryClient({
+                defaultOptions: { queries: { retry: false, gcTime: 0 } },
+              }),
+            },
+          ],
+        ],
+      },
     },
   )
   await flushPromises()
@@ -75,6 +99,18 @@ describe('SettingsPage', () => {
     api.fetchAgentDefaultPrompt.mockResolvedValue('你是新闻检索助手。')
     session.user.value = { email: 'admin@example.com', is_superuser: true }
     session.logout.mockReset()
+    api.fetchUsageSummary.mockReset()
+    api.fetchUsageSummary.mockResolvedValue({
+      inputTokens: 100,
+      outputTokens: 40,
+      cachedTokens: null,
+      totalTokens: 140,
+      callCount: 1,
+    })
+    api.fetchUsageRecords.mockReset()
+    api.fetchUsageRecords.mockResolvedValue({ items: [], hasMore: false })
+    api.fetchUsageModels.mockReset()
+    api.fetchUsageModels.mockResolvedValue(['gpt-x'])
     Element.prototype.scrollIntoView = vi.fn()
     window.scrollTo = vi.fn()
   })
@@ -90,6 +126,17 @@ describe('SettingsPage', () => {
     expect(wrapper.find('#account-heading').exists()).toBe(true)
     expect(wrapper.text()).toContain('admin@example.com')
     expect(wrapper.text()).toContain('修改密码')
+    wrapper.unmount()
+  })
+
+  it('用量分区可以从设置中心打开，导航里也有它', async () => {
+    const { wrapper } = await mountAt('/settings/usage')
+
+    expect(wrapper.find('#usage-heading').exists()).toBe(true)
+    expect(wrapper.text()).toContain('调用次数')
+    expect(wrapper.find('#usage-model').text()).toContain('gpt-x')
+    const nav = wrapper.get('.settings-nav')
+    expect(nav.text()).toContain('用量')
     wrapper.unmount()
   })
 

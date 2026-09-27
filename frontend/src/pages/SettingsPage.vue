@@ -10,17 +10,18 @@ import {
   AgentPromptSection,
   SearchPreferencesSection,
   SettingsNav,
+  UsageSection,
   usePreferences,
   type SettingsSection,
 } from '@/features/settings'
 
 /**
- * 设置中心：账号安全、检索偏好、Agent 偏好都在这里。
+ * 设置中心：账号安全、检索偏好、Agent 偏好、用量都在这里。
  *
  * 桌面端是外壳内容区上的居中浮层（2026-09 重设计 P4）：路由与深链不变，
  * /settings/search 等地址仍然直达；侧栏在浮层之外保持可点，导航离开就是出口。
  * 窄屏（≤720px）回退整页形态——没有遮罩与 Esc，dialog 语义一并撤掉。
- * 分区由路由参数决定，分区组件按需渲染。三个分区都对所有登录账号开放。
+ * 分区由路由参数决定，分区组件按需渲染。四个分区都对所有登录账号开放。
  */
 const route = useRoute()
 const router = useRouter()
@@ -85,7 +86,7 @@ function warnBeforeUnload(event: BeforeUnloadEvent): void {
 onMounted(() => window.addEventListener('beforeunload', warnBeforeUnload))
 onScopeDispose(() => window.removeEventListener('beforeunload', warnBeforeUnload))
 
-const SECTION_KEYS: readonly SettingsSection[] = ['account', 'search', 'agent']
+const SECTION_KEYS: readonly SettingsSection[] = ['account', 'search', 'agent', 'usage']
 
 const section = computed<SettingsSection>(() => {
   const value = route.params.section
@@ -215,6 +216,7 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
                 :model-value="agentPromptDraft"
                 @update:model-value="onDraftEdit"
               />
+              <UsageSection v-else-if="section === 'usage'" />
             </div>
           </div>
         </section>

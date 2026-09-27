@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { type Component } from 'vue'
-import { Bot, SlidersHorizontal, UserRound } from '@lucide/vue'
+import { Bot, Gauge, SlidersHorizontal, UserRound } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 
-export type SettingsSection = 'account' | 'search' | 'agent'
+export type SettingsSection = 'account' | 'search' | 'agent' | 'usage'
 
 defineProps<{
   /** 当前激活的分区，由路由参数决定。 */
@@ -29,12 +29,14 @@ interface SectionItem {
   icon: Component
 }
 
-// 三个分区都对所有登录账号可见：Agent 对话本身已对所有登录账号开放，
-// 它的偏好（自定义提示词）就不再是超级用户专有（见 ADR 0030）。
+// 四个分区都对所有登录账号可见：Agent 对话本身已对所有登录账号开放，
+// 它的偏好（自定义提示词）就不再是超级用户专有（见 ADR 0030）；
+// 用量分区只展示当前账号自己的调用记录，也不需要额外角色。
 const sections: SectionItem[] = [
   { key: 'account', label: '账号安全', description: '登录信息与密码', icon: UserRound },
   { key: 'search', label: '检索偏好', description: '每次检索的数量参数', icon: SlidersHorizontal },
   { key: 'agent', label: 'Agent 偏好', description: '自定义系统提示词', icon: Bot },
+  { key: 'usage', label: '用量', description: '模型调用与 token 消耗', icon: Gauge },
 ]
 </script>
 
