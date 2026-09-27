@@ -108,9 +108,10 @@ def _failed_outcome(*, started: float, occurred_at: datetime) -> _CallOutcome:
 class UsageRecordingChatModel(BaseChatModel):
     """把一次模型调用记成一条 ``UsageRecord`` 的包装模型。
 
-    它不是装饰器式的「加个回调」：LangChain 的回调拿不到这次调用属于哪个账号、哪次运行，
-    而运行身份必须从当前运行的上下文读（见 ``_resolve_identity``），所以采集点只能落在
-    调用本身外面。
+    采集点为什么包住整个调用、而不是只挂在它的结束事件上：每次调用都要带上「属于哪个账号、
+    哪会话、哪次运行」，这三个值只能在调用发生的那一刻从当前运行的上下文读（见
+    ``_resolve_identity``）；而且成功、报错、被取消都要各留一条记录——尤其是被取消的那次，
+    它不会走到任何结束事件。
 
     装配时用 ``wrap_with_usage_recording`` 而不是直接构造本类。
 
