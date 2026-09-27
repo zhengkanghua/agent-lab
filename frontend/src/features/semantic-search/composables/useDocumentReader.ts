@@ -80,10 +80,7 @@ export function useDocumentReader() {
       detail.value.contentHash.toLowerCase() !== selectedResult.value.contentHash.toLowerCase(),
   )
 
-  async function open(
-    result: ReadableResult,
-    trigger: HTMLElement | null = null,
-  ): Promise<void> {
+  async function open(result: ReadableResult, trigger: HTMLElement | null = null): Promise<void> {
     const previous = selectedResult.value
     selectedResult.value = result
     triggerElement.value = trigger
