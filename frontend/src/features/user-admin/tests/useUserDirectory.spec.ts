@@ -316,7 +316,7 @@ describe('useUserDirectory', () => {
     wrapper.unmount()
   })
 
-  it('删除账号要先确认，拒绝就什么都不做', async () => {
+  it('注销账号要先确认，拒绝就什么都不做', async () => {
     const confirm = vi.fn(() => false)
     vi.stubGlobal('confirm', confirm)
     const { wrapper, directory } = mountHarness()
@@ -384,7 +384,7 @@ describe('useUserDirectory', () => {
     wrapper.unmount()
   })
 
-  it('删除失败时错误落在该行，列表不动', async () => {
+  it('注销失败时错误落在该行，列表不动', async () => {
     vi.stubGlobal(
       'confirm',
       vi.fn(() => true),
@@ -402,7 +402,7 @@ describe('useUserDirectory', () => {
     wrapper.unmount()
   })
 
-  it('环境托管超级用户与当前账号不能删，连确认都不弹', async () => {
+  it('环境托管超级用户与当前账号不能注销，连确认都不弹', async () => {
     const confirm = vi.fn(() => true)
     vi.stubGlobal('confirm', confirm)
     const { wrapper, directory } = mountHarness(environmentAdmin.id)

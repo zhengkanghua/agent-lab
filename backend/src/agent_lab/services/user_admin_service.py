@@ -169,8 +169,9 @@ class UserAdminService:
             已更新并刷新的 ``UserRecord``。
 
         Raises:
-            UserAdminDomainError: ``user_not_found``、``environment_admin_protected``，
-                或 ``last_superuser_protected``（这次改动会让系统失去最后一个活跃超管）。
+            UserAdminDomainError: ``user_not_found``、``environment_admin_protected``、
+                ``account_already_deleted``，或 ``last_superuser_protected``（这次改动会让系统
+                失去最后一个活跃超管）。
 
         Notes:
             一次 PostgreSQL 写入事务。行锁在第一步就拿，见 ``_get_user_for_update``。
@@ -180,7 +181,16 @@ class UserAdminService:
         user = await self._get_user_for_update(user_id)
         await self._ensure_not_environment_managed(user)
 
-        # 2、算目标状态：字段为 None 表示不改这一项，沿用当前值。
+        # 2、已注销的账号上做写动作一律拒绝，且要说清是「已注销」而不是「不存在」：
+        #    调用方分得清这两个，界面才能给出不同的下一步。
+        if user.deleted_at is not None:
+            await self._session.rollback()
+            raise UserAdminDomainError(
+                "account_already_deleted",
+                "该账号已经注销，不能再修改状态。",
+            )
+
+        # 3、算目标状态：字段为 None 表示不改这一项，沿用当前值。
         next_active = request.is_active if request.is_active is not None else user.is_active
         next_superuser = (
             request.is_superuser
@@ -230,8 +240,8 @@ class UserAdminService:
             已更新并刷新的 ``UserRecord``。
 
         Raises:
-            UserAdminDomainError: ``user_not_found``、``environment_admin_protected``
-                或 ``invalid_password``。
+            UserAdminDomainError: ``user_not_found``、``environment_admin_protected``、
+                ``account_already_deleted`` 或 ``invalid_password``。
 
         Notes:
             一次 PostgreSQL 写入事务。明文密码只用于算 Hash 和校验强度，不落库、不写日志。
@@ -240,7 +250,15 @@ class UserAdminService:
         # 1、锁行取人，挡掉环境托管账号。
         user = await self._get_user_for_update(user_id)
         await self._ensure_not_environment_managed(user)
-        # 2、验新密码强度。用库里的 email 而不是请求里的，因为这个接口不改邮箱。
+        # 2、已注销的账号不能改密：它已经登不进来，改它的密码改的是什么？返回确切的领域
+        #    错误比静默成功更诚实。
+        if user.deleted_at is not None:
+            await self._session.rollback()
+            raise UserAdminDomainError(
+                "account_already_deleted",
+                "该账号已经注销，不能再重置密码。",
+            )
+        # 3、验新密码强度。用库里的 email 而不是请求里的，因为这个接口不改邮箱。
         try:
             validate_password_strength(request.password, user.email)
         except exceptions.InvalidPasswordException as error:
@@ -274,24 +292,36 @@ class UserAdminService:
         ``is_active=false`` 与 ``deleted_at`` 必须成对写入：库里那条配对约束拦的就是
         「只写了一半」的组合，而漏写的表现是「列表显示已注销、这个人照常登录」且没有报错。
 
+        **注销是幂等的**：对一个已经注销的账号再调一次返回成功，不改第一次记下的注销时间、
+        不重复清 Token。它是「同一个目标状态，重复到达算成功」，与停用/改密那类
+        「对已注销账号没有意义」的动作不同——那两类抛 ``account_already_deleted``。
+
         Args:
             user_id: 目标账号 id。
 
         Raises:
             UserAdminDomainError: ``user_not_found``、``environment_admin_protected``，
                 或 ``last_superuser_protected``（注销他之后没人能再进管理页）。
-
         Notes:
             一次 PostgreSQL 写入事务。注销不改写指向本账号的任何引用，因此没有连带删除；
             之前那批硬删除语义的清理（删会话归属、删偏好、置空决策留痕）是本次刻意去掉的。
         """
 
-        # 1、锁行取人，挡掉环境托管账号。它的身份来自服务端配置，注销之后
-        #    下次启动还会被拉回来，等于做了个「看起来生效、实际没有」的动作。
+        # 1、锁行取人。
         user = await self._get_user_for_update(user_id)
+
+        # 2、已经注销过的账号直接返回成功。注销是「同一个目标状态」，重复到达它算成功，
+        #    不该报错；但也不要再做一遍：注销时间保持第一次那个值（那才是事情发生的时刻），
+        #    登录 Token 也不重复清（注销那一步已经清空）。
+        if user.deleted_at is not None:
+            await self._session.rollback()
+            return
+
+        # 3、挡掉环境托管账号。它的身份来自服务端配置，注销之后下次启动还会被拉回来，
+        #    等于做了个「看起来生效、实际没有」的动作。
         await self._ensure_not_environment_managed(user)
 
-        # 2、最后一个活跃超管不能注销。与 update_user 里那条同源，共用同一段判据与行锁：
+        # 4、最后一个活跃超管不能注销。与 update_user 里那条同源，共用同一段判据与行锁：
         #    注销他之后没人能再进管理页，而注销连「把状态改回来」的入口都没有。
         if user.is_active and user.is_superuser:
             remaining = await self._lock_active_superuser_ids()
@@ -302,11 +332,11 @@ class UserAdminService:
                     "最后一个活跃超级管理员不能被注销。",
                 )
 
-        # 3、盖注销时间戳，并同时置 is_active=false。两次赋值在同一个事务里提交，
+        # 5、盖注销时间戳，并同时置 is_active=false。两次赋值在同一个事务里提交，
         #    「只写一半」的中间态不会落库。
         user.is_active = False
         user.deleted_at = datetime.now(UTC)
-        # 4、注销的人不该再有活着的会话。它是本次唯一要清的连带数据。
+        # 6、注销的人不该再有活着的会话。它是本次唯一要清的连带数据。
         await self._delete_sessions(user.id)
         await self._session.commit()
 

@@ -113,7 +113,7 @@ describe('user admin API', () => {
       jsonResponse(
         {
           code: 'last_superuser_protected',
-          detail: '最后一个活跃超级管理员不能被删除。',
+          detail: '最后一个活跃超级管理员不能被注销。',
           retryable: false,
         },
         409,

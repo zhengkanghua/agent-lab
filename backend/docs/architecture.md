@@ -136,8 +136,10 @@ Agent 新会话默认所有启用库，迁移旧会话保留 news；每次运行
 （``sync_configured_environment_admin()``）。该账号带环境托管标记，**不能**通过 API 停用、
 降级、重置密码或注销（``environment_admin_protected``）；网页创建的其他账号可正常管理。
 它是网页入口不可用时的恢复通道，登录后与普通超级用户权限相同。
-``UserAdminService`` 另外保护「最后一个超级用户」（``last_superuser_protected``），并对
-重复邮箱和弱密码返回 ``user_already_exists`` / ``invalid_password``。
+``UserAdminService`` 另外保护「最后一个活跃超级用户」（``last_superuser_protected``），对
+重复邮箱和弱密码返回 ``user_already_exists`` / ``invalid_password``，对已注销账号上的停用/启用
+与重置密码返回 ``account_already_deleted``（注销本身则幂等成功，不重复写时间戳、不重复清 Token），
+对停用或注销自己返回 ``account_self_protected``。
 
 **注销与停用是两个字段。** ``is_active``（框架原有）说「这个账号能不能用」，``deleted_at``
 （可空时刻）说「这个人还在不在」。两个字段组合出三种情形：活跃 = ``is_active``；停用 =
@@ -146,7 +148,7 @@ Agent 新会话默认所有启用库，迁移旧会话保留 news；每次运行
 只盖时间戳挡不住登录。库上两条约束兜底：``ck_users_deleted_at_implies_inactive`` 拦「已注销却
 仍可登录」，``ck_users_environment_admin_privileges`` 里那句 ``deleted_at IS NULL`` 拦「环境
 托管账号被注销」。注销保留账号行、会话归属与个人偏好，只撤销登录 Token；账号列表默认不返回已
-注销的账号。终态与代价见 [ADR 0034](../../docs/adr/0034-account-deletion-is-soft-delete.md),
+注销的账号。终态与代价见 [ADR 0034](../../docs/adr/0034-account-deletion-is-soft-delete.md)，
 术语见 [CONTEXT.md](../../CONTEXT.md)。
 
 ## FreshRSS 增量同步

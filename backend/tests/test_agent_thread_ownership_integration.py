@@ -352,6 +352,10 @@ def test_deregistering_an_account_keeps_its_thread_rows() -> None:
                 assert doomed.id in with_deleted
                 assert with_deleted[doomed.id].deleted_at is not None
                 assert with_deleted[doomed.id].is_active is False
+
+                # 6、撤销会话仍可执行：注销已经清空了 Token，所以这里删 0 行。
+                #    它是一个实际动作（不报错、幂等地删），只是不再有东西可删。
+                assert await UserAdminService(session).revoke_sessions(doomed.id) == 0
         finally:
             await outer_transaction.rollback()
             await connection.close()

@@ -311,8 +311,12 @@ def test_user_admin_validation_error_is_stable_and_does_not_echo_password() -> N
     assert private_password not in response.text
 
 
-class FinalSuperuserSession:
-    """模拟只剩一个启用超级用户的请求级数据库 Session。"""
+class SingleAccountSession:
+    """模拟只返回一个预置账号的请求级数据库 Session。
+
+    ``scalar`` 回放那个账号、``scalars`` 回放它的主键：后者让「还剩几个活跃超管」的
+    查询看到只有一行，保护分支因此必然触发。不需要数据库，也不需要真 Session 的其余能力。
+    """
 
     def __init__(self, user: UserRecord) -> None:
         self.user = user
@@ -352,7 +356,7 @@ def test_service_protects_last_active_superuser() -> None:
         is_verified=True,
         is_environment_admin=False,
     )
-    session = FinalSuperuserSession(current)
+    session = SingleAccountSession(current)
     service = UserAdminService(session)  # type: ignore[arg-type]
 
     with pytest.raises(UserAdminDomainError) as error:
@@ -375,7 +379,7 @@ def test_service_rolls_back_before_protecting_environment_admin() -> None:
         is_verified=True,
         is_environment_admin=True,
     )
-    session = FinalSuperuserSession(current)
+    session = SingleAccountSession(current)
     service = UserAdminService(session)  # type: ignore[arg-type]
 
     with pytest.raises(UserAdminDomainError) as error:
@@ -401,7 +405,7 @@ def test_service_protects_last_active_superuser_from_deletion() -> None:
         is_verified=True,
         is_environment_admin=False,
     )
-    session = FinalSuperuserSession(current)
+    session = SingleAccountSession(current)
     service = UserAdminService(session)  # type: ignore[arg-type]
 
     with pytest.raises(UserAdminDomainError) as error:
@@ -424,7 +428,7 @@ def test_service_refuses_to_delete_environment_managed_admin() -> None:
         is_verified=True,
         is_environment_admin=True,
     )
-    session = FinalSuperuserSession(current)
+    session = SingleAccountSession(current)
     service = UserAdminService(session)  # type: ignore[arg-type]
 
     with pytest.raises(UserAdminDomainError) as error:
@@ -461,3 +465,92 @@ def test_password_policy_detail_is_local_and_never_upstream_text() -> None:
     assert error.value.code == "invalid_password"
     assert error.value.detail == INVALID_PASSWORD_DETAIL
     assert same_as_email not in error.value.detail
+
+
+def _deregistered_account() -> UserRecord:
+    """一个已注销的账号：不可用 + 有注销时间，和库里那条配对约束的要求一致。"""
+
+    return UserRecord(
+        id=uuid4(),
+        email="deregistered@example.com",
+        hashed_password="not-used",
+        is_active=False,
+        is_superuser=False,
+        is_verified=True,
+        is_environment_admin=False,
+        deleted_at=datetime(2026, 9, 1, tzinfo=UTC),
+    )
+
+
+def test_service_refuses_status_change_and_password_reset_on_deregistered_account() -> None:
+    """已注销账号上的停用/启用与改密都被拒，且报的是「已注销」而不是「不存在」。
+
+    两个码分得清是给调用方用的：前端据此显示「该账号已经注销」，而不是「该账号已不存在，
+    请刷新列表」——后者会把人引去刷新一个本来就正确的列表。
+    """
+
+    account = _deregistered_account()
+
+    for action, request in (
+        ("update", UserAdminUpdateRequest(is_active=True)),
+        ("reset", UserAdminPasswordRequest(password="a" * 12)),
+    ):
+        session = SingleAccountSession(account)
+        service = UserAdminService(session)  # type: ignore[arg-type]
+
+        with pytest.raises(UserAdminDomainError) as error:
+            if action == "update":
+                run(service.update_user(account.id, request))
+            else:
+                run(service.reset_password(account.id, request))
+
+        assert error.value.code == "account_already_deleted"
+        assert "注销" in error.value.detail
+        # 拒绝要连行锁一起放开，不能把锁留到请求结束。
+        assert session.rollback_count == 1
+        assert session.commit_count == 0
+
+
+def test_service_deregistering_twice_succeeds_and_leaves_the_first_timestamp() -> None:
+    """对已注销账号再注销一次：成功，不报错、不改时间、不重复清 Token。
+
+    注销是「同一个目标状态，重复到达算成功」，与停用/改密那两类动作刻意不同。
+    ``SingleAccountSession`` 没有 ``execute``：实现若去删 Token，这里会直接报
+    ``AttributeError``，所以「不重复清凭据」也被这条用例盯着。
+    """
+
+    account = _deregistered_account()
+    original_timestamp = account.deleted_at
+    session = SingleAccountSession(account)
+    service = UserAdminService(session)  # type: ignore[arg-type]
+
+    run(service.delete_user(account.id))
+
+    assert account.deleted_at == original_timestamp
+    assert account.is_active is False
+    # 没有写入可提交，事务只用来放开行锁。
+    assert session.commit_count == 0
+    assert session.rollback_count == 1
+
+
+@pytest.mark.parametrize("code", ["account_already_deleted", "account_self_protected"])
+def test_new_account_domain_errors_map_to_conflict(code: str) -> None:
+    """两个新错误码都映射成 409，与现有那两个保护类码同形。
+
+    只测到 HTTP 层：Service 内部抛不抛由各自的用例盯着，这里管的是「同一个领域错误
+    在响应里长什么样」——前端按 code 查文案表，状态码错了它就走不到那张表。
+    """
+
+    service = FakeAdminService()
+    service.error = UserAdminDomainError(code, "该操作不被允许。")
+
+    response = run(
+        request(build_app(service, authenticated=True), "PATCH", f"/admin/users/{service.user_id}", json={"is_active": False})
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "code": code,
+        "detail": "该操作不被允许。",
+        "retryable": False,
+    }

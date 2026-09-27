@@ -245,6 +245,8 @@ def _domain_error(error: UserAdminDomainError) -> JSONResponse:
         "user_already_exists": status.HTTP_409_CONFLICT,
         "environment_admin_protected": status.HTTP_409_CONFLICT,
         "last_superuser_protected": status.HTTP_409_CONFLICT,
+        "account_already_deleted": status.HTTP_409_CONFLICT,
+        "account_self_protected": status.HTTP_409_CONFLICT,
     }.get(error.code, status.HTTP_409_CONFLICT)
     return build_error_response(
         status_code,
