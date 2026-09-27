@@ -9,9 +9,14 @@ from pydantic import SecretStr
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from agent_lab.auth.bootstrap import synchronize_environment_admin
+import httpx
+
+from agent_lab.auth.bootstrap import (
+    EnvironmentAdminDeregisteredError,
+    synchronize_environment_admin,
+)
 from agent_lab.config.auth import AuthSettings
-from agent_lab.db.session import engine
+from agent_lab.db.session import engine, get_db_session
 from agent_lab.models.user import AccessTokenRecord, UserRecord
 from agent_lab.schemas.user_admin import (
     UserAdminCreateRequest,
@@ -22,6 +27,7 @@ from agent_lab.services.user_admin_service import (
     UserAdminDomainError,
     UserAdminService,
 )
+from tests.app_helpers import create_offline_app
 
 
 pytestmark = pytest.mark.skipif(
@@ -175,6 +181,98 @@ def test_environment_admin_sync_and_account_management_transactions() -> None:
             )
             assert cleared.configured is False
             assert cleared.released_previous_managers == 1
+        finally:
+            await outer_transaction.rollback()
+            await connection.close()
+            await engine.dispose()
+
+    asyncio.run(verify(), loop_factory=asyncio.SelectorEventLoop)
+
+
+def test_deregistered_account_cannot_log_in_and_startup_refuses_to_revive_it() -> None:
+    """真库上把两件事串起来：注销之后登录真的进不来；配置指向它时启动拒绝复活。
+
+    为什么这条必须真库：离线层验不到「注销真的把 ``is_active`` 置成了 false」——那一层把
+    用户管理器换成了替身。这里拿一个真账号走完注销，再拿它的邮箱与**正确密码**登录，
+    两段就串起来了。驳回登录的文案还要与「密码错误」一模一样：区分两者等于给攻击者
+    一个枚举有效邮箱的预言机。
+
+    第二条打的是真正的启动同步入口 ``synchronize_environment_admin``，不是内部辅助函数：
+    要保护的性质是「服务起不来」，那只有入口抛错才算数。既不能静默复活（把一个已注销的人
+    变成能登录的超管），也不能静默跳过。
+    """
+
+    async def verify() -> None:
+        suffix = uuid4().hex
+        email = f"deregistered-{suffix}@example.com"
+        password = "integration-deregistered-password"
+        other_operator_id = uuid4()
+
+        connection = await engine.connect()
+        outer_transaction = await connection.begin()
+        factory = async_sessionmaker(
+            bind=connection,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
+        try:
+            # 1、走 Service 建一个真账号：密码是真 Hash，后面要拿它真登录一次。
+            async with factory() as session:
+                account = await UserAdminService(session).create_user(
+                    UserAdminCreateRequest(email=email, password=password)
+                )
+                account_id = account.id
+
+            # 2、注销它。调用者用另一个 id：撞上「不能注销自己」的话，这条用例就不再验
+            #    它本来要验的事。
+            async with factory() as session:
+                await UserAdminService(session).delete_user(account_id, other_operator_id)
+
+            # 3、真登录：正确密码也进不来，且与密码错误是同一句话。登录路由走真实的
+            #    FastAPI Users Router 与真实数据库 Session，只把 Session 换成外层事务里这个。
+            app = create_offline_app()
+
+            async def session_dependency():
+                async with factory() as session:
+                    yield session
+
+            app.dependency_overrides[get_db_session] = session_dependency
+            async with app.router.lifespan_context(app):
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app),
+                    base_url="http://testserver",
+                ) as client:
+                    correct_password = await client.post(
+                        "/auth/login",
+                        data={"username": email, "password": password},
+                    )
+                    wrong_password = await client.post(
+                        "/auth/login",
+                        data={"username": email, "password": "definitely-not-the-password"},
+                    )
+
+            assert correct_password.status_code == 400
+            assert correct_password.json() == wrong_password.json()
+
+            # 4、配置里的邮箱指向这个已注销账号：启动同步拒绝启动并说明要人工处理。
+            settings = AuthSettings(
+                _env_file=None,
+                admin_email=email,
+                admin_password=SecretStr(password),
+            )
+            with pytest.raises(EnvironmentAdminDeregisteredError) as refused:
+                await synchronize_environment_admin(settings, factory)
+            assert "人工处理" in str(refused.value)
+
+            # 5、被拒之后那一行一个字段都没被动过：仍然是已注销、仍然不可用。
+            #    这就是「不静默复活」的可观察结果。
+            async with factory() as session:
+                row = await session.get(UserRecord, account_id)
+                assert row is not None
+                assert row.deleted_at is not None
+                assert row.is_active is False
+                assert row.is_environment_admin is False
         finally:
             await outer_transaction.rollback()
             await connection.close()

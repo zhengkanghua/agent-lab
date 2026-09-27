@@ -342,3 +342,42 @@ def test_lifespan_synchronizes_environment_admin_before_search_runtime() -> None
 
     run(verify())
     assert events == ["environment_admin", "runtime", "close"]
+
+
+def test_inactive_account_cannot_log_in_and_sees_the_wrong_password_message() -> None:
+    """不可用账号登不进来，且文案与「密码错误」一字不差。
+
+    登录 Router 里那道 `is_active` 门与密码校验无关，所以这一半离线就能验：把预置用户
+    设成不可用即可。注销走的就是「把账号设成不可用」这条路，所以这条门也挡住注销的人。
+
+    真库那一半在 ``tests/test_auth_environment_integration.py``：那里拿一个真账号走完注销，
+    再拿它的邮箱与正确密码登录——「注销真的把 is_active 置成了 false」只有真库能串起来。
+
+    文案必须相同：区分「这个邮箱存在但被停用了」等于给攻击者一个枚举有效邮箱的预言机。
+    """
+
+    blocked_account = user()
+    blocked_account.is_active = False
+    blocked_app, _ = auth_app(blocked_account)
+    # 对照：authenticate 返回 None（等价于密码错误）的那个应用。
+    wrong_password_app, _ = auth_app(None)
+    body = {"username": "reader@example.com", "password": "valid-password"}
+
+    async def verify() -> None:
+        async with blocked_app.router.lifespan_context(blocked_app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=blocked_app),
+                base_url="https://testserver",
+            ) as client:
+                blocked = await client.post("/auth/login", data=body)
+        async with wrong_password_app.router.lifespan_context(wrong_password_app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=wrong_password_app),
+                base_url="https://testserver",
+            ) as client:
+                wrong = await client.post("/auth/login", data=body)
+
+        assert blocked.status_code == wrong.status_code == 400
+        assert blocked.json() == wrong.json()
+
+    run(verify())

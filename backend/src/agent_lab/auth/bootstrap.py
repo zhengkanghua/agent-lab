@@ -29,6 +29,14 @@ class EnvironmentAdminSyncResult:
     user_id: UUID | None
 
 
+class EnvironmentAdminDeregisteredError(RuntimeError):
+    """配置里那个邮箱在库里是一个**已注销**的账号，因此拒绝启动。
+
+    单独给一个异常类型而不是 ValueError：它是运维要处理的配置/数据矛盾，
+    不是输入参数写错，日志与排查步骤也不同。
+    """
+
+
 async def sync_configured_environment_admin() -> EnvironmentAdminSyncResult:
     """使用默认配置与 Session factory 同步环境托管超级用户。
 
@@ -37,6 +45,7 @@ async def sync_configured_environment_admin() -> EnvironmentAdminSyncResult:
 
     Raises:
         IntegrityError: 两次并发冲突重试后数据库仍无法满足唯一约束。
+        EnvironmentAdminDeregisteredError: 配置里的邮箱对应一个已注销账号。
         SQLAlchemyError: PostgreSQL 不可用或认证表尚未迁移。
 
     Notes:
@@ -64,6 +73,7 @@ async def synchronize_environment_admin(
 
     Raises:
         IntegrityError: 两次尝试都遇到并发唯一约束冲突。
+        EnvironmentAdminDeregisteredError: 配置里的邮箱对应一个已注销账号。
         SQLAlchemyError: 其他 PostgreSQL 查询、写入或提交失败。
         InvalidPasswordException: 调用方绕过 AuthSettings 构造了不合规密码。
     """
@@ -104,6 +114,7 @@ async def _synchronize_once(
 
     Raises:
         IntegrityError: 并发启动撞上唯一约束，交给上层重试。
+        EnvironmentAdminDeregisteredError: 目标账号已注销，拒绝把它复活。
         InvalidPasswordException: 配置里的密码不合策略。
 
     Notes:
@@ -149,11 +160,23 @@ async def _synchronize_once(
         .where(func.lower(UserRecord.email) == email.casefold())
         .with_for_update()
     )
+    # 5、目标是一个已注销的账号 → 拒绝启动。同步的本意是恢复通道，而它对这一行做的事
+    #    （把 is_active/is_superuser/is_verified 一律拉回真）正好是「把一个已注销的人复活
+    #    成一个能登录的超管」。既不能静默复活，也不能静默跳过：两者都会让人在不知情的情况
+    #    下拿回（或失去）管理入口。所以停下来，让人去换邮箱或人工处理那一行。
+    #    检查放在任何写入之前，消息里也不出现邮箱（配置值不进日志）。
+    if target is not None and target.deleted_at is not None:
+        await session.rollback()
+        raise EnvironmentAdminDeregisteredError(
+            "配置里的 AUTH_ADMIN_EMAIL 对应一个已注销的账号，需要人工处理："
+            "注销不可由启动同步撤销。"
+        )
+
     helper = PasswordHelper()
     created = target is None
     password_changed = False
 
-    # 5、没有就建、有就对齐密码。新建时 password_changed 记成 True 只是为了让返回结果
+    # 6、没有就建、有就对齐密码。新建时 password_changed 记成 True 只是为了让返回结果
     #    如实反映「这个密码是这次写进去的」；下面第 7 步靠 created 把它排除在踢下线之外。
     if target is None:
         target = UserRecord(
@@ -180,7 +203,7 @@ async def _synchronize_once(
             # 不算密码变更，也就不用踢人下线。
             target.hashed_password = upgraded_hash
 
-    # 6、把上一任的标记摘掉，保证全局只有一个账号带环境托管标记。flush 一下让 UPDATE 先走，
+    # 7、把上一任的标记摘掉，保证全局只有一个账号带环境托管标记。flush 一下让 UPDATE 先走，
     #    避免和下面给 target 上标记的语句在同一批里撞上唯一约束。
     released = 0
     for previous in managed_users:
@@ -190,21 +213,21 @@ async def _synchronize_once(
     if released:
         await session.flush()
 
-    # 7、强制把目标账号拉回「可用的超管」状态。这是恢复通道的意义所在：账号在库里被停用、
+    # 8、强制把目标账号拉回「可用的超管」状态。这是恢复通道的意义所在：账号在库里被停用、
     #    改过密码或标成未验证都不影响，改配置重启就能恢复。
     target.email = email
     target.is_active = True
     target.is_superuser = True
     target.is_verified = True
     target.is_environment_admin = True
-    # 8、密码被这次同步改掉了 → 删掉他的 access token。旧密码签出去的会话不该在密码换了
+    # 9、密码被这次同步改掉了 → 删掉他的 access token。旧密码签出去的会话不该在密码换了
     #    之后还能用。新建的账号没有历史会话，所以排除 created。
     if password_changed and not created:
         await session.execute(
             delete(AccessTokenRecord).where(AccessTokenRecord.user_id == target.id)
         )
 
-    # 9、提交后 refresh 一次，让 target.id 之类的字段确定可读，再组装脱敏结果。
+    # 10、提交后 refresh 一次，让 target.id 之类的字段确定可读，再组装脱敏结果。
     await session.commit()
     await session.refresh(target)
     return EnvironmentAdminSyncResult(
