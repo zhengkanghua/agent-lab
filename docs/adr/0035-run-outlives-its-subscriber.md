@@ -20,10 +20,10 @@ Agent 一次运行的推进不再由 HTTP 响应体驱动。浏览器关掉页�
 
 必须有一个不依赖 HTTP 连接的东西把事件流抽干到 `done`；HTTP 响应退化成它的一个可选订阅者，没人订阅时它自己读完写库。
 
-由此带来两条如实记录的边界，不是本决策能顺带解决的：运行所在的进程被重启（部署、崩溃）时那一轮照样停在半途，因为没有任何东西替它续跑；生产 `WORKER_COUNT` 默认大于 1，同一会话的前后两次请求可能落在不同进程上，因此「在新连接上接着看旧运行的实时输出」不能在进程内存里实现。
+由此带来两条如实记录的边界，不是本决策能顺带解决的：运行所在的进程**被强杀**（崩溃、内存耗尽、超过部署脚本的停止宽限）时那一轮停在半途，因为没有任何东西替它续跑——**正常部署不属于这一类**：ASGI 服务器默认等已有连接结束才退出，而那条连接会一直开到运行结束，所以部署通常让它跑完；生产 `WORKER_COUNT` 默认大于 1，同一会话的前后两次请求可能落在不同进程上，因此「在新连接上接着看旧运行的实时输出」不能在进程内存里实现。
 
 LangGraph 侧没有「这次运行被取消」这类结局字段可查：`CheckpointMetadata` 只有 `source`（`input` / `loop` / `update` / `fork`）、`step` 等，没有结局；`__interrupt__` 是节点显式调用 `interrupt()` 的中断，与本项目无关；`__error__` 只在取消信号能贯穿到 Pregel 内部时才落库，而当前这条链的包装形状（`api/agent_chat.py` 的 `ensure_future` + `finally`）恰好让它落不了库。**判断「这一轮有没有跑完」要由我们自己记录**：实测（`InMemorySaver`）发现取消后残留的 `next` 取值随取消时机变化——打在模型节点上是 `("model",)`，打在工具执行期间是 `("tools",)`，而有的时机下图会自己把这一轮跑完、`next` 回到 `()`。仅凭 checkpoint 也无法区分「正在跑」「被取消」「进程崩了」。
 
 不过**区分「用户停止」与「上游报错」不必做**，当前没有产品价值：两者都按截断语义展示（`completed` 取假），用户看到的是同一件事——这轮没写完。需要记录的只有「有没有在跑」与「有人要求停吗」，两者都在会话行上（见 [0037](0037-cross-process-run-coordination-in-database.md)）。
 
-`api/agent_chat.py` 里那句「断开时 ASGI 服务器会 aclose 本生成器」的注释与实际不符：uvicorn 声明 ASGI `spec_version: 2.3`，低于 Starlette `responses.py` 里 `2.4` 的分水岭，因此走的是 task group + `cancel_scope.cancel()` 那条分支，生成器体内收到的是 `CancelledError` 而不是 `GeneratorExit`，Starlette 全目录没有一处 `aclose()`。现象（控制流从 yield 直接跳出）是成立的，路径说错了。
+改动前 `api/agent_chat.py` 里那句「断开时 ASGI 服务器会 aclose 本生成器」的注释与实际不符（uvicorn 声明 ASGI `spec_version: 2.3`，低于 Starlette `responses.py` 里 `2.4` 的分水岭，因此走的是 task group + `cancel_scope.cancel()` 那条分支，生成器体内收到的是 `CancelledError` 而不是 `GeneratorExit`；Starlette 全目录没有一处 `aclose()`）。现象（控制流从 yield 直接跳出）是成立的，路径说错了；本次已按实测改正。留着这条是因为它解释了为什么收尾不能指望 `GeneratorExit`。
