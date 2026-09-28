@@ -9,50 +9,15 @@
 先 ``alembic upgrade head``）。这里证明的是「迁移写了什么」，那里证明「跑完之后真的按预期生效」。
 """
 
-import importlib.util
-from pathlib import Path
-from typing import Any
-
 import sqlalchemy as sa
 
 from agent_lab.models.agent_thread import AgentThreadRecord
+from tests.migration_helpers import VERSIONS_DIR, load_migration, migration_chain
 
 
-VERSIONS_DIR = Path(__file__).resolve().parents[1] / "alembic" / "versions"
-MIGRATION_FILE = VERSIONS_DIR / "d5f8a2c7b9e1_会话记录在途运行与停止请求_thread_run_coordination.py"
-
-
-def load_migration(path: Path) -> Any:
-    """按路径加载一个迁移模块（文件名含中文，不能用 ``import_module``）。"""
-
-    spec = importlib.util.spec_from_file_location("agent_thread_run_coordination", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def chain_from_head() -> list[str]:
-    """从 head 沿 ``down_revision`` 往回走到底得到的 revision 列表。"""
-
-    by_revision: dict[str, Any] = {}
-    referenced: set[str] = set()
-    for path in sorted(VERSIONS_DIR.glob("*.py")):
-        if path.name.startswith("__"):
-            continue
-        module = load_migration(path)
-        by_revision[module.revision] = module
-        if module.down_revision is not None:
-            referenced.add(module.down_revision)
-    heads = set(by_revision) - referenced
-    assert len(heads) == 1, f"迁移图有多个 head：{sorted(heads)}"
-
-    chain: list[str] = []
-    cursor: str | None = heads.pop()
-    while cursor is not None:
-        chain.append(cursor)
-        cursor = by_revision[cursor].down_revision
-    return chain
+MIGRATION_FILE = (
+    VERSIONS_DIR / "d5f8a2c7b9e1_会话记录在途运行与停止请求_thread_run_coordination.py"
+)
 
 
 def test_the_migration_is_wired_onto_the_current_head() -> None:
@@ -60,9 +25,10 @@ def test_the_migration_is_wired_onto_the_current_head() -> None:
 
     module = load_migration(MIGRATION_FILE)
 
-    assert module.revision in chain_from_head()
-    # 本次只新增了一条迁移，所以它就是链头；否则说明要验的那份没接上最后一个环节。
-    assert chain_from_head()[0] == module.revision
+    assert module.revision in migration_chain()
+    # 它当初接在当时的 head 上——写死这个父节点是为了挡住「顺手改了 down_revision」这类改动：
+    # 那种改动会让它（或它的后继）从链上掉下来，而链完整性检查在这里发现不了。
+    assert module.down_revision == "c1f4a7d92e60"
 
 
 def test_upgrade_adds_both_columns_and_refreshes_the_last_active_comment(monkeypatch) -> None:
