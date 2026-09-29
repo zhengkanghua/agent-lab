@@ -30,6 +30,11 @@ services:
   backend:
     <<: *backend
     container_name: agent-lab-backend
+    # API 的停止宽限单独取 180 秒 = uvicorn 关停超时 30 秒（entrypoint.sh）＋ 排空上限
+    # 120 秒（agent/limits.RUN_DRAIN_TIMEOUT_SECONDS）＋ 收尾写入的余量。它不再跟着
+    # 「一次运行最坏能跑多久」走，也不再与另外两个服务共用上面那个 360 秒——Beat 与 Worker
+    # 的活要按各自的需要收尾，见 docs/adr/0039 与 0040。
+    stop_grace_period: 180s
     ports:
       - "127.0.0.1:${BACKEND_PORT:-18000}:8000"
     environment:

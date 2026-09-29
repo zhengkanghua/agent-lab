@@ -264,7 +264,16 @@ jobs:
               services="$(docker compose config --services)"
               for service in task-beat backend task-worker; do
                 if printf '%s\n' "$services" | grep -Fxq "$service"; then
-                  docker compose stop --timeout 360 "$service"
+                  # API 的停止宽限 180 秒 = uvicorn 关停超时 30 秒（entrypoint.sh）＋ 排空上限
+                  # 120 秒（agent/limits.RUN_DRAIN_TIMEOUT_SECONDS）＋ 收尾写入的余量：旧进程在
+                  # 收尾里把在途运行停在可交接边界、写下「等接手」标记，新 API 起来后接手跑完
+                  # （见 ADR 0040）。Beat 与 Worker 保持 360 秒：Worker 手上的文档批次要跑完
+                  # （ADR 0039）。
+                  if [ "$service" = "backend" ]; then
+                    docker compose stop --timeout 180 "$service"
+                  else
+                    docker compose stop --timeout 360 "$service"
+                  fi
                 fi
               done
               cp docker-compose.yml docker-compose.previous.yml

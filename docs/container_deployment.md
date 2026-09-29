@@ -327,9 +327,10 @@ CI 的完整顺序在 [`.github/workflows/deploy.yml`](../.github/workflows/depl
    老后端」。
 3. **`docker compose pull` 不能省**：tag 恒为 `backend-latest`，`up -d` 认为 tag 没变会
    直接复用本地旧镜像——表现是 CI 全绿、容器也重启了，但跑的还是上一版代码。
-4. 候选编排先校验、拉镜像并检查已有 Redis 连接，再按服务器上现有的编排停止 Beat、API、Worker；迁移成功后替换编排并启动新进程。迁移失败保持停止，不自动重启已不兼容的旧进程；已有共享 Redis 始终由其自身部署管理。旧编排备份为 `docker-compose.previous.yml`。
+4. 候选编排先校验、拉镜像并检查已有 Redis 连接，再按服务器上现有的编排停止 Beat、API、Worker；迁移成功后替换编排并启动新进程。**停止 API 时给它 180 秒宽限（不是 360）**：旧进程在收尾里把在途运行排空到可交接的 superstep 边界、在会话行上写下「等接手」标记再退出，新 API 起来后扫到标记接手续跑（见 [ADR 0040](adr/0040-run-handover-on-deploy.md)）；Beat 与 Worker 保持 360 秒。迁移失败保持停止，不自动重启已不兼容的旧进程；已有共享 Redis 始终由其自身部署管理。旧编排备份为 `docker-compose.previous.yml`。
 5. **用量库配置自检在停旧进程之前**（与 Redis 连接检查同一步）：`LLMOPS_DATABASE_URL` 缺失或不合法时应用启动就会失败，把生产停在一半才发现 `.env` 少了一项是完全可以避开的。
 6. **迁移阶段有两条链**：业务库的 `alembic upgrade head`，以及用量库的建库 + `alembic -c alembic_usage.ini upgrade head`。两者都在 `up -d` 之前完成，任一条失败即中止部署（保持停止）。
+7. **删列、改列名、改语义、拆约束的迁移拆两次发布**：这次只发「代码不再用它」，下一次发布才真删。原因是任何回滚（重新部署旧版本，或以后切回上一版镜像）都要求旧代码能跑在当前结构上：结构先变、代码后退，旧代码会直接报「列不存在」或者更糟——不报错但留下脏数据（当年拆外键约束那次就是这一类）。这条与部署方式无关，换编排、上蓝绿都照用。
 
 推送完成后执行 `gh run list --limit 1` 核对最新部署，失败时用 `gh run view <run-id>` 查明原因；修复在本地验证后再推送。Actions 就绪检查覆盖 API、Beat 和 Worker 消息连接，业务验收仍需受控操作与执行编号。
 
