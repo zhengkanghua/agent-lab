@@ -66,6 +66,15 @@ from agent_lab.usage.assembly import UsageRuntime
 from agent_lab.usage.contracts import UsageCollector
 
 
+# 与 CLI 同一套日志配置（见 cli.py）：根级别压到 WARNING，挡掉 httpx 等第三方的 INFO；
+# 只把本项目提到 INFO。API 进程此前没有配置，root 停在 Python 默认的 WARNING，项目自己的
+# ``logger.info``（对话开始/结束、部署时的排空/接手等）全被丢掉——部署时的三个时刻因此在
+# 生产日志里看不见（见 ADR 0040）。放在模块级：uvicorn 先配置自己的 logger、再导入本模块，
+# 这里配的是 uvicorn 不管的 root 与 ``agent_lab``。
+logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s %(message)s")
+logging.getLogger("agent_lab").setLevel(logging.INFO)
+
+
 logger = logging.getLogger(__name__)
 
 OPENAPI_TAGS: list[dict[str, str]] = [
