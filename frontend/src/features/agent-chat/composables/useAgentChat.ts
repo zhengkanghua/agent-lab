@@ -123,6 +123,13 @@ export function useAgentChat({
   const isStreaming = computed(() => status.value === 'streaming')
   /** 服务端确认这个会话有运行在跑——但当前这条连接不是它的订阅者（刚刷新/刚切回来）。 */
   const isAwaitingRun = computed(() => awaitingRunId.value !== null)
+  /**
+   * 服务端手上确实有一次可以停的运行：流式连接在看它，或界面处在「等待中」。
+   *
+   * 等待态没有本地连接，停止只能用回放给出的在途运行 id。id 为空时没有东西可停，
+   * 所以那种情况不渲染停止键。
+   */
+  const canStop = computed(() => isStreaming.value || awaitingRunId.value !== null)
 
   watch(draft, (value) => {
     if (inputError.value && !validateMessage(value) && !getScopeError()) {
@@ -187,6 +194,10 @@ export function useAgentChat({
       }
     } catch (error) {
       if (runId !== runSequence) return
+
+      // 连接被中断不一定是失败：部署切换会断掉订阅连接，而运行本身还在服务端跑。
+      // 先读一次回放，服务端仍报有在途运行就转成等待态，而不是把这轮标成错误。
+      if (await recoverInterruptedRun(runId)) return
 
       live.status = 'error'
       live.error = presentAgentError(
@@ -351,6 +362,30 @@ export function useAgentChat({
   }
 
   /**
+   * 流被中断时的回退：读一次回放，服务端仍报有在途运行就进入等待态。
+   *
+   * 部署切换会把订阅连接断掉，但运行与连接已经解耦，服务端照旧跑完并落库。此时回放里的
+   * ``active_run_id`` 还在，界面显示「正在生成」并继续轮询；服务端不再上报之后按回放渲染
+   * 这一轮。返回 ``false`` 表示服务端也没在跑，交给调用方走原来的错误分支。
+   *
+   * 陈旧响应守卫与 ``synchronizeHistory`` 同理：这一轮已经被取消或换掉时什么都不做，但也不
+   * 再标错。
+   */
+  async function recoverInterruptedRun(runId: number): Promise<boolean> {
+    const target = threadId.value
+    if (!target) return false
+    try {
+      const replay = await loadThreadMessages(target)
+      if (runId !== runSequence || target !== threadId.value) return true
+      if (replay.active_run_id == null) return false
+      applyReplay(replay, target)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
    * 停下来这一轮：请求服务端真的停下它，并**保持连接等它的终态事件**。
    *
    * 刻意不在本地造结局。运行已经不在连接上，本地中止只会让界面白白做出一副「停了」的样子，
@@ -360,13 +395,21 @@ export function useAgentChat({
    * 重复点击无害：服务端只对「在途运行的 id 与请求里的相等」才写停止标志，不等一律幂等成功。
    */
   function cancel(): void {
-    if (status.value !== 'streaming') return
-    const last = turns.value[turns.value.length - 1]
-    if (!threadId.value || !last?.runId) {
-      stopPending = true
+    if (status.value === 'streaming') {
+      const last = turns.value[turns.value.length - 1]
+      if (!threadId.value || !last?.runId) {
+        // run_started 还没到：记下意图，首帧到了再补发。
+        stopPending = true
+        return
+      }
+      requestStop(threadId.value, last.runId)
       return
     }
-    requestStop(threadId.value, last.runId)
+    // 等待态（刷新或断开回退之后在等这一轮结束）：停止用回放给出的在途运行 id。
+    // 没有在途 id 就不渲染停止键，所以这里不需要兜底分支。
+    if (threadId.value && awaitingRunId.value !== null) {
+      requestStop(threadId.value, awaitingRunId.value)
+    }
   }
 
   /** 发一次停止请求。失败只记在意图位上，不弹错：用户再点一次就是了。 */
@@ -526,6 +569,7 @@ export function useAgentChat({
     updateSelection,
     remainingCharacters,
     canSend,
+    canStop,
     isStreaming,
     isAwaitingRun,
     send,

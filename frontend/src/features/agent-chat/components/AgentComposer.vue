@@ -24,6 +24,8 @@ const props = defineProps<{
   inputError: string | null
   remainingCharacters: number
   streaming: boolean
+  /** 服务端手上有一次可停的运行（流式连接或等待态）；为真时底栏显示停止键。 */
+  stoppable: boolean
   canSend: boolean
 }>()
 
@@ -125,7 +127,7 @@ function onEnter(event: KeyboardEvent): void {
         </span>
 
         <BaseButton
-          v-if="streaming"
+          v-if="stoppable"
           class="stop-button"
           variant="danger"
           size="sm"
@@ -137,8 +139,7 @@ function onEnter(event: KeyboardEvent): void {
           <template #icon><Square :size="15" aria-hidden="true" /></template>
           <span class="sr-only">停止生成</span>
         </BaseButton>
-        <!-- 这个分支是 v-if="streaming" 的 v-else，streaming 恒为假，
-             所以不需要转圈：流式中显示的是上面那个停止键。 -->
+        <!-- 这个分支是 v-if="stoppable" 的 v-else：服务端没有可停的运行时就只能发送。 -->
         <BaseButton
           v-else
           class="send-button"

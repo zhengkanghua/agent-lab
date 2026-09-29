@@ -1096,3 +1096,93 @@ describe('刷新之后知道这一轮还在跑', () => {
     wrapper.unmount()
   })
 })
+
+describe('流被中断时的断开回退与等待态停止', () => {
+  const IN_FLIGHT = '30000000-0000-4000-8000-000000000020'
+
+  async function waitFor(check: () => boolean, timeoutMs = 1000): Promise<void> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if (check()) return
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    throw new Error('等待的条件没有在期限内成立')
+  }
+
+  /** 首帧之后断掉的流：部署切换会把订阅连接断掉，而运行本身还在服务端跑。 */
+  function interruptingStream(): AgentChatStream {
+    return async function* () {
+      yield agentStarted() as AgentChatEvent
+      yield { event: 'token', text: '半句' } as AgentChatEvent
+      throw new TypeError('网络断了')
+    } as AgentChatStream
+  }
+
+  it('回放仍报有在途运行时进入等待态，不把这轮标成错误', async () => {
+    const loader = scriptedLoader(
+      replay([{ question: '问题', answer: '', status: 'incomplete' }], { activeRunId: IN_FLIGHT }),
+    )
+    const { wrapper, chat } = mountHarness(interruptingStream(), loader, {
+      runWatchIntervalMs: 100,
+    })
+    chat.draft.value = '问题'
+
+    await chat.send()
+    await flushPromises()
+
+    expect(chat.isAwaitingRun.value).toBe(true)
+    expect(chat.canStop.value).toBe(true)
+    expect(chat.turns.value[0]?.status).not.toBe('error')
+    // 回退只读了一次回放（还没到第一个轮询周期）。
+    expect(loader.calls).toEqual([THREAD_ID])
+    wrapper.unmount()
+  })
+
+  it('服务端不再上报在途运行之后按回放渲染这一轮', async () => {
+    const loader = scriptedLoader(
+      replay([{ question: '问题', answer: '', status: 'incomplete' }], { activeRunId: IN_FLIGHT }),
+      replay([{ question: '问题', answer: '最终答案。', status: 'completed' }]),
+    )
+    const { wrapper, chat } = mountHarness(interruptingStream(), loader, {
+      runWatchIntervalMs: 20,
+    })
+    chat.draft.value = '问题'
+
+    await chat.send()
+    await flushPromises()
+    expect(chat.isAwaitingRun.value).toBe(true)
+
+    await waitFor(() => chat.isAwaitingRun.value === false)
+    expect(chat.turns.value[0]?.answer).toBe('最终答案。')
+    expect(chat.canStop.value).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('等待态按停止发出带在途运行 id 的请求', async () => {
+    const stopRun = vi.fn(async () => {})
+    const loader = scriptedLoader(
+      replay([{ question: '问题', answer: '', status: 'incomplete' }], { activeRunId: IN_FLIGHT }),
+    )
+    const { wrapper, chat } = mountHarness(interruptingStream(), loader, {
+      runWatchIntervalMs: 100,
+      stopRun,
+    })
+    chat.draft.value = '问题'
+
+    await chat.send()
+    await flushPromises()
+    expect(chat.canStop.value).toBe(true)
+
+    chat.cancel()
+
+    expect(stopRun).toHaveBeenCalledWith(THREAD_ID, IN_FLIGHT)
+    wrapper.unmount()
+  })
+
+  it('服务端没在跑时停止键不可用（canStop 为假）', async () => {
+    const { wrapper, chat } = mountHarness(scriptedStream())
+
+    expect(chat.canStop.value).toBe(false)
+    wrapper.unmount()
+  })
+})

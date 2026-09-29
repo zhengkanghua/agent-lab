@@ -24,6 +24,7 @@ function mountComposer(overrides: Partial<ComposerProps> = {}) {
       inputError: null,
       remainingCharacters: 3996,
       streaming: false,
+      stoppable: false,
       canSend: true,
       ...overrides,
     },
@@ -83,11 +84,28 @@ describe('AgentComposer', () => {
   })
 
   it('流式期间把发送换成停止生成', async () => {
-    const wrapper = mountComposer({ streaming: true, canSend: false })
+    const wrapper = mountComposer({ streaming: true, stoppable: true, canSend: false })
 
     expect(wrapper.find('.send-button').exists()).toBe(false)
     await wrapper.get('.stop-button').trigger('click')
     expect(wrapper.emitted('cancel')).toHaveLength(1)
+  })
+
+  it('等待态（服务端仍在跑、本连接不看流）也显示停止键', async () => {
+    // 刷新或连接被部署断掉之后，界面进「正在生成」态；用户仍然要能停。
+    const wrapper = mountComposer({ streaming: false, stoppable: true })
+
+    expect(wrapper.find('.send-button').exists()).toBe(false)
+    await wrapper.get('.stop-button').trigger('click')
+    expect(wrapper.emitted('cancel')).toHaveLength(1)
+  })
+
+  it('服务端没有可停的运行时不渲染停止键', async () => {
+    // 等待态的在途运行 id 为空、流也结束了：没有东西可停，就不该给一个停不掉的键。
+    const wrapper = mountComposer({ streaming: false, stoppable: false })
+
+    expect(wrapper.find('.stop-button').exists()).toBe(false)
+    expect(wrapper.find('.send-button').exists()).toBe(true)
   })
 
   it('偏好里存了自定义提示词时亮徽章并链到设置页，默认时不打扰', async () => {

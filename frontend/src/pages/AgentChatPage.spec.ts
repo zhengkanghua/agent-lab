@@ -562,7 +562,12 @@ describe('AgentChatPage', () => {
       expect(wrapper.text()).toContain('正在生成')
       await wrapper.get('.message-input').setValue('再问一句')
       await flushPromises()
-      expect(wrapper.get('.send-button').attributes('disabled')).toBeDefined()
+      // 等待态没有发送键（服务端在跑时发出去注定被拒），换成了停止键。
+      expect(wrapper.find('.send-button').exists()).toBe(false)
+      const inFlight = '30000000-0000-4000-8000-000000000020'
+      expect(wrapper.find('.stop-button').exists()).toBe(true)
+      await wrapper.get('.stop-button').trigger('click')
+      expect(api.stopAgentRun).toHaveBeenCalledWith(THREAD_ID, inFlight)
       wrapper.unmount()
     })
 

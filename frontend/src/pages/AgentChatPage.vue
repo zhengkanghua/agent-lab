@@ -277,6 +277,7 @@ async function chooseExample(value: string): Promise<void> {
             :input-error="chat.inputError.value"
             :remaining-characters="chat.remainingCharacters.value"
             :streaming="chat.isStreaming.value"
+            :stoppable="chat.canStop.value"
             :can-send="chat.canSend.value"
             @submit="chat.send"
             @cancel="chat.cancel"
