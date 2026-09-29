@@ -201,21 +201,29 @@ def build_agent_runtime(
     )
 
 
-def build_agent_run_registry() -> AgentRunRegistry:
+def build_agent_run_registry(runtime: AgentRuntime | None) -> AgentRunRegistry:
     """装配进程级运行注册表（只构造对象，不建任务、不连任何服务）。
 
     它只碰 ``agent_threads`` 一张表（占位、续活、释放、读停止请求），所以只依赖会话 Service；
     会话历史与模型调用都不经过它。``AgentThreadService`` 自己无状态（真正贵的是数据库连接，
     而连接归它内部按需开关），所以这里现造一个不会有额外开销。
 
+    Args:
+        runtime: lifespan 已经装好的 Agent Runtime；``None`` 表示 Agent 装配失败。
+
     Returns:
         尚未 ``start()`` 的注册表；启动与关闭都由 lifespan 负责。
 
     Notes:
-        不执行 I/O。
+        不执行 I/O。接手的图就从 ``runtime.graph`` 取（见 ADR 0040）：Runtime 装配失败时图是
+        ``None``，注册表因此拿不到可用的图、不去认领「等接手」的标记，把那些运行留给能跑的
+        进程——否则一个坏副本会替健康副本把本可接手的运行收成未完成。
     """
 
-    return AgentRunRegistry(threads=AgentThreadService(async_session_factory))
+    return AgentRunRegistry(
+        threads=AgentThreadService(async_session_factory),
+        graph=runtime.graph if runtime is not None else None,
+    )
 
 
 def build_usage_runtime() -> UsageRuntime:
@@ -265,7 +273,9 @@ def create_app(
     agent_runtime_factory: Callable[[VectorSearchService, UsageCollector], AgentRuntime] = (
         build_agent_runtime
     ),
-    agent_run_registry_factory: Callable[[], AgentRunRegistry] = build_agent_run_registry,
+    agent_run_registry_factory: Callable[[AgentRuntime | None], AgentRunRegistry] = (
+        build_agent_run_registry
+    ),
     usage_runtime_factory: Callable[[], UsageRuntime] = build_usage_runtime,
     environment_admin_sync: Callable[
         [], Awaitable[EnvironmentAdminSyncResult]
@@ -310,13 +320,23 @@ def create_app(
             else:
                 application.state.agent_runtime = agent_runtime
             # 5、脱离连接的后台运行注册表。它排在 Agent Runtime 之后：运行要图才能跑，而它
-            #    自己只读写 agent_threads，所以装配失败的影响面比 Agent 装配失败小。
-            run_registry = agent_run_registry_factory()
+            #    自己只读写 agent_threads，所以装配失败的影响面比 Agent 装配失败小。传入刚刚
+            #    装好的 Runtime（可能为 ``None``）：接手续跑要用同一张进程级图（见 ADR 0040）。
+            run_registry = agent_run_registry_factory(agent_runtime)
             await run_registry.start()
             application.state.agent_run_registry = run_registry
             # 6、yield 之后是「运行期」：ASGI Server 在这里处理并发 HTTP 请求。
             yield
         finally:
+            # 0、部署或重启的收尾：先把本进程手上的在途运行排空到可交接的边界（上限见
+            #    agent/limits.RUN_DRAIN_TIMEOUT_SECONDS），再关资源。排空的运行不在这里收尾，
+            #    它交给集群里下一个扫到标记的进程续跑（见 ADR 0040）。
+            if run_registry is not None:
+                try:
+                    await run_registry.drain()
+                except Exception as exc:
+                    # 只记类型：排空失败不能挡住后面必然要做的资源释放。
+                    logger.error("排空在途运行失败 error_type=%s", type(exc).__name__)
             # 先停掉还在跑的后台运行（收尾可能来不及，那段窗口已确认为接受的边界），
             # 再释放依赖搜索的 Agent，最后释放用量库与搜索资源。
             for resource in (run_registry, agent_runtime, usage_runtime, runtime):

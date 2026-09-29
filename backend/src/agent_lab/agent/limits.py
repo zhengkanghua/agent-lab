@@ -122,6 +122,23 @@ DELETE_RUNNING_THREAD_POLL_INTERVAL_SECONDS = 0.2
 RUN_STATE_POLL_INTERVAL_SECONDS = 1.0
 
 
+# ---- 部署时的排空与接手（见 ADR 0040）----
+
+# 进程收尾时等手上在途运行走到「可交接边界」的总预算。**是整次收尾的总预算，不是每个运行各一份**
+# （收尾时对手上所有运行一起请求排空、并发等待，所以运行数不影响这个上限）。它覆盖的是典型的一次
+# 模型调用或一批工具调用（几秒到三十秒），**不覆盖**最坏的重试链（模型 60 秒超时 × 3 次尝试再叠
+# 主备回退、工具 30 秒 × 3）——那种 superstep 会被放弃。这是刻意的取舍：宁可最坏部署少等一会儿、
+# 偶尔丢一次，也不让上限跟着「一次运行最坏能跑多久」往上顶。
+#
+# API 容器的停止宽限（180 秒）= uvicorn 关停超时（30 秒，写在 entrypoint.sh）＋ 本上限 ＋ 收尾写入
+# 的余量，见 docs/container_deployment.md 与 docker-compose.yml。
+RUN_DRAIN_TIMEOUT_SECONDS = 120.0
+
+# 每个 API 进程扫描「被排空、等接手」标记的节奏。启动时先扫一次，之后按这个间隔再扫。
+# 扫到就抢所有权接着跑（见 ADR 0040）。
+RUN_HANDOVER_SCAN_INTERVAL_SECONDS = 30.0
+
+
 __all__ = [
     "DELETE_RUNNING_THREAD_POLL_INTERVAL_SECONDS",
     "DELETE_RUNNING_THREAD_WAIT_SECONDS",
@@ -132,7 +149,9 @@ __all__ = [
     "MODEL_RETRY_MAX",
     "READ_DOCUMENT_MAX_CHARS",
     "RETRY_INITIAL_DELAY_SECONDS",
+    "RUN_DRAIN_TIMEOUT_SECONDS",
     "RUN_EVENT_POLL_INTERVAL_SECONDS",
+    "RUN_HANDOVER_SCAN_INTERVAL_SECONDS",
     "RUN_LIVENESS_UPDATE_INTERVAL_SECONDS",
     "RUN_STATE_POLL_INTERVAL_SECONDS",
     "RUN_ZOMBIE_THRESHOLD_SECONDS",

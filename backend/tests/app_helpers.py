@@ -27,11 +27,12 @@ from agent_lab.agent.limits import RUN_ZOMBIE_THRESHOLD_SECONDS
 from agent_lab.agent.runs import AgentRunRegistry
 from agent_lab.agent.runtime import AgentRuntime
 from agent_lab.config.llm import LlmProvider, LlmSettings
-from agent_lab.services.agent_thread_service import derive_thread_title
+from agent_lab.services.agent_thread_service import DrainedRunClaim, derive_thread_title
 from agent_lab.usage.collector import NoopUsageCollector
 from agent_lab.knowledge.scope import KnowledgeBaseSelection, ResolvedKnowledgeBaseScope
 from agent_lab.knowledge.domain import KnowledgeBaseNotFoundError
 from tests.agent_scope_helpers import NEWS_SCOPE
+from tests.agent_helpers import OFFLINE_LANGSMITH_SETTINGS
 from tests.auth_helpers import (
     SUPERUSER_ID,
     allow_reader,
@@ -110,9 +111,20 @@ def offline_agent_runtime_factory(_service: Any, _usage_collector: Any) -> Offli
 OFFLINE_RUN_POLL_INTERVAL_SECONDS = 0.005
 OFFLINE_RUN_LIVENESS_INTERVAL_SECONDS = 0.05
 
+# 离线测试的排空上限。生产是 120 秒（见 agent/limits.py）；这里取一个远小于它、又足够让
+# 普通假模型走完当前 superstep 的值，免得退出 lifespan 的用例白等两分钟。要验证「到点按放弃
+# 收尾」的用例显式传一个更小的值。
+OFFLINE_DRAIN_TIMEOUT_SECONDS = 2.0
+
+# 离线测试扫描「等接手」标记的节奏；压到毫秒级才能在毫秒级验证接手。
+OFFLINE_HANDOVER_SCAN_INTERVAL_SECONDS = 0.005
+
 
 def offline_agent_run_registry_factory(
     threads: "InMemoryAgentThreadService",
+    runtime: Any = None,
+    *,
+    drain_timeout: float | None = None,
 ) -> AgentRunRegistry:
     """返回不做真实 I/O 的进程级运行注册表。
 
@@ -121,6 +133,10 @@ def offline_agent_run_registry_factory(
 
     Args:
         threads: ``create_offline_app`` 建好的内存会话 Service。
+        runtime: lifespan 传进来的 Agent Runtime；替身（``OfflineAgentRuntime``）没有 ``graph``，
+            所以这种文件里注册表拿不到图、不会去认领「等接手」标记——与生产的「图装配失败」同形。
+        drain_timeout: 排空上限；``None`` 时用离线默认值（远小于生产，见
+            ``OFFLINE_DRAIN_TIMEOUT_SECONDS``）。测试传小值验证「到点按放弃收尾」。
 
     Returns:
         全新的 ``AgentRunRegistry``，周期参数为毫秒级。
@@ -128,9 +144,16 @@ def offline_agent_run_registry_factory(
 
     return AgentRunRegistry(
         threads=threads,
+        graph=getattr(runtime, "graph", None),
+        # 离线固定关掉追踪：不能让测试意外向 LangSmith 上报。
+        langsmith_settings=OFFLINE_LANGSMITH_SETTINGS,
         event_poll_interval=OFFLINE_RUN_POLL_INTERVAL_SECONDS,
         liveness_interval=OFFLINE_RUN_LIVENESS_INTERVAL_SECONDS,
         state_poll_interval=OFFLINE_RUN_POLL_INTERVAL_SECONDS,
+        drain_timeout=(
+            OFFLINE_DRAIN_TIMEOUT_SECONDS if drain_timeout is None else drain_timeout
+        ),
+        handover_scan_interval=OFFLINE_HANDOVER_SCAN_INTERVAL_SECONDS,
     )
 
 
@@ -228,6 +251,7 @@ class InMemoryAgentThreadService:
                 last_active_at=now,
                 active_run_id=run_id,
                 stop_requested_at=None,
+                drained_at=None,
             )
             return created, system_prompt
 
@@ -280,6 +304,47 @@ class InMemoryAgentThreadService:
         record.last_active_at = now
         return 1
 
+    async def mark_drained(
+        self, *, thread_id: UUID, run_id: UUID, now: datetime | None = None
+    ) -> int:
+        """写下「等接手」标记；只在仍然占着位的运行上写（与真实实现同义）。"""
+
+        record = self.threads.get(thread_id)
+        if record is None or record.active_run_id != run_id:
+            return 0
+        record.drained_at = now or datetime.now(UTC)
+        return 1
+
+    async def list_drained_thread_ids(self) -> list[UUID]:
+        """列出所有带「等接手」标记的会话。"""
+
+        return [
+            record.thread_id
+            for record in self.threads.values()
+            if record.drained_at is not None
+        ]
+
+    async def claim_drained_run(self, *, thread_id: UUID) -> DrainedRunClaim | None:
+        """抢一条「等接手」运行的所有权；置空标记并把接手所需的上下文一并返回。
+
+        内存替身里「判标记非空 + 置空」之间没有 await 点，所以它天然原子——它只能证明「路由/
+        扫描把抢所有权交给了 Service」，真库上那条条件写入的原子性由 ``test_agent_thread_service``
+        的语句级断言负责。
+        """
+
+        record = self.threads.get(thread_id)
+        if record is None or record.drained_at is None:
+            return None
+        record.drained_at = None
+        if record.active_run_id is None:
+            return None
+        return DrainedRunClaim(
+            thread_id=thread_id,
+            run_id=record.active_run_id,
+            user_id=record.user_id,
+            system_prompt=record.system_prompt,
+        )
+
     async def update_scope(self, *, user_id, thread_id, scope):
         record = await self.get_owned_thread(user_id=user_id, thread_id=thread_id)
         record.scope = scope.model_dump(mode="json")
@@ -322,10 +387,18 @@ class InMemoryAgentThreadService:
         return set(self.threads)
 
 
-def create_offline_app(**overrides: Any) -> FastAPI:
+def create_offline_app(
+    *,
+    threads: "InMemoryAgentThreadService | None" = None,
+    drain_timeout: float | None = None,
+    **overrides: Any,
+) -> FastAPI:
     """创建三个工厂都默认为离线替身的应用，并集中收拢 ``type: ignore``。
 
     Args:
+        threads: 现成的内存会话 Service；省略时新建一个。传它是为了让两个应用实例共享同一份
+            会话行（接手续跑的用例要把前一个实例排空后的库状态交给新实例）。
+        drain_timeout: 运行注册表的排空上限；省略时用生产常量。测试传小值验证「到点按放弃收尾」。
         **overrides: 直接透传给 ``create_app`` 的参数，用来覆盖任一默认替身。常见的是
             ``runtime_factory``（注入本文件自己的 fake 检索 Runtime）；想测真实 Agent
             装配就传 ``agent_runtime_factory``。
@@ -346,14 +419,16 @@ def create_offline_app(**overrides: Any) -> FastAPI:
     # 0、会话归属 Service 换成内存替身。**必须在 create_app 之前建**：运行注册表在 lifespan
     #    里装配，它读的必须是同一个替身；晚一步建就只能让注册表拿真实的 session 工厂去连库，
     #    而那个失败不会让测试报错，只会变成一次超时。
-    offline_threads = InMemoryAgentThreadService()
+    offline_threads = threads or InMemoryAgentThreadService()
 
     # 1、先铺离线默认值，再让调用方的 overrides 覆盖，保证「漏写=安全」而不是「漏写=连真库」。
     #    model_catalog_check 也在其中：它的生产实现会向 .env 里那个真实 base_url 发 GET，
     #    漏写的话每个走 lifespan 的测试都要等一次连接超时（本文件开头那段历史正是这么来的）。
     defaults: dict[str, Any] = {
         "agent_runtime_factory": offline_agent_runtime_factory,
-        "agent_run_registry_factory": lambda: offline_agent_run_registry_factory(offline_threads),
+        "agent_run_registry_factory": lambda runtime=None: offline_agent_run_registry_factory(
+            offline_threads, runtime, drain_timeout=drain_timeout
+        ),
         "environment_admin_sync": skip_environment_admin_sync,
         "model_catalog_check": skip_model_catalog_check,
         "task_service_factory": lambda: object(),
@@ -418,6 +493,10 @@ def create_agent_app(
     model_catalog_error: Exception | None = None,
     usage_collector: Any = None,
     usage_runtime: Any = None,
+    checkpointer: Any = None,
+    threads: "InMemoryAgentThreadService | None" = None,
+    drain_timeout: float | None = None,
+    agent_run_registry_factory: Any = None,
 ) -> tuple[FastAPI, FakeSearchRuntime]:
     """创建装着**真实** ``AgentRuntime`` 的离线应用。
 
@@ -439,6 +518,15 @@ def create_agent_app(
             什么」的用例注入记录用的假采集器。
         usage_runtime: 非空时用它替掉离线用量库替身，供需要走完整用量链路的用例注入带真实
             会话工厂与采集器的资源（例如跑完一轮对话再查用量接口）。
+        checkpointer: 会话历史存储；省略时新建一个 ``InMemorySaver``。传现成的对象是为了让两个
+            应用实例共享同一份会话历史（接手续跑用例要把前一个实例留下的 checkpoint 交给新实例）。
+        threads: 会话归属的内存 Service；省略时新建。与 ``checkpointer`` 同理，传现成的
+            对象才能让两个实例看到同一批会话行。
+        drain_timeout: 运行注册表的排空上限；省略时用生产常量。测试传小值验证「到点按放弃收尾」。
+
+        agent_run_registry_factory: 覆盖运行注册表的装配；省略时用离线默认。需要「有可用的图、
+            但不扫描接手标记」的用例传一个 ``graph=None`` 的注册表，用来把「占位被拒」与「接手」
+            两件事分开验证。
 
     Returns:
         ``(应用, 假检索 Runtime)``。检索 Runtime 用来断言关闭顺序，或在装配失败时当只读探针。
@@ -461,7 +549,7 @@ def create_agent_app(
             search_service=service,
             session_factory=None,  # type: ignore[arg-type]
             database_url="postgresql+psycopg://unused/unused",
-            checkpointer=InMemorySaver(),
+            checkpointer=checkpointer if checkpointer is not None else InMemorySaver(),
             model=model,
             usage_collector=usage_collector if usage_collector is not None else lifespan_collector,
             # 退避是真 sleep。这些用例断言的是 HTTP 契约，不需要等。
@@ -478,6 +566,13 @@ def create_agent_app(
         model_catalog_check=catalog_check,
         usage_runtime_factory=(
             (lambda: usage_runtime) if usage_runtime is not None else offline_usage_runtime_factory
+        ),
+        threads=threads,
+        drain_timeout=drain_timeout,
+        **(
+            {"agent_run_registry_factory": agent_run_registry_factory}
+            if agent_run_registry_factory is not None
+            else {}
         ),
     )
     if not anonymous:
@@ -522,6 +617,7 @@ def seed_owned_thread(
     system_prompt: str | None = None,
     active_run_id: UUID | None = None,
     stop_requested_at: datetime | None = None,
+    drained_at: datetime | None = None,
 ) -> SimpleNamespace:
     """在内存会话表里预置一行归属记录。
 
@@ -536,6 +632,7 @@ def seed_owned_thread(
         system_prompt: 该会话的提示词快照；省略等同「用内置默认提示词」。
         active_run_id: 预置一个在途运行，用来构造「这个会话正在跑」。
         stop_requested_at: 预置一个陈旧的停止请求，用来验证新一次占位会把它清掉。
+        drained_at: 预置一个「已排空、等接手」标记，用来验证它拒绝新提问、也不会被失活分支顶掉。
 
     Returns:
         刚写进去的那行记录，便于随后修改或断言。
@@ -552,6 +649,7 @@ def seed_owned_thread(
         last_active_at=last_active_at or now,
         active_run_id=active_run_id,
         stop_requested_at=stop_requested_at,
+        drained_at=drained_at,
     )
     app.state.offline_threads.threads[thread_id] = record
     return record
@@ -565,9 +663,12 @@ def is_claimable(record: SimpleNamespace, now: datetime) -> bool:
         now: 判定用的当前时刻。
 
     Returns:
-        ``True`` 表示没有在途运行，或那次运行已经超过失活阈值。
+        ``True`` 表示没有在途运行、没有排空标记，或那次运行已经超过失活阈值。
     """
 
+    if record.drained_at is not None:
+        # 带排空标记的会话连失活分支也不放行：旧的 checkpoint 停在半途，新提问会继续跑旧节点。
+        return False
     if record.active_run_id is None:
         return True
     return record.last_active_at < now - timedelta(seconds=RUN_ZOMBIE_THRESHOLD_SECONDS)
@@ -575,6 +676,8 @@ def is_claimable(record: SimpleNamespace, now: datetime) -> bool:
 
 __all__ = [
     "OFFLINE_LLM_SETTINGS",
+    "OFFLINE_DRAIN_TIMEOUT_SECONDS",
+    "OFFLINE_HANDOVER_SCAN_INTERVAL_SECONDS",
     "FakeSearchRuntime",
     "FakeSearchService",
     "InMemoryAgentThreadService",

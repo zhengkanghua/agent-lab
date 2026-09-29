@@ -677,3 +677,99 @@ def test_new_thread_title_comes_from_the_same_rule_as_the_helper() -> None:
     )
 
     assert session.added[0].title == derive_thread_title(message)
+
+
+def test_claiming_a_thread_excludes_a_drained_one_from_the_zombie_branch() -> None:
+    """占位那条条件写入把带「等接手」标记的会话整个排除掉，**包括失活分支**。
+
+    排空之后旧进程不再续期活跃时间，两分钟后失活分支就会命中。不排除的话，用户能在标记还在的
+    时候开新一轮，而旧的 checkpoint 停在半途、还有待跑的节点——两个进程会写同一份图状态。
+    """
+
+    session = FakeSession(rowcount=1, returning_row=(None,))
+
+    run(
+        service_with(session).ensure_thread(
+            user_id=uuid4(),
+            thread_id=uuid4(),
+            run_id=uuid4(),
+            first_message="继续",
+        )
+    )
+
+    conditions = compiled(session.statements[0]).upper().split(" WHERE ", 1)[1]
+    assert "DRAINED_AT IS NULL" in conditions
+    # 正面那一半：失活分支还在，说明我们不是把整段条件删了。
+    assert "ACTIVE_RUN_ID IS NULL" in conditions
+    assert "LAST_ACTIVE_AT <" in conditions
+
+
+def test_marking_a_run_drained_only_touches_its_own_claim() -> None:
+    """写标记的条件是「占位的就是这次运行」——被失活判定顶掉的旧运行不能把标记写到新运行头上。"""
+
+    session = FakeSession(rowcount=1)
+    thread_id, run_id = uuid4(), uuid4()
+    now = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
+
+    updated = run(
+        service_with(session).mark_drained(thread_id=thread_id, run_id=run_id, now=now)
+    )
+
+    assert updated == 1
+    sql = compiled(session.statements[0]).upper()
+    assignments = sql.split(" SET ", 1)[1].split(" WHERE ", 1)[0]
+    conditions = sql.split(" WHERE ", 1)[1]
+    assert "DRAINED_AT" in assignments
+    assert "ACTIVE_RUN_ID =" in conditions and str(run_id).upper() in conditions
+    assert str(thread_id).upper() in conditions
+    assert session.commits == 1
+
+
+def test_claiming_a_drained_run_consumes_the_marker_in_one_write() -> None:
+    """抢所有权是「判标记非空 + 置空」的同一条语句，且不碰停止请求那一列。
+
+    分开做会出现两个进程都读到标记、都以为自己接手的窗口。不碰停止请求是因为用户在部署窗口里
+    按下的停止要照样生效——接手之后的驱动者还要能读到它并停下这次运行。
+    """
+
+    thread_id, run_id, user_id = uuid4(), uuid4(), uuid4()
+    session = FakeSession(returning_row=(run_id, user_id, "会话里存的提示词。"))
+
+    claim = run(service_with(session).claim_drained_run(thread_id=thread_id))
+
+    assert claim is not None
+    assert (claim.thread_id, claim.run_id, claim.user_id) == (thread_id, run_id, user_id)
+    assert claim.system_prompt == "会话里存的提示词。"
+    sql = compiled(session.statements[0]).upper()
+    assignments = sql.split(" SET ", 1)[1].split(" WHERE ", 1)[0]
+    conditions = sql.split(" WHERE ", 1)[1]
+    assert "DRAINED_AT=NULL" in assignments
+    assert "DRAINED_AT IS NOT NULL" in conditions
+    assert "STOP_REQUESTED_AT" not in assignments
+    returning = sql.split("RETURNING", 1)[1]
+    assert "ACTIVE_RUN_ID" in returning
+    assert "USER_ID" in returning
+    assert "SYSTEM_PROMPT" in returning
+    assert session.commits == 1
+
+
+def test_claiming_a_drained_run_returns_nothing_when_the_marker_is_gone() -> None:
+    """标记已经被别的进程消费时返回 ``None``，调用方据此什么都不做。"""
+
+    session = FakeSession(returning_row=None)
+
+    assert run(service_with(session).claim_drained_run(thread_id=uuid4())) is None
+
+
+def test_listing_drained_threads_reads_only_flagged_rows() -> None:
+    """扫描只取带标记的会话，不把整个会话表拉出来。"""
+
+    thread_id = uuid4()
+    session = FakeSession(scalars_result=[thread_id])
+
+    ids = run(service_with(session).list_drained_thread_ids())
+
+    assert ids == [thread_id]
+    sql = compiled(session.statements[0]).upper()
+    assert sql.lstrip().startswith("SELECT")
+    assert "DRAINED_AT IS NOT NULL" in sql

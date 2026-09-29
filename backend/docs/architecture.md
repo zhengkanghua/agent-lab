@@ -368,6 +368,18 @@ Python 中重排；同一 Document 的多个 Chunk 可以分别返回，不做 d
 有一个轮询协程批量读自己手上在跑的那几次运行的停止请求，写进内存标志；驱动者每轮只看那个标志，不为此
 碰数据库。
 
+**部署或重启时排空、由别的进程接手**（见 ADR 0040）：进程在 ASGI 生命周期收尾里先
+``AgentRunRegistry.drain()``，对手上所有在途运行一起请求排空（上限
+``agent/limits.RUN_DRAIN_TIMEOUT_SECONDS``）——图在当前 superstep 落盘后停下并抛 ``GraphDrained``，
+驱动者不补写、不标未完成、不释放会话位，而是在 ``agent_threads.drained_at`` 上写下「等接手」标记后
+退出；到点还没走到边界的由 ``close()`` 取消，沿用既有的「被中断」收尾（补写、释放）。每个 API 进程
+另有一个接手扫描协程（启动时先扫一次，之后每 ``RUN_HANDOVER_SCAN_INTERVAL_SECONDS`` 一次）：扫到标记
+就用同一条条件写入抢所有权（判标记非空、置空，**不碰停止请求那一列**），从 checkpoint 重建这一轮
+冻结的范围、从会话行取账号与提示词，再以「无新输入」的方式接着跑；抢不到就什么都不做。**拿不到可用的
+图（Agent 装配失败）就不认领**，把标记留给能跑的进程；认领之后重建不出上下文或运行中途抛错，按未完成
+收尾并释放会话位。带标记的会话不接受新提问（占位那条条件写入的失活分支排除它），因为旧的 checkpoint
+停在半途、还有待跑的节点。强杀、OOM、断电没有收尾机会，仍按 ADR 0036 收尾。
+
 被中断的运行会把**尚未落库**的那部分模型输出补写进会话（见 ADR 0036）：累积以「最近一次已落库的模型
 消息」为界，边界由 ``streaming.PersistedModelMessage`` 这个只给驱动者看的信号给出。没有文本就不写；
 写入失败只记日志，不让收尾失败反过来中断清理。
@@ -385,7 +397,7 @@ agent/evidence.py   Tool artifact 与引用核验，SSE 和回放共用
 agent/replay.py     从保留消息得到问答、范围、完成状态和引用
 agent/middleware.py 中间件流水线；顺序有语义，见 ADR 0005
 agent/runtime.py    组装根：编译一次图，进程级共享
-agent/runs.py       脱离连接的运行驱动者与订阅者、停止标志、失活续期（见 ADR 0035/0037）
+agent/runs.py       脱离连接的运行驱动者与订阅者、停止标志、失活续期、收尾排空与接手扫描（见 ADR 0035/0037/0040）
 agent/streaming.py  翻译 LangGraph 事件，从持久状态确定 Done
 agent/checkpointer.py  四张 checkpointer 表名的唯一真源 + Alembic 的 include_object
 agent/model_catalog.py 启动期向上游拉模型列表，校验配置的模型名确实存在
@@ -408,6 +420,8 @@ Agent 装配失败**不致命**：lifespan 捕获、只记异常类型、``app.s
 ``SEARCH_TOOL_MAX_DOCUMENTS`` 与 ``SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT`` 是给模型的上下文预算，不是
 给人看的分页上限；``READ_DOCUMENT_MAX_CHARS`` 这里截断是对的，正文是数据不是指令；
 ``SSE_HEARTBEAT_INTERVAL_SECONDS`` 是心跳间隔，前端的空闲超时按它的倍数留余量。
+``RUN_DRAIN_TIMEOUT_SECONDS`` 是收尾排空的总预算（不是每个运行一份），``RUN_HANDOVER_SCAN_INTERVAL_SECONDS``
+是接手扫描的节奏；它们与容器停止宽限的关系见 ADR 0040 与 ``docker-compose.yml`` 的注释。
 
 SSE 侧的实现约束（心跳与订阅在 ``api/agent_chat.py``，事件流在 ``agent/runs.py``）：
 
@@ -702,8 +716,8 @@ document_review_records     人工或自动审核结论及当时正文依据
 users            内部登录邮箱、Argon2 密码 Hash、启用/超级用户状态和唯一环境托管标记
 access_tokens    浏览器登录产生的可撤销随机 Token、创建时间和所属用户
 agent_threads    Agent 会话的账号归属、选择范围、会话级系统提示词快照、标题、最后活动时刻
-                 （提问受理时写一次、运行期间由驱动者续期）与运行协调两列（在途运行 id、
-                 停止请求时刻）；不含任何消息内容
+                 （提问受理时写一次、运行期间由驱动者续期）与运行协调三列（在途运行 id、
+                 停止请求时刻、被排空时刻）；不含任何消息内容
 user_preferences 账号级个人偏好：自定义系统提示词与两个检索数量参数；一行一个账号，
                  system_prompt 为空表示用服务端内置默认提示词
 scheduled_jobs   周期配置：key 唯一、类型、cron、params、启停、配置版本与下一计划时刻

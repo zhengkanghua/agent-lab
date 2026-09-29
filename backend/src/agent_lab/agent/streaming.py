@@ -18,7 +18,9 @@ from typing import Any
 from uuid import UUID
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langgraph.errors import GraphDrained
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.runtime import RunControl
 from langsmith import Client as LangSmithClient
 from langsmith.run_helpers import tracing_context
 
@@ -306,6 +308,8 @@ async def stream_agent_events(
     thread_id: UUID,
     context: AgentContext,
     langsmith_settings: LangSmithSettings,
+    control: RunControl | None = None,
+    resume: bool = False,
 ) -> AsyncIterator[AgentChatEvent | PersistedModelMessage]:
     """跑一次 Agent，把过程翻译成事件流。
 
@@ -313,16 +317,27 @@ async def stream_agent_events(
     原因是响应头在第一个 token 发出时就已经送出，之后没法再改 HTTP 状态码，所以流一旦
     开始，失败只能作为事件送达。
 
+    ``resume`` 为真时以「无新输入」的方式续跑同一个会话：提问与轮次身份已经在 checkpoint
+    里，不再拼一条 HumanMessage，也不重发 ``run_started``（那次运行早就开始了）。这是部署时
+    接手别的进程排空下来的运行所用的路径（见 ADR 0040）。
+
     Args:
         graph: 进程级共享的已编译 Agent 图。
-        message: 用户这一轮的提问。
+        message: 用户这一轮的提问；``resume`` 为真时忽略。
         thread_id: 会话 id；checkpointer 按它读写历史。
-        context: 本次运行的上下文，目前只含可选的自定义系统提示词。
+        context: 本次运行的上下文。
         langsmith_settings: 追踪开关与凭据。
+        control: 本次运行的排空控制器；进程收尾时请求它排空，图会在当前 superstep 落盘后
+            停下并抛 ``GraphDrained``。
+        resume: 是否以「无新输入」的方式接着跑 checkpoint 里尚未完成的节点。
 
     Yields:
         ``token`` / ``tool_call`` / ``tool_result`` 事件，最后是 ``done`` 或 ``error``；
         中间还可能夹着只给运行驱动者看的 ``PersistedModelMessage`` 落库信号。
+
+    Raises:
+        GraphDrained: 有人请求排空且图走到了可交接的边界。**刻意不翻成 error 事件**：
+            它不是失败，调用方（运行驱动者）据此写下「等接手」标记。
 
     Notes:
         本函数执行模型 HTTP I/O、Qdrant 检索、PostgreSQL 读取和会话历史读写，但不写任何
@@ -340,7 +355,9 @@ async def stream_agent_events(
     # 烧掉的量——失控循环恰恰都是以失败收尾的，那时候的用量最值得看。
     usage_totals = {"input": 0, "output": 0, "total": 0}
     try:
-        if context.scope is not None:
+        # 接手续跑时没有新的 run_started 可发：那次运行在旧进程里就开始了，前端靠回放拿到
+        # 在途运行 id，不需要重新认领它。
+        if context.scope is not None and not resume:
             yield AgentRunStartedEvent(thread_id=thread_id, run_id=context.run_id, scope=context.scope)
         # 2、开一个「只管本次运行」的追踪范围。tracing_context 不写 os.environ，
         #    所以并发请求之间不会互相污染，也不需要在进程启动时就决定好。
@@ -350,14 +367,25 @@ async def stream_agent_events(
             client=client,
         ):
             # 3、跑图，同时订阅两种流。这里只传用户这一条新消息——历史由 checkpointer
-            #    按 config 里的 thread_id 自己接在前面，不用我们拼。
+            #    按 config 里的 thread_id 自己接在前面，不用我们拼。续跑时输入是 None：
+            #    图从 checkpoint 里尚未完成的节点接着跑，不新开一轮。
+            graph_input = (
+                None
+                if resume
+                else {
+                    "messages": [
+                        HumanMessage(content=message, additional_kwargs={
+                            "agent_run": {"run_id": str(context.run_id), "scope": context.scope.model_dump(mode="json")},
+                        } if context.scope is not None else {})
+                    ]
+                }
+            )
             async for stream_mode, chunk in graph.astream(
-                {"messages": [HumanMessage(content=message, additional_kwargs={
-                    "agent_run": {"run_id": str(context.run_id), "scope": context.scope.model_dump(mode="json")},
-                } if context.scope is not None else {})]},
+                graph_input,
                 config=config,
                 context=context,
                 stream_mode=["updates", "messages"],
+                control=control,
             ):
                 # 4、messages 流 → 打字机效果。给的是 (消息增量, metadata) 二元组，
                 #    只有模型节点产的文本才是用户要看的字，工具节点的要滤掉。
@@ -391,6 +419,11 @@ async def stream_agent_events(
                 run_id=context.run_id,
                 scope=context.scope,
             )
+    except GraphDrained:
+        # 排空不是失败，是正常的收尾路径。往上抛给运行驱动者：它据此写下「等接手」标记、
+        # 把这次运行交给别的进程（见 ADR 0040）。这里绝不能翻成 error 事件——那会让接手
+        # 看到一个本可续跑的运行被当成了失败。
+        raise
     except Exception as exc:
         # 6、失败翻成一个 error 事件送出去，不往上抛。第一个 token 发走时响应头就定了，
         #    这之后改不了 HTTP 状态码，只能把失败当成流里的一条事件。

@@ -18,6 +18,7 @@ docs/adr/0010-sse-routes-use-short-lived-db-sessions.md）：
 """
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -39,6 +40,28 @@ MAX_THREAD_TITLE_CHARS = 60
 # 首条提问为空白等极端情况下的兜底标题。理论上到不了这里（``AgentChatRequest`` 已经拒绝纯空白
 # 提问），但标题列 NOT NULL，留一个确定值比让数据库报约束错误好。
 FALLBACK_THREAD_TITLE = "未命名会话"
+
+
+@dataclass(frozen=True, slots=True)
+class DrainedRunClaim:
+    """一次成功抢到的「排空待接手」运行所需的全部上下文。
+
+    Attributes:
+        thread_id: 待接手的会话。
+        run_id: 那次被排空的运行；续跑时在途运行 id 不变，前端已有的等待态与回放轮询不需要知道
+            接手发生过。
+        user_id: 会话归属账号，用于重建运行上下文里的用量归属。
+        system_prompt: 会话级提示词快照；``None`` 表示用内置默认提示词。
+
+    Notes:
+        **不含知识库范围**：那是上一轮冻结在 checkpoint 里的值，与「会话行上的当前选择」不是
+        同一件事（续聊时可以改选），接手时要回 checkpoint 里取一轮自己的那份（见 ADR 0040）。
+    """
+
+    thread_id: UUID
+    run_id: UUID
+    user_id: UUID
+    system_prompt: str | None
 
 
 def derive_thread_title(message: str) -> str:
@@ -154,6 +177,7 @@ class AgentThreadService:
                         # 新行不存在「上一次运行」这回事，所以占位必定成功。
                         active_run_id=run_id,
                         stop_requested_at=None,
+                        drained_at=None,
                     )
                 )
                 await session.commit()
@@ -168,6 +192,11 @@ class AgentThreadService:
                 .where(
                     AgentThreadRecord.thread_id == thread_id,
                     AgentThreadRecord.user_id == user_id,
+                    # 带「等接手」标记的会话不能被新提问顶掉，**包括失活分支**：排空之后旧进程
+                    # 不再续期活跃时间，两分钟后失活分支就会命中；不排除的话用户能在标记还在的
+                    # 时候开新一轮，两个进程写同一份图状态（旧的 checkpoint 停在半途、还有待跑
+                    # 的节点，新提问会顺着那份状态继续跑旧节点）。见 ADR 0040。
+                    AgentThreadRecord.drained_at.is_(None),
                     or_(
                         AgentThreadRecord.active_run_id.is_(None),
                         AgentThreadRecord.last_active_at < zombie_cutoff,
@@ -333,6 +362,119 @@ class AgentThreadService:
             )
             await session.commit()
             return result.rowcount or 0
+
+    async def mark_drained(self, *, thread_id: UUID, run_id: UUID, now: datetime | None = None) -> int:
+        """给一次走到可交接边界的运行写下「等接手」标记。
+
+        条件写的是 ``active_run_id == run_id``，与释放占位同一个道理：这次运行可能已经被失活
+        判定顶掉，那时不能把标记写到新运行头上（否则接手者会拿新的运行 id 去接旧 checkpoint）。
+
+        Args:
+            thread_id: 本次运行所属会话。
+            run_id: 本次运行的标识。
+            now: 写入的时刻；省略时取当前时间，测试可以钉住它。
+
+        Returns:
+            实际更新的行数；``0`` 表示这次运行已经不再占着这个会话，标记未写。
+
+        Raises:
+            SQLAlchemyError: 业务库不可用；由调用方记日志（收尾失败不能反过来中断退出）。
+
+        Notes:
+            执行一次 PostgreSQL 写入并提交。标记得以存在的前提是 ``active_run_id`` 还在——接手
+            者靠它确认「该接着跑哪一次运行」。
+        """
+
+        async with self._session_factory() as session:
+            result = await session.execute(
+                update(AgentThreadRecord)
+                .where(
+                    AgentThreadRecord.thread_id == thread_id,
+                    AgentThreadRecord.active_run_id == run_id,
+                )
+                .values(drained_at=now or datetime.now(UTC))
+            )
+            await session.commit()
+            return result.rowcount or 0
+
+    async def list_drained_thread_ids(self) -> list[UUID]:
+        """列出所有带「等接手」标记的会话。
+
+        接手者按固定节奏调它，扫到什么就接什么，不设「一轮最多接几个」的上限——那些运行本来
+        就在跑，换个进程跑不会增加负载。
+
+        Returns:
+            带标记的会话 id，顺序不保证。
+
+        Raises:
+            SQLAlchemyError: 业务库不可用；由调用方记日志后继续下一轮。
+
+        Notes:
+            只读，不写。只取 id：随后抢所有权的那条条件写入才是「算不算抢到」的判定点。
+        """
+
+        async with self._session_factory() as session:
+            rows = await session.scalars(
+                select(AgentThreadRecord.thread_id).where(
+                    AgentThreadRecord.drained_at.is_not(None)
+                )
+            )
+            return list(rows)
+
+    async def claim_drained_run(self, *, thread_id: UUID) -> DrainedRunClaim | None:
+        """抢一条「等接手」运行的所有权；抢到才返回它。
+
+        **判标记非空与置空必须放在同一条语句里**：分开做会出现两个进程都读到标记、都以为自己
+        接手的窗口，同一轮运行被两处同时写入。条件更新天然解决它——``rowcount`` 为 1 才算抢到，
+        第二个进程下一轮就扫不到这个标记了。
+
+        **这次更新不碰 ``stop_requested_at``**：用户在部署窗口里按下的停止要照样生效，接手
+        之后的驱动者还要能读到它并停下这次运行。
+
+        Args:
+            thread_id: 待接手的会话。
+
+        Returns:
+            抢到时的 ``DrainedRunClaim``；没抢到（标记已被别的进程消费）返回 ``None``。
+
+        Raises:
+            SQLAlchemyError: 业务库不可用；由调用方记日志后继续下一轮。
+
+        Notes:
+            执行一条 PostgreSQL 条件写入并提交。取回运行 id、账号与会话提示词，让接手方不必再
+            查一次会话行；知识库范围**不在这里取**，它在 checkpoint 里。
+        """
+
+        async with self._session_factory() as session:
+            result = await session.execute(
+                update(AgentThreadRecord)
+                .where(
+                    AgentThreadRecord.thread_id == thread_id,
+                    AgentThreadRecord.drained_at.is_not(None),
+                )
+                .values(drained_at=None)
+                .returning(
+                    AgentThreadRecord.active_run_id,
+                    AgentThreadRecord.user_id,
+                    AgentThreadRecord.system_prompt,
+                )
+            )
+            row = result.first()
+            await session.commit()
+            if row is None:
+                return None
+            active_run_id, user_id, system_prompt = row
+            if active_run_id is None:
+                # 标记与在途运行并存是写入端保证的；真出现「只有标记、没有在途运行」，把它
+                # 当作一次没有可接手对象的扫描（上面的 SET 已经清掉标记，会话因此解锁）。
+                logger.warning("排空标记没有对应的在途运行 thread_id=%s", thread_id)
+                return None
+            return DrainedRunClaim(
+                thread_id=thread_id,
+                run_id=active_run_id,
+                user_id=user_id,
+                system_prompt=system_prompt,
+            )
 
     async def update_scope(self, *, user_id: UUID, thread_id: UUID, scope: KnowledgeBaseSelection) -> None:
         """保存经应用校验的选择；不改正在执行的运行快照，不刷新最近提问时间。"""
@@ -548,5 +690,6 @@ __all__ = [
     "FALLBACK_THREAD_TITLE",
     "MAX_THREAD_TITLE_CHARS",
     "AgentThreadService",
+    "DrainedRunClaim",
     "derive_thread_title",
 ]

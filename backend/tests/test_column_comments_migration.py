@@ -37,11 +37,15 @@ def columns_of(table: str) -> Any:
 
 
 def test_the_migration_is_wired_after_the_previous_head() -> None:
-    """它接在原来的 head 上，并且是最新的 head——否则部署时不会被跑到。"""
+    """它接在原来的 head 上，并且真的在迁移链里——否则部署时不会被跑到。
+
+    这条以前还包括「它就是最新 head」。新增迁移（会话排空标记）之后不再成立，所以那半条
+    断言移到了新迁移自己的测试里；这里只守「挂在链上、down_revision 对」。
+    """
 
     module = load_migration(MIGRATION_FILE)
 
-    assert migration_chain()[0] == module.revision
+    assert module.revision in migration_chain()
     assert module.down_revision == "d5f8a2c7b9e1"
 
 
