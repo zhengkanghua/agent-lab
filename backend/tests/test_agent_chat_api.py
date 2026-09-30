@@ -453,12 +453,33 @@ def test_agent_build_failure_yields_503_without_breaking_search() -> None:
     assert len(search.service.calls) == 1
 
 
-def test_a_model_name_not_in_the_catalog_yields_the_same_503() -> None:
-    """启动时模型名校验失败，对外表现与 Agent 装配失败完全一致。
+async def _chat_with(
+    client: httpx.AsyncClient,
+    **payload: Any,
+) -> tuple[httpx.Response, list[str]]:
+    """在**已有** client 上发起一次 SSE 对话并按帧切开。
 
-    与上一条成对：两者在 lifespan 里共用同一个 ``try``，因为对用户是同一件事——Agent 用不了，
-    别的照用。钉住「同一个 code」是为了让前端只需要认一套文案；把校验挪出那个 try、让它
-    冒到启动路径上，这条会红。
+    与 ``chat`` 的区别是它不自建 lifespan：需要「同一个进程里连着做几件事」的用例（先看就绪、
+    再提问、再用同一个会话重试）必须共享同一个生命周期，否则每次请求都会重新装配一遍，
+    「占位有没有归还」这类断言就无从谈起。
+    """
+
+    async with client.stream("POST", "/agent/chat", json=payload) as response:
+        body = "".join([chunk async for chunk in response.aiter_text()])
+    return response, [frame for frame in body.split("\n\n") if frame.strip()]
+
+
+def test_a_model_name_not_in_the_catalog_arrives_as_an_error_event() -> None:
+    """启动配置校验发现模型名不在上游列表里时，提问收到 ``llm_model_not_found`` 事件。
+
+    与「Agent 装配失败」那条成对，但结论相反：装配失败是进程自己起不来，所以还在流开始之前
+    返 503；配置写错不同——装配是成功的，检索、阅读、流水线照常，只有这条链路做不了事，于是
+    失败以 ``error`` 事件送达（前端文案表里这个码本来就指向同一句话）。
+
+    它以前钉的是 503 ``agent_runtime_unavailable``：那次自检原来挡在装配路径上，现在它并发
+    跑、结论由就绪端点表达（见 ``test_readiness_api.py``），所以断言跟着换。这里额外钉住两
+    件事：**不启动一次注定失败的运行**（把那次注定失败的调用、重试与降级省掉），以及**占位
+    当场归还**（否则用户拿同一个会话再问会被自己上一次拦成 409）。
     """
 
     model = scripted("答案")
@@ -467,13 +488,55 @@ def test_a_model_name_not_in_the_catalog_yields_the_same_503() -> None:
         model_catalog_error=LlmModelNotListedError("上游模型列表中没有以下模型：auto。"),
     )
 
-    chat_response = run(send(app, "POST", "/agent/chat", json={"message": "问题"}))
-    search_response = run(
-        send(app, "POST", "/vector-search", json={"query": "央行利率"})
-    )
+    async def scenario() -> tuple[Any, ...]:
+        async with app.router.lifespan_context(app):
+            # 后台那次校验要落下结论再断言，否则这条用例是在赌任务调度。
+            await app.state.model_catalog_verdict.wait()
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as client:
+                ready = await client.get("/ready")
+                first_response, first_frames = await _chat_with(client, message="问题")
+                thread_id = payloads(first_frames)[-1]["thread_id"]
+                retry_response, retry_frames = await _chat_with(
+                    client, message="再问一次", thread_id=thread_id
+                )
+                search_response = await client.post(
+                    "/vector-search", json={"query": "央行利率"}
+                )
+        return (
+            ready,
+            first_response,
+            payloads(first_frames),
+            retry_response,
+            payloads(retry_frames),
+            search_response,
+            thread_id,
+        )
 
-    assert chat_response.status_code == 503
-    assert chat_response.json()["code"] == "agent_runtime_unavailable"
+    (
+        ready,
+        first_response,
+        first_events,
+        retry_response,
+        retry_events,
+        search_response,
+        thread_id,
+    ) = run(scenario())
+
+    assert ready.status_code == 503
+    assert ready.json() == {"status": "not_ready"}
+    assert first_response.status_code == 200
+    assert first_events[-1]["event"] == "error"
+    assert first_events[-1]["code"] == "llm_model_not_found"
+    assert first_events[-1]["retryable"] is False
+    # 同一个会话紧接着再问一次：能受理（占位归还过），结论一样，而且落在同一个会话上。
+    assert retry_response.status_code == 200
+    assert retry_events[-1]["code"] == "llm_model_not_found"
+    assert retry_events[-1]["thread_id"] == thread_id
+    assert app.state.offline_threads.threads[UUID(thread_id)].active_run_id is None
+    # 只读链路照常，而且真正跑过的检索只有那一次 HTTP 查询（没有为提问跑任何东西）。
     assert search_response.status_code == 200
     assert len(search.service.calls) == 1
 

@@ -16,6 +16,7 @@ from agent_lab.api.agent_chat import router as agent_chat_router
 from agent_lab.api.agent_threads import router as agent_threads_router
 from agent_lab.api.auth import router as auth_router
 from agent_lab.api.health import router as health_router
+from agent_lab.api.readiness import ModelCatalogVerdict, router as readiness_router
 from agent_lab.api.knowledge_bases import router as knowledge_bases_router
 from agent_lab.api.sources import router as sources_router
 from agent_lab.api.file_documents import router as file_documents_router
@@ -256,16 +257,23 @@ def build_usage_runtime() -> UsageRuntime:
 
 
 async def verify_configured_llm_models() -> None:
-    """启动时问一次上游「有哪些模型」，确认配置的两个模型名真的在列表里。
+    """启动后向上游问一次「有哪些模型」，确认配置的两个模型名真的在列表里。
 
-    为什么值得在启动路径上多花一次请求：模型名配错不会在启动时报错，也不会在第一次调用时
-    报出一句好懂的话——曾经把 ``LLM_MODEL`` 配成 ``auto``（那是某些中转站的自动路由开关，
-    按每次 HTTP 调用挑上游），症状是「查完资料不给回答」和「模型声称要调用没注册的工具」，
-    排查方向被带到前端和流式管道上。一次极轻的 GET 换掉那种排查，是划算的。
+    为什么值得多花一次请求：模型名配错不会在启动时报错，也不会在第一次调用时报出一句好懂的话
+    ——曾经把 ``LLM_MODEL`` 配成 ``auto``（那是某些中转站的自动路由开关，按每次 HTTP 调用挑
+    上游），症状是「查完资料不给回答」和「模型声称要调用没注册的工具」，排查方向被带到前端和
+    流式管道上。一次极轻的 GET 换掉那种排查，是划算的。
+
+    **它与启动路径上其余工作并发，不串行等待**（由 ``api/readiness.ModelCatalogVerdict`` 挂成
+    后台任务）：它最长占满 ``MODEL_CATALOG_TIMEOUT_SECONDS``，而它不属于「能服务」的前提，
+    挡在启动路径上等于让所有请求陪着一起等。结论改由 ``/ready`` 表达——「配置写错的版本不许
+    替掉好版本」这条判定因此仍然在，只是不再占用启动时间。**不要把它改回 ``await``**：
+    那会把端口能服务的时间整整推迟一个上游超时。
 
     Raises:
-        LlmModelNotListedError: 上游给出了非空列表，且配置的模型不在其中。由 lifespan 接住，
-            结果是只关掉 ``/agent/*``。
+        LlmModelNotListedError: 上游给出了非空列表，且配置的模型不在其中。由
+            ``ModelCatalogVerdict`` 接住，落成「未就绪」，并把这次失败记进它的 ``error``，
+            供对话链路给出 ``llm_model_not_found``。
 
     Notes:
         执行一次 HTTP GET（列模型，不产生 token 消耗），不写数据库、不碰 Qdrant。
@@ -303,6 +311,7 @@ def create_app(
         usage_runtime: UsageRuntime | None = None
         agent_runtime: AgentRuntime | None = None
         run_registry: AgentRunRegistry | None = None
+        verdict: ModelCatalogVerdict | None = None
         shutdown_error: Exception | None = None
         try:
             # 1、migration 已由部署步骤完成；先同步唯一的环境托管超级用户。
@@ -316,10 +325,18 @@ def create_app(
             # 3、只读搜索 Runtime。
             runtime = runtime_factory()
             application.state.vector_search_runtime = runtime
-            # 4、Agent 复用上面那个检索 Service，所以必须排在它之后。
+            # 4、启动后**并发**跑一次上游「列模型」校验，不 await：它最长占满
+            #    MODEL_CATALOG_TIMEOUT_SECONDS，而它不属于「能服务」的前提（检索、阅读、
+            #    流水线都不需要生成式模型）。结论由就绪端点表达（见 api/readiness），所以
+            #    「配置写错的版本不许替掉好版本」这条判定仍然在，只是不再占用启动时间。
+            verdict = ModelCatalogVerdict()
+            verdict.start(model_catalog_check)
+            application.state.model_catalog_verdict = verdict
+            # 5、Agent 复用上面那个检索 Service，所以必须排在它之后。装配**不再等那次校验**：
+            #    配置写错现在表现为「这次提问收到 llm_model_not_found 事件 + 就绪端点报未
+            #    就绪」，而不是「装配失败、/agent/* 返 503」。
             application.state.agent_runtime = None
             try:
-                await model_catalog_check()
                 agent_runtime = agent_runtime_factory(runtime.service, usage_runtime.collector)
                 await agent_runtime.open()
             except Exception as exc:
@@ -328,13 +345,13 @@ def create_app(
                 agent_runtime = None
             else:
                 application.state.agent_runtime = agent_runtime
-            # 5、脱离连接的后台运行注册表。它排在 Agent Runtime 之后：运行要图才能跑，而它
+            # 6、脱离连接的后台运行注册表。它排在 Agent Runtime 之后：运行要图才能跑，而它
             #    自己只读写 agent_threads，所以装配失败的影响面比 Agent 装配失败小。传入刚刚
             #    装好的 Runtime（可能为 ``None``）：接手续跑要用同一张进程级图（见 ADR 0040）。
             run_registry = agent_run_registry_factory(agent_runtime)
             await run_registry.start()
             application.state.agent_run_registry = run_registry
-            # 6、yield 之后是「运行期」：ASGI Server 在这里处理并发 HTTP 请求。
+            # 7、yield 之后是「运行期」：ASGI Server 在这里处理并发 HTTP 请求。
             yield
         finally:
             # 0、部署或重启的收尾：先把本进程手上的在途运行排空到可交接的边界（上限见
@@ -346,6 +363,9 @@ def create_app(
                 except Exception as exc:
                     # 只记类型：排空失败不能挡住后面必然要做的资源释放。
                     logger.error("排空在途运行失败 error_type=%s", type(exc).__name__)
+            # 排空之后关掉那次配置校验：它只是个探测任务，收尾时结论已经没有消费者。
+            if verdict is not None:
+                await verdict.close()
             # 先停掉还在跑的后台运行（收尾可能来不及，那段窗口已确认为接受的边界），
             # 再释放依赖搜索的 Agent，最后释放用量库与搜索资源。
             for resource in (run_registry, agent_runtime, usage_runtime, runtime):
@@ -361,7 +381,7 @@ def create_app(
                             f"此外关闭 {type(resource).__name__} 也失败："
                             f"{type(exc).__name__}。"
                         )
-            # 6、再释放数据库连接池；所有资源都要尝试释放，且不掩盖前面的异常
+            # 1、再释放数据库连接池；所有资源都要尝试释放，且不掩盖前面的异常
             try:
                 await engine.dispose()
             except Exception as engine_error:
@@ -376,6 +396,7 @@ def create_app(
                 application.state.usage_runtime = None
                 application.state.vector_search_runtime = None
                 application.state.agent_runtime = None
+                application.state.model_catalog_verdict = None
                 application.state.agent_run_registry = None
             if shutdown_error is not None:
                 raise shutdown_error
@@ -524,6 +545,7 @@ def create_app(
     application.include_router(knowledge_bases_router)
     application.include_router(sources_router, dependencies=[Depends(current_superuser)])
     application.include_router(health_router)
+    application.include_router(readiness_router)
     application.include_router(
         vector_search_router,
         dependencies=[Depends(current_active_user)],

@@ -57,6 +57,7 @@ from agent_lab.agent.errors import (
     AgentThreadNotFoundError,
     ModelResponseInvalidError,
 )
+from agent_lab.agent.model_catalog import LlmModelNotListedError
 from agent_lab.api.dependencies import (
     SchedulerRuntimeUnavailableError,
     UsageDatabaseUnavailableError,
@@ -674,6 +675,17 @@ AGENT_CHAT_ERROR_RULES: tuple[ErrorContractRule, ...] = (
         code="llm_rate_limited",
         detail="大模型服务达到调用频率上限。",
         retryable=True,
+    ),
+    # 这是「配置写错」在流里的形态：启动后那次「列模型」校验拿到的证据是「配置的模型名不在
+    # 上游列表里」，它比下面那条 NotFoundError 来得更早，也更确定——后者要等真调一次模型、
+    # 上游报 404 才发现，而上游的报错形状并不总是 404。两者共用同一个 code 与同一句 detail：
+    # 对用户来说是同一件事（Agent 尚未就绪），前端文案表只需认这一个码。
+    ErrorContractRule(
+        exceptions=(LlmModelNotListedError,),
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="llm_model_not_found",
+        detail="配置的大模型不可用。",
+        retryable=False,
     ),
     ErrorContractRule(
         exceptions=(NotFoundError,),
