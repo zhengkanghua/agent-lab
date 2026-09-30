@@ -37,6 +37,10 @@ export interface UseAgentChatOptions {
   stopRun?: AgentRunStopper
   /** 轮询「在途运行结束了吗」的间隔。只为让测试不必真的等三秒，生产不要传。 */
   runWatchIntervalMs?: number
+  /** 断流后读回放的尝试次数；只为让测试不必真的等三十秒，生产不要传。 */
+  runRecoverAttempts?: number
+  /** 两次读回放之间的间隔；同上。 */
+  runRecoverIntervalMs?: number
   getScopeError?: () => string | null
   saveScope?: typeof updateAgentThreadScope
   onThreadCreated?: (threadId: string) => void
@@ -48,6 +52,17 @@ export interface UseAgentChatOptions {
  * 只用来知道它什么时候结束，不接续正在生成的实时文字（那是刻意的：见 spec 的「超出范围」）。
  */
 export const RUN_WATCH_INTERVAL_MS = 3000
+
+/**
+ * 流被中断后，读回放（判断服务端还在不在跑）的尝试次数上限。
+ *
+ * 单副本「先停后起」或手动重启容器时，从旧进程停止接受到新进程能服务之间有几十秒的
+ * 不可达窗口；这个重连轮询就是用来跨过它的。
+ */
+export const RUN_RECOVER_ATTEMPTS = 5
+
+/** 两次读回放之间的间隔（约 5 次 × 6 秒 ≈ 30 秒）。见 `RUN_RECOVER_ATTEMPTS`。 */
+export const RUN_RECOVER_INTERVAL_MS = 6000
 
 const FAILED_TRACE_NOTE = '本轮对话中断，这次工具调用的结果未送达。'
 // 回放专用：历史里那次调用没有结果，是当时就断了，不是现在还在查。
@@ -69,6 +84,8 @@ export function useAgentChat({
   loadThreadMessages = getAgentThreadMessages,
   stopRun = stopAgentRun,
   runWatchIntervalMs = RUN_WATCH_INTERVAL_MS,
+  runRecoverAttempts = RUN_RECOVER_ATTEMPTS,
+  runRecoverIntervalMs = RUN_RECOVER_INTERVAL_MS,
   getScopeError = () => null,
   saveScope = updateAgentThreadScope,
   onThreadCreated,
@@ -362,11 +379,16 @@ export function useAgentChat({
   }
 
   /**
-   * 流被中断时的回退：读一次回放，服务端仍报有在途运行就进入等待态。
+   * 流被中断时的回退：读回放，服务端仍报有在途运行就进入等待态。
    *
-   * 部署切换会把订阅连接断掉，但运行与连接已经解耦，服务端照旧跑完并落库。此时回放里的
-   * ``active_run_id`` 还在，界面显示「正在生成」并继续轮询；服务端不再上报之后按回放渲染
-   * 这一轮。返回 ``false`` 表示服务端也没在跑，交给调用方走原来的错误分支。
+   * 部署切换会把订阅连接断掉，但运行与连接已经解耦，服务端照旧跑完并落库。断流之后
+   * 读回放能拿到服务端记的在途运行 id，界面显示「正在生成」并继续轮询；服务端不再上报
+   * 之后按回放渲染这一轮。
+   *
+   * **读回放本身也要重试。** 单副本「先停后起」与手动重启容器期间，旧进程已停止接受
+   * 连接、新进程还没起来，回放请求必然失败；这个窗口有几十秒，一次探针不够。所以按
+   * `runRecoverAttempts` 次重试（默认约 30 秒）。**只有用尽重试仍连不上**才返回 ``false``
+   * ——那更像真的断网，而不是一次部署，交给调用方走错误分支。
    *
    * 陈旧响应守卫与 ``synchronizeHistory`` 同理：这一轮已经被取消或换掉时什么都不做，但也不
    * 再标错。
@@ -374,15 +396,21 @@ export function useAgentChat({
   async function recoverInterruptedRun(runId: number): Promise<boolean> {
     const target = threadId.value
     if (!target) return false
-    try {
-      const replay = await loadThreadMessages(target)
-      if (runId !== runSequence || target !== threadId.value) return true
-      if (replay.active_run_id == null) return false
-      applyReplay(replay, target)
-      return true
-    } catch {
-      return false
+    for (let attempt = 0; attempt < runRecoverAttempts; attempt += 1) {
+      if (attempt > 0) {
+        await new Promise((resolve) => setTimeout(resolve, runRecoverIntervalMs))
+        if (runId !== runSequence || target !== threadId.value) return true
+      }
+      try {
+        const replay = await loadThreadMessages(target)
+        if (runId !== runSequence || target !== threadId.value) return true
+        applyReplay(replay, target)
+        return true
+      } catch {
+        // 服务可能正在停-起切换，给它时间再试；到上限仍旧失败才当真的连不上。
+      }
     }
+    return false
   }
 
   /**

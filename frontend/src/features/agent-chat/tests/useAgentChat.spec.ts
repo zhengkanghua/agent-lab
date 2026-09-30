@@ -1185,4 +1185,64 @@ describe('流被中断时的断开回退与等待态停止', () => {
     expect(chat.canStop.value).toBe(false)
     wrapper.unmount()
   })
+
+  it('断流后回放暂时读不到：重试成功后进入等待态，不把这轮标成错误', async () => {
+    // 单副本停-起切换期间旧进程已停止接受连接、新进程还没起来，回放必然失败；
+    // 这个窗口有几十秒，一次探针不够。
+    const loader = scriptedLoader(
+      new TypeError('旧进程已停'),
+      new TypeError('新进程还没起'),
+      replay([{ question: '问题', answer: '', status: 'incomplete' }], { activeRunId: IN_FLIGHT }),
+    )
+    const { wrapper, chat } = mountHarness(interruptingStream(), loader, {
+      runRecoverAttempts: 5,
+      runRecoverIntervalMs: 1,
+      runWatchIntervalMs: 100,
+    })
+    chat.draft.value = '问题'
+
+    await chat.send()
+    await flushPromises()
+
+    expect(chat.isAwaitingRun.value).toBe(true)
+    expect(chat.turns.value[0]?.status).not.toBe('error')
+    expect(loader.calls.length).toBeGreaterThanOrEqual(3)
+    wrapper.unmount()
+  })
+
+  it('重试次数用尽仍连不上时，才把这轮标成错误', async () => {
+    const loader = scriptedLoader(
+      new TypeError('down'),
+      new TypeError('down'),
+      new TypeError('down'),
+    )
+    const { wrapper, chat } = mountHarness(interruptingStream(), loader, {
+      runRecoverAttempts: 3,
+      runRecoverIntervalMs: 1,
+    })
+    chat.draft.value = '问题'
+
+    await chat.send()
+    await flushPromises()
+
+    expect(chat.turns.value[0]?.status).toBe('error')
+    expect(loader.calls).toHaveLength(3)
+    wrapper.unmount()
+  })
+
+  it('回放说服务端已经没在跑时直接按回放渲染，不标错', async () => {
+    const loader = scriptedLoader(
+      replay([{ question: '问题', answer: '最终答案。', status: 'completed' }]),
+    )
+    const { wrapper, chat } = mountHarness(interruptingStream(), loader)
+    chat.draft.value = '问题'
+
+    await chat.send()
+    await flushPromises()
+
+    expect(chat.turns.value[0]?.status).toBe('done')
+    expect(chat.turns.value[0]?.answer).toBe('最终答案。')
+    expect(chat.isAwaitingRun.value).toBe(false)
+    wrapper.unmount()
+  })
 })
