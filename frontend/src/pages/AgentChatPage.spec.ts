@@ -560,6 +560,13 @@ describe('AgentChatPage', () => {
       const { wrapper } = await mountThreadPage()
 
       expect(wrapper.text()).toContain('正在生成')
+      // 状态贴在对话最底下（transcript 之后），不是正文上方——长回答滚动到底时才看得见。
+      const region = wrapper.get('.transcript-region')
+      const children = [...region.element.children]
+      const transcriptIndex = children.findIndex((el) => el.classList.contains('transcript'))
+      const noteIndex = children.findIndex((el) => el.classList.contains('run-note'))
+      expect(transcriptIndex).toBeGreaterThanOrEqual(0)
+      expect(noteIndex).toBeGreaterThan(transcriptIndex)
       await wrapper.get('.message-input').setValue('再问一句')
       await flushPromises()
       // 等待态没有发送键（服务端在跑时发出去注定被拒），换成了停止键。

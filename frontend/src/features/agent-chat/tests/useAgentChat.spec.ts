@@ -1133,8 +1133,38 @@ describe('流被中断时的断开回退与等待态停止', () => {
     expect(chat.isAwaitingRun.value).toBe(true)
     expect(chat.canStop.value).toBe(true)
     expect(chat.turns.value[0]?.status).not.toBe('error')
+    // 屏幕上的片段保留下来（不去用回放重建 turns，那会把滚动位置一并重置）。
+    expect(chat.turns.value[0]?.answer).toBe('半句')
     // 回退只读了一次回放（还没到第一个轮询周期）。
     expect(loader.calls).toEqual([THREAD_ID])
+    wrapper.unmount()
+  })
+
+  it('等待期间轮询不重建对话，结束之后才按回放渲染一次', async () => {
+    // turnsFromReplay 会给每一轮生成新 id，transcript 以 turn.id 为 key；
+    // 如果每轮询一次都换 turns，整段对话会被拆掉重建，滚动位置被反复重置。
+    const loader = scriptedLoader(
+      replay([{ question: '问题', answer: '' }], { activeRunId: IN_FLIGHT }),
+      replay([{ question: '问题', answer: '' }], { activeRunId: IN_FLIGHT }),
+      replay([{ question: '问题', answer: '最终答案。', status: 'completed' }]),
+    )
+    const { wrapper, chat } = mountHarness(interruptingStream(), loader, {
+      runRecoverAttempts: 1,
+      runWatchIntervalMs: 5,
+    })
+    chat.draft.value = '问题'
+
+    await chat.send()
+    await flushPromises()
+    expect(chat.isAwaitingRun.value).toBe(true)
+    const waitingTurn = chat.turns.value[0]
+
+    // 等到「服务端仍报在途」的那几次轮询都发生过：界面不应被换成新的 turns。
+    await waitFor(() => loader.calls.length >= 2)
+    expect(chat.turns.value[0]).toBe(waitingTurn)
+
+    await waitFor(() => chat.isAwaitingRun.value === false)
+    expect(chat.turns.value[0]?.answer).toBe('最终答案。')
     wrapper.unmount()
   })
 
@@ -1207,6 +1237,30 @@ describe('流被中断时的断开回退与等待态停止', () => {
     expect(chat.isAwaitingRun.value).toBe(true)
     expect(chat.turns.value[0]?.status).not.toBe('error')
     expect(loader.calls.length).toBeGreaterThanOrEqual(3)
+    wrapper.unmount()
+  })
+
+  it('重连期间暴露 isReconnecting，重连成功后清掉', async () => {
+    const loader = scriptedLoader(
+      new TypeError('旧进程已停'),
+      replay([{ question: '问题', answer: '', status: 'incomplete' }], { activeRunId: IN_FLIGHT }),
+    )
+    const { wrapper, chat } = mountHarness(interruptingStream(), loader, {
+      runRecoverAttempts: 5,
+      runRecoverIntervalMs: 30,
+      runWatchIntervalMs: 100,
+    })
+    chat.draft.value = '问题'
+
+    const running = chat.send()
+    await flushPromises()
+    // 第一次探针失败之后进入「正在重连」，底部会显示它。
+    await waitFor(() => chat.isReconnecting.value === true)
+
+    await running
+    await flushPromises()
+    expect(chat.isReconnecting.value).toBe(false)
+    expect(chat.isAwaitingRun.value).toBe(true)
     wrapper.unmount()
   })
 

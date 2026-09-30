@@ -155,6 +155,17 @@ watch(
   },
 )
 
+// 「正在生成 / 正在重连」这类底部状态是低频的状态切换（不是每个 token），出现时把它带进
+// 视口，否则贴在底部也会落在折叠线以下看不见。
+watch(
+  [() => chat.isAwaitingRun.value, () => chat.isReconnecting.value],
+  async ([awaiting, reconnecting], [wasAwaiting, wasReconnecting]) => {
+    if ((!awaiting || wasAwaiting) && (!reconnecting || wasReconnecting)) return
+    await nextTick()
+    transcriptEndRef.value?.scrollIntoView({ block: 'end', behavior: 'smooth' })
+  },
+)
+
 async function chooseExample(value: string): Promise<void> {
   chat.draft.value = value
   await chat.send()
@@ -248,16 +259,6 @@ async function chooseExample(value: string): Promise<void> {
             >
           </BaseCallout>
 
-          <BaseCallout
-            v-if="chat.isAwaitingRun.value"
-            class="run-note"
-            tone="neutral"
-            title="正在生成"
-            description="上一轮回答还在服务端生成，完成后会自动显示最终内容。"
-          >
-            <template #icon><LoaderCircle :size="14" aria-hidden="true" /></template>
-          </BaseCallout>
-
           <AgentTranscript
             :turns="chat.turns.value"
             :streaming="chat.isStreaming.value"
@@ -266,6 +267,28 @@ async function chooseExample(value: string): Promise<void> {
             @choose-example="chooseExample"
             @open-evidence="openEvidence"
           />
+
+          <!-- 生成/重连这类状态贴在对话最底部：聊天内容向上长，用户的视线在底部，
+               放在正文上方时长回答一多就被滚出视口看不见。与主流聊天产品一致。 -->
+          <BaseCallout
+            v-if="chat.isReconnecting.value"
+            class="run-note"
+            tone="neutral"
+            title="连接中断，正在重连"
+            description="服务可能正在重启，界面会自动恢复，不需要刷新。"
+          >
+            <template #icon><LoaderCircle :size="14" aria-hidden="true" /></template>
+          </BaseCallout>
+          <BaseCallout
+            v-else-if="chat.isAwaitingRun.value"
+            class="run-note"
+            tone="neutral"
+            title="正在生成"
+            description="上一轮回答还在服务端生成，完成后会自动显示最终内容。"
+          >
+            <template #icon><LoaderCircle :size="14" aria-hidden="true" /></template>
+          </BaseCallout>
+
           <!-- 滚动锚点。滚 transcript 本身会把它的顶部带进视口，方向正好相反。 -->
           <div ref="transcriptEndRef" class="scroll-anchor" aria-hidden="true"></div>
         </div>

@@ -109,6 +109,9 @@ export function useAgentChat({
   // 服务端报告的「这个会话有在途运行」。刷新或切回来时，它是唯一能区分「这一轮没有回答」与
   // 「这一轮还在生成」的渠道：在途那一轮还没落库，从消息里看不出来。
   const awaitingRunId = ref<string | null>(null)
+  // 断流后正在重连（旧进程停了、新进程还没起来的那段窗口）。只在重试阶段为真，
+  // 用来在对话底部显示「连接中断，正在重连」。
+  const isReconnecting = ref(false)
   const selection = ref<KnowledgeBaseSelection>({ mode: 'all' })
   const savingScope = ref(false)
   const scopeSaveError = ref<string | null>(null)
@@ -367,11 +370,15 @@ export function useAgentChat({
       try {
         const replay = await loadThreadMessages(targetThreadId)
         if (threadId.value !== targetThreadId || watchId !== watchSequence) return
+        // 还在跑：界面保持不动。**不要每一轮都把 turns 换一遍**——turnsFromReplay 会给每一轮
+        // 生成新的 id，transcript 以 turn.id 为 key，整段对话会被拆掉重建、滚动位置被反复重置
+        // （表现是用户往下滚、下一次轮询又把他拉回去）。等它结束后一次性按回放渲染。
+        if ((replay.active_run_id ?? null) !== null) continue
         turns.value = turnsFromReplay(replay.turns ?? [], HISTORY_TRACE_NOTE)
         isHistoryTruncated.value = replay.summarized
         historySummary.value = replay.summary ?? null
-        awaitingRunId.value = replay.active_run_id ?? null
-        if (awaitingRunId.value === null) return
+        awaitingRunId.value = null
+        return
       } catch {
         // 一次读失败不放弃：这是一条「等它结束」的循环，下一轮再试就好。
       }
@@ -396,21 +403,36 @@ export function useAgentChat({
   async function recoverInterruptedRun(runId: number): Promise<boolean> {
     const target = threadId.value
     if (!target) return false
-    for (let attempt = 0; attempt < runRecoverAttempts; attempt += 1) {
-      if (attempt > 0) {
-        await new Promise((resolve) => setTimeout(resolve, runRecoverIntervalMs))
-        if (runId !== runSequence || target !== threadId.value) return true
+    try {
+      for (let attempt = 0; attempt < runRecoverAttempts; attempt += 1) {
+        if (attempt > 0) {
+          // 第一次探针失败说明服务此刻不可达（最典型是停-起切换）；从这一轮开始告诉用户
+          // 正在重连，界面底部会显示它。
+          isReconnecting.value = true
+          await new Promise((resolve) => setTimeout(resolve, runRecoverIntervalMs))
+          if (runId !== runSequence || target !== threadId.value) return true
+        }
+        try {
+          const replay = await loadThreadMessages(target)
+          if (runId !== runSequence || target !== threadId.value) return true
+          if (replay.active_run_id != null) {
+            // 服务端确认还在跑：保留当前屏幕上的片段与滚动位置，只进入等待态。
+            // **刻意不走 applyReplay**：那会用回放重建 turns（每轮都是新 id），transcript 以
+            // turn.id 为 key，整段对话会被拆掉重建、滚动位置被重置。等它结束后再按回放渲染一次。
+            awaitingRunId.value = replay.active_run_id
+            void watchPendingRun(target)
+            return true
+          }
+          applyReplay(replay, target)
+          return true
+        } catch {
+          // 服务可能正在停-起切换，给它时间再试；到上限仍旧失败才当真的连不上。
+        }
       }
-      try {
-        const replay = await loadThreadMessages(target)
-        if (runId !== runSequence || target !== threadId.value) return true
-        applyReplay(replay, target)
-        return true
-      } catch {
-        // 服务可能正在停-起切换，给它时间再试；到上限仍旧失败才当真的连不上。
-      }
+      return false
+    } finally {
+      isReconnecting.value = false
     }
-    return false
   }
 
   /**
@@ -497,6 +519,7 @@ export function useAgentChat({
     historySummary.value = null
     historySyncError.value = null
     awaitingRunId.value = null
+    isReconnecting.value = false
     scopeSaveError.value = null
     scopeEditVersion += 1
     savingScope.value = false
@@ -552,6 +575,7 @@ export function useAgentChat({
     historySummary.value = null
     historySyncError.value = null
     awaitingRunId.value = null
+    isReconnecting.value = false
     selection.value = { mode: 'all' }
     scopeEditVersion += 1
     savingScope.value = false
@@ -598,6 +622,7 @@ export function useAgentChat({
     remainingCharacters,
     canSend,
     canStop,
+    isReconnecting,
     isStreaming,
     isAwaitingRun,
     send,
