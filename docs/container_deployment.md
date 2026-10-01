@@ -724,6 +724,28 @@ docker stack rm agent-lab
 一次性容器都挂 `agent-lab-net`：它们要够到 Redis、PostgreSQL、minio，而这三个容器被接在这张网上
 （见第一节第 5 小节）。`docker run --rm` 起的是一次性容器，用完即删，不影响正在服务的那个。
 
+### 图形界面（Portainer）能做什么、不能做什么
+
+**定位：查看、看日志、应急重启/停止/回滚；写入者始终是 CI。** 堆栈显示「在 Portainer 外部创建、控制权
+受限」是**预期的**——它是 CI 用 `docker stack deploy` 建的，所以它不提供「编辑/重新部署」。
+**不要在 Portainer 里新建一个栈来「部署」**：那会出现第二份服务定义，症状是「改了没生效」。
+
+- **能看**：堆栈、服务、容器、日志。容器的健康状态只有在这里（或 `docker ps`）看得到，服务定义里没有。
+- **能应急**：重启/停止**服务**（界面上有服务级操作就用它）；对**容器**做停止/重启也能生效，但有下面第 1 个坑。
+- **回滚**：以 CLI 的 `docker service update --rollback` 为准（见第三节）；Portainer 是否暴露一键回滚
+  视版本而定，不要依赖它。
+
+**两个坑，都是 Docker 的行为、面板改不了：**
+
+1. **对任务容器做「重启」会留下孤儿容器。** Swarm 把那个任务判成异常、另建新任务，而旧容器因为自带
+   `restart: any` 策略继续活着、且不再归编排管。症状是「服务层看着干净（`docker service ls` 显示 1/1），
+   但 `docker ps` 里多出一个同名容器在跑」；对 Beat 而言就是两个调度器同时活着（周期任务可能被投两次）。
+   **正确做法是重启服务**：`docker service update --force <服务名>`；已经产生的孤儿用
+   `docker rm -f <容器名>` 清掉。
+2. **手工换下来的旧任务容器不会被 CI 清。** 工作流只清自己那一次部署留下的；手工做过 `docker service
+   update`（回滚、改环境、强制重启）之后自己清一次：
+   `docker ps -a --filter name=agent-lab_ --filter status=exited --format '{{.Names}}' | xargs -r docker rm`。
+
 ## 五、与容器化无关：Cloudflare 与账号管理
 
 ### 5.1 Cloudflare 与源站防护
