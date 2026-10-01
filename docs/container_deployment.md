@@ -32,13 +32,7 @@ HTTP Pipeline。PostgreSQL 保存状态和结果，Redis 传递任务消息，�
 （见 [ADR 0039](adr/0039-swarm-start-first-deploys.md) 与 [ADR 0040](adr/0040-run-handover-on-deploy.md)）。
 **写入者只有 CI**；图形界面（Portainer）只用于查看、看日志、手动重启与应急回滚，不要用它改服务定义。
 
-发布流程：CI 用 `docker stack deploy` 部署，一次性容器（Redis 自检、用量库配置自检、两个迁移、建表初始化）都跑在 `agent-lab-net` 上，运行顺序与几条不可调的顺序约束见下面「二、日常部署」。
-
-## 与容器化无关的内容
-
-Cloudflare 与账号管理收在本文第五节；网关侧要求（登录限流、请求体大小、SSE 读超时）见
-[`backend/README.md`](../backend/README.md) 的「生产前置要求」一节——服务本身不做这些，
-需要在 OpenResty 侧落实。
+发布流程：CI 用 `docker stack deploy` 部署，一次性容器（Redis 自检、用量库配置自检、两个迁移、建表初始化）都跑在 `agent-lab-net` 上，运行顺序与几条不可调的顺序约束见下面「二、日常部署」。**网关侧要求**（登录限流、请求体大小、SSE 读超时）见 [`backend/README.md`](../backend/README.md) 的「生产前置要求」一节——服务本身不做这些，需要在 OpenResty 侧落实；Cloudflare 与账号管理在第五节。
 
 ## 一、服务器一次性准备
 
@@ -121,45 +115,31 @@ CRLF 行尾，而 `.env` 不经过 Git（`.gitattributes` 管不到它），`\r`
 URL、API Key 后面多一个看不见的字符。这类故障很难查：日志里的报错看起来像密码错或地址错，
 但值「看上去」完全正确。
 
-填写时注意以下配置：
+填写时只有四类要点，其余键一律照 [`backend/.env.example`](../backend/.env.example) 的注释与
+[后端 README 的环境变量表](../backend/README.md) 填，本文不重复：
 
-1. `AUTH_COOKIE_SECURE=true`（生产走 HTTPS，必须）。
-2. `DATABASE_URL` 指远程库。**不要**写 `localhost`——容器里的 `localhost` 指容器自己，
-   不是宿主机。
-3. `AUTH_ADMIN_EMAIL` 与 `AUTH_ADMIN_PASSWORD` 必须同时存在，密码 12–128 字符、不能与
-   邮箱相同。模板里的尖括号是占位符，必须替换。
-4. **不要写 `LLM_CHECKPOINT_POOL_SIZE`**。它在 `config/llm.py` 里声明为 `strict=True`，
-   而 compose 的 `env_file` 注入的一律是字符串，配上会让容器启动即 `ValidationError`。
-5. 保留 `SCHEDULER_TIMEZONE=Asia/Shanghai` 与 `DATABASE_TIMEZONE=UTC`；周期、参数和启停在任务管理配置，默认重试与历史保留通过网页策略管理，`.env` 里不再有调度开关。
-6. 文档原件必须配置 `S3_ENDPOINT`、`S3_BUCKET`、`S3_REGION`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`
-   和 `S3_ADDRESSING_STYLE`。MinIO endpoint 是后端可达的 API 地址，不是管理控制台地址。
-   保持 `S3_REQUIRED=true`；缺少原件存储时上传和 FreshRSS 接收不能成功，不回退旧处理链。
-7. 新版使用 `QDRANT_COLLECTION_SCHEMA_VERSION=v3`。镜像已设置
-   `DOCUMENT_TOKENIZER_PATH=/app/resources/tokenizers/bge-m3`，通常无需在 `.env` 重复设置；
-   不要用本地开发的 `.cache/...` 路径覆盖它。`DOCUMENT_CHUNK_MAX_TOKENS` 默认 512，包含标题上下文。
-8. 容器必须显式设置 `REDIS_URL`，指向环境已有 Redis。**地址按容器名写**（`redis`、`postgresql`、`minio` 都是容器名，见第五节「网络与容器内依赖」）；没有配置时栈校验会直接报错（写成 `${REDIS_URL:?...}`）。不要复制原生开发的 `127.0.0.1`。密码单独填 `REDIS_PASSWORD`，留空表示不需要密码，不把密码拼入 URL。API、Beat、Worker 的 Redis 配置与 `TASK_QUEUE_NAME` 必须一致；队列名同时决定消息及辅助键的前缀，不同环境须区分。连接凭据只放服务端配置，不放任务参数或前端变量。
-9. `WORKER_COUNT` 是 API 进程数，`TASK_WORKER_CONCURRENCY` 是每个 Worker 的 prefork 子进程数。**要加 Worker 实例就改编排文件里的 `deploy.replicas`**（或临时 `docker service scale agent-lab_task-worker=2`），Beat 始终只有一个实例。停止宽限用于让手上的活收尾，不能据此限制整次排空时长。
-10. **`LLMOPS_DATABASE_URL` 必填**，指用量记录所在的**另一个** PostgreSQL 数据库（同一个实例上另建一个库，库名 `llmops`）；连同 `LLMOPS_POOL_SIZE` 等一起照模板填。少了它进程**起不来**（报错会指出缺的是哪一项，而不是静默不记账），所以部署工作流在停旧进程之前会先自检这一项。不要把它写成 `DATABASE_URL` 那个库：两者必须是不同的库，否则用量数据会和业务表共命运（见 [ADR 0032](adr/0032-usage-data-in-separate-database.md)）。
+1. **地址类值写容器名**（`redis`、`postgresql`、`minio`），不要写 `127.0.0.1`（容器里的
+   `localhost` 指容器自己）；`REDIS_URL` 没配时栈校验直接报错，密码单独填 `REDIS_PASSWORD`。
+   API、Beat、Worker 的 Redis 配置与 `TASK_QUEUE_NAME` 必须一致。
+2. **`LLMOPS_DATABASE_URL` 必填**，而且是**另一个**库（同一个实例上另建 `llmops`，见
+   [ADR 0032](adr/0032-usage-data-in-separate-database.md)）；少了它进程起不来，部署工作流在停旧
+   之前会先自检这一项。
+3. **不要写 `LLM_CHECKPOINT_POOL_SIZE`**：它在 `config/llm.py` 是 `strict=True`，而 `env_file`
+   注入的全是字符串，配上就会启动即 `ValidationError`。生产还要有 `AUTH_COOKIE_SECURE=true`。
+4. **`WORKER_COUNT` 是 API 进程数、`TASK_WORKER_CONCURRENCY` 是每个 Worker 的子进程数**；要加
+   Worker 实例就改编排文件里的 `deploy.replicas`，Beat 始终只有一个实例（详见后端 README 的环境变量表）。
 
-已有 Redis 的部署负责 AOF/everysec、持久盘、容量和 `noeviction`，本项目**不创建 Redis 与数据卷**，也不修改共享实例配置；**但创建并自持一张本项目的 overlay**（`agent-lab-net`，建网与接线见第五节）——这张网上只有我们的三个服务与它们依赖的三个容器，比今天「全机共用面板那张网」更窄。`REDIS_URL` 为项目公共连接，任务消息和后续缓存按各自前缀区分；`noeviction` 作用于整个实例，缓存用 TTL 过期，内存满时新增写入失败。任务发布失败的依据保留在 PostgreSQL，等待补投。运维监控需关注内存占用/上限、AOF 写入状态、持久盘剩余空间和任务投递错误；在现有监控平台配置告警，具体阈值按批准容量设置。Redis 重启不清卷，不对共享服务执行 FLUSHDB 或故障实验。
+已有的 **Redis 与原件存储**都由各自部署管理：本项目不创建、不修改它们（AOF/everysec、持久盘、
+`noeviction`、桶的私有与保留策略都见[后端 README 的生产前置要求](../backend/README.md)），
+只**创建并自持一张 overlay**（`agent-lab-net`，建网与接线见第 5 小节）——这张网上只有我们的三个
+服务与它们依赖的三个容器，比今天「全机共用面板那张网」更窄。
 
-原件桶需预先创建并保持私有，按环境隔离。应用凭据只需覆盖本项目对象的读取、条件写入和删除；
-开启桶版本控制时也要允许读取和删除具体对象版本。应用不会创建桶或修改桶配置。不要为原件启用
-对象锁，也不要配置会绕过应用保留规则的桶级到期清理：待审核、失败、拒绝资料及已采用历史仍需保留。
-浏览器通过后端鉴权下载原件，无需桶公开读权限或浏览器侧 S3 密钥。
-
-构建环境首次安装依赖并从 Hugging Face 下载锁定的 tokenizer 文件，校验 SHA-256 后放入镜像，
-不下载 Embedding 模型权重。这一步在镜像构建里完成（`backend/Dockerfile`），运行时只读本地文件；
-本地跑结构测试前需要自己先执行 `prepare_document_resources`。
-部署时可先用新镜像做离线资源检查：
+部署时可先用新镜像做一次离线资源检查（不连接数据库、S3 或模型服务；也**不能代替原件存储验收**
+——真实 S3 的读写与删除验收入口见[后端测试说明](../backend/README.md#测试)）：
 
 ```bash
 docker run --rm --network agent-lab-net --env-file .env "$IMG" python -m agent_lab.prepare_document_resources --check
 ```
-
-这条检查不连接数据库、S3 或模型服务。真实 S3 的字节读写、幂等和版本删除验收入口见
-[后端测试说明](../backend/README.md#测试)，只使用随机测试键；资源检查或 API `/health` 成功
-不能代替原件存储验收。
 
 ### 4. 让 deploy 用户能写静态站目录
 
@@ -309,13 +289,9 @@ Secrets 和 Variables 填在不同页签里，填错地方工作流读不到（�
 | `DEPLOY_DIR` | 如 `/opt/agent-lab` | 第 3 步建的目录 |
 | `WEB_ROOT` | 静态站目录绝对路径，**不要带尾部斜杠** | 面板上站点详情页显示的目录 |
 
-为什么地址用 Variables 而不是 Secrets：Secrets 的值在日志里会被打码，调 CI 时看到的是
-`docker push ***/***:backend-latest`，出错几乎无法定位。这些值也不是凭据——光有地址没有
-用户名密码拉不动私有仓库。
-
-工作流在「检查必需的 Variables 已配置」这一步校验这五个 Variables 是否都非空（排在取代码之后、
-装依赖之前），缺了就在早期失败并指出缺哪个；不检查会一路跑到几分钟后的
-push 步骤才报一个含糊的错。
+地址放 Variables 而不是 Secrets，是因为 Secrets 在日志里会被打码（`docker push ***/***:…`），
+调 CI 时几乎无法定位；而这些值本来也不是凭据。工作流会在第一步就校验这五个 Variables 非空，
+缺了立刻失败并指出缺哪个。
 
 ### 更换 registry 时必须同步改的地方
 
@@ -328,56 +304,14 @@ push 步骤才报一个含糊的错。
 | 服务器 `<DEPLOY_DIR>/.env` | `BACKEND_IMAGE` 整行 |
 | 服务器 `docker login` | 重新登录新 registry（凭据存在 `~/.docker/config.json`） |
 
-改完先手工验证一次再推代码：
-
-```bash
-cd /opt/agent-lab
-docker pull "$(grep -E '^BACKEND_IMAGE=' .env | cut -d= -f2-)"      # 确认拉得动
-bash verify-agent-lab-net.sh                                          # 确认三个依赖够得着
-```
+改完先手工验证一次再推代码（在部署目录执行）：
+`docker pull "$(grep -E '^BACKEND_IMAGE=' .env | cut -d= -f2-)"`——拉得动再推。
 
 ### 9. 首次部署前先手工验证一遍
 
-不要指望第一次就让 CI 跑通。先在服务器上手工走一遍，把环境问题和 CI 问题分开：
-
-```bash
-cd /opt/agent-lab
-
-# 一次性容器与起栈都要用到这个地址（本页里的示例路径都是占位符，按实际 .env 所在目录替换）
-IMG=$(grep -E '^BACKEND_IMAGE=' .env | head -1 | cut -d= -f2-)
-
-# ACR 登录（会提示输密码；地址和用户名从 ACR 控制台取）
-docker login <your-acr-registry> -u <your-acr-username>
-
-# 此时 ACR 里还没有镜像，所以 pull 会失败——这是正常的。
-# 先让 CI 跑一次，把镜像推上去，再回来执行下面的步骤。
-
-docker pull "$IMG"
-# 业务库迁移。业务库必须已存在（本页不涵盖它的创建）。
-docker run --rm --network agent-lab-net --env-file .env "$IMG" alembic upgrade head
-# 用量库（ADR 0032 的独立库 llmops）：先建库，再跑它自己那套迁移。部署工作流也做这两步，
-# 手工走一遍主要是确认服务器上的 .env 配全了（少了这一项应用启动就会失败）。
-docker run --rm -i --network agent-lab-net --env-file .env --entrypoint python "$IMG" - <<'PY'
-import psycopg
-from sqlalchemy.engine import make_url
-from agent_lab.config.usage_database import get_usage_database_settings
-
-url = make_url(str(get_usage_database_settings().database_url))
-try:
-    with psycopg.connect(host=url.host, port=url.port, dbname=url.database, user=url.username,
-                         password=url.password, connect_timeout=5, autocommit=True):
-        print("用量库已存在，跳过创建")
-except psycopg.OperationalError:
-    with psycopg.connect(host=url.host, port=url.port, dbname="postgres", user=url.username,
-                         password=url.password, connect_timeout=5, autocommit=True) as conn, conn.cursor() as cur:
-        cur.execute(f'CREATE DATABASE "{url.database}"')
-    print("用量库已创建")
-PY
-docker run --rm --network agent-lab-net --env-file .env "$IMG" alembic -c alembic_usage.ini upgrade head
-docker run --rm --network agent-lab-net --env-file .env "$IMG" agent-lab init-checkpointer
-docker stack deploy --with-registry-auth --detach=false -c docker-stack.next.yml agent-lab   # 起栈（完整流程见第二节）
-docker service logs -f agent-lab_backend
-```
+不要指望第一次就让 CI 跑通。手工跑一遍的顺序、命令与注意事项都在**第二节「手工跑一遍同一套流程」**，
+本手册不再重复一遍；那里也写了初次部署才碰得到的两条前提：ACR 里还没有镜像时第一次 `pull` 会失败
+（先让 CI 跑一次把镜像推上去），以及业务库必须已存在（本文不涵盖它的创建）。
 
 ## 二、日常部署
 
@@ -431,6 +365,7 @@ CI 不在手边（或想先验证服务器侧）时，照下面这套顺序手�
 cd <DEPLOY_DIR>
 
 # 1) 登录并拉新镜像（目录里已经上传了本次的候选文件 docker-stack.next.yml）
+#    两条前提：ACR 里还没有镜像时第一次 pull 会失败（先让 CI 跑一次）；业务库必须已存在（本文不涵盖它的创建）
 echo "$ACR_PASSWORD" | docker login "$ACR_REGISTRY" -u "$ACR_USERNAME" --password-stdin
 docker pull "$BACKEND_IMAGE"
 
@@ -538,8 +473,6 @@ docker run --rm --network agent-lab-net --env-file .env "$IMG" agent-lab recover
 
 ### 任务执行的排查与恢复
 
-公共任务组件（Celery Beat/Worker 加 Redis）已于 2026-09-13 替换掉旧的进程内 scheduler，切换步骤与当时的容器清理记录在提交 `623e17e` 前后的历史里。切换前受理的执行若没有参数快照，详情里会明确标记缺失，不用当前配置伪造失败参数，这类历史不能人工重试。
-
 部署后分别核对 API `/health`、Beat 本地就绪、Worker 消息连接，再在批准范围内从网页受理一次任务并按编号核对结果：
 
 ```bash
@@ -548,23 +481,7 @@ docker exec "$(docker ps -q -f name=agent-lab_task-worker | head -1)" sh -c 'cel
 docker run --rm --network agent-lab-net --env-file .env "$IMG" python -m agent_lab.scheduler_maintenance
 ```
 
-第三条默认只查看执行者、心跳和占用，输出不含连接串、正文或第三方错误文本。页面的 `needs_attention` 不是允许重新执行的信号。先依据 owner 识别并确认所属进程已经停止，再确认 Qdrant/S3 等远端未决写入已结束；仅确认容器退出或心跳过期还不够。
-
-人工确认完成后，才执行对应恢复命令：
-
-```bash
-docker run --rm --network agent-lab-net --env-file .env "$IMG" python -m agent_lab.scheduler_maintenance --run-id <任务执行UUID> --confirm-stopped
-# 没有任务执行记录的 CLI 或遗留手动 Pipeline，占用通过 operation-id 定位：
-docker run --rm --network agent-lab-net --env-file .env "$IMG" python -m agent_lab.scheduler_maintenance --operation-id <占用UUID> --confirm-stopped
-```
-
-恢复会拒绝近期仍有心跳的执行，关闭失联执行记录、解除相关占用并清除其待核实提示；已经失败的结果和统计继续保留。它不重新执行业务，也不删除 Document 或删除待办。删除待办由下一次正常清理重新核实并继续处理，失败不是“下次一定成功”的保证。
-
-日志用 `run_id`、`operation_id`、`owner` 关联（`job_id` 只在执行详情里，不进日志）：等待写资源、业务失败、客户端关闭失败、终态未保存是不同问题。业务成功但终态未保存时，不能直接再跑一次当作修复。
-
-回退前必须停止所有相关写入口并核实未决写入。共享任务表的迁移拒绝自动 downgrade，不能通过删除执行、回执或业务待办强行降级；若必须回到迁移前的版本，应在确认数据损失范围后恢复配套备份，而非只回滚代码；已经发生的远端删除不会随数据库恢复自动撤销。
-
-任务不推进时按以下证据区分原因：
+任务不推进时按证据区分原因：
 
 | 观察到的现象 | 优先核对 |
 | --- | --- |
@@ -573,9 +490,21 @@ docker run --rm --network agent-lab-net --env-file .env "$IMG" python -m agent_l
 | 已投递但长期未领取 | Worker ping、实际 Worker 数量、繁忙任务与配置的队列名 |
 | 资源等待 | 等待原因、占用者及其任务进展；正常等待不消耗重试 |
 | 待核实 | 原领取、业务完成依据、进程与远端未决写入；不按心跳直接解锁 |
-| 业务已完成但终态未确认 | 条件收尾及业务依据；不能再次执行来“补结果” |
+| 业务已完成但终态未确认 | 条件收尾及业务依据；不能再次执行来「补结果」 |
 
-Redis 队列长度只反映消息数量，不能代表持久受理或业务健康。通过已有 Redis 的运维入口只读查看内存与持久化状态；内存满、AOF 写入失败、磁盘不足及持续投递错误均应由部署监控告警。`TASK_QUEUE_VISIBILITY_TIMEOUT` 不是任务时长上限，长任务重投由 PostgreSQL 领取保护。
+**恢复前必须先确认旧进程与远端未决写入都已停止**（只看容器退出或心跳过期不够；页面上的
+`needs_attention` 不是重跑信号），确认后才执行对应命令；恢复会关闭失联执行记录、解除占用并清除待核实提示，
+**不会重新执行业务**，也不删 Document 与删除待办。切换前受理、没有参数快照的历史执行不能人工重试。
+
+```bash
+docker run --rm --network agent-lab-net --env-file .env "$IMG" python -m agent_lab.scheduler_maintenance --run-id <任务执行UUID> --confirm-stopped
+docker run --rm --network agent-lab-net --env-file .env "$IMG" python -m agent_lab.scheduler_maintenance --operation-id <占用UUID> --confirm-stopped   # 无执行记录的 CLI/遗留 Pipeline
+```
+
+回退前要停掉所有相关写入口并核实未决写入：共享任务表的迁移拒绝自动 downgrade，要回到迁移前的版本只能按
+备份恢复，而已经发生的远端删除不会随数据库恢复自动撤销。日志用 `run_id`、`operation_id`、`owner` 关联；
+队列长度只反映消息数量、不代表业务健康，`TASK_QUEUE_VISIBILITY_TIMEOUT` 也不是任务时长上限。跨存储失败
+与心跳语义的完整说明见 [`docs/flows/scheduled-job-execution.md`](../flows/scheduled-job-execution.md)。
 
 ### 看日志
 
@@ -596,8 +525,14 @@ docker service ls --filter name=agent-lab    # API、Beat、Worker 各 1/1
 
 **就绪探针在一个容器两个进程时只是抽样。** 探针每次是一条新连接、内核在两个进程之间分派，所以它只
 代表**被问到的那一个**进程；两个里坏了一个时，容器仍可能报就绪。这是「一个容器两个进程」今天就有
-的事实，由拓扑决定、不由本次改造引入；要让它变成全量事实得改成「一个容器一个进程 + 多开副本」，那
-件事超出本次范围。
+的事实，由拓扑决定、不由本次改造引入。
+
+**已记为待办（单独做）：改成「一个容器一个进程 + 多开副本」。** 做法是编排文件里 API 的 `WORKER_COUNT`
+取 1（或删掉，entrypoint 默认就是 1）、`deploy.replicas: 2`，并相应改部署工作流的就绪判定（现在写的是
+「运行中任务 ≥3」，要按副本数算），然后真部署验证一次、改相关文档。收益：**每个进程都被自己的探针
+覆盖**，一个进程卡住时只有那个容器被判不健康、由 Swarm 自己换掉，另一个继续服务——不必再人工重启整个
+服务。与 [ADR 0039](adr/0039-swarm-start-first-deploys.md) 末尾那条「已知边界」是同一件事；2026-10-01
+决定单独做，不随这次部署改造。
 
 另一个表征：那个进程的日志不再前进（`docker logs` 里一段沉默），而另一个进程照旧收发。
 
@@ -750,6 +685,8 @@ docker ps --filter name=agent-lab --format '{{.Names}}\t{{.Status}}'         # 3
 
 ## 四、手动运维命令
 
+三条只在这里出现的容器内命令（都挂 `agent-lab-net`，因为要够到 Redis/PostgreSQL/minio；`docker run --rm` 用完即删，不影响正在服务的那个）：
+
 ```bash
 cd <DEPLOY_DIR>
 IMG=$(grep -E '^BACKEND_IMAGE=' .env | head -1 | cut -d= -f2-)
@@ -762,59 +699,25 @@ docker run --rm --network agent-lab-net --env-file .env "$IMG" agent-lab sync-ne
 
 # 建恢复账号（网页进不去时才用）
 docker run --rm --network agent-lab-net --env-file .env "$IMG" agent-lab create-user --email recovery@example.com --superuser
-
-# 看日志与状态
-docker service logs --tail 100 agent-lab_backend
-docker service ls --filter name=agent-lab
-docker ps --filter name=agent-lab --format '{{.Names}}\t{{.Status}}'
-
-# 重启某个服务（手工重启要在「服务」这一层做，别重启任务容器）
-docker service update --force agent-lab_backend
-
-# 部署连接配置变化后重建以重新注入环境；网页周期修改由 Beat 动态读取
-docker stack deploy --with-registry-auth -c docker-stack.next.yml agent-lab
-
-# 停掉整个栈（不会被重启策略自动拉起；停之前确认没有在途运行）
-docker stack rm agent-lab
 ```
 
-一次性容器都挂 `agent-lab-net`：它们要够到 Redis、PostgreSQL、minio，而这三个容器被接在这张网上
-（见第一节第 5 小节）。`docker run --rm` 起的是一次性容器，用完即删，不影响正在服务的那个。
+看日志与状态、重启某个服务、起停整栈、清已退出/孤儿容器，都在第三节（「应急速查」「看日志」）与第二节里，这里不重复。
 
 ### 图形界面（Portainer）能做什么、不能做什么
 
-**先把四个词对齐**（它们是同一个东西的四层，Docker 自己的叫法）：
+**四个词是同一个东西的四层**：**堆栈**（一份打包定义：`docker-stack.yml` + 栈名，我们只有一个）→
+**服务**（期望状态：镜像、副本、更新顺序、宽限、健康检查；我们有三个，**部署改的就是它**，蓝绿也发生在
+这一层）→ **任务**（服务建的一次执行单元，更新时会短暂看到新旧两个）→ **容器**（节点上真正跑的那个，
+`agent-lab_backend.1.<后缀>`）。**平时看服务层与容器日志、应急在服务层操作、容器层只读。**
 
-- **堆栈（Stack）**：一组服务的打包定义——`docker-stack.yml` + 栈名 `agent-lab`。我们只有一个。
-- **服务（Service）**：一类进程的**期望状态**：用什么镜像（含摘要）、跑几个副本、更新顺序、停止宽限、
-  健康检查。我们有三个：`agent-lab_backend` / `agent-lab_task-beat` / `agent-lab_task-worker`。
-  **部署就是在改这三个东西**，先起后停（蓝绿）也发生在这一层。
-- **任务（Task）**：服务为了达到期望状态而创建的一次执行单元。更新时你会短暂看到新旧两个任务，
-  旧的那个停止后消失（`docker service ps` 里的历史行只是记录，不带容器）。
-- **容器（Container）**：任务在节点上真正跑起来的那个 docker 容器（`agent-lab_backend.1.<后缀>`）。
+**定位：查看、看日志、应急重启/回滚；写入者始终是 CI。** 堆栈显示「在 Portainer 外部创建、控制权受限」
+是**预期的**（它由 CI 用 `docker stack deploy` 建），所以别指望用它重新部署；**也不要新建一个栈来「部署」**
+——那会出现第二份服务定义，症状是「改了没生效」。回滚以 CLI 为准（第三节）。
 
-**平时看哪一层**：排查看**服务**（状态、副本、更新结论）与**容器**的日志；应急重启在**服务**层做；
-**堆栈**层只用来确认三个服务在同一个栈里。**容器层只读**——点它的「重启/停止」就是下面第 1 个坑。
-
-**定位：查看、看日志、应急重启/停止/回滚；写入者始终是 CI。** 堆栈显示「在 Portainer 外部创建、控制权
-受限」是**预期的**——它是 CI 用 `docker stack deploy` 建的，所以它不提供「编辑/重新部署」。
-**不要在 Portainer 里新建一个栈来「部署」**：那会出现第二份服务定义，症状是「改了没生效」。
-
-- **能看**：堆栈、服务、容器、日志。容器的健康状态只有在这里（或 `docker ps`）看得到，服务定义里没有。
-- **能应急**：重启/停止**服务**（界面上有服务级操作就用它）；对**容器**做停止/重启也能生效，但有下面第 1 个坑。
-- **回滚**：以 CLI 的 `docker service update --rollback` 为准（见第三节）；Portainer 是否暴露一键回滚
-  视版本而定，不要依赖它。
-
-**两个坑，都是 Docker 的行为、面板改不了：**
-
-1. **对任务容器做「重启」会留下孤儿容器。** Swarm 把那个任务判成异常、另建新任务，而旧容器因为自带
-   `restart: any` 策略继续活着、且不再归编排管。症状是「服务层看着干净（`docker service ls` 显示 1/1），
-   但 `docker ps` 里多出一个同名容器在跑」；对 Beat 而言就是两个调度器同时活着（周期任务可能被投两次）。
-   **正确做法是重启服务**：`docker service update --force <服务名>`；已经产生的孤儿用
-   `docker rm -f <容器名>` 清掉。
-2. **手工换下来的旧任务容器不会被 CI 清。** 工作流只清自己那一次部署留下的；手工做过 `docker service
-   update`（回滚、改环境、强制重启）之后自己清一次：
-   `docker ps -a --filter name=agent-lab_ --filter status=exited --format '{{.Names}}' | xargs -r docker rm`。
+**唯一的坑：对「容器」点重启/停止会留下孤儿容器。** Swarm 把那个任务判成异常、另建新任务，而旧容器
+因为自带 `restart: any` 继续活着且不再归编排管（对 Beat 就是两个调度器同时跑）。**重启要在服务层做**：
+`docker service update --force <服务名>`，产生的孤儿用 `docker rm -f <容器名>` 清掉；手工做过服务层操作后，
+顺手清一次它换下来的旧容器（命令见第三节应急速查的垃圾清理表）。
 
 ## 五、与容器化无关：Cloudflare 与账号管理
 
