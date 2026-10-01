@@ -1,6 +1,13 @@
 # 同一后端镜像运行 API、单个 Beat 和 Linux prefork Worker。
 # PostgreSQL 保存受理与结果，Redis 使用环境已有实例；前端由 OpenResty 发布静态文件。
-# 发布时先按服务器上现有编排停掉这三个进程再迁移，顺序约束见 docs/container_deployment.md「二、日常部署」。
+#
+# ⚠ **这份文件已经不再是日常部署用的那一份。** 后端改成 Swarm 服务之后，CI 用同目录的
+# ``docker-stack.yml``（`docker stack deploy`）部署；普通容器形态下「停旧 → 迁移 → 起新」
+# 那套流程与它一起退成**退回旧部署方式的逃生路径**，只在演练或改造出问题时用（命令与
+# 前置条件见 docs/container_deployment.md）。留着它是因为那条路必须真的走过、而不是写在纸上。
+#
+# 回到旧方式时用普通 compose（`docker compose up -d`），不要用 `docker stack deploy` 读这份：
+# 它带着栈加载器不认或会静默忽略的写法（container_name、restart:、相对路径挂载）。
 x-backend: &backend
   image: ${BACKEND_IMAGE:?BACKEND_IMAGE 未设置：检查本文件同目录的 .env}
   restart: unless-stopped

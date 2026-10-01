@@ -1,0 +1,150 @@
+# 后端三个进程（API、Beat、Worker）的 Swarm 服务定义：一份定义、一个部署命令、面板里一个堆栈。
+#
+# **为什么是「服务」而不是「容器」**：部署要「先起后停」——新任务启动判定成功之后才停旧任务，
+# 于是迁移与起容器都发生在旧版本还在服务的时候；顺带拿到一条 `docker service update --rollback`
+# 的秒级版本回滚。取舍与后果见 docs/adr/0039-swarm-start-first-deploys.md。
+#
+# **写入者只有 CI**（GitHub Actions）。图形界面（Portainer）只用于查看、看日志与应急时手动重启
+# 或回滚；两处各记一份服务定义就会出现「改了没生效」。日常部署、一次性容器的跑法与回滚命令见
+# docs/container_deployment.md。
+#
+# 栈加载器与普通 compose 不是同一套实现，对不认识的字段它会报错、也会静默忽略（两种都遇到过）。
+# 下面这些写法是为它换过的：
+# - 没有 container_name：栈不允许固定容器名，服务的身份就是「栈名_服务名」（agent-lab_backend 等）。
+# - 没有 restart:：重启语义由每个服务的 deploy.restart_policy 表达。
+# - 没有相对路径的卷挂载：栈不按项目目录解析相对路径。原来那两个挂载都不再需要——`/data` 没有被
+#   任何代码引用（服务器上那个目录一直是空的），`.env` 的键统一由下面的 env_file 注入。
+# - 网络声明成 external 并写死名字：不靠栈名前缀生成。建网与接依赖是手工做过一次的动作，
+#   复核命令见手册（`bash /root/agent-lab-net-verify.sh`）。
+# - Worker 的实例数由 deploy.replicas 表达（原来靠 `docker compose up -d --scale task-worker=N`）。
+#
+# 密钥不在这个文件里：env_file 指向同目录的 .env，由部署账号在服务器上维护、不进仓库。
+x-backend: &backend
+  image: ${BACKEND_IMAGE:?BACKEND_IMAGE 未设置：检查本文件同目录的 .env}
+  env_file:
+    - .env
+  environment: &backend-environment
+    TZ: ${TZ:-Asia/Shanghai}
+    # 容器必须显式连接环境已有 Redis，避免误用本地地址或另建一套实例。
+    REDIS_URL: ${REDIS_URL:?REDIS_URL 未设置：请在 .env 配置已有 Redis 的容器可达地址}
+  networks:
+    - agent-lab-net
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+networks:
+  # 本项目自持的 overlay（作用域是 swarm，栈服务只认这种）。名字写死，不靠栈名前缀生成，
+  # 这样敲命令时不必先查它实际叫什么。
+  agent-lab-net:
+    external: true
+
+services:
+  backend:
+    <<: *backend
+    # API 的停止宽限 180 秒 = uvicorn 关停超时 30 秒（entrypoint.sh）＋ 排空上限 120 秒
+    # （agent/limits.RUN_DRAIN_TIMEOUT_SECONDS）＋ 收尾写入的余量。它不再跟着「一次运行最坏能
+    # 跑多久」走，也不再与另外两个服务共用一个数：三者的活不同，见 ADR 0039 与 0040。
+    stop_grace_period: 180s
+    environment:
+      <<: *backend-environment
+      WORKER_COUNT: ${WORKER_COUNT:-2}
+    # 入口由 Swarm 的路由网格接管，因此绑定从「只绑本机回环」变成全网卡监听（这是 Swarm 的
+    # 已知行为，不支持只绑回环）。安全边界随之从端口绑定换成云安全组/VCN 安全列表：只放
+    # 80、443、SSH。对外端口号不变。
+    ports:
+      - target: 8000
+        published: ${BACKEND_PORT:-18000}
+        protocol: tcp
+        mode: ingress
+    # 只有 API 声明健康检查。它有两层作用：**任务在就绪之前不算 Running**，入口因此不把流量
+    # 发给它；而更新器按「任务有没有启动成功」决定要不要停旧任务，所以一个「检索能用、提问用
+    # 不了」的新版本会被判成未就绪、由 failure_action 回滚，而不会替掉正在服务的那一份。
+    #
+    # Beat 与 Worker 刻意不声明：在 Swarm 里健康检查不过等于 agent 把容器杀掉重启（不是 compose
+    # 里那种「只显示 unhealthy」），而 Worker 手上的文档批次被杀会留下需要人工确认的待核实记录。
+    # 它们的就绪由部署工作流用 docker exec 打到任务容器上检查（见 .github/workflows/deploy.yml）。
+    healthcheck:
+      # 目标就是只读的就绪端点（见 api/readiness.py）：业务库能查、checkpointer 连接池能取到
+      # 连接、启动后那次上游「列模型」校验没有发现配置错误。
+      #
+      # 单次超时 3 秒必须大于探针自己的上限（api/readiness.READINESS_PROBE_TIMEOUT_SECONDS =
+      # 2 秒）：被外面掐断的请求不会留下「哪一项没过」的日志。启动宽限 15 秒要盖过正常启动耗时
+      # ——实测容器起到「Application startup complete」约 9.7 秒，其中 7.7 秒是子进程 import。
+      test:
+        - CMD
+        - python
+        - -c
+        - import sys,urllib.request;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/ready',timeout=2).status==200 else 1)
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    deploy:
+      replicas: 1
+      restart_policy:
+        # 等价于原来 compose 的 restart: unless-stopped：任何退出都拉起来。
+        condition: any
+      update_config:
+        # 先起后停：这就是本方案本身，旧任务只在新任务启动成功之后才被停掉。
+        order: start-first
+        # 一次一个任务；失败即回滚。
+        parallelism: 1
+        failure_action: rollback
+        # 监视窗口要盖过「健康检查判不健康」所需的时间（间隔 5 秒 × 连续 3 次）。
+        monitor: 60s
+        delay: 0s
+
+  task-beat:
+    <<: *backend
+    # Beat 必须「先停后起」：它只在到点时往队列投任务，先起后停会让两个调度器短暂同时活着、
+    # 同一个周期任务可能被投两次。它没有手上活要收尾，停止宽限 30 秒就够。
+    stop_grace_period: 30s
+    command:
+      - celery
+      - -A
+      - agent_lab.tasks.celery_app:app
+      - beat
+      - --loglevel=INFO
+      - --pidfile=
+    deploy:
+      # Beat 始终只有一个实例。
+      replicas: 1
+      restart_policy:
+        condition: any
+      update_config:
+        order: stop-first
+        parallelism: 1
+        failure_action: rollback
+        monitor: 60s
+        delay: 0s
+
+  task-worker:
+    <<: *backend
+    # Worker 手上可能有正在跑的文档批次，停止宽限保持 360 秒：压到两分钟会让批次半途被中断、
+    # 留下需要人工确认的待核实记录。它用「先起后停」，与「先停后起」的差别只是后者有一段没人
+    # 领任务的消费空窗——已领的批次在两种顺序下都会被允许跑完（Celery 收到终止信号是温和退出）。
+    stop_grace_period: 360s
+    command:
+      - celery
+      - -A
+      - agent_lab.tasks.celery_app:app
+      - worker
+      - --loglevel=INFO
+      - --pool=prefork
+      - --concurrency=${TASK_WORKER_CONCURRENCY:-2}
+      - --hostname=worker@%h
+    deploy:
+      # 实例数声明（原来靠 --scale 命令行参数）。要扩容改这里，或临时用
+      # `docker service scale agent-lab_task-worker=N`。
+      replicas: 1
+      restart_policy:
+        condition: any
+      update_config:
+        order: start-first
+        parallelism: 1
+        failure_action: rollback
+        monitor: 60s
+        delay: 0s

@@ -22,6 +22,10 @@
 （``include_in_schema=False``）：这是给编排用的内部端点，产品侧没有消费者，前端的生成类型因此
 不需要重新生成。
 
+**探针有自己的等待上限，而且比外部那个小**：编排文件里健康检查的单次超时是 3 秒，本模块两个
+探针各自最多等 ``READINESS_PROBE_TIMEOUT_SECONDS``，所以本端点总在自己回答、不会被外面掐断——
+被掐断的请求既不会留下「哪一项没过」的日志，也谈不上「如实回答」。
+
 **它的结论在 Swarm 里是有后果的。** 容器健康检查不过，agent 会把容器杀掉重启（实测）——所以
 「配置写错」的版本会被反复杀掉，而不是像在本机开发那样长期半好地在线。部署场景下这正是我们要
 的（旧任务不被替掉、更新自己回滚）；代价是「进程照起、检索照服务」只在被杀之前那几十秒内成立。
@@ -41,12 +45,18 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_lab.agent.model_catalog import LlmModelNotListedError
-from agent_lab.config.settings import Settings, get_settings
 from agent_lab.db.session import get_db_session
 
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["readiness"])
+
+# 两个探针各自的等待上限，必须**明显小于**编排文件里健康检查的单次超时（3 秒）。
+# 两者之间的关系不是巧合：健康检查每 5 秒问一次本端点，而本端点要先回答才能报出结论。
+# 上限一旦超过外面那个，探针就会在回答之前被掐断——那种失败在应用日志里什么都不留，
+# 排查时只看得到「健康检查失败」。改这里时把 ``backend/docker-stack.yml`` 里 API 的
+# ``healthcheck.timeout`` 一起看。
+READINESS_PROBE_TIMEOUT_SECONDS = 2.0
 
 
 class ModelCatalogVerdict:
@@ -183,7 +193,6 @@ def get_model_catalog_verdict(request: Request) -> ModelCatalogVerdict | None:
 async def readiness(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db_session)],
-    settings: Annotated[Settings, Depends(get_settings)],
 ) -> JSONResponse:
     """评估当前进程能不能接班，并把结论如实报成 200 / 503。
 
@@ -193,7 +202,6 @@ async def readiness(
     Args:
         request: 当前 HTTP 请求，用于取出进程级 Agent Runtime 与启动配置校验结论。
         session: FastAPI 注入的业务库会话，用于执行最小查询。
-        settings: 应用配置，提供探活的等待上限。
 
     Returns:
         就绪时 200、未就绪时 503；响应体都只有 ``status`` 一个字段。
@@ -204,30 +212,19 @@ async def readiness(
         不共用连接。
     """
 
-    ready = await evaluate_readiness(
-        request,
-        session=session,
-        timeout=settings.database_health_check_timeout,
-    )
+    ready = await evaluate_readiness(request, session=session)
     return JSONResponse(
         status_code=status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE,
         content=ReadinessResponse(status="ready" if ready else "not_ready").model_dump(),
     )
 
 
-async def evaluate_readiness(
-    request: Request,
-    *,
-    session: AsyncSession,
-    timeout: float,
-) -> bool:
+async def evaluate_readiness(request: Request, *, session: AsyncSession) -> bool:
     """三样一起看，任何一样不过就是未就绪。
 
     Args:
         request: 当前 HTTP 请求，用于取出进程级 Agent Runtime 与启动配置校验结论。
         session: 业务库会话。
-        timeout: 两个探针各自的等待上限（复用配置里的健康检查超时：两者都是「等一个有界响应」，
-            语义相同，不再多一个旋钮）。
 
     Returns:
         三样都通过时为 ``True``。
@@ -245,17 +242,17 @@ async def evaluate_readiness(
     if verdict.state != "ok":
         # pending 与 failed 都不算就绪：前者是「还没问过上游」，后者是「已经问到配置错了」。
         return False
-    if not await _business_database_reachable(session, timeout=timeout):
+    if not await _business_database_reachable(session):
         return False
-    return await _checkpointer_pool_reachable(runtime, timeout=timeout)
+    return await _checkpointer_pool_reachable(runtime)
 
 
-async def _business_database_reachable(session: AsyncSession, *, timeout: float) -> bool:
+async def _business_database_reachable(session: AsyncSession) -> bool:
     """业务库能不能执行一次最小查询。"""
 
     try:
         # 应用级总超时可以覆盖 DNS 返回多个地址、驱动逐个尝试所产生的累计等待。
-        async with asyncio.timeout(timeout):
+        async with asyncio.timeout(READINESS_PROBE_TIMEOUT_SECONDS):
             await session.execute(text("SELECT 1"))
     except (TimeoutError, SQLAlchemyError) as exc:
         logger.error("就绪检查：业务库探活失败 error_type=%s", type(exc).__name__)
@@ -263,7 +260,7 @@ async def _business_database_reachable(session: AsyncSession, *, timeout: float)
     return True
 
 
-async def _checkpointer_pool_reachable(runtime: object, *, timeout: float) -> bool:
+async def _checkpointer_pool_reachable(runtime: object) -> bool:
     """checkpointer 连接池能不能取到连接。
 
     ``pool`` 为 ``None`` 时不作为判据：那表示注入了外部 checkpointer（离线测试用
@@ -275,7 +272,7 @@ async def _checkpointer_pool_reachable(runtime: object, *, timeout: float) -> bo
     if pool is None:
         return True
     try:
-        async with asyncio.timeout(timeout):
+        async with asyncio.timeout(READINESS_PROBE_TIMEOUT_SECONDS):
             async with pool.connection() as connection:
                 # 取到连接还不够：psycopg 的池会把坏连接交出来（它只在归还时巡检），
                 # 所以真发一条最小 SQL，才算「够得着」。

@@ -1,16 +1,18 @@
-# 推 main 即构建、部署。手动入口 workflow_dispatch 用于「服务器侧改了配置，
-# 想重跑一次部署」而不必造一个空提交。
+# 推 main 即构建、部署。手动入口 workflow_dispatch 用于「服务器侧改了配置，想重跑一次部署」而不必造一个空提交。
 #
-# **本工作流只负责部署，不跑测试。** 测试与回归在本地完成（命令见各运行时 README
-# 与 AGENTS.md）；把测试搬进 CI 会让「本地能过、CI 挂了」多出一条排查路径，
-# 而部署本身只需要「构建产物 + 推镜像 + 换容器」。唯一保留的构建期检查是
-# 前端 `npm run build` 内含的 `vue-tsc -b`——它是构建的一部分，不是额外门禁。
+# **本工作流只负责部署，不跑测试。** 测试与回归在本地完成（命令见各运行时 README 与 AGENTS.md）；
+# 把测试搬进 CI 会让「本地能过、CI 挂了」多出一条排查路径，而部署本身只需要「构建产物 + 推镜像 + 换服务」。
+# 唯一保留的构建期检查是前端 `npm run build` 内含的 `vue-tsc -b`——它是构建的一部分，不是额外门禁。
 #
 # 单 job 顺序执行，不拆并行：后端必须先部署完再传前端 dist（顺序理由见 deploy 那一步的注释），
 # 拆开之后要额外做 job 间的产物传递和顺序编排，对单人项目不划算。
 #
-# 整体设计与取舍见 docs/adr/0008-backend-in-image-frontend-as-static-files.md，
-# 服务器侧一次性准备见 docs/container_deployment.md。
+# **后端是一个 Swarm 栈**（api/beat/worker 三个服务，定义见 backend/docker-stack.yml）：
+# 部署用「先起后停」——迁移与起新任务都发生在旧任务还在服务的时候，旧任务只在新任务启动判定成功
+# 之后才被停掉，所以部署期间新请求不中断；顺带拿到 `docker service update --rollback` 的秒级版本
+# 回滚。取舍与后果见 docs/adr/0039 与 0040，服务器侧一次性准备与运维命令见 docs/container_deployment.md。
+#
+# 整体设计与取舍见 docs/adr/0008-backend-in-image-frontend-as-static-files.md。
 
 name: 部署到甲骨文
 
@@ -37,7 +39,7 @@ env:
   #
   # ⚠ 下面拼出来的镜像地址必须和服务器 /opt/agent-lab/.env 里的 BACKEND_IMAGE 完全一致。
   # 两个值现在分别藏在 GitHub Variables 和服务器文件里，仓库里看不到、也没法自动比对；
-  # 不一致的表现是「本工作流全绿、容器也重启了，但跑的还是上一版代码」。
+  # 不一致的表现是「本工作流全绿、服务也换了，但跑的还是上一版代码」。
   # 改 registry 时两处必须同步改，清单见 docs/container_deployment.md 的「更换 registry」。
   ACR_REGISTRY: ${{ vars.ACR_REGISTRY }}
   BACKEND_IMAGE: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/${{ vars.ACR_REPOSITORY }}:backend-latest
@@ -158,7 +160,12 @@ jobs:
           # 这两种情况下镜像本身是好的，没有理由不部署。
           cache-to: type=gha,mode=max,ignore-error=true
 
-      # 旧流程只在目录里执行 Docker；候选编排还要求部署账号能创建和替换文件。
+      # 候选栈文件要写进项目目录，所以部署账号得能写它。目录不可写时用一个已有镜像
+      # 启动一个无网络的临时容器，只把项目目录本身的属主改回部署账号；不递归触碰
+      # .env、数据或其他项目。
+      #
+      # 复用的镜像优先取正在跑的 agent-lab 容器那个（改造前后都在），退化到 .env 里
+      # 那个镜像地址——不能再靠 `docker compose images`：改造之后普通容器形态已经不在了。
       - name: 准备编排目录写入权限
         uses: appleboy/ssh-action@v1
         with:
@@ -169,12 +176,13 @@ jobs:
           script: |
             set -euo pipefail
             cd "$DEPLOY_DIR"
-            test -f docker-compose.yml
             test -f .env
             if [ ! -w . ]; then
-              # 复用现有镜像，只调整项目目录本身；不递归触碰 .env、数据或其他项目。
               deploy_path="$(pwd -P)"
-              deploy_image="$(docker compose images -q backend | sort -u)"
+              deploy_image="$(docker ps --filter name=agent-lab --format '{{.Image}}' | head -1)"
+              if [ -z "$deploy_image" ]; then
+                deploy_image="$(grep -E '^BACKEND_IMAGE=' .env | head -1 | cut -d= -f2- | tr -d '\r')"
+              fi
               test -n "$deploy_image"
               docker run --rm --network none --read-only --user 0 --entrypoint python \
                 --mount "type=bind,src=$deploy_path,dst=/deployment" "$deploy_image" \
@@ -185,19 +193,27 @@ jobs:
         env:
           DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
 
-      # 编排先以候选文件上传：迁移前要用服务器上现有的那份编排停掉正在跑的旧进程，
-      # 先覆盖文件会让旧进程按新编排停不干净。迁移成功后再替换，旧份留作 previous 供诊断。
-      - name: 上传候选后端编排
+      # 候选栈文件以 next 名字上传，不覆盖服务器上已有的那份：改造期间那份普通容器编排
+      # （docker-compose.yml）是退回旧部署方式的逃生路径，必须留着。反正部署命令用 -c
+      # 显式指定文件，叫什么名字都不影响。
+      - name: 上传候选栈文件
         uses: burnett01/rsync-deployments@v9
         with:
           switches: -rlgoDz
-          path: backend/docker-compose.yml
-          remote_path: ${{ vars.DEPLOY_DIR }}/docker-compose.next.yml
+          path: backend/docker-stack.yml
+          remote_path: ${{ vars.DEPLOY_DIR }}/docker-stack.next.yml
           remote_host: ${{ secrets.SSH_HOST }}
           remote_user: ${{ secrets.SSH_USER }}
           remote_key: ${{ secrets.SSH_KEY }}
 
       # ---------- 4. 部署后端 ----------
+      # 顺序，以及与旧流程的差别（理由见文件头与 docs/adr/0039）：
+      #   校验候选栈文件 → 一次性容器（Redis 自检、用量库配置自检、业务库迁移、建表初始化）
+      #   → 停掉还在用旧方式跑的容器（只在第一次切换时有事做）→ 起栈（先起后停在里面）
+      #   → 等新任务就绪 → 清理旧镜像
+      # 关键是**迁移与起新任务都在旧版本还在服务的时候完成**，旧任务只在新任务启动判定成功
+      # 之后才被停掉。旧流程是「停旧 → 迁移 → 起新」，中间那段时间端口上没人服务。
+      #
       # 在传前端之前做，是有意的：迁移失败就中止在这里，前端仍是旧版本，
       # 不会出现「新前端调老后端」。反过来先传前端则做不到这一点。
       - name: 部署后端
@@ -208,22 +224,68 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           # 密码通过 envs 传成远端的环境变量，不写进 script 的命令行——命令行会进
           # 服务器的进程列表和 shell history。
-          envs: ACR_PASSWORD,ACR_REGISTRY,ACR_USERNAME,DEPLOY_DIR
+          envs: ACR_PASSWORD,ACR_REGISTRY,ACR_USERNAME,CI_BACKEND_IMAGE,DEPLOY_DIR
           script: |
             set -euo pipefail
             cd "$DEPLOY_DIR"
 
+            # 传了凭据就登录；手工跑同一段脚本时用机器上已有的 docker 登录即可（不传这两个变量就跳过）。
             # --password-stdin 而不是 -p：后者会让密码出现在进程列表里。
-            echo "$ACR_PASSWORD" | docker login "$ACR_REGISTRY" -u "$ACR_USERNAME" --password-stdin
+            if [ -n "${ACR_USERNAME:-}" ] && [ -n "${ACR_PASSWORD:-}" ]; then
+              echo "$ACR_PASSWORD" | docker login "$ACR_REGISTRY" -u "$ACR_USERNAME" --password-stdin
+            else
+              echo "未提供 ACR 凭据，沿用机器上已有的 docker 登录"
+            fi
 
-            # 这一步不能省。tag 恒为 backend-latest，up -d 认为 tag 没变就会直接复用
-            # 本地旧镜像——表现是本工作流全绿、容器也重启了，但跑的还是上一版代码。
-            docker compose -f docker-compose.next.yml config --quiet
-            docker compose -f docker-compose.next.yml pull
+            # ⚠ **docker stack deploy 不读 .env**（只有 docker compose 读），栈文件里 ${} 引用的
+            # 键必须来自进程环境，否则写成 ${VAR:?} 的键会直接报错。这里只导出会被插值的那几个，
+            # 不整份 source .env：里面 LLM_USER_AGENT 这类值带空格与括号，会被 shell 拆坏。
+            # 其余键由服务定义里的 env_file 注入容器，不经过环境。
+            # 改 backend/docker-stack.yml 时新增了 ${} 引用，就要往这个列表里加一行。
+            #
+            # **这一段必须排在下面每一句引用 $BACKEND_IMAGE 的语句之前**：不排在前面的话，
+            # `docker pull "$BACKEND_IMAGE"` 在远端环境里没有这个变量、set -u 直接退出
+            # （演练里真的被这个坑到过：日志只有一行 `BACKEND_IMAGE: unbound variable`）。
+            for key in BACKEND_IMAGE BACKEND_PORT TZ REDIS_URL WORKER_COUNT TASK_WORKER_CONCURRENCY; do
+              # `|| true` 不是装饰：set -euo pipefail 下，grep 找不到键（.env 里本来就没有
+              # TASK_WORKER_CONCURRENCY）会让整条管道返回 1，而「赋值给变量的命令返回值失败」
+              # 同样会触发 set -e——脚本会在这里直接退出（演练时真的被这个坑到过）。
+              value="$(grep -E "^${key}=" .env | head -1 | cut -d= -f2- | tr -d '\r' || true)"
+              if [ -n "$value" ]; then export "$key=$value"; fi
+            done
 
-            # 仅验证候选网络上的已有 Redis；配置错误时保留当前应用继续运行。
+            # 镜像地址必须两处一致：CI 构建并推送的那一个（GitHub Variables 拼出来的）与服务器
+            # .env 里的 BACKEND_IMAGE。不一致的表现是「部署全绿、服务也换了，但跑的还是旧镜像」
+            # ——因为栈文件里的 ${BACKEND_IMAGE} 用的是服务器那一份。这里把它变成响的失败。
+            # 两处怎么同步改见 docs/container_deployment.md 的「更换 registry」。
+            if [ -n "${CI_BACKEND_IMAGE:-}" ] && [ "$CI_BACKEND_IMAGE" != "$BACKEND_IMAGE" ]; then
+              echo "镜像地址不一致：CI 构建推送的是 $CI_BACKEND_IMAGE，而服务器 .env 里是 $BACKEND_IMAGE。"
+              echo "两处必须完全一致，改法见文档的「更换 registry」一节。"
+              exit 1
+            fi
+
+            # 先把新镜像拉到本地：起栈时 CLI 会去 registry 解析摘要并把它写进服务定义，
+            # 节点再按摘要取镜像。这一步让「registry 里有这个镜像、凭据也对」在起栈之前就问清楚。
+            docker pull "$BACKEND_IMAGE"
+
+            # 候选文件先过栈加载器：语法错、未知字段、${VAR:?} 缺值都在这里报出来，比起栈之后
+            # 再回滚便宜。注意它只做合并与插值，不是「swarm 会不会接受」的校验——那一条由
+            # backend/tests/test_deploy_stack_file.py 的结构断言守。
+            docker stack config -c docker-stack.next.yml >/dev/null
+
+            # ---------- 一次性容器：都跑在项目网络上 ----------
+            # 它们与服务看到同一个世界，尤其下面这条 Redis 自检验证的就是服务将来能不能够到
+            # Redis（迁移本身只需要数据库、不碰队列，挂同一张网是为了口径一致）。
+            # 这一整段都排在「停旧」之前：迁移必须在旧版本还服务的时候跑完。
+            #
             # 连接凭据由客户端直接使用，错误只报告类型，不输出 URL、密码或配置。
-            docker compose -f docker-compose.next.yml run --no-deps --rm -T backend python - <<'PY'
+            #
+            # ⚠ **-i 不是可选项。** 程序是通过 <<'PY' heredoc 送进去的，而少了 -i 时 docker CLI
+            # 不会把自己的 stdin 交给容器：容器里的 `python -` 读到空程序、立刻退出 0、什么都不
+            # 打印——三条自检因此全部空跑，而脚本看不出任何异常（演练里真的被这个坑到过：
+            # Redis 自检在地址写错时仍然"通过"，部署一路跑到起栈）。旧流程用的
+            # `docker compose run` 默认就接 stdin，所以那时没这个问题。
+            docker run --rm -i --network agent-lab-net --env-file .env --entrypoint python "$BACKEND_IMAGE" - <<'PY'
             import sys
             from redis import Redis
             from agent_lab.config.redis import get_redis_settings
@@ -235,15 +297,15 @@ jobs:
                                     socket_connect_timeout=5, socket_timeout=5) as client:
                     client.ping()
             except Exception as error:
-                print(f"已有 Redis 连接检查失败（{type(error).__name__}）；请核对地址、密码和网络。", file=sys.stderr)
+                print(f"Redis 连接检查失败（{type(error).__name__}）；请核对地址、密码和网络。", file=sys.stderr)
                 raise SystemExit(1)
-            print("已有 Redis 连接检查通过")
+            print("Redis 连接检查通过")
             PY
 
-            # 用量库配置自检。它必须放在停旧进程之前：用量库配置缺失或不合法时应用启动就会
+            # 用量库配置自检。它必须放在停旧之前：用量库配置缺失或不合法时应用启动就会
             # 失败（配置缺失即启动失败，不是静默不记），把生产停在一半才发现 .env 少了一项
             # 是完全可以避开的。
-            docker compose -f docker-compose.next.yml run --no-deps --rm -T backend python - <<'PY'
+            docker run --rm -i --network agent-lab-net --env-file .env --entrypoint python "$BACKEND_IMAGE" - <<'PY'
             import sys
             from pydantic import ValidationError
             from agent_lab.config.usage_database import get_usage_database_settings
@@ -257,32 +319,13 @@ jobs:
             print("用量库配置自检通过")
             PY
 
-            # 迁移前先按现有编排停掉旧进程，避免旧代码在表结构变化中途继续写入。外部 CLI 和
-            # 未决远端写入仍须按部署文档先核实。迁移失败保持停止，不自动重启已不兼容的旧进程；
-            # 旧镜像/编排保留作诊断依据。
-            if [ -f docker-compose.yml ]; then
-              services="$(docker compose config --services)"
-              for service in task-beat backend task-worker; do
-                if printf '%s\n' "$services" | grep -Fxq "$service"; then
-                  # API 的停止宽限 180 秒 = uvicorn 关停超时 30 秒（entrypoint.sh）＋ 排空上限
-                  # 120 秒（agent/limits.RUN_DRAIN_TIMEOUT_SECONDS）＋ 收尾写入的余量：旧进程在
-                  # 收尾里把在途运行停在可交接边界、写下「等接手」标记，新 API 起来后接手跑完
-                  # （见 ADR 0040）。Beat 与 Worker 保持 360 秒：Worker 手上的文档批次要跑完
-                  # （ADR 0039）。
-                  if [ "$service" = "backend" ]; then
-                    docker compose stop --timeout 180 "$service"
-                  else
-                    docker compose stop --timeout 360 "$service"
-                  fi
-                fi
-              done
-              cp docker-compose.yml docker-compose.previous.yml
-            fi
-            docker compose -f docker-compose.next.yml run --no-deps --rm backend alembic upgrade head
+            # 业务库迁移。
+            docker run --rm --network agent-lab-net --env-file .env "$BACKEND_IMAGE" alembic upgrade head
+
             # 用量数据在独立库 llmops 里（ADR 0032），它有自己的迁移链。库不存在时先建库：
             # 连接串来自 LLMOPS_DATABASE_URL，而建库只能连同一个实例的维护库 postgres 执行。
             # 已存在就跳过，所以重复部署安全。
-            docker compose -f docker-compose.next.yml run --no-deps --rm -T backend python - <<'PY'
+            docker run --rm -i --network agent-lab-net --env-file .env --entrypoint python "$BACKEND_IMAGE" - <<'PY'
             import sys
             import psycopg
             from sqlalchemy.engine import make_url
@@ -305,46 +348,115 @@ jobs:
                     cursor.execute(f'CREATE DATABASE "{url.database}"')
                 print("用量库已创建")
             PY
-            docker compose -f docker-compose.next.yml run --no-deps --rm backend alembic -c alembic_usage.ini upgrade head
-            docker compose -f docker-compose.next.yml run --no-deps --rm backend agent-lab init-checkpointer
-            mv docker-compose.next.yml docker-compose.yml
-            docker compose up -d backend task-worker task-beat
 
-            # 验证进程真的起来了并且连得上 PostgreSQL。没有这一步，容器崩溃重启循环时
-            # 本工作流仍会显示成功。python:3.12-slim 里没有 curl，所以用 Python 自己发请求。
-            for i in $(seq 1 10); do
-              if docker compose exec -T backend python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status == 200 else 1)"; then
-                echo "健康检查通过"
-                break
-              fi
-              if [ "$i" -eq 10 ]; then
-                echo "健康检查连续失败，输出最后 50 行日志："
-                docker compose logs --tail 50 backend
-                exit 1
-              fi
-              sleep 3
+            docker run --rm --network agent-lab-net --env-file .env "$BACKEND_IMAGE" alembic -c alembic_usage.ini upgrade head
+            docker run --rm --network agent-lab-net --env-file .env "$BACKEND_IMAGE" agent-lab init-checkpointer
+
+            # ---------- 停掉还在用旧方式（普通容器）跑的三个进程 ----------
+            # 只在第一次切换时真的有事做：Swarm 要发布同一个宿主机端口，旧容器占着它就起不来。
+            # 改造完成之后再执行到这里是空操作（服务器上那份 docker-compose.yml 留着当逃生路径，
+            # 它已经不是日常部署用的那一份，见 backend/docker-compose.yml 头部）。
+            if [ -f docker-compose.yml ] && [ -n "$(docker compose -f docker-compose.yml ps -q 2>/dev/null || true)" ]; then
+              echo "停掉旧编排里的进程（一次性动作；之后这一步是空操作）"
+              docker compose -f docker-compose.yml stop --timeout 180 backend || true
+              docker compose -f docker-compose.yml stop --timeout 360 task-worker task-beat || true
+              cp docker-compose.yml docker-compose.previous.yml
+            fi
+
+            # ---------- 起栈（先起后停在里面）----------
+            # --with-registry-auth 不是可选项：它让 CLI 去 registry 解析摘要、把 digest 写进服务
+            # 定义，于是「回滚到上一版」回到的是那一版**具体镜像**，而不是一个已经被覆盖的可变
+            # 标签（实测：不带它时服务定义里只有 backend-latest）。它同时也在告诉节点用哪个凭据
+            # 去拉私有镜像。
+            # --detach=false：等更新器给出结论再往下走（这个版本的默认是不等）。它必须等：不等的话
+            # 下面那段就绪判定可能读到**上一次**更新遗留下来的 completed，或者在新任务健康而更新还没
+            # 走完时就判成就绪。
+            # 后面那个过滤只是去噪声：非 TTY 下 CLI 会把「还在等收敛」重复打印几百遍，真出错时
+            # 会把有用的行埋掉。退出码用 PIPESTATUS 单独取，不受过滤影响。
+            set +e
+            docker stack deploy --with-registry-auth --detach=false -c docker-stack.next.yml agent-lab 2>&1 \
+              | grep -v '^verify: Waiting'
+            deploy_status=${PIPESTATUS[0]}
+            set -e
+            if [ "$deploy_status" -ne 0 ]; then
+              echo "起栈失败（退出码 $deploy_status）"
+              exit 1
+            fi
+
+            echo "服务定义里的镜像引用（带 @sha256: 才算摘要被钉住，秒级回滚才有意义）："
+            docker service inspect agent-lab_backend --format '  {{json .Spec.TaskTemplate.ContainerSpec.Image}}'
+
+            # ---------- 等新任务就绪 ----------
+            # 两条判据一起看：
+            # 1. 更新器自己的结论（UpdateStatus）：只有它知道「新任务启动成功、旧任务已停」还是
+            #    「自己回滚了」。只看到「任务在跑且健康」不够——回滚之后跑的正是旧任务，它当然
+            #    健康，那种情况下必须报失败。
+            # 2. 任务本身：运行中的任务数等于声明的副本数，且 API 容器健康（容器的健康状态只在
+            #    节点的 docker ps 里看得见，服务定义里读不到）。
+            deadline=$((SECONDS + 300))
+            ready=""
+            while [ "$SECONDS" -lt "$deadline" ]; do
+              state="$(docker service inspect agent-lab_backend --format '{{json .UpdateStatus}}' 2>/dev/null | grep -o '"State":"[a-z_]*"' | cut -d'"' -f4 || true)"
+              case "$state" in
+                rollback_started|rollback_completed|paused)
+                  echo "更新器判定新版本没有接班（UpdateStatus.State=$state），它已经自己回滚："
+                  docker service ps agent-lab_backend --no-trunc | head -20
+                  exit 1
+                  ;;
+              esac
+              api_health="$(docker ps --filter name=agent-lab_backend --format '{{.Status}}' | head -1)"
+              running="$(for service in agent-lab_backend agent-lab_task-beat agent-lab_task-worker; do
+                # 服务可能还没被创建（第一次部署的第一个轮次），别让那种失败把脚本带走。
+                docker service ps "$service" --filter desired-state=running --format '{{.Name}}' 2>/dev/null || true
+              done | sort -u | wc -l)"
+              case "$api_health" in
+                *healthy*)
+                  if [ "$running" -ge 3 ]; then ready="yes"; break; fi
+                  ;;
+              esac
+              sleep 5
             done
+            if [ -z "$ready" ]; then
+              echo "等待新任务就绪超时（300 秒）："
+              docker service ls
+              docker service ps agent-lab_backend agent-lab_task-beat agent-lab_task-worker --no-trunc 2>/dev/null | head -30 || true
+              exit 1
+            fi
+            echo "新任务已就绪：$api_health（运行中任务 $running 个）"
 
-            # Beat 检查只读本容器状态；Worker 检查精确指向本容器主进程，不执行业务。
+            # Beat 与 Worker 的就绪检查打到**任务容器**上。它们刻意没有声明健康检查：在 Swarm
+            # 里健康检查不过等于 agent 把容器杀掉重启，而 Worker 手上的文档批次被杀会留下需要
+            # 人工确认的待核实记录（理由写在 backend/docker-stack.yml 里）。所以这两条检查是
+            # 它们唯一的就绪信号。
             for i in $(seq 1 10); do
-              if docker compose exec -T task-beat python -m agent_lab.tasks.status --check && \
-                 docker compose exec -T task-worker sh -c 'celery -A agent_lab.tasks.celery_app:app inspect ping --destination "worker@$HOSTNAME" --timeout 5'; then
+              beat="$(docker ps --filter name=agent-lab_task-beat --format '{{.ID}}' | head -1)"
+              worker="$(docker ps --filter name=agent-lab_task-worker --format '{{.ID}}' | head -1)"
+              if [ -n "$beat" ] && [ -n "$worker" ] \
+                 && docker exec "$beat" python -m agent_lab.tasks.status --check \
+                 && docker exec "$worker" sh -c 'celery -A agent_lab.tasks.celery_app:app inspect ping --destination "worker@$HOSTNAME" --timeout 5'; then
                 echo "Beat 推进与 Worker 消息连接检查通过"
                 break
               fi
               if [ "$i" -eq 10 ]; then
                 echo "任务进程就绪检查失败，请检查调度、消息连接及待核实执行"
-                docker compose logs --tail 50 task-beat task-worker
+                docker logs --tail 50 "$beat" 2>/dev/null || true
+                docker logs --tail 50 "$worker" 2>/dev/null || true
                 exit 1
               fi
               sleep 3
             done
 
-            # 被 backend-latest 覆盖掉的旧镜像会变成无名镜像留在磁盘上，不清理会慢慢吃满。
-            docker image prune -f
+            # 被 backend-latest 覆盖掉的旧镜像会变成无名镜像留在磁盘上，不清理会慢慢吃满。但
+            # **不能无条件清空**：秒级回滚要回到的那一版必须在本地，否则「一条命令切回上一版」
+            # 会变成一个报错的按钮（见 ADR 0039）。所以只删 7 天前的无名镜像：够回滚用，又不让
+            # 磁盘无限涨。改这一行会让 backend/tests/test_deploy_stack_file.py 变红。
+            docker image prune -f --filter "until=168h"
         env:
           ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          # 名字与服务器 .env 里的 BACKEND_IMAGE 分开：同名的话远端脚本会先按 .env 的值把它覆盖掉，
+          # 就没法再比对两处是否一致了（下面的比对正是为了挡住「部署全绿但跑的还是旧镜像」）。
+          CI_BACKEND_IMAGE: ${{ env.BACKEND_IMAGE }}
           DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
 
       # ---------- 5. 上传前端 dist ----------
