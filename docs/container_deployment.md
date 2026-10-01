@@ -557,6 +557,20 @@ docker service ps agent-lab_backend --no-trunc
 在跑」；对 Beat 而言就是两个调度器同时活着（周期任务可能被投两次）。手工清理：
 `docker rm -f <孤儿容器名>`。
 
+### 对话里的检索工具报错（`qdrant_response_invalid`）
+
+现象：日志里反复出现
+
+```text
+WARNING agent_lab.agent.middleware Agent 工具调用失败 tool=search_documents error_type=QdrantSearchResponseError code=qdrant_response_invalid
+```
+
+用户侧表现为模型查不到资料、很快就给一个泛泛的回答（工具一调就失败，重试几次后收尾），而**检索页本身
+正常**——失败在 Agent 调 Qdrant 那一步的响应校验上，与部署方式无关、也不是网络问题。
+
+**这是改造前就存在的缺陷（2026-10-01 实测确认：改造成 Swarm 之前的容器日志里同样有），待单独一轮处理**，
+不在本次部署改造范围内；排查时不要先怀疑部署。
+
 ### 每次提问都失败，`agent_internal_error` 500
 
 `agent-lab init-checkpointer` 没跑过，四张 `checkpoint*` 表不存在。这个故障很隐蔽：
