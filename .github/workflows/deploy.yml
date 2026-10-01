@@ -446,6 +446,13 @@ jobs:
               sleep 3
             done
 
+            # 顺手清掉本栈**已退出**的任务容器：任务被替换后旧容器会被停掉但留在节点上（实测：
+            # 每次部署多留三个，`docker ps -a` 里是 Exited，占着日志与元数据）。只删本栈的
+            # （名字带 agent-lab_ 下划线前缀；旧的普通容器是横线，不会误伤），且只在就绪检查通过
+            # 之后删——那时候旧任务都已经排空收尾完了。
+            docker ps -a --filter name=agent-lab_ --filter status=exited --format '{{.Names}}' \
+              | xargs -r docker rm >/dev/null || true
+
             # 被 backend-latest 覆盖掉的旧镜像会变成无名镜像留在磁盘上，不清理会慢慢吃满。但
             # **不能无条件清空**：秒级回滚要回到的那一版必须在本地，否则「一条命令切回上一版」
             # 会变成一个报错的按钮（见 ADR 0039）。所以只删 7 天前的无名镜像：够回滚用，又不让
