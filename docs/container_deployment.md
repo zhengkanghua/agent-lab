@@ -347,7 +347,7 @@ CI 的完整顺序在 [`.github/workflows/deploy.yml`](../.github/workflows/depl
 2. **后端部署在前端上传之前**：迁移失败时部署中止，前端仍是旧版本，不会出现「新前端调
    老后端」。
 3. **`docker stack deploy` 必须带 `--with-registry-auth`**：它让 CLI 去 registry 解析摘要、把 digest 写进服务定义，于是「回滚到上一版」回到的是那一版**具体镜像**，而不是一个已经被覆盖的可变标签；同时也在告诉节点用哪个凭据去拉私有镜像。
-4. **栈文件里的 `${}` 引用必须在进程环境里**：`docker stack deploy` 与 `docker stack config` 都**不读 `.env`**（只有 `docker compose` 读），所以部署前要把会被插值的那几个键从 `.env` 导出——`BACKEND_IMAGE`、`BACKEND_PORT`、`TZ`、`REDIS_URL`、`WORKER_COUNT`、`TASK_WORKER_CONCURRENCY`；其余键由服务定义里的 `env_file` 注入容器。改栈文件时新增了 `${}` 引用，就要往那个列表里加一行（写成 `${VAR:?}` 的键在缺值时会在校验那一步直接报错）。**不能整份 `source .env`**：里面 `LLM_USER_AGENT` 这类值带空格与括号，会被 shell 拆坏。
+4. **栈文件里的 `${}` 引用必须在进程环境里**：`docker stack deploy` 与 `docker stack config` 都**不读 `.env`**（只有 `docker compose` 读），所以部署前要把被引用的那几个键从 `.env` 导出——键名与可执行的那段循环见下面「手工跑一遍同一套流程」第 2 步。其余键由服务定义里的 `env_file` 注入容器，不经过环境；**不能整份 `source .env`**（里面 `LLM_USER_AGENT` 这类值带空格与括号，会被 shell 拆坏）。在栈文件里新增一个 `${}` 引用时，记得同步工作流里那个列表；写成 `${VAR:?}` 的键缺值会在校验那一步直接报错。
 5. **停旧任务由更新器按「新任务是否启动成功」判定**，`failure_action: rollback` 管的是「容器退出」那一类（起来了但不健康的，靠就绪端点被看见）。API 的停止宽限 180 秒 = uvicorn 关停超时 30 秒（`entrypoint.sh`）＋ 排空上限 120 秒（`agent/limits.RUN_DRAIN_TIMEOUT_SECONDS`）＋ 收尾写入的余量：旧进程在收尾里把在途运行排空到可交接的 superstep 边界、在会话行上写下「等接手」标记再退出，新 API 起来后扫到标记接手续跑（见 [ADR 0040](adr/0040-run-handover-on-deploy.md)）；Beat 30 秒（它必须「先停后起」，否则两个调度器同时活着会把周期任务投两次）、Worker 360 秒（让手上的文档批次做完）。只有**第一次切换**时工作流会去停旧的普通容器（Swarm 要发布同一个宿主机端口），之后那一步是空操作。
 6. **用量库配置自检与 Redis 连接自检都排在起新任务之前**：`LLMOPS_DATABASE_URL` 缺失或不合法时应用启动就会失败，把生产停在一半才发现 `.env` 少了一项是完全可以避开的。
 7. **迁移阶段有两条链**：业务库的 `alembic upgrade head`，以及用量库的建库 + `alembic -c alembic_usage.ini upgrade head`。两者都在 `docker stack deploy` 之前完成，任一条失败即中止部署（此时旧版本仍在服务）。
@@ -577,34 +577,26 @@ docker run --rm --network agent-lab-net --env-file .env "$IMG" agent-lab init-ch
 exec /app/.venv/bin/uvicorn: exec format error
 ```
 
-镜像架构和服务器不符。这台是 Ampere A1（`uname -m` → `aarch64`），镜像必须是
-`linux/arm64`。工作流用 `runs-on: ubuntu-24.04-arm` 原生构建，并在构建步骤写死
-`platforms: linux/arm64`，两处都不要改回 x64。
-
-这个错的迷惑性在于它长得像「文件坏了」或「路径不对」，但那两种情况报的是
-`no such file or directory`。`exec format error` 是 ENOEXEC，只有一个含义：
-内核认出这是可执行文件，但看不懂里面的机器码。
-
-确认现有镜像的架构：
+镜像架构和服务器不符。这台是 Ampere A1（`uname -m` → `aarch64`），镜像必须是 `linux/arm64`；
+工作流用 `runs-on: ubuntu-24.04-arm` 原生构建并写死 `platforms: linux/arm64`，两处都别改回 x64。
+（`exec format error` 是 ENOEXEC——内核认出了可执行文件但看不懂里面的机器码，不是「文件坏了」也不是
+路径问题，那两种报的是 `no such file or directory`。）确认现有镜像的架构：
 
 ```bash
 docker image inspect <BACKEND_IMAGE> --format '{{.Architecture}}'   # 应为 arm64
 uname -m                                                            # 应为 aarch64
 ```
 
-**前端也在 ARM 上构建，同一原因带来的第二个约束。** 工作流只有一个 job、跑在 ARM runner 上，所以
-`npm ci` 也发生在 arm64 环境里，依赖 `package-lock.json` 中存有 ARM 版原生包（当前是
-`@rolldown/binding-linux-arm64-gnu` 和 `lightningcss-linux-arm64-gnu`）。**换 Vite 或 Tailwind 大版本
-后要复查一次**：包名或平台标签变了而 lock 文件没跟上，`npm ci` 会在 CI 里直接失败。
+同一原因还带来前端的一个约束：`npm ci` 也跑在 ARM 上，依赖 `package-lock.json` 里的 ARM 原生包
+（`@rolldown/binding-linux-arm64-gnu`、`lightningcss-linux-arm64-gnu`）——**换 Vite/Tailwind 大版本后
+要复查一次**，包名或平台标签变了而 lock 没跟上，`npm ci` 会在 CI 里直接失败。
 
 ### 推镜像失败：`unknown manifest class for application/vnd.oci.empty.v1+json`
 
-ACR 个人版不认 buildx 默认附加的 provenance / SBOM 证明。工作流里已经用
-`provenance: false` / `sbom: false` 关掉了，**这两行不是优化，删掉就推不上去**。
-
-这个故障的表现容易误导：所有镜像层和镜像本身都推成功了，只有附加的证明 manifest 被拒，
-日志里前面全是正常的 `writing layer`，看起来像网络或权限问题。同理构建缓存用
-`type=gha` 而不是 `type=registry`。理由见 `.github/workflows/deploy.yml` 里 build 步骤的注释。
+ACR 个人版不认 buildx 默认附加的 provenance / SBOM 证明。表现容易误导：**所有镜像层都推成功了，只有
+附加的证明 manifest 被拒**，日志前面全是正常的 `writing layer`，看起来像网络或权限问题。工作流里的
+`provenance: false` / `sbom: false` **不是优化，删掉就推不上去**；缓存用 `type=gha` 而不是
+`type=registry` 同理。理由都写在 `.github/workflows/deploy.yml` 的 build 步骤注释里。
 
 ### 部署成功但代码没更新
 
