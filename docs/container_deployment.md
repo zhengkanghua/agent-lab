@@ -388,6 +388,18 @@ docker service logs -f agent-lab_backend
 [后端 README](../backend/README.md#测试) 和 [前端 README](../frontend/README.md#验证)），
 推送后 CI 从构建开始。唯一保留的构建期检查是前端 `npm run build` 内含的 `vue-tsc -b`。
 
+### 配置放在哪儿（改之前先看这张表）
+
+只有两处：
+
+| 想改的东西 | 改哪里 | 怎么生效 |
+|---|---|---|
+| 更新顺序、停止宽限、副本数、健康检查、端口发布、挂哪张网、各服务的 command、日志上限 | git 里的 `backend/docker-stack.yml` | 推一次（CI 部署） |
+| 环境变量（`DATABASE_URL`/`REDIS_URL`/`LLMOPS_*`/`S3_*`/`AUTH_*`/`LLM_*` 等）、镜像地址 `BACKEND_IMAGE`、端口号的值 | 服务器 `<DEPLOY_DIR>/.env`（1Panel 文件管理器或 `vi`） | 改完**重新部署一次**才生效（`.env` 的值是部署时读进服务定义的）；最省事是在 GitHub 的 Actions 页手动 Run workflow |
+| 任务的周期、参数、策略 | 网页的任务管理（存在数据库） | Beat 每次动态读取，不用重新部署 |
+
+两个容易混的点：**镜像摘要（`@sha256:…`）不在任何文件里**——它是部署时去 registry 解析后钉进服务定义的，回滚（`--rollback`）就靠它；**`.env` 里只有 6 个键会被栈文件引用**（`BACKEND_IMAGE`、`BACKEND_PORT`、`TZ`、`REDIS_URL`、`WORKER_COUNT`、`TASK_WORKER_CONCURRENCY`），部署前由工作流导出成进程环境，其余四十来个键通过 `env_file` 直接注入容器；若在栈文件里新增一个 `${}` 引用，要同步往工作流里那个 6 键列表加一行。
+
 CI 的完整顺序在 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) 里。它做的事是：
 **校验候选栈文件 → 在项目网络上跑一次性容器（Redis 自检、用量库配置自检、业务库迁移、建用量库与
 其迁移、建表初始化）→ 停掉还在按旧方式跑的普通容器（只有第一次切换时有活干）→
@@ -466,6 +478,51 @@ docker ps -a --filter name=agent-lab_ --filter status=exited --format '{{.Names}
 修复在本地验证后再推送。Actions 就绪检查覆盖 API、Beat 和 Worker 消息连接，业务验收仍需受控操作与执行编号。
 
 ## 三、排查
+
+### 应急速查（线上出问题先看这里）
+
+**第一步：先判断是哪一类，然后只用对应那一条。**
+
+| 现象 | 做什么 |
+|---|---|
+| 站点/接口大面积报错，怀疑是新版本 | **回上一版**（下面第 1 条）——秒级，不用构建 |
+| 某个服务卡住（例如回答一直不返回） | **重启那个服务**（第 3 条） |
+| 队列不动、上传失败、库连不上 | 查那张 overlay 的三根线：`bash verify-agent-lab-net.sh`；症状对照见第一节第 5 小节 |
+| 分不清 | 先看现状（第 4 条） |
+
+**四条命令（都在部署目录下执行）**
+
+```bash
+# 1) 回到上一版：三个服务各回滚一次，然后比对摘要确认真的换了版本
+for s in backend task-beat task-worker; do docker service update --rollback "agent-lab_$s"; done
+docker service inspect agent-lab_backend --format '{{json .Spec.TaskTemplate.ContainerSpec.Image}}'
+
+# 2) 切到某个指定版本（先列出本地可回滚的版本，再拿完整地址去切）
+docker images --filter dangling=true --format '{{.ID}} {{.CreatedSince}}'
+docker service update --image <那一版的完整地址，含 @sha256> agent-lab_backend
+
+# 3) 重启某个服务（是「服务」，不是「容器」）
+docker service update --force agent-lab_backend
+
+# 4) 看现状与有没有「多出来的容器」
+docker service ls --filter name=agent-lab
+docker ps --filter name=agent-lab_ --format '{{.Names}}\t{{.Status}}'
+```
+
+**在面板里操作的三条规矩（Portainer）**
+
+1. **在「Services」（服务）或「Stacks」（堆栈）里操作**：重启、回滚、改定义都在这一层做——服务层的动作不会留下「活着但没人管」的容器。
+2. **「Containers」（容器）里只读**：看日志、看状态可以；**别点它的重启/停止**——那会让编排器另建新任务，而这个容器又自己活过来，变成管理不到的「编外容器」（对 Beat 而言就是两个调度器同时跑）。
+3. **别在面板里新建一个栈来「部署」**：那会多出第二份定义，和现有服务抢端口。部署走 CI，或第二节的手工清单。
+
+**哪些垃圾会自动清、哪些要自己清**
+
+| 来源 | 会不会自动清 |
+|---|---|
+| CI 部署替换下来的旧容器 | ✅ 工作流在就绪后自动清 |
+| 服务层操作（面板或 CLI 的 update / rollback / scale）换下来的旧容器 | ❌ 会以「已停止」留在机器上（无害），顺手清一次：`docker ps -a --filter name=agent-lab_ --filter status=exited --format '{{.Names}}' \| xargs -r docker rm` |
+| **容器层点重启/停止留下的「编外容器」** | ❌ 必须自己删（它还在跑）：`docker rm -f <名字>` |
+| 面板里新建的第二个栈 | ❌ 在 Stacks 里 Stop + Delete |
 
 ### 索引重建与发布恢复
 
@@ -725,6 +782,19 @@ docker stack rm agent-lab
 （见第一节第 5 小节）。`docker run --rm` 起的是一次性容器，用完即删，不影响正在服务的那个。
 
 ### 图形界面（Portainer）能做什么、不能做什么
+
+**先把四个词对齐**（它们是同一个东西的四层，Docker 自己的叫法）：
+
+- **堆栈（Stack）**：一组服务的打包定义——`docker-stack.yml` + 栈名 `agent-lab`。我们只有一个。
+- **服务（Service）**：一类进程的**期望状态**：用什么镜像（含摘要）、跑几个副本、更新顺序、停止宽限、
+  健康检查。我们有三个：`agent-lab_backend` / `agent-lab_task-beat` / `agent-lab_task-worker`。
+  **部署就是在改这三个东西**，先起后停（蓝绿）也发生在这一层。
+- **任务（Task）**：服务为了达到期望状态而创建的一次执行单元。更新时你会短暂看到新旧两个任务，
+  旧的那个停止后消失（`docker service ps` 里的历史行只是记录，不带容器）。
+- **容器（Container）**：任务在节点上真正跑起来的那个 docker 容器（`agent-lab_backend.1.<后缀>`）。
+
+**平时看哪一层**：排查看**服务**（状态、副本、更新结论）与**容器**的日志；应急重启在**服务**层做；
+**堆栈**层只用来确认三个服务在同一个栈里。**容器层只读**——点它的「重启/停止」就是下面第 1 个坑。
 
 **定位：查看、看日志、应急重启/停止/回滚；写入者始终是 CI。** 堆栈显示「在 Portainer 外部创建、控制权
 受限」是**预期的**——它是 CI 用 `docker stack deploy` 建的，所以它不提供「编辑/重新部署」。
