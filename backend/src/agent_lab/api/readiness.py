@@ -29,6 +29,12 @@
 **它的结论在 Swarm 里是有后果的。** 容器健康检查不过，agent 会把容器杀掉重启（实测）——所以
 「配置写错」的版本会被反复杀掉，而不是像在本机开发那样长期半好地在线。部署场景下这正是我们要
 的（旧任务不被替掉、更新自己回滚）；代价是「进程照起、检索照服务」只在被杀之前那几十秒内成立。
+
+**生产核对（2026-10-01 切上 Swarm 后实测）**：本端点是编排文件里 API 服务的健康检查目标，
+正常时返回 `200` 与 `{"status":"ready"}`。排查时要分清两个位置：容器的健康状态只在节点上的
+`docker ps` 里看得到（服务定义里读不到）；而服务的更新顺序、镜像引用与停止宽限分别在
+`Spec.UpdateConfig`、`TaskTemplate.ContainerSpec.Image`、`TaskTemplate.StopGracePeriod` 下，
+用 `--format '{{json …}}'` 读（点号写法对部分字段会报 `map has no entry`）。
 """
 
 import asyncio
