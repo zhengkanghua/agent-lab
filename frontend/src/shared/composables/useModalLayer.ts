@@ -11,12 +11,25 @@ import { nextTick, onScopeDispose, watch, type Ref } from 'vue'
  *
  * 监听挂在 document 上而不是容器上：模态打开时焦点可能在容器外（浏览器把焦点
  * 挪到 body、或用户点了遮罩），挂在容器上时那些情况一律收不到 Esc。挂在 document
- * 上则无论焦点在哪都收得到。
+ * 上则无论焦点在哪都收得到——代价是同一次按键会被所有活着的层收到，所以下面用
+ * layerStack 兜住：只有最上面那层响应。
  */
 
 /** 容器内可参与 Tab 顺序的元素。与 BaseDialog 原有的选择器一致，收编时取最全的一份。 */
 const FOCUSABLE =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+/* 已打开的模态层，后进先出。
+ *
+ * 需要它是因为模态会叠：设置中心本身是一层浮层，它的离开确认又是 ConfirmDialog（另一层），
+ * 而 Esc 与 Tab 的监听都挂在 document 上——不加这道判断，一次 Esc 会同时被两层收到，
+ * 结果是确认框被取消、设置中心也一起关掉。只有最上面那层该响应。
+ */
+const layerStack: symbol[] = []
+
+function isTopLayer(token: symbol): boolean {
+  return layerStack[layerStack.length - 1] === token
+}
 
 export interface ModalLayerOptions {
   /** 是否处于打开态。用 getter 而不是 ref，让调用方可以直接传一个 computed。 */
@@ -36,6 +49,7 @@ export interface ModalLayerOptions {
 }
 
 export function useModalLayer(options: ModalLayerOptions): void {
+  const token = Symbol('modal-layer')
   let active = false
   let previousBodyOverflow = ''
   let returnFocusTo: HTMLElement | null = null
@@ -52,6 +66,9 @@ export function useModalLayer(options: ModalLayerOptions): void {
   }
 
   function onKeydown(event: KeyboardEvent): void {
+    // 叠层时只有最上面那层响应：否则一次 Esc 会同时关掉浮层与它上面的确认框。
+    if (!isTopLayer(token)) return
+
     if (event.key === 'Escape' && options.onEscape) {
       event.preventDefault()
       options.onEscape()
@@ -80,6 +97,7 @@ export function useModalLayer(options: ModalLayerOptions): void {
   function activate(): void {
     if (active) return
     active = true
+    layerStack.push(token)
     returnFocusTo = document.activeElement instanceof HTMLElement ? document.activeElement : null
     if (locksScroll) {
       previousBodyOverflow = document.body.style.overflow
@@ -91,6 +109,8 @@ export function useModalLayer(options: ModalLayerOptions): void {
   function release(): void {
     if (!active) return
     active = false
+    const index = layerStack.indexOf(token)
+    if (index >= 0) layerStack.splice(index, 1)
     document.removeEventListener('keydown', onKeydown)
     if (locksScroll) {
       document.body.style.overflow = previousBodyOverflow

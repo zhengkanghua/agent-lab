@@ -13,11 +13,21 @@ import { useModalLayer } from '@/shared/composables/useModalLayer'
  * 留在原地反而让测试与 SSR 不用穿透。
  */
 
-const props = defineProps<{
-  open: boolean
-  /** 读屏播报的对话框名；可见标题由使用方放在内容里。 */
-  label: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    open: boolean
+    /** 读屏播报的对话框名；可见标题由使用方放在内容里。 */
+    label: string
+    /**
+     * alertdialog 给破坏性确认用：读屏会立刻播报内容，而不是等用户走到对话框才发现它。
+     * 普通表单面板保持 dialog，别把「打开就被打断」的代价加到不危险的地方。
+     */
+    role?: 'dialog' | 'alertdialog'
+    /** 打开后把焦点放到哪个元素；省略则聚焦面板本身。返回 null 也退回面板。 */
+    initialFocus?: () => HTMLElement | null | undefined
+  }>(),
+  { role: 'dialog', initialFocus: undefined },
+)
 
 const emit = defineEmits<{ close: [] }>()
 
@@ -27,6 +37,7 @@ useModalLayer({
   open: () => props.open,
   container: panelRef,
   onEscape: () => emit('close'),
+  initialFocus: () => props.initialFocus?.(),
 })
 </script>
 
@@ -35,7 +46,7 @@ useModalLayer({
     <section
       ref="panelRef"
       class="base-dialog"
-      role="dialog"
+      :role="role"
       aria-modal="true"
       :aria-label="label"
       tabindex="-1"
