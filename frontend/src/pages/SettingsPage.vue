@@ -21,7 +21,7 @@ import {
  * 设置中心：账号安全、检索偏好、Agent 偏好、用量都在这里。
  *
  * 桌面端是外壳内容区上的居中浮层（2026-09 重设计 P4）：路由与深链不变，
- * /settings/search 等地址仍然直达；侧栏在浮层之外保持可点，导航离开就是出口。
+ * /settings/search 等地址仍然直达。遮罩盖满整页、含侧栏，出口只有关闭键与 Esc。
  * 窄屏（≤720px）回退整页形态——没有遮罩与 Esc，dialog 语义一并撤掉。
  * 分区由路由参数决定，分区组件按需渲染。四个分区都对所有登录账号开放。
  */
@@ -142,7 +142,7 @@ function updateViewport(): void {
 const panelRef = ref<HTMLElement | null>(null)
 
 /** 关闭浮层：有来路就回上一页（多半是从检索页的偏好入口进来的），否则回工作台。
- *  离开确认不在这里做——onBeforeRouteLeave 守卫统一拦，Esc 和侧栏导航走同一条路。 */
+ *  离开确认不在这里做——onBeforeRouteLeave 守卫统一拦，Esc 和关闭键走同一条路。 */
 function closeSettings(): void {
   const historyState = router.options.history.state as { back?: string | null }
   if (historyState.back != null) router.back()
@@ -234,12 +234,16 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
   padding: var(--space-6) 0 var(--space-8);
 }
 
-/* 桌面浮层：盖在内容区上。侧栏的 z 层更高（--z-drawer-sidebar 40 > 35），
-   遮罩盖不住它——侧栏导航是设置的第二条合法出口，不该被挡。 */
+/* 桌面浮层：盖住整页，含侧栏。
+   原来是「盖在内容区上」——用 --z-drawer-overlay（35，低于侧栏的 40）把侧栏留作
+   第二出口。但面板同时带着 aria-modal="true" 与 Tab 约束（useModalLayer 默认
+   trapTab），于是鼠标能点侧栏、键盘 Tab 不到、读屏被告知外面全部失效：三条路径
+   说着三种话。2026-10 与老板确认统一成模态——遮罩盖满，出口只有关闭键与 Esc，
+   --z-overlay（60）本来就是给这个浮层备的层。 */
 .settings-overlay.is-floating {
   position: fixed;
   inset: 0;
-  z-index: var(--z-drawer-overlay);
+  z-index: var(--z-overlay);
   display: grid;
   place-items: center;
   padding: var(--space-6);

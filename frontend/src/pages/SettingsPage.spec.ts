@@ -143,13 +143,16 @@ describe('SettingsPage', () => {
     wrapper.unmount()
   })
 
-  it('返回工作台不再需要页面级按钮：外壳导航始终在侧栏', async () => {
-    const { wrapper } = await mountAt('/settings/account')
+  it('桌面端浮层自带关闭键：它是离开设置中心的可见出口', async () => {
+    const { wrapper, router } = await mountAt('/settings/account')
 
-    expect(wrapper.find('.settings-heading a').exists()).toBe(false)
-    const nav = wrapper.get('.sidebar-nav .nav-item')
-    expect(nav.text()).toContain('语义检索')
-    expect(nav.attributes('href')).toBe('/')
+    // 2026-10：遮罩盖满整页、含侧栏，侧栏不再是第二出口（见 SettingsPage 的样式注释），
+    // 所以这枚键必须真的在、而且真的能关。
+    const close = wrapper.get('.panel-close')
+    expect(close.attributes('aria-label')).toBe('关闭设置')
+    await close.trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/')
     wrapper.unmount()
   })
 
