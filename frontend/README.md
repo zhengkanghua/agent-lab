@@ -185,7 +185,7 @@ npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated/o
   和生成类型；数量参数与提示词上界的契约常量也在这里（`document-search.ts`、
   `agent-chat.ts`），它们是请求契约的一部分；
 - `src/features/auth`：当前用户会话恢复、登录、退出和过期状态；
-- `src/features/semantic-search`：文档搜索状态（多轮检索流）、全文 Query、展示模型和
+- `src/features/semantic-search`：文档搜索状态（多轮检索流）、展示模型和
   检索流组件（输入条 / 单条记录 / 结果卡）；
 - `src/features/agent-chat`：多轮对话状态、工具轨迹配对、错误文案表和对话组件；
 - `src/features/file-documents`：文件上传、列表、替换、索引重试与删除状态；
@@ -195,11 +195,18 @@ npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated/o
 - `src/features/scheduled-jobs`：周期配置、任务执行、Pipeline 提交与策略面板；
 - `src/features/settings`：设置中心（账号安全 / 检索偏好 / Agent 偏好）与账号偏好
   store（读写 `/auth/me/preferences`）；
-- `src/shared/ui`：`Base*` 基础控件、`ComposerDock` 输入坞、`KnowledgeBaseScopePicker`、
-  `ThemeToggle`，以及答案与 Markdown 文件共用的安全渲染器 `SafeMarkdown.vue`；
+- `src/shared/ui`：`Base*` 基础控件（含 `BaseSwitch` 开关）、`ComposerDock` 输入坞、
+  `KnowledgeBaseScopePicker`、`ThemeToggle`，以及答案与 Markdown 文件共用的安全渲染器
+  `SafeMarkdown.vue`、检索 / Agent / 文件资料三处共用的全文阅读器 `DocumentReader.vue`；
 - `src/shared/composables/useKnowledgeBaseScope.ts`：启用知识库目录与选择有效性；
-- `src/shared/model`：跨功能共用的纯函数（文档处理状态显示、密码规则）；
+- `src/shared/composables/useDocumentReader.ts`：全文 Query 与阅读层状态（三处入口共用）；
+- `src/shared/model`：跨功能共用的纯函数与类型（文档处理状态显示、密码规则、
+  打开全文所需的文档身份 `ReadableResult` 与引用快照）；
 - `src/pages`：登录、检索、Agent 对话、设置中心与后台控制台（单路由
   `/admin/:section?`，AdminPage 按分区组合账号、知识库、来源、文件与任务管理）的路由级组合，
   不直接执行 `fetch`；
-- `src/styles`：设计令牌（`tokens.css`）与 `components/` 下的顶栏、动效两个共享样式层；全局 reset/base/components 分层写在 `src/style.css`。
+- `src/styles`：设计令牌（`tokens.css`）与 `components/` 下的顶栏、动效、目录三态行、
+  状态胶囊、窄屏抽屉遮罩、复选行六个共享样式层；全局 reset/base/components 分层写在
+  `src/style.css`。共享层只放「多个组件长得必须一样」的规则，且只写进 `@layer components`
+  ——分层规则恒定输给组件未分层的 scoped 样式，要压过某个组件（比如把 BaseIconButton
+  藏起来）得在调用方自己的 scoped 块里写。
