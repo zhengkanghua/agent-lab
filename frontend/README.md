@@ -33,8 +33,9 @@ Session Storage 保存密码和 Token。退出调用 `POST /auth/logout` 撤销�
 换浏览器或换设备登录都一致；前端不保存任何凭据（见
 `docs/adr/0027-user-level-preferences-in-database.md`）。
 Agent 提示词草稿在设置分区之间切换时保留，只有保存后才影响提问；有未保存修改时，
-离开设置中心或刷新页面会提示确认。桌面设置中心为居中浮层，支持关闭、Esc 和焦点约束；
-窄屏回退整页，保留相同路由与深链。返回工作台通过外壳导航，离开时继续保护未保存草稿。
+离开设置中心或刷新页面会提示确认。桌面设置中心为居中浮层，遮罩盖满整页、含侧栏，
+出口只有面板的关闭键与 Esc（模态语义与可点侧栏不能同时成立，2026-10 收敛到模态这一侧）；
+窄屏回退整页，保留相同路由与深链，离开时继续保护未保存草稿。
 
 前台的 `AppShell` 用左侧栏承载工作台导航、当前页主操作、Agent 会话列表和底部账号区；
 手机通过导航抽屉访问同一组入口，支持焦点约束、Esc、滚动锁和焦点恢复。
@@ -215,7 +216,8 @@ npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated/o
   `/admin/:section?`，AdminPage 按分区组合账号、知识库、来源、文件与任务管理）的路由级组合，
   不直接执行 `fetch`；
 - `src/styles`：设计令牌（`tokens.css`）与 `components/` 下的顶栏、动效、目录三态行、
-  状态胶囊、窄屏抽屉遮罩、复选行六个共享样式层；全局 reset/base/components 分层写在
+  状态胶囊、窄屏抽屉遮罩、复选行、会话与检索流的左侧时间线、输入条字数胶囊
+  八个共享样式层；全局 reset/base/components 分层写在
   `src/style.css`。共享层只放「多个组件长得必须一样」的规则，且只写进 `@layer components`
   ——分层规则恒定输给组件未分层的 scoped 样式，要压过某个组件（比如把 BaseIconButton
   藏起来）得在调用方自己的 scoped 块里写。
