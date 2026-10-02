@@ -1,0 +1,25 @@
+/* 输入条上的字数胶囊。同一个类名与三档配色原先在 Agent 输入条、检索输入条里各写一份
+ * （字号、等宽字、三档色逐项相同），设置页那段提示词的字数又手写了一遍阈值。
+ * 这里收敛成一套，三处共用。档位由 shared/model/character-count.ts 的 counterTone() 算。
+ *
+ * 只共享样式，不共享结构：Agent 那条在失焦时把常态档藏起来、检索那条窄容器里整个不显示，
+ * 这类差异留在各自 scoped 里——scoped 未分层，恒定压过这里（frontend/AGENTS.md 第 6 条）。
+ */
+
+@layer components {
+  .character-count {
+    color: var(--text-tertiary);
+    font-family: var(--mono-font);
+    font-size: var(--fs-xs);
+    white-space: nowrap;
+    transition: color var(--duration-normal) var(--ease-out-smooth);
+  }
+
+  .character-count.is-near {
+    color: var(--warning);
+  }
+
+  .character-count.is-over {
+    color: var(--danger);
+  }
+}

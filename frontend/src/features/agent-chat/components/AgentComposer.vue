@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { nextTick, onMounted, useTemplateRef, watch } from 'vue'
 import { Send, Settings2, Square } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import ComposerDock from '@/shared/ui/ComposerDock.vue'
+import { useComposerInput } from '@/shared/composables/useComposerInput'
 import { MAX_MESSAGE_CHARACTERS } from '../model/agent-validation'
 
 /* 贴在页面底部的输入区。
@@ -35,24 +36,23 @@ const emit = defineEmits<{
   cancel: []
 }>()
 
-const draft = computed({
-  get: () => props.modelValue,
-  set: (value: string) => emit('update:modelValue', value),
+/* 草稿转发、Enter 守卫、焦点归还、字数档位与检索输入条共用（见
+   shared/composables/useComposerInput.ts）。这里只留 Agent 独有的行为：随内容长高。 */
+const inputRef = useTemplateRef<HTMLTextAreaElement>('agent-textarea')
+const { draft, tone, onEnter, focusInput } = useComposerInput({
+  inputRef,
+  value: () => props.modelValue,
+  onChange: (value) => emit('update:modelValue', value),
+  canSubmit: () => props.canSend,
+  submit: () => emit('submit'),
+  remainingCharacters: () => props.remainingCharacters,
 })
-
-const counterTone = computed(() => {
-  if (props.remainingCharacters < 0) return 'is-over'
-  if (props.remainingCharacters < 200) return 'is-near'
-  return ''
-})
-
-const messageInputRef = ref<HTMLTextAreaElement | null>(null)
 
 /* 输入框随内容长高，到 CSS 的 max-height（40vh）后转为框内滚动。
    固定 62px 时多行文字在框里滚动，被切半的最后一行紧贴无边框底边，
    视觉上和下面的控件行糊在一起（2026-09 审查的「自定义 Prompt 重叠」）。 */
 function autoGrow(): void {
-  const el = messageInputRef.value
+  const el = inputRef.value
   if (!el) return
   el.style.height = 'auto'
   el.style.height = `${el.scrollHeight}px`
@@ -60,23 +60,6 @@ function autoGrow(): void {
 
 watch(draft, () => nextTick(autoGrow))
 onMounted(autoGrow)
-
-/**
- * Enter 发送、Shift+Enter 换行。
- *
- * 输入法组合期间不能发送：中文输入按 Enter 是「确认候选词」，此时 isComposing 为真，
- * 不拦住会把半个词发出去。
- */
-function onEnter(event: KeyboardEvent): void {
-  if (event.isComposing || event.shiftKey) return
-  event.preventDefault()
-  if (props.canSend) emit('submit')
-}
-
-/** 让调用方能把光标送进输入框（落地页与「新对话」之后）。与 SearchComposer 同一约定。 */
-function focusInput(): void {
-  messageInputRef.value?.focus()
-}
 
 defineExpose({ focusInput })
 </script>
@@ -88,7 +71,7 @@ defineExpose({ focusInput })
       <label class="sr-only" for="agent-message">这一轮的问题</label>
       <textarea
         id="agent-message"
-        ref="messageInputRef"
+        ref="agent-textarea"
         v-model="draft"
         class="message-input"
         name="message"
@@ -129,7 +112,7 @@ defineExpose({ focusInput })
       </template>
 
       <template #bar-right>
-        <span id="agent-message-count" class="character-count" :class="counterTone">
+        <span id="agent-message-count" class="character-count" :class="tone">
           还可输入 {{ remainingCharacters.toLocaleString('zh-CN') }} 个字符
         </span>
 
@@ -166,10 +149,16 @@ defineExpose({ focusInput })
 </template>
 
 <style scoped>
-/* 焦点环、圆角、浮起底都由 ComposerDock 提供；class 留在这里只为
-   「失焦时藏起默认字数」这条规则能找到坞的 focus-within 状态。 */
+/* 字数胶囊的皮肤（三档色、等宽字）归共享层 character-count.css。这里只留本页的策略：
+   常态档失焦时藏起来（纯参考信息，--text-tertiary 在那个字号上对比度不足），
+   临近与超出两档自带语气色，无论有没有焦点都要看得见。 */
 .agent-composer:not(:focus-within) .character-count {
   visibility: hidden;
+}
+
+.agent-composer:not(:focus-within) .character-count.is-near,
+.agent-composer:not(:focus-within) .character-count.is-over {
+  visibility: visible;
 }
 
 .message-input {
@@ -232,26 +221,6 @@ defineExpose({ focusInput })
   border-radius: 50%;
   background: var(--accent);
   pointer-events: none;
-}
-
-.character-count {
-  color: var(--text-tertiary);
-  font-family: var(--mono-font);
-  font-size: var(--fs-xs);
-  white-space: nowrap;
-  transition: color var(--duration-normal) var(--ease-out-smooth);
-}
-
-/* 只有临近与超出上界时才需要被看见,那两档自带语气色。默认那档是纯参考信息,
-   --text-tertiary 在这个字号上对比度不足,所以平时不显示,聚焦时才出现。 */
-.character-count.is-near {
-  color: var(--warning);
-  visibility: visible;
-}
-
-.character-count.is-over {
-  color: var(--danger);
-  visibility: visible;
 }
 
 .field-error {

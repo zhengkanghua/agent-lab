@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, useTemplateRef } from 'vue'
 import { Search, SlidersHorizontal } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseField from '@/shared/ui/BaseField.vue'
 import ComposerDock from '@/shared/ui/ComposerDock.vue'
+import { useComposerInput } from '@/shared/composables/useComposerInput'
 import { MAX_QUERY_CHARACTERS } from '../model/search-validation'
 
 /* 检索页顶部常驻的输入条（Q3 / Q4 模型二）。
@@ -16,8 +17,6 @@ import { MAX_QUERY_CHARACTERS } from '../model/search-validation'
  * 分区（可发现、可持久）；输入条只留一个跳转入口（底栏滑杆图标），悬停能看到当前值。
  * 知识库范围选择器由页面经 #scope 插槽放进底栏左侧：组件不管它的数据。
  */
-
-const textareaRef = ref<HTMLTextAreaElement | null>(null)
 
 const props = withDefaults(
   defineProps<{
@@ -42,28 +41,17 @@ const emit = defineEmits<{
   submit: []
 }>()
 
-const draft = computed({
-  get: () => props.modelValue,
-  set: (value: string) => emit('update:modelValue', value),
+/* 草稿转发、Enter 守卫、焦点归还、字数档位与 Agent 输入条共用：
+   见 shared/composables/useComposerInput.ts。两条输入条只有提交条件不同。 */
+const inputRef = useTemplateRef<HTMLTextAreaElement>('query-textarea')
+const { draft, tone, onEnter, focusInput } = useComposerInput({
+  inputRef,
+  value: () => props.modelValue,
+  onChange: (value) => emit('update:modelValue', value),
+  canSubmit: () => !props.loading && !props.disabled,
+  submit: () => emit('submit'),
+  remainingCharacters: () => props.remainingCharacters,
 })
-
-const counterTone = computed(() => {
-  if (props.remainingCharacters < 0) return 'is-over'
-  if (props.remainingCharacters < 200) return 'is-near'
-  return ''
-})
-
-function onEnter(event: KeyboardEvent): void {
-  // 输入法组合期间按 Enter 是「确认候选词」，不能当提交。Shift+Enter 换行。
-  if (event.isComposing || event.shiftKey) return
-  event.preventDefault()
-  if (!props.loading && !props.disabled) emit('submit')
-}
-
-/** 让父级把焦点放回输入框（Q11：提交一轮后清空草稿、焦点留下，方便连续换词）。 */
-function focusInput(): void {
-  textareaRef.value?.focus()
-}
 
 defineExpose({ focusInput })
 </script>
@@ -80,7 +68,7 @@ defineExpose({ focusInput })
       >
         <template #default="{ control }">
           <textarea
-            ref="textareaRef"
+            ref="query-textarea"
             v-bind="control"
             v-model="draft"
             class="query-input"
@@ -118,7 +106,7 @@ defineExpose({ focusInput })
       </template>
 
       <template #bar-right>
-        <span class="character-count" :class="counterTone" aria-hidden="true">
+        <span class="character-count" :class="tone" aria-hidden="true">
           {{ remainingCharacters.toLocaleString('zh-CN') }}
         </span>
 
@@ -214,21 +202,7 @@ defineExpose({ focusInput })
   }
 }
 
-.character-count {
-  color: var(--text-tertiary);
-  font-family: var(--mono-font);
-  font-size: var(--fs-xs);
-  padding-right: 4px;
-}
-
-.character-count.is-near {
-  color: var(--warning);
-}
-
-.character-count.is-over {
-  color: var(--danger);
-}
-
+/* 字数胶囊的皮肤（三档色、等宽字）归共享层 character-count.css。 */
 /* 圆形发送键：有字才实色（primary 的 disabled 态），空时灰。 */
 .search-submit {
   width: 38px;

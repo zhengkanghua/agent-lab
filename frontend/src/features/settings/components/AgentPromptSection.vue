@@ -6,6 +6,7 @@ import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseField from '@/shared/ui/BaseField.vue'
 import BaseTextarea from '@/shared/ui/BaseTextarea.vue'
 import { MAX_SYSTEM_PROMPT_CHARACTERS } from '@/api/agent-chat'
+import { counterTone } from '@/shared/model/character-count'
 import { validateAgentSystemPrompt } from '../model/preferences'
 import { useDefaultAgentPrompt } from '../composables/useDefaultAgentPrompt'
 import { usePreferences } from '../composables/usePreferences'
@@ -149,10 +150,7 @@ async function clearPrompt(): Promise<void> {
           />
         </template>
         <template #hint>
-          <span
-            class="char-count"
-            :class="{ 'is-near': remainingCharacters < 200, 'is-over': remainingCharacters < 0 }"
-          >
+          <span class="character-count" :class="counterTone(remainingCharacters)">
             还可输入 {{ remainingCharacters.toLocaleString('zh-CN') }} 个字符
           </span>
         </template>
@@ -280,18 +278,8 @@ async function clearPrompt(): Promise<void> {
   min-height: 220px;
 }
 
-.char-count {
-  font-family: var(--mono-font);
-  font-size: var(--fs-xs);
-}
-
-.char-count.is-near {
-  color: var(--warning);
-}
-
-.char-count.is-over {
-  color: var(--danger);
-}
+/* 字数胶囊的皮肤与档位归共享处：样式在 styles/components/character-count.css，
+   档位在 shared/model/character-count.ts（原先这里把 200 这个阈值写进 :class）。 */
 
 /* 底部吸附保存条（2026-09 重设计 P4）：浮层里内容滚动时保存键始终可见，
    整页形态下吸附文档滚动，同效。负 margin 把这一行拉到卡片边缘并吃掉卡片的
