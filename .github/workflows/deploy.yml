@@ -241,12 +241,14 @@ jobs:
             # 键必须来自进程环境，否则写成 ${VAR:?} 的键会直接报错。这里只导出会被插值的那几个，
             # 不整份 source .env：里面 LLM_USER_AGENT 这类值带空格与括号，会被 shell 拆坏。
             # 其余键由服务定义里的 env_file 注入容器，不经过环境。
-            # 改 backend/docker-stack.yml 时新增了 ${} 引用，就要往这个列表里加一行。
+            # 改 backend/docker-stack.yml 时新增了 ${} 引用，就要往这个列表里加一行；反过来删
+            # 掉一个引用就从列表里去掉（`WORKER_COUNT` 就是这样）——API 的进程数现在是栈文件里
+            # 写死的 `"1"`，不再是 `${WORKER_COUNT}`，导出它只会让人以为它还被引用。
             #
             # **这一段必须排在下面每一句引用 $BACKEND_IMAGE 的语句之前**：不排在前面的话，
             # `docker pull "$BACKEND_IMAGE"` 在远端环境里没有这个变量、set -u 直接退出
             # （演练里真的被这个坑到过：日志只有一行 `BACKEND_IMAGE: unbound variable`）。
-            for key in BACKEND_IMAGE BACKEND_PORT TZ REDIS_URL WORKER_COUNT TASK_WORKER_CONCURRENCY; do
+            for key in BACKEND_IMAGE BACKEND_PORT TZ REDIS_URL TASK_WORKER_CONCURRENCY; do
               # `|| true` 不是装饰：set -euo pipefail 下，grep 找不到键（.env 里本来就没有
               # TASK_WORKER_CONCURRENCY）会让整条管道返回 1，而「赋值给变量的命令返回值失败」
               # 同样会触发 set -e——脚本会在这里直接退出（演练时真的被这个坑到过）。
@@ -391,8 +393,24 @@ jobs:
             # 1. 更新器自己的结论（UpdateStatus）：只有它知道「新任务启动成功、旧任务已停」还是
             #    「自己回滚了」。只看到「任务在跑且健康」不够——回滚之后跑的正是旧任务，它当然
             #    健康，那种情况下必须报失败。
-            # 2. 任务本身：运行中的任务数等于声明的副本数，且 API 容器健康（容器的健康状态只在
-            #    节点的 docker ps 里看得见，服务定义里读不到）。
+            # 2. 任务本身：**每个服务的运行中任务数不少于它声明的副本数**，且 API 的健康容器数
+            #    不少于 API 的副本数（容器的健康状态只在节点的 docker ps 里看得见，服务定义里读不到）。
+            #
+            # 副本数从服务定义里读，不写死数字。之前这里写的是 `running -ge 3`，配上 API 单副本
+            # 恰好成立；API 改成 2 个副本之后它仍然会通过（2+1+1=4>3），却再也拦不住「只起来了一个
+            # API 副本」——而那正是这次改拓扑要保证的东西。
+            declared_replicas() {
+              # 归一成纯整数：服务可能还没被创建（首次部署的第一个轮次），或者格式拿不到值。
+              # 不归一的话空串会进下面的 `$(( ))`，而 `set -e` 下算术报错会把整个部署步骤带走。
+              local n
+              n="$(docker service inspect "agent-lab_$1" --format '{{.Spec.Mode.Replicated.Replicas}}' 2>/dev/null || true)"
+              case "$n" in ''|*[!0-9]*) echo 0 ;; *) echo "$n" ;; esac
+            }
+            # 数健康容器的**个数**，不是 head -1 挑一个：API 有 2 个副本时「挑一个」等于随机看一半，
+            # 另一个坏掉也不报。用 `(healthy)` 而不是 `healthy`——`(unhealthy)` 也含子串 healthy。
+            healthy_containers() {
+              docker ps --filter "name=$1" --format '{{.Status}}' | grep -c '(healthy)' || true
+            }
             deadline=$((SECONDS + 300))
             ready=""
             while [ "$SECONDS" -lt "$deadline" ]; do
@@ -404,25 +422,29 @@ jobs:
                   exit 1
                   ;;
               esac
-              api_health="$(docker ps --filter name=agent-lab_backend --format '{{.Status}}' | head -1)"
+              api_declared="$(declared_replicas backend)"
+              declared_total=$(( api_declared + $(declared_replicas task-beat) + $(declared_replicas task-worker) ))
+              api_healthy="$(healthy_containers agent-lab_backend)"
               running="$(for service in agent-lab_backend agent-lab_task-beat agent-lab_task-worker; do
                 # 服务可能还没被创建（第一次部署的第一个轮次），别让那种失败把脚本带走。
                 docker service ps "$service" --filter desired-state=running --format '{{.Name}}' 2>/dev/null || true
               done | sort -u | wc -l)"
-              case "$api_health" in
-                *healthy*)
-                  if [ "$running" -ge 3 ]; then ready="yes"; break; fi
-                  ;;
-              esac
+              if [ "$api_declared" -ge 1 ] \
+                 && [ "$api_healthy" -ge "$api_declared" ] \
+                 && [ "$running" -ge "$declared_total" ]; then
+                ready="yes"
+                break
+              fi
               sleep 5
             done
             if [ -z "$ready" ]; then
               echo "等待新任务就绪超时（300 秒）："
               docker service ls
+              docker ps --filter name=agent-lab_backend --format '  {{.Names}} {{.Status}}'
               docker service ps agent-lab_backend agent-lab_task-beat agent-lab_task-worker --no-trunc 2>/dev/null | head -30 || true
               exit 1
             fi
-            echo "新任务已就绪：$api_health（运行中任务 $running 个）"
+            echo "新任务已就绪：API 健康容器 $api_healthy/$api_declared（三个服务运行中任务 $running 个，合计声明 $declared_total 个）"
 
             # Beat 与 Worker 的就绪检查打到**任务容器**上。它们刻意没有声明健康检查：在 Swarm
             # 里健康检查不过等于 agent 把容器杀掉重启，而 Worker 手上的文档批次被杀会留下需要

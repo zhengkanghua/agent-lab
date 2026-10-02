@@ -13,15 +13,17 @@ Cloudflare 与账号管理内容收在本文第五节。
                       ↓
                  Swarm 路由网格（入口，绑全接口）
                       ↓
-                 agent-lab 栈：backend / task-beat / task-worker 三个服务
+                 agent-lab 栈：backend（2 个副本）/ task-beat / task-worker 三个服务
                       ↓
                  已有 PostgreSQL / Redis / MinIO
                  （这三个容器被接进同一张自持 overlay agent-lab-net，服务才能靠容器名解析到它们）
                  其余上游（Ollama / Qdrant / 大模型 / FreshRSS）走公网域名，与容器挂哪张网无关
 ```
 
-前端由 OpenResty 提供静态文件；**后端是一个 Swarm 栈**，三个进程（API、单个 Beat、Linux prefork
-Worker）用同一个后端镜像，服务定义在 [`backend/docker-stack.yml`](../backend/docker-stack.yml)。
+前端由 OpenResty 提供静态文件；**后端是一个 Swarm 栈**，三个服务用同一个后端镜像，服务定义在
+[`backend/docker-stack.yml`](../backend/docker-stack.yml)：API 是 **2 个副本、每个容器一个进程**
+（一个进程卡住时只有那个容器被判不健康、由 Swarm 换掉，另一个继续服务——见第三节「某个 API 副本
+卡住」），单个 Beat，单个 Linux prefork Worker。
 API 校验权限、持久受理并查询；单个 Beat 推进周期和补投；Worker 完成三类周期任务、文档处理批次和
 HTTP Pipeline。PostgreSQL 保存状态和结果，Redis 传递任务消息，后续缓存等用途共用连接并区分键前缀。
 文件与 FreshRSS 的文档待办不需要额外 cron，进程职责与恢复决策见
@@ -126,7 +128,8 @@ URL、API Key 后面多一个看不见的字符。这类故障很难查：日志
    之前会先自检这一项。
 3. **不要写 `LLM_CHECKPOINT_POOL_SIZE`**：它在 `config/llm.py` 是 `strict=True`，而 `env_file`
    注入的全是字符串，配上就会启动即 `ValidationError`。生产还要有 `AUTH_COOKIE_SECURE=true`。
-4. **`WORKER_COUNT` 是 API 进程数、`TASK_WORKER_CONCURRENCY` 是每个 Worker 的子进程数**；要加
+4. **`WORKER_COUNT` 不用配**：API 的进程数在栈文件里写死为 1（一个容器一个进程），并发能力由
+   `deploy.replicas`（2 个副本）提供。`TASK_WORKER_CONCURRENCY` 是每个 Worker 容器的 prefork 子进程数；要加
    Worker 实例就改编排文件里的 `deploy.replicas`，Beat 始终只有一个实例（详见后端 README 的环境变量表）。
 
 已有的 **Redis 与原件存储**都由各自部署管理：本项目不创建、不修改它们（AOF/everysec、持久盘、
@@ -332,7 +335,7 @@ Secrets 和 Variables 填在不同页签里，填错地方工作流读不到（�
 | 环境变量（`DATABASE_URL`/`REDIS_URL`/`LLMOPS_*`/`S3_*`/`AUTH_*`/`LLM_*` 等）、镜像地址 `BACKEND_IMAGE`、端口号的值 | 服务器 `<DEPLOY_DIR>/.env`（1Panel 文件管理器或 `vi`） | 改完**重新部署一次**才生效（`.env` 的值是部署时读进服务定义的）；最省事是在 GitHub 的 Actions 页手动 Run workflow |
 | 任务的周期、参数、策略 | 网页的任务管理（存在数据库） | Beat 每次动态读取，不用重新部署 |
 
-两个容易混的点：**镜像摘要（`@sha256:…`）不在任何文件里**——它是部署时去 registry 解析后钉进服务定义的，回滚（`--rollback`）就靠它；**`.env` 里只有 6 个键会被栈文件引用**（`BACKEND_IMAGE`、`BACKEND_PORT`、`TZ`、`REDIS_URL`、`WORKER_COUNT`、`TASK_WORKER_CONCURRENCY`），部署前由工作流导出成进程环境，其余四十来个键通过 `env_file` 直接注入容器；若在栈文件里新增一个 `${}` 引用，要同步往工作流里那个 6 键列表加一行。
+两个容易混的点：**镜像摘要（`@sha256:…`）不在任何文件里**——它是部署时去 registry 解析后钉进服务定义的，回滚（`--rollback`）就靠它；**`.env` 里只有 5 个键会被栈文件引用**（`BACKEND_IMAGE`、`BACKEND_PORT`、`TZ`、`REDIS_URL`、`TASK_WORKER_CONCURRENCY`），部署前由工作流导出成进程环境，其余四十来个键通过 `env_file` 直接注入容器；若在栈文件里新增一个 `${}` 引用，要同步往工作流里那个 5 键列表加一行，删掉一个引用就相应减一行。
 
 CI 的完整顺序在 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) 里。它做的事是：
 **校验候选栈文件 → 在项目网络上跑一次性容器（Redis 自检、用量库配置自检、业务库迁移、建用量库与
@@ -348,11 +351,11 @@ CI 的完整顺序在 [`.github/workflows/deploy.yml`](../.github/workflows/depl
    老后端」。
 3. **`docker stack deploy` 必须带 `--with-registry-auth`**：它让 CLI 去 registry 解析摘要、把 digest 写进服务定义，于是「回滚到上一版」回到的是那一版**具体镜像**，而不是一个已经被覆盖的可变标签；同时也在告诉节点用哪个凭据去拉私有镜像。
 4. **栈文件里的 `${}` 引用必须在进程环境里**：`docker stack deploy` 与 `docker stack config` 都**不读 `.env`**（只有 `docker compose` 读），所以部署前要把被引用的那几个键从 `.env` 导出——键名与可执行的那段循环见下面「手工跑一遍同一套流程」第 2 步。其余键由服务定义里的 `env_file` 注入容器，不经过环境；**不能整份 `source .env`**（里面 `LLM_USER_AGENT` 这类值带空格与括号，会被 shell 拆坏）。在栈文件里新增一个 `${}` 引用时，记得同步工作流里那个列表；写成 `${VAR:?}` 的键缺值会在校验那一步直接报错。
-5. **停旧任务由更新器按「新任务是否启动成功」判定**，`failure_action: rollback` 管的是「容器退出」那一类（起来了但不健康的，靠就绪端点被看见）。API 的停止宽限 180 秒 = uvicorn 关停超时 30 秒（`entrypoint.sh`）＋ 排空上限 120 秒（`agent/limits.RUN_DRAIN_TIMEOUT_SECONDS`）＋ 收尾写入的余量：旧进程在收尾里把在途运行排空到可交接的 superstep 边界、在会话行上写下「等接手」标记再退出，新 API 起来后扫到标记接手续跑（见 [ADR 0040](adr/0040-run-handover-on-deploy.md)）；Beat 30 秒（它必须「先停后起」，否则两个调度器同时活着会把周期任务投两次）、Worker 360 秒（让手上的文档批次做完）。只有**第一次切换**时工作流会去停旧的普通容器（Swarm 要发布同一个宿主机端口），之后那一步是空操作。
+5. **停旧任务由更新器按「新任务是否启动成功」判定**，`failure_action: rollback` 管的是「容器退出」那一类（起来了但不健康的，靠就绪端点被看见）。API 的停止宽限 180 秒 = uvicorn 关停超时 30 秒（`entrypoint.sh`）＋ 排空上限 120 秒（`agent/limits.RUN_DRAIN_TIMEOUT_SECONDS`）＋ 收尾写入的余量：旧进程在收尾里把在途运行排空到可交接的 superstep 边界、在会话行上写下「等接手」标记再退出，新 API 起来后扫到标记接手续跑（见 [ADR 0040](adr/0040-run-handover-on-deploy.md)）；副本数不影响这个数——更新是 `parallelism: 1`，一次只换一个任务、两个容器的排空不重叠，代价只是部署总时长；Beat 30 秒（它必须「先停后起」，否则两个调度器同时活着会把周期任务投两次）、Worker 360 秒（让手上的文档批次做完）。只有**第一次切换**时工作流会去停旧的普通容器（Swarm 要发布同一个宿主机端口），之后那一步是空操作。
 6. **用量库配置自检与 Redis 连接自检都排在起新任务之前**：`LLMOPS_DATABASE_URL` 缺失或不合法时应用启动就会失败，把生产停在一半才发现 `.env` 少了一项是完全可以避开的。
 7. **迁移阶段有两条链**：业务库的 `alembic upgrade head`，以及用量库的建库 + `alembic -c alembic_usage.ini upgrade head`。两者都在 `docker stack deploy` 之前完成，任一条失败即中止部署（此时旧版本仍在服务）。
 8. **删列、改列名、改语义、拆约束的迁移拆两次发布**：这次只发「代码不再用它」，下一次发布才真删。原因见第三节「哪种迁移会让回滚退路消失」。
-9. **等就绪看两条**：更新器自己的结论（`UpdateStatus.State`）与任务本身（运行中任务数等于副本数、API 容器健康）。只看「任务在跑且健康」不够——回滚之后跑的正是旧任务，它当然健康。任务更新进来之后，旧任务容器会被停掉但**留在节点上**（`Exited`），所以工作流在就绪之后会清一次本栈已退出的任务容器；手工跑同一套流程时也要清：`docker ps -a --filter name=agent-lab_ --filter status=exited --format '{{.Names}}' | xargs -r docker rm`。
+9. **等就绪看两条**：更新器自己的结论（`UpdateStatus.State`）与任务本身（每个服务的运行中任务数不少于**它声明的副本数**、API 的健康容器数不少于 API 的副本数）。副本数从服务定义里读，不写死数字——API 是 2 个，硬编码一个「≥3」在改完拓扑之后仍然会通过，却拦不住「只起来了一个 API 副本」。只看「任务在跑且健康」不够——回滚之后跑的正是旧任务，它当然健康。任务更新进来之后，旧任务容器会被停掉但**留在节点上**（`Exited`），所以工作流在就绪之后会清一次本栈已退出的任务容器；手工跑同一套流程时也要清：`docker ps -a --filter name=agent-lab_ --filter status=exited --format '{{.Names}}' | xargs -r docker rm`。
 
 > **一条与常见说法相反的实测（2026-10-01，本机 Docker 29）。** **未就绪的任务收不到流量**：带健康检查的服务里，新任务在就绪之前那 980 次请求 0 失败、最慢 3ms（对照实验：把健康检查去掉后，窗口里的请求会排上十几秒）；而 `/ready` 一直返 503 的那个任务，入口一次请求都没转运给它（拿到的转发请求数是 **0**）。也就是说这套编排里「就绪之后才切流量」是成立的，不必自己再写一个代理。**升级 Docker 大版本后请复核这一条**——它决定我们还要不要加一个「自己拿指针」的组件。
 
@@ -370,7 +373,7 @@ echo "$ACR_PASSWORD" | docker login "$ACR_REGISTRY" -u "$ACR_USERNAME" --passwor
 docker pull "$BACKEND_IMAGE"
 
 # 2) 把会被插值的键导出成进程环境（stack deploy 不读 .env）
-for key in BACKEND_IMAGE BACKEND_PORT TZ REDIS_URL WORKER_COUNT TASK_WORKER_CONCURRENCY; do
+for key in BACKEND_IMAGE BACKEND_PORT TZ REDIS_URL TASK_WORKER_CONCURRENCY; do
   value="$(grep -E "^${key}=" .env | head -1 | cut -d= -f2- | tr -d '\r' || true)"
   [ -n "$value" ] && export "$key=$value"
 done
@@ -399,7 +402,7 @@ docker stack deploy --with-registry-auth --detach=false -c docker-stack.next.yml
 # 7) 等就绪与核对
 docker service ls --filter name=agent-lab
 docker service inspect agent-lab_backend --format '{{json .UpdateStatus}}'      # 应为 completed
-docker ps --filter name=agent-lab_backend --format '{{.Names}}\t{{.Status}}'    # 应为 healthy
+docker ps --filter name=agent-lab_backend --format '{{.Names}}\t{{.Status}}'    # 两个副本都应 healthy
 curl -s -o /dev/null -w '/ready=%{http_code}\n' http://127.0.0.1:18000/ready
 
 # 8) 清掉本栈已退出的任务容器
@@ -421,7 +424,7 @@ docker ps -a --filter name=agent-lab_ --filter status=exited --format '{{.Names}
 | 现象 | 做什么 |
 |---|---|
 | 站点/接口大面积报错，怀疑是新版本 | **回上一版**（下面第 1 条）——秒级，不用构建 |
-| 某个服务卡住（例如回答一直不返回） | **重启那个服务**（第 3 条） |
+| 某个服务卡住（例如回答一直不返回） | API 的副本卡住会自己好（看「某个 API 副本卡住」）；其他服务**重启那个服务**（第 3 条） |
 | 队列不动、上传失败、库连不上 | 查那张 overlay 的三根线：`bash verify-agent-lab-net.sh`；症状对照见第一节第 5 小节 |
 | 分不清 | 先看现状（第 4 条） |
 
@@ -513,47 +516,55 @@ cd /opt/agent-lab
 docker service logs --tail 100 agent-lab_backend      # backend 最近 100 行
 docker service logs --tail 100 agent-lab_task-beat agent-lab_task-worker
 docker service logs -f agent-lab_backend              # 跟踪
-docker service ls --filter name=agent-lab    # API、Beat、Worker 各 1/1
+docker service ls --filter name=agent-lab    # backend 2/2、task-beat 1/1、task-worker 1/1
 ```
 
 日志上限 10MB × 3 份（compose 里配的）。Docker 默认不限大小，那会慢慢写满磁盘。
 
-### 某个 API 进程卡住（回答偶尔一直不返回）
+### 某个 API 副本卡住（回答偶尔一直不返回）
 
-**表现**：一个容器里跑着 `WORKER_COUNT` 个 API 进程（默认 2），其中**一个**卡住时请求会被内核随机分
-给它——于是症状是「同一个问题有时秒回、有时一直不返回」，而容器本身仍然 `(healthy)`。原因见下一条。
+**拓扑是「一个容器一个进程 × 2 个副本」**（2026-10-02 改，收掉 [ADR 0039](adr/0039-swarm-start-first-deploys.md)
+末尾那条「已知边界」）：编排文件里 API 的 `WORKER_COUNT` 写死 1、`deploy.replicas` 是 2。所以每个进程
+都被**自己容器**的 `/ready` 探针覆盖，不再是抽样。
 
-**就绪探针在一个容器两个进程时只是抽样。** 探针每次是一条新连接、内核在两个进程之间分派，所以它只
-代表**被问到的那一个**进程；两个里坏了一个时，容器仍可能报就绪。这是「一个容器两个进程」今天就有
-的事实，由拓扑决定、不由本次改造引入。
+**表现**：其中一个副本的进程卡住（典型是某个模型调用不再返回），它的日志不再前进（`docker logs` 里
+一段沉默）。探针连续 3 次拿不到 200（间隔 5 秒）之后那个容器被判成 `(unhealthy)`，**Swarm 自己换掉
+那一个任务**，另一个副本继续服务——用户侧最多是「一个还在跑的回答被中断」。所以正常情况**不需要人工
+介入**。改造前是「一个容器两个进程」：探针每次连到哪个进程由内核随机决定，两个里坏一个容器仍可能
+报就绪，症状是「同一个问题有时秒回、有时一直不返回」，恢复只能重启整个服务。
 
-**已记为待办（单独做）：改成「一个容器一个进程 + 多开副本」。** 做法是编排文件里 API 的 `WORKER_COUNT`
-取 1（或删掉，entrypoint 默认就是 1）、`deploy.replicas: 2`，并相应改部署工作流的就绪判定（现在写的是
-「运行中任务 ≥3」，要按副本数算），然后真部署验证一次、改相关文档。收益：**每个进程都被自己的探针
-覆盖**，一个进程卡住时只有那个容器被判不健康、由 Swarm 自己换掉，另一个继续服务——不必再人工重启整个
-服务。与 [ADR 0039](adr/0039-swarm-start-first-deploys.md) 末尾那条「已知边界」是同一件事；2026-10-01
-决定单独做，不随这次部署改造。
+**要看的证据**（两个副本，所以两条日志都要看；`docker service logs` 把两个任务的流合在一起）：
 
-另一个表征：那个进程的日志不再前进（`docker logs` 里一段沉默），而另一个进程照旧收发。
+```bash
+cd /opt/agent-lab
+docker service ls --filter name=agent-lab_backend                            # 期望 2/2
+docker ps --filter name=agent-lab_backend --format '{{.Names}}\t{{.Status}}'  # 期望两个都 (healthy)
+docker service ps agent-lab_backend --no-trunc
+docker service logs --tail 100 agent-lab_backend
+```
 
-**恢复**：重启这个**服务**（不要重启任务容器，理由见下段）：
+两个副本的日志现在混在一个流里，想分开看就按任务名取：
+
+```bash
+docker logs --tail 100 agent-lab_backend.1.xxxx    # 名字从上面那条 docker ps 里拿
+```
+
+**什么时候还需要人工出手**：两个副本同时卡住（典型是共同依赖的上游整体挂了），那时两个容器都会被
+反复杀掉重起。先看日志确认是上游故障，不要在容器层动手；真要人工重启就**重启服务**（两个副本按先起
+后停滚动过去）：
 
 ```bash
 docker service update --force agent-lab_backend
 ```
 
-重启后容器里的所有进程都是新的，卡住的那个随之消失。**恢复前先抓证据**（两个进程共享日志流，重启
-会把现场冲掉）：
-
-```bash
-docker ps --filter name=agent-lab_backend --format '{{.Names}} {{.Status}}'
-docker logs --tail 100 "$(docker ps -q -f name=agent-lab_backend | head -1)"
-docker service ps agent-lab_backend --no-trunc
-```
+**仍然存在的边界**：排空与接手（[ADR 0040](adr/0040-run-handover-on-deploy.md)）覆盖的是收到退出信号、
+能跑收尾的进程。一个**卡住**的进程既接不到信号也走不到排空，它手上那次运行只能等会话失活阈值解锁后
+重新提问；强杀、OOM、断电同理。所以这次改造消掉的是「一个坏进程拖垮整个服务」，不是「那次运行一定
+能续上」。
 
 **别用容器层的重启。** 对 Swarm 的**任务容器**做 `docker restart`（或面板里的「重启」按钮），Swarm
 会把它判成异常并另建新任务，而旧容器因为自带 `restart: any` 策略继续活着、且不再归编排管。症状是
-「服务层看着干净（`docker service ps` 只有一行 Running、`REPLICAS 1/1`），但节点上多出一个同名容器
+「服务层看着干净（`docker service ps` 只有一行 Running、`REPLICAS 2/2`），但节点上多出一个同名容器
 在跑」；对 Beat 而言就是两个调度器同时活着（周期任务可能被投两次）。手工清理：
 `docker rm -f <孤儿容器名>`。
 

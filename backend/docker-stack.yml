@@ -19,6 +19,12 @@
 # - Worker 的实例数由 deploy.replicas 表达（原来靠 `docker compose up -d --scale task-worker=N`）。
 #
 # 密钥不在这个文件里：env_file 指向同目录的 .env，由部署账号在服务器上维护、不进仓库。
+#
+# **API 的形态是「一个容器一个进程 × 2 个副本」**（见下面 backend 服务）：并发能力由
+# deploy.replicas 提供，不由容器里的进程数提供。这样每个进程都被**自己容器**的健康检查覆盖
+# ——一个进程卡住时只有那个容器被判不健康、由 Swarm 换掉，另一个继续服务。原来「一个容器两个
+# 进程」时探针只是抽样（内核把每条新连接随机分给其中一个进程），两个里坏一个容器仍可能报就绪，
+# 排查与恢复见 docs/container_deployment.md 的「某个 API 副本卡住」一节。
 x-backend: &backend
   image: ${BACKEND_IMAGE:?BACKEND_IMAGE 未设置：检查本文件同目录的 .env}
   env_file:
@@ -47,10 +53,16 @@ services:
     # API 的停止宽限 180 秒 = uvicorn 关停超时 30 秒（entrypoint.sh）＋ 排空上限 120 秒
     # （agent/limits.RUN_DRAIN_TIMEOUT_SECONDS）＋ 收尾写入的余量。它不再跟着「一次运行最坏能
     # 跑多久」走，也不再与另外两个服务共用一个数：三者的活不同，见 ADR 0039 与 0040。
+    # 它是**单个容器**的预算，2 个副本不影响它：下面 update_config 是 parallelism: 1，一次只
+    # 换一个任务，两个容器的排空不重叠。代价是部署总时长最坏变成两次「启动 + 排空」。
     stop_grace_period: 180s
     environment:
       <<: *backend-environment
-      WORKER_COUNT: ${WORKER_COUNT:-2}
+      # 写死 1，**刻意不写成 ${WORKER_COUNT:-1}**：env_file 注入的是服务器 .env 里的同名键，
+      # 而那份 .env 按 .env.example 建（历史上写着 2），所以只要这里不是显式覆盖，容器里就是
+      # 两个进程——探针重新变成抽样、这次改造白做，而且没有任何报错。显式写死还有一个好处：
+      # backend/tests/test_deploy_stack_file.py 能把「又变回 2」这种改坏方式钉住。
+      WORKER_COUNT: "1"
     # 入口由 Swarm 的路由网格接管，因此绑定从「只绑本机回环」变成全网卡监听（这是 Swarm 的
     # 已知行为，不支持只绑回环）。安全边界随之从端口绑定换成云安全组/VCN 安全列表：只放
     # 80、443、SSH。对外端口号不变。
@@ -63,6 +75,9 @@ services:
     # 发给它；而更新器按「任务有没有启动成功」决定要不要停旧任务，所以一个「检索能用、提问用
     # 不了」的新版本会被判成未就绪、由 failure_action 回滚，而不会替掉正在服务的那一份。
     #
+    # 一个容器只有一个 API 进程（见上面 environment），所以探针问到的那一个就是这个容器的全部
+    # ——不再是抽样。坏掉的进程只让**这一个**容器不健康、被 Swarm 换掉，另一个副本继续服务。
+    #
     # Beat 与 Worker 刻意不声明：在 Swarm 里健康检查不过等于 agent 把容器杀掉重启（不是 compose
     # 里那种「只显示 unhealthy」），而 Worker 手上的文档批次被杀会留下需要人工确认的待核实记录。
     # 它们的就绪由部署工作流用 docker exec 打到任务容器上检查（见 .github/workflows/deploy.yml）。
@@ -72,7 +87,7 @@ services:
       #
       # 单次超时 3 秒必须大于探针自己的上限（api/readiness.READINESS_PROBE_TIMEOUT_SECONDS =
       # 2 秒）：被外面掐断的请求不会留下「哪一项没过」的日志。启动宽限 15 秒要盖过正常启动耗时
-      # ——实测容器起到「Application startup complete」约 9.7 秒，其中 7.7 秒是子进程 import。
+      # ——实测容器起到「Application startup complete」约 9.7 秒，其中 7.7 秒是应用 import（那时是 2 个 uvicorn 子进程各 import 一次；现在一个容器一个进程，这段只剩一次，所以宽限没动）。
       test:
         - CMD
         - python
@@ -83,7 +98,10 @@ services:
       retries: 3
       start_period: 15s
     deploy:
-      replicas: 1
+      # 2 个副本，不是 1：一个 API 进程卡住时只有它所在的容器被判不健康、由 Swarm 自己换掉，
+      # 另一个继续服务；退回 1 就等于「那个进程卡住 = 整个服务不可用」，又回到人工重启整服务。
+      # 并发能力由这里提供，不再由 WORKER_COUNT 提供（见文件头与上面 environment）。
+      replicas: 2
       restart_policy:
         # 等价于原来 compose 的 restart: unless-stopped：任何退出都拉起来。
         condition: any

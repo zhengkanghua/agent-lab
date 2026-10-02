@@ -79,7 +79,7 @@ Agent 继续使用 LangChain/LangGraph，向量存储使用官方 qdrant-client�
 
 API 启动访问 PostgreSQL，同步环境托管管理员并装配受理与查询组件；除了向 LLM 上游拉一次模型列表核对 `LLM_MODEL`（见下文），不在启动时探测其他业务上游或 Redis，也不创建 Collection/Alias。Redis 暂不可用时仍可持久受理，恢复后由 Beat 补投原执行。
 
-API、单个 Beat 和 Worker 使用同一份后端代码、独立进程与数据库连接。Beat 动态读取周期配置并维护补投、恢复及历史；生产 Worker 使用 Linux prefork，子进程在 fork 后建立自己的持久 asyncio 循环和连接池。Windows 原生的 HTTP、Beat 和 solo Worker 已通过受理、补投、资源等待、非空业务处理及正常关停验证；生产 prefork 的多进程与故障验收由 Linux 承担，具体范围见「测试」。`WORKER_COUNT` 控制 API 进程数，`TASK_WORKER_CONCURRENCY` 控制每个 Worker 容器的子进程数；增加 Worker 实例不增加 Beat。
+API、单个 Beat 和 Worker 使用同一份后端代码、独立进程与数据库连接。Beat 动态读取周期配置并维护补投、恢复及历史；生产 Worker 使用 Linux prefork，子进程在 fork 后建立自己的持久 asyncio 循环和连接池。Windows 原生的 HTTP、Beat 和 solo Worker 已通过受理、补投、资源等待、非空业务处理及正常关停验证；生产 prefork 的多进程与故障验收由 Linux 承担，具体范围见「测试」。`TASK_WORKER_CONCURRENCY` 控制每个 Worker 容器的子进程数；增加 Worker 实例不增加 Beat。API 的进程数在栈编排里写死为 1（一个容器一个进程，并发靠 `deploy.replicas` 的 2 个副本），不由环境变量决定。
 
 同步、索引和清理保留周期配置，文档处理和 HTTP Pipeline 也接入公共任务组件。配置启用或执行期间可以编辑、停用和删除，后续受理使用新配置，已有执行沿用旧快照；删除后仍能按执行编号查询。相同配置未结束时，新的人工触发返回冲突，新周期留下跳过记录。错过 cron 不补跑；已受理工作继续推进。同任务约束、写资源等待和清理占用由 PostgreSQL 协调，CLI 也参与。决策与代价见 [ADR 0019](../docs/adr/0019-scheduled-execution-and-write-coordination.md)，精确规则见 [架构说明](docs/architecture.md) 的「公共任务组件」节。
 

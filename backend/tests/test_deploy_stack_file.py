@@ -88,14 +88,38 @@ def test_api_uses_start_first_so_a_deploy_does_not_stop_serving() -> None:
     assert duration_seconds(update["monitor"]) >= 3 * 5
 
 
-def test_beat_uses_stop_first_so_a_cron_tick_is_never_delivered_twice() -> None:
-    """Beat 必须先停后起：两个调度器同时活着会让同一个周期任务被投两次。
+def test_api_runs_one_process_per_container_across_two_replicas() -> None:
+    """API 是「一个容器一个进程 × 2 个副本」——两个数一起才成立。
 
-    改成 ``start-first`` 没有任何测试会红，表现是周期任务重复受理——而那要等到业务上看到
-    重复数据才发现。
+    这两行一起守两件都是静默的改坏方式：
+
+    1. ``WORKER_COUNT`` 变回大于 1（或者改回 ``${WORKER_COUNT:-…}`` 让服务器 ``.env`` 里的 2
+       生效）——容器里又是两个进程，健康检查重新变成抽样，而消掉抽样正是这次改造的全部收益
+       （见 docs/container_deployment.md 的「某个 API 副本卡住」一节）。
+    2. ``replicas`` 退回 1——一个进程卡住就等于整个服务不可用，又回到人工重启整个服务。
+
+    断言写成「显式值就是 1」而不是「小于 2」：这里要的性质是**不由环境变量决定**。写成
+    ``${WORKER_COUNT:-1}`` 时容器里的进程数取决于服务器 ``.env``（那份文件不进仓库、这里测不到），
+    漏改一次就是四个 API 进程在跑、而仓库里没有任何东西变红。
     """
 
-    assert load_stack()["services"]["task-beat"]["deploy"]["update_config"]["order"] == "stop-first"
+    api = load_stack()["services"]["backend"]
+
+    assert str(api["environment"]["WORKER_COUNT"]) == "1"
+    assert api["deploy"]["replicas"] == 2
+
+
+def test_beat_uses_stop_first_so_a_cron_tick_is_never_delivered_twice() -> None:
+    """Beat 必须先停后起、且只有一个实例：两个调度器同时活着会让同一个周期任务被投两次。
+
+    改成 ``start-first`` 没有任何测试会红，表现是周期任务重复受理——而那要等到业务上看到
+    重复数据才发现。副本数同理：它今天就是 1，写成 2 也只是静默地多一个调度器。
+    """
+
+    beat = load_stack()["services"]["task-beat"]
+
+    assert beat["deploy"]["update_config"]["order"] == "stop-first"
+    assert beat["deploy"]["replicas"] == 1
 
 
 def test_every_service_declares_its_own_stop_grace_period() -> None:
