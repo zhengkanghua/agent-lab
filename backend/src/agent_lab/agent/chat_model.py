@@ -144,8 +144,6 @@ def build_user_agent_headers(settings: LlmSettings) -> dict[str, str] | None:
 
     Notes:
         两个 provider 分支共用本函数，以免出现「换个 provider 就少发一个头」的不对称。
-        ``agent.model_catalog`` 也用它——启动时问「有哪些模型」必须和真正调模型时报同一个
-        身份，否则某些按 User-Agent 拦流量的中转站会让两者得出不同结论。
         为什么要能改 User-Agent 见 ``LlmSettings.user_agent`` 的字段说明。
     """
 

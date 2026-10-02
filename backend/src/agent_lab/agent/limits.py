@@ -72,15 +72,6 @@ READ_DOCUMENT_MAX_CHARS = 6000
 TOOL_CALL_TIMEOUT_SECONDS = 30.0
 
 
-# ---- 启动自检 ----
-
-# 启动时向上游拉模型列表的超时秒数。刻意远小于 LLM_REQUEST_TIMEOUT_SECONDS（默认 60）：
-# 那个约束的是「模型思考多久」，这个约束的是「启动多等多久」。列一下有哪些模型是个极轻的
-# 请求，5 秒拿不到就说明上游此刻不健康，那种情况下继续等只是延迟服务上线——校验拿不到
-# 结果时是放过而不是拒绝，所以等下去也换不来别的结论。
-MODEL_CATALOG_TIMEOUT_SECONDS = 5.0
-
-
 # ---- 流式传输 ----
 
 # SSE 心跳间隔秒数。作用是让反向代理和浏览器都确信连接还活着：模型「想」的时候可能
@@ -145,7 +136,6 @@ __all__ = [
     "MAX_SYSTEM_PROMPT_CHARS",
     "MAX_USER_MESSAGE_CHARS",
     "MODEL_CALL_RUN_LIMIT",
-    "MODEL_CATALOG_TIMEOUT_SECONDS",
     "MODEL_RETRY_MAX",
     "READ_DOCUMENT_MAX_CHARS",
     "RETRY_INITIAL_DELAY_SECONDS",

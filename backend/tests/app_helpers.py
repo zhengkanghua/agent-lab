@@ -81,17 +81,6 @@ class OfflineAgentRuntime:
         self.closed = True
 
 
-async def skip_model_catalog_check() -> None:
-    """跳过启动时的模型名校验，不发任何 HTTP 请求。
-
-    生产实现会向 ``LLM_BASE_URL`` 发一次「列模型」的 GET。测试注入的模型是假的，那个校验
-    既无意义又会真的联网，所以这里换成空操作。要测校验本身的用例传自己的实现覆盖它，
-    见 ``tests/test_model_catalog.py``。
-    """
-
-    return None
-
-
 def offline_agent_runtime_factory(_service: Any, _usage_collector: Any) -> OfflineAgentRuntime:
     """忽略检索 Service 与用量采集器，返回不做 I/O 的 Agent Runtime 替身。
 
@@ -422,15 +411,12 @@ def create_offline_app(
     offline_threads = threads or InMemoryAgentThreadService()
 
     # 1、先铺离线默认值，再让调用方的 overrides 覆盖，保证「漏写=安全」而不是「漏写=连真库」。
-    #    model_catalog_check 也在其中：它的生产实现会向 .env 里那个真实 base_url 发 GET，
-    #    漏写的话每个走 lifespan 的测试都要等一次连接超时（本文件开头那段历史正是这么来的）。
     defaults: dict[str, Any] = {
         "agent_runtime_factory": offline_agent_runtime_factory,
         "agent_run_registry_factory": lambda runtime=None: offline_agent_run_registry_factory(
             offline_threads, runtime, drain_timeout=drain_timeout
         ),
         "environment_admin_sync": skip_environment_admin_sync,
-        "model_catalog_check": skip_model_catalog_check,
         "task_service_factory": lambda: object(),
         # 用量库替身：不覆盖它就会去读真实的 LLMOPS_DATABASE_URL，而离线测试没有那份配置。
         "usage_runtime_factory": offline_usage_runtime_factory,
@@ -490,7 +476,6 @@ def create_agent_app(
     superuser: bool = True,
     anonymous: bool = False,
     agent_build_error: Exception | None = None,
-    model_catalog_error: Exception | None = None,
     usage_collector: Any = None,
     usage_runtime: Any = None,
     checkpointer: Any = None,
@@ -511,9 +496,6 @@ def create_agent_app(
             它与 ``superuser=False`` 是两件事：后者是「登录了但不是超管」，前者是「没登录」。
             权限放开后这两者必须分开，否则「没凭据进不来」这条会被一个普通账号的替身悄悄满足。
         agent_build_error: 非空时让 Agent 工厂抛这个异常，模拟装配失败。
-        model_catalog_error: 非空时让启动时的模型名校验抛这个异常，模拟「配置的模型不在上游列表里」。
-            它和 ``agent_build_error`` 走的是 lifespan 里同一个 ``try``，对外表现应当完全一致
-            （``/agent/*`` 返回 503、检索照常），传这个参数就是为了证明这一点。
         usage_collector: 非空时用它替掉 lifespan 传进来的用量采集器，供需要断言「这次对话记了
             什么」的用例注入记录用的假采集器。
         usage_runtime: 非空时用它替掉离线用量库替身，供需要走完整用量链路的用例注入带真实
@@ -556,14 +538,9 @@ def create_agent_app(
             retry_initial_delay=0.0,
         )
 
-    async def catalog_check() -> None:
-        if model_catalog_error is not None:
-            raise model_catalog_error
-
     app = create_offline_app(
         runtime_factory=lambda: search_runtime,
         agent_runtime_factory=agent_factory,
-        model_catalog_check=catalog_check,
         usage_runtime_factory=(
             (lambda: usage_runtime) if usage_runtime is not None else offline_usage_runtime_factory
         ),
@@ -690,5 +667,4 @@ __all__ = [
     "offline_usage_runtime_factory",
     "seed_owned_thread",
     "send",
-    "skip_model_catalog_check",
 ]

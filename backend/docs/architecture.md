@@ -400,7 +400,6 @@ agent/runtime.py    组装根：编译一次图，进程级共享
 agent/runs.py       脱离连接的运行驱动者与订阅者、停止标志、失活续期、收尾排空与接手扫描（见 ADR 0035/0037/0040）
 agent/streaming.py  翻译 LangGraph 事件，从持久状态确定 Done
 agent/checkpointer.py  四张 checkpointer 表名的唯一真源 + Alembic 的 include_object
-agent/model_catalog.py 启动期向上游拉模型列表，校验配置的模型名确实存在
 agent/errors.py     本层的已分类异常（叶子模块，不 import 框架图相关模块）
 ```
 

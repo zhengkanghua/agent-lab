@@ -26,7 +26,6 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agent_lab.agent.context import AgentContext
 from agent_lab.agent.limits import SSE_HEARTBEAT_INTERVAL_SECONDS
-from agent_lab.agent.model_catalog import LlmModelNotListedError
 from agent_lab.agent.prompts import DEFAULT_SYSTEM_PROMPT
 from agent_lab.agent.runs import AgentRun, AgentRunRegistry
 from agent_lab.agent.runtime import AgentRuntime
@@ -36,12 +35,7 @@ from agent_lab.api.dependencies import (
     get_agent_thread_service,
     get_vector_search_service,
 )
-from agent_lab.api.error_contract import (
-    AGENT_CHAT_ERROR_RULES,
-    build_agent_chat_error_response,
-    resolve_error_contract,
-)
-from agent_lab.api.readiness import ModelCatalogVerdict, get_model_catalog_verdict
+from agent_lab.api.error_contract import build_agent_chat_error_response
 from agent_lab.auth.dependencies import current_active_user
 from agent_lab.config.llm import LangSmithSettings, get_langsmith_settings
 from agent_lab.models.user import UserRecord
@@ -166,42 +160,6 @@ async def _stream_run(run: AgentRun) -> AsyncIterator[str]:
                 await pending
 
 
-async def _stream_model_not_listed(
-    thread_id: UUID,
-    error: LlmModelNotListedError,
-) -> AsyncIterator[str]:
-    """配置写错时唯一的一帧 ``error`` 事件：不跑图、不调模型。
-
-    **为什么不先启动运行、让它自己失败**：这次失败在请求到达之前就已经有确定证据（启动后那次
-    「列模型」校验：上游给了非空列表，而配置的模型名不在里面）。跑一次只会先撞上模型重试与备用
-    模型，白等几秒再报同一个错。事件形状与流里的其他失败完全一致——``code``/``detail`` 来自同
-    一张错误表（``AGENT_CHAT_ERROR_RULES``），所以前端只需认一套文案。
-
-    Args:
-        thread_id: 本次提问所属会话；会话行在上一步已经写好，前端据此把重试发到同一个会话，
-            而不是另开一个。
-        error: 那次校验留下的异常；只读它的类型。
-
-    Yields:
-        一帧 ``error`` 事件的 SSE 文本。
-    """
-
-    rule = resolve_error_contract(error, AGENT_CHAT_ERROR_RULES)
-    logger.error(
-        "Agent 配置校验未通过，本次提问未启动运行 thread_id=%s code=%s",
-        thread_id,
-        rule.code,
-    )
-    yield _encode(
-        AgentErrorEvent(
-            thread_id=thread_id,
-            code=rule.code,
-            detail=rule.detail,
-            retryable=rule.retryable,
-        )
-    )
-
-
 @router.post(
     "/chat",
     status_code=status.HTTP_200_OK,
@@ -229,7 +187,6 @@ async def _stream_model_not_listed(
 async def agent_chat(
     chat_request: AgentChatRequest,
     runtime: Annotated[AgentRuntime, Depends(get_agent_runtime)],
-    verdict: Annotated[ModelCatalogVerdict | None, Depends(get_model_catalog_verdict)],
     langsmith_settings: Annotated[LangSmithSettings, Depends(get_langsmith_settings)],
     user: Annotated[UserRecord, Depends(current_active_user)],
     threads: Annotated[AgentThreadService, Depends(get_agent_thread_service)],
@@ -251,8 +208,6 @@ async def agent_chat(
     Args:
         chat_request: 提问、可选会话 id 与可选会话知识库选择。
         runtime: 进程级 Agent Runtime，由 lifespan 装配。
-        verdict: 启动后那次上游配置校验的结论；``None`` 表示应用没走过生命周期——那种
-            情况下上面的 ``runtime`` 依赖已经先抛出 503 了。
         langsmith_settings: 追踪配置，进程级缓存。
         user: 当前登录账号，用于会话归属。
         threads: 会话归属与列表 Service。
@@ -316,14 +271,7 @@ async def agent_chat(
         run_id,
         session_prompt is not None,
     )
-    # 5、启动配置校验已经给出「配置的模型名不在上游列表里」这个结论时，这次提问直接判成
-    #    ``llm_model_not_found``：进程装配是成功的（检索、阅读、流水线照常），只有这条链路
-    #    做不了事，所以不给 503、也不启动一次注定失败的运行。占位必须在这一步归还，否则用户
-    #    下一次提问会被他自己这一次拦成 409。
-    if verdict is not None and isinstance(verdict.error, LlmModelNotListedError):
-        await threads.finish_run(thread_id=thread_id, run_id=run_id)
-        return ServerSentEventResponse(_stream_model_not_listed(thread_id, verdict.error))
-    # 6、把运行交给注册表，然后在后台开始驱动；本接口拿到的是它的订阅入口。
+    # 5、把运行交给注册表，然后在后台开始驱动；本接口拿到的是它的订阅入口。
     #    顺序很重要：运行先启动，HTTP 响应只是后来的订阅者，所以即使下面这行响应还没被消费
     #    （甚至浏览器根本没能连上），这次运行也会跑完并把结果写进会话。
     run = runs.begin(
