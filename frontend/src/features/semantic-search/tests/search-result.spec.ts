@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { toDocumentResult } from '../model/search-result'
+import { formatScore, toDocumentResult } from '../model/search-result'
 
 const firstMatch = {
   chunk_id: '10000000-0000-4000-8000-000000000001',
@@ -51,5 +51,19 @@ describe('document search view model', () => {
       },
     })
     expect(result.additionalMatches).toHaveLength(1)
+  })
+})
+
+describe('formatScore', () => {
+  it('显示原始数值，但不补齐小数位', () => {
+    // 不补零：0.91 不该写成 0.910（同一次检索里几张卡顶着同一个三位数像写死的）。
+    expect(formatScore(0.91)).toBe('0.91')
+    expect(formatScore(0.9)).toBe('0.9')
+    // 更高精度的原始值照原样给到三位；再多位时按三位显示（0.90051 不取边界值，
+    // 免得断言挂在浮点表示上）。
+    expect(formatScore(0.905)).toBe('0.905')
+    expect(formatScore(0.90051)).toBe('0.901')
+    // 不换算成百分比。
+    expect(formatScore(1)).toBe('1')
   })
 })

@@ -4,7 +4,7 @@ import { KeyRound, RefreshCw, ShieldCheck, Trash2, UserRound } from '@lucide/vue
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseSwitch from '@/shared/ui/BaseSwitch.vue'
 import type { UserAdminDto } from '@/api/user-admin'
-import { formatAccountDate } from '../model/user-account'
+import { formatDate } from '@/shared/model/datetime'
 import UserPasswordResetForm from './UserPasswordResetForm.vue'
 
 /* 账号目录里的一行。
@@ -43,7 +43,7 @@ const resetOpen = computed(() => props.resetPassword !== null)
    约束挡着注销不了。 */
 const deregistered = computed(() => props.user.deleted_at !== null)
 const deregisteredAt = computed(() =>
-  props.user.deleted_at === null ? '' : formatAccountDate(props.user.deleted_at),
+  props.user.deleted_at === null ? '' : formatDate(props.user.deleted_at),
 )
 
 /* 自己那一行的注销键由 stateControlsVisible 整只拿掉，剩下的禁用条件只有环境托管。 */
@@ -91,6 +91,7 @@ const stateControlsVisible = computed(() => !isCurrentUser.value && !deregistere
     </div>
 
     <div class="status-cell" role="cell">
+      <span class="cell-label">使用状态</span>
       <!-- 已注销的行没有开关：注销是终态，没有「改回去」这个动作，
            给一个只能停在那里的开关只会让人以为能动。 -->
       <template v-if="deregistered">
@@ -119,6 +120,7 @@ const stateControlsVisible = computed(() => !isCurrentUser.value && !deregistere
     </div>
 
     <div class="status-cell" role="cell">
+      <span class="cell-label">管理权限</span>
       <!-- 管理权限只剩一个只读标记：超管身份只在建号时决定，之后不能改，所以这里
            不该有可操作的控件（见 docs/adr/0038）。 -->
       <span class="status-chip" :class="user.is_superuser ? 'is-on' : 'is-off'" role="status">
@@ -127,7 +129,8 @@ const stateControlsVisible = computed(() => !isCurrentUser.value && !deregistere
     </div>
 
     <div class="created-cell" role="cell">
-      <span>{{ formatAccountDate(user.created_at) }}</span>
+      <span class="cell-label">创建时间</span>
+      <span>{{ formatDate(user.created_at) }}</span>
       <small>{{ user.is_verified ? '已确认' : '待确认' }}</small>
     </div>
 
@@ -388,6 +391,13 @@ const stateControlsVisible = computed(() => !isCurrentUser.value && !deregistere
   grid-column: 1 / -1;
 }
 
+/* 窄容器里表头整行被隐藏（见 UserDirectoryTable 的 960px 断点），值的语义就只剩排列顺序
+   ——「2026/08/17」是创建时间还是最后登录，读者只能猜。给数据单元格补一枚只在那时出现的
+   标签，宽度条件与表头消失的那条严格对齐。 */
+.cell-label {
+  display: none;
+}
+
 @container (max-width: 960px) {
   .user-row {
     grid-template-columns: minmax(260px, 1.4fr) repeat(2, minmax(120px, 0.7fr));
@@ -399,6 +409,18 @@ const stateControlsVisible = computed(() => !isCurrentUser.value && !deregistere
 
   .row-actions {
     grid-column: 2 / -1;
+  }
+
+  .cell-label {
+    display: block;
+    /* 使用状态那格是 flex 行：标签占满一行，开关与胶囊落到下一行。 */
+    flex: 0 0 100%;
+    color: var(--text-tertiary);
+    font-size: var(--fs-xs);
+  }
+
+  .status-cell {
+    flex-wrap: wrap;
   }
 }
 

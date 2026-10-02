@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { RefreshCw, UsersRound } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
@@ -49,6 +50,9 @@ function resetPasswordFor(user: UserAdminDto): string | null {
 function onIncludeDeletedChange(event: Event): void {
   emit('update:includeDeleted', (event.target as HTMLInputElement).checked)
 }
+
+/* 开关打开时列表里到底带进来几条已注销的。开关关着时这个数没有意义（列表里本来就没有）。 */
+const deletedCount = computed(() => props.users.filter((user) => user.deleted_at !== null).length)
 </script>
 
 <template>
@@ -71,6 +75,12 @@ function onIncludeDeletedChange(event: Event): void {
           />
           <span>显示已注销</span>
         </label>
+        <!-- 开关打开后要有回应：已注销的那几行长得和普通行一样，一共带出来几条
+             得说出来，否则「勾了没变化」会被当成开关坏了（库里本来就没有已注销账号
+             时更是完全看不出来）。 -->
+        <span v-if="includeDeleted && loadState === 'ready'" class="deleted-hint" role="status">
+          {{ deletedCount === 0 ? '当前没有已注销账号' : `其中已注销 ${deletedCount} 个` }}
+        </span>
         <BaseButton
           variant="ghost"
           size="sm"
@@ -195,6 +205,12 @@ function onIncludeDeletedChange(event: Event): void {
 .include-deleted input:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+
+/* 开关打开后的回应：比开关本身淡一档，它是结果不是控件。 */
+.deleted-hint {
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
 }
 
 /* 刷新键走 BaseButton（ghost），三处目录/历史面板同款。刷新键上那圈转动用共享的

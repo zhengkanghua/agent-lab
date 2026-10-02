@@ -41,7 +41,11 @@ function requestFullText(event: MouseEvent): void {
         :aria-label="`最高 Cosine 相关度分数 ${formatScore(result.bestScore)}，不是概率`"
         title="最高 Cosine 相关度分数，不是概率"
       >
-        {{ formatScore(result.bestScore) }}
+        <!-- 可见的「相关度」三个字：光一个 0.91 没人知道那是什么数，语义承诺不能
+             只挂在 aria-label 与 title 上（那两者对鼠标与读屏之外的人不存在）。
+             窄容器里收起文字，数值与 aria-label 都还在。 -->
+        <span class="score-label" aria-hidden="true">相关度</span>
+        <span>{{ formatScore(result.bestScore) }}</span>
       </div>
     </header>
 
@@ -174,6 +178,20 @@ function requestFullText(event: MouseEvent): void {
   font-family: var(--mono-font);
   font-size: var(--fs-xs);
   line-height: var(--lh-ui);
+}
+
+/* 标签走界面字、数值走等宽字：等宽只留给数字，一对儿读起来才不像一串符号。 */
+.score-label {
+  margin-right: 5px;
+  color: var(--text-tertiary);
+  font-family: var(--body-font);
+}
+
+/* 窄容器里只留数值：标题那一行不够宽。语义没有丢——aria-label 与 title 都还在。 */
+@container (max-width: 480px) {
+  .score-label {
+    display: none;
+  }
 }
 
 .result-meta {

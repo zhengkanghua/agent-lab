@@ -2,15 +2,12 @@ import type { UserAdminDto } from '@/api/user-admin'
 
 /*
  * 账号列表的排序与展示口径。纯函数，便于单独断言。
+ *
+ * 日期显示不在这里：原先本文件自带一个 Intl.DateTimeFormat('zh-CN')，不带 timeZone，
+ * 于是它跟随浏览器时区、输出成 2026/08/17 的斜杠形状——正是 shared/model/datetime.ts
+ * 开头点名批评的那种写法（同一条记录在不同机器上显示成不同的日子）。账号目录与设置页
+ * 显示的是同一份 created_at，两处口径必须一致，所以统一走 datetime.ts 的 formatDate。
  */
-
-// 提到模块作用域：Intl.DateTimeFormat 的构造开销远高于 format()，账号列表每行都会调用。
-// 创建时间与注销时间共用它：两列并排坐在一起，日期不该出现两种写法。
-const accountDateFormatter = new Intl.DateTimeFormat('zh-CN', {
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-})
 
 /**
  * 环境托管超级用户置顶，其余按邮箱字典序。
@@ -25,10 +22,6 @@ export function sortUsers(items: UserAdminDto[]): UserAdminDto[] {
     }
     return left.email.localeCompare(right.email)
   })
-}
-
-export function formatAccountDate(value: string): string {
-  return accountDateFormatter.format(new Date(value))
 }
 
 export interface DirectoryStats {

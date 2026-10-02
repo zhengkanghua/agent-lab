@@ -58,8 +58,11 @@ function toDocumentMatch(dto: DocumentSearchMatchDto): DocumentMatch {
   }
 }
 
+/* 原始数值不改写（不换算成概率、不四舍五入），但不补齐小数位：以前固定三位，
+   0.91 会写成 0.910、0.9 写成 0.900——同一次检索里几张卡都顶着同一个三位数，
+   看起来像写死的。最多三位、不补零，既保住原始精度，也不制造虚假精度。 */
 const scoreFormatter = new Intl.NumberFormat('zh-CN', {
-  minimumFractionDigits: 3,
+  minimumFractionDigits: 0,
   maximumFractionDigits: 3,
 })
 

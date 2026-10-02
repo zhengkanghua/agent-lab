@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import type { UserAdminDto } from '@/api/user-admin'
-import { formatAccountDate, sortUsers, summarizeUsers } from '../model/user-account'
+import { sortUsers, summarizeUsers } from '../model/user-account'
 
 function makeUser(overrides: Partial<UserAdminDto> & Pick<UserAdminDto, 'email'>): UserAdminDto {
   return {
@@ -72,12 +72,5 @@ describe('summarizeUsers', () => {
 
   it('空列表给出三个零', () => {
     expect(summarizeUsers([])).toEqual({ total: 0, active: 0, superusers: 0 })
-  })
-})
-
-describe('formatAccountDate', () => {
-  it('把后端的 ISO 时间戳格式化成年月日', () => {
-    expect(formatAccountDate('2026-08-18T12:34:56Z')).toMatch(/2026/)
-    expect(formatAccountDate('2026-08-18T12:34:56Z')).not.toMatch(/12:34/)
   })
 })

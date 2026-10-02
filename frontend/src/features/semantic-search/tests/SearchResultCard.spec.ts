@@ -53,7 +53,10 @@ describe('SearchResultCard', () => {
 
     expect(wrapper.text()).not.toContain('文档 2 段')
     expect(wrapper.text()).not.toContain('最佳命中')
-    expect(wrapper.get('.score-chip').text()).toBe('0.912')
+    // 2026-10：一个光秃秃的 0.912 没人知道那是什么数，chip 里补了可见的「相关度」，
+    // 数值按原始精度显示（不补齐小数位）。语义承诺仍在 aria-label 上。
+    expect(wrapper.get('.score-chip').text()).toBe('相关度0.912')
+    expect(wrapper.get('.score-chip').attributes('aria-label')).toContain('0.912')
   })
 
   it('expands the full best-match text and collapses it again', async () => {
