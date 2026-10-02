@@ -6,12 +6,15 @@ import {
   listDocumentCandidates,
   listDocumentDecisions,
   listDocumentVersions,
+  REVIEW_PAGE_SIZE,
 } from '@/api/document-review'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
+import BasePager from '@/shared/ui/BasePager.vue'
 import DocumentOriginal from './DocumentOriginal.vue'
 import DocumentPreview from './DocumentPreview.vue'
 import { processingLabel } from '@/shared/model/document-processing'
+import { formatDateTime } from '@/shared/model/datetime'
 
 const props = defineProps<{ documentId: string; revision: number; filename: string }>()
 const emit = defineEmits<{ select: [processingId: string] }>()
@@ -92,7 +95,7 @@ watch([kind, () => props.documentId], () => {
       <li v-for="item in versions.data.value?.items" :key="item.version_id">
         <div>
           <strong>第 {{ item.revision }} 版 · {{ item.title }}</strong
-          ><small>{{ new Date(item.created_at).toLocaleString('zh-CN') }}</small>
+          ><small>{{ formatDateTime(item.created_at) }}</small>
         </div>
         <BaseButton variant="ghost" size="sm" @click="selectedVersion = item.version_id"
           >查看版本</BaseButton
@@ -106,8 +109,7 @@ watch([kind, () => props.documentId], () => {
           {{ item.decision_source === 'automatic' ? '自动处理' : '人工处理' }}</strong
         >
         <small
-          >{{ new Date(item.created_at).toLocaleString('zh-CN') }} · 草稿修订
-          {{ item.candidate_revision }}</small
+          >{{ formatDateTime(item.created_at) }} · 草稿修订 {{ item.candidate_revision }}</small
         >
         <p>{{ item.conclusion || '未填写附加结论' }}</p>
         <details>
@@ -120,25 +122,22 @@ watch([kind, () => props.documentId], () => {
       <li v-for="item in candidates.data.value?.items" :key="item.processing_id">
         <div>
           <strong>{{ item.title || '未命名资料' }}</strong>
-          <small
-            >{{ processingLabel(item.state) }} ·
-            {{ new Date(item.created_at).toLocaleString('zh-CN') }}</small
-          >
+          <small>{{ processingLabel(item.state) }} · {{ formatDateTime(item.created_at) }}</small>
         </div>
         <BaseButton variant="ghost" size="sm" @click="emit('select', item.processing_id)"
           >查看处理结果</BaseButton
         >
       </li>
     </ol>
-    <div v-if="offset || hasMore" class="history-pagination">
-      <BaseButton variant="outline" :disabled="offset === 0 || loading" @click="offset -= 25"
-        >上一页</BaseButton
-      >
-      <span>第 {{ offset / 25 + 1 }} 页</span>
-      <BaseButton variant="outline" :disabled="!hasMore || loading" @click="offset += 25"
-        >下一页</BaseButton
-      >
-    </div>
+    <BasePager
+      v-if="offset || hasMore"
+      :page="offset / REVIEW_PAGE_SIZE + 1"
+      :has-previous="offset > 0"
+      :has-more="hasMore"
+      :busy="loading"
+      @previous="offset -= REVIEW_PAGE_SIZE"
+      @next="offset += REVIEW_PAGE_SIZE"
+    />
     <template v-if="selectedVersion && kind === 'versions'">
       <p v-if="version.isPending.value" role="status">正在读取已采用版本…</p>
       <BaseCallout v-else-if="version.isError.value" tone="danger" description="版本读取失败。">
@@ -166,16 +165,11 @@ watch([kind, () => props.documentId], () => {
   gap: 20px;
   min-width: 0;
 }
-.history-tabs,
-.history-pagination {
+.history-tabs {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-}
-.history-pagination {
-  justify-content: flex-end;
-  font-size: var(--fs-sm);
 }
 .history-list {
   list-style: none;

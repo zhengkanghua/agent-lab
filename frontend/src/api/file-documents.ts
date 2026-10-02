@@ -2,6 +2,12 @@ import type { components } from './generated/openapi'
 import { ApiError, requestJson, requestVoid } from './client'
 import { hasText, isRecord, isSha256, isUuid } from './json-guards'
 
+/**
+ * 每页文档条数。与后端 `limit` 的默认值一致（`backend/src/agent_lab/api/file_documents.py`），改一边就要改另一边。
+ * 前端的翻页步长与「第 N 页」的算法都读它：写两遍就会出现页号与数据对不上的情况。
+ */
+export const FILE_PAGE_SIZE = 25
+
 export type FileDocumentDto = components['schemas']['FileDocumentResponse']
 export type FileDocumentListDto = components['schemas']['FileDocumentListResponse']
 

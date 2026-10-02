@@ -9,6 +9,12 @@ import {
   isUuid,
 } from './json-guards'
 
+/**
+ * 每页文档/候选条数。与后端 `limit` 的默认值一致（`backend/src/agent_lab/api/document_review.py`），改一边就要改另一边。
+ * 前端的翻页步长与「第 N 页」的算法都读它：写两遍就会出现页号与数据对不上的情况。
+ */
+export const REVIEW_PAGE_SIZE = 25
+
 export type ManagedDocumentDto = components['schemas']['ManagedDocument']
 export type ReviewDetailDto = components['schemas']['ReviewDetail']
 export type ProcessingSummaryDto = components['schemas']['ProcessingSummary']

@@ -2,6 +2,7 @@
 import { Calendar, ShieldCheck, UserRound } from '@lucide/vue'
 import type { AuthUserDto } from '@/api/auth'
 import PasswordChangeForm from './PasswordChangeForm.vue'
+import { formatDateTime } from '@/shared/model/datetime'
 
 /**
  * 设置中心 · 账号安全分区：关于「我自己」的全部内容——登录信息 + 改自己密码。
@@ -43,7 +44,7 @@ defineProps<{ user: AuthUserDto | null }>()
             <span>创建时间</span>
           </dt>
           <dd class="info-value">
-            {{ user?.created_at ? new Date(user.created_at).toLocaleString('zh-CN') : '—' }}
+            {{ formatDateTime(user?.created_at) }}
           </dd>
         </div>
       </dl>

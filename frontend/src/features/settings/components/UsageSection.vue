@@ -7,6 +7,7 @@ import BaseField from '@/shared/ui/BaseField.vue'
 import BaseInput from '@/shared/ui/BaseInput.vue'
 import BaseSelect from '@/shared/ui/BaseSelect.vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
+import BasePager from '@/shared/ui/BasePager.vue'
 import { useUsage } from '../composables/useUsage'
 import {
   formatDuration,
@@ -128,52 +129,57 @@ const {
       </div>
 
       <template v-else>
-        <table class="records">
-          <caption class="visually-hidden">
-            用量明细
-          </caption>
-          <thead>
-            <tr>
-              <th scope="col">发生时刻</th>
-              <th scope="col">模型</th>
-              <th scope="col">状态</th>
-              <th scope="col" class="numeric">输入</th>
-              <th scope="col" class="numeric">输出</th>
-              <th scope="col" class="numeric">缓存</th>
-              <th scope="col" class="numeric">合计</th>
-              <th scope="col" class="numeric">耗时</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="record in records" :key="record.callId">
-              <td class="occurred">{{ formatOccurredAt(record.occurredAt) }}</td>
-              <td>{{ record.modelName ?? '—' }}</td>
-              <td>
-                <span class="status" :class="{ 'is-failed': record.status === 'failed' }">
-                  {{ record.status === 'failed' ? '失败' : '完成' }}
-                </span>
-              </td>
-              <td class="numeric">{{ formatTokens(record.inputTokens) }}</td>
-              <td class="numeric">{{ formatTokens(record.outputTokens) }}</td>
-              <td class="numeric">{{ formatTokens(record.cachedTokens) }}</td>
-              <td class="numeric">{{ formatTokens(record.totalTokens) }}</td>
-              <td class="numeric">{{ formatDuration(record.durationMs) }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <!-- 明细表每个单元格都 nowrap（时间戳与数字串断行后更难读），列又多：窄屏放不下时
+             让它在本层横向滚动，而不是把整页撑出一条横向滚动条。 -->
+        <div class="records-scroll">
+          <table class="records">
+            <caption class="visually-hidden">
+              用量明细
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">发生时刻</th>
+                <th scope="col">模型</th>
+                <th scope="col">状态</th>
+                <th scope="col" class="numeric">输入</th>
+                <th scope="col" class="numeric">输出</th>
+                <th scope="col" class="numeric">缓存</th>
+                <th scope="col" class="numeric">合计</th>
+                <th scope="col" class="numeric">耗时</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="record in records" :key="record.callId">
+                <td class="occurred">{{ formatOccurredAt(record.occurredAt) }}</td>
+                <td>{{ record.modelName ?? '—' }}</td>
+                <td>
+                  <span class="status" :class="{ 'is-failed': record.status === 'failed' }">
+                    {{ record.status === 'failed' ? '失败' : '完成' }}
+                  </span>
+                </td>
+                <td class="numeric">{{ formatTokens(record.inputTokens) }}</td>
+                <td class="numeric">{{ formatTokens(record.outputTokens) }}</td>
+                <td class="numeric">{{ formatTokens(record.cachedTokens) }}</td>
+                <td class="numeric">{{ formatTokens(record.totalTokens) }}</td>
+                <td class="numeric">{{ formatDuration(record.durationMs) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
-        <div class="pager">
-          <BaseButton variant="ghost" size="sm" :disabled="!hasPrevious" @click="previousPage">
-            上一页
-          </BaseButton>
-          <BaseButton variant="ghost" size="sm" :disabled="!hasMore" @click="nextPage">
-            下一页
-          </BaseButton>
+        <BasePager
+          class="usage-pager"
+          align="start"
+          :has-previous="hasPrevious"
+          :has-more="hasMore"
+          @previous="previousPage"
+          @next="nextPage"
+        >
           <BaseButton variant="ghost" size="sm" @click="refresh">
             <template #icon><RefreshCw :size="14" aria-hidden="true" /></template>
             刷新
           </BaseButton>
-        </div>
+        </BasePager>
       </template>
     </template>
   </section>
@@ -266,6 +272,11 @@ const {
   font-size: var(--fs-sm);
 }
 
+/* 表格自己横向滚动：单元格一律 nowrap，窄屏放不下时不该把整页撑宽。 */
+.records-scroll {
+  overflow-x: auto;
+}
+
 .records {
   width: 100%;
   border-collapse: collapse;
@@ -299,10 +310,7 @@ const {
   color: var(--danger);
 }
 
-.pager {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+.usage-pager {
   margin-top: var(--space-4);
 }
 

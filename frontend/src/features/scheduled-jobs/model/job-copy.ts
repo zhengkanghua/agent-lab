@@ -1,6 +1,7 @@
 import type { JobRunDto, ScheduledJobDto, ScheduledJobTaskType } from '@/api/scheduled-jobs'
 import { isRecord } from '@/api/json-guards'
 import { isTerminalStatus } from '@/api/tasks'
+import { formatDateTime } from '@/shared/model/datetime'
 
 /*
  * 定时任务的展示模型：类型/状态/触发方式的中文文案、北京时间格式化、统计摘要。
@@ -80,30 +81,15 @@ export function triggerTypeLabel(triggerType: string): string {
 }
 
 /** 北京时间、固定格式（Q6 共识）：管理页要精确，不做相对时间。 */
-const BEIJING_PARTS_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
-  timeZone: 'Asia/Shanghai',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-  hour12: false,
-})
-
 /**
  * 把 UTC ISO8601 字符串格式化成 `YYYY-MM-DD HH:mm:ss`（北京时间）。
  *
- * 用 formatToParts 自己拼而不是直接用 formatter.format：zh-CN 的 format 输出
- * 「2026/09/03 09:00:00」，斜杠分隔不是共识里定的形状。解析不了的输入原样返回，
- * 让异常数据可见，而不是悄悄显示成 Invalid Date。
+ * 实现落在 shared/model/datetime.ts：调度时区在东八区，与全站其它时间戳同一个口径，
+ * 这里不再自己持有一份 Intl formatter。保留这个域名函数是因为调用方读的是「北京时间」
+ * 这层语义，而不是通用格式化。缺值给破折号、异常输入原样返回的约定也在那边。
  */
 export function formatBeijingTime(iso: string): string {
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return iso
-  const parts = BEIJING_PARTS_FORMATTER.formatToParts(date)
-  const value = (type: string): string => parts.find((part) => part.type === type)?.value ?? ''
-  return `${value('year')}-${value('month')}-${value('day')} ${value('hour')}:${value('minute')}:${value('second')}`
+  return formatDateTime(iso)
 }
 
 /** 上次执行摘要里的状态短语；空字符串表示「还没有执行过」。 */

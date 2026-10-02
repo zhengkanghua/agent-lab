@@ -2,9 +2,10 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { listKnowledgeBases } from '@/api/knowledge-bases'
-import { listManagedDocuments, type ReviewFilters } from '@/api/document-review'
+import { listManagedDocuments, type ReviewFilters, REVIEW_PAGE_SIZE } from '@/api/document-review'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
+import BasePager from '@/shared/ui/BasePager.vue'
 import {
   isProcessing,
   processingLabel,
@@ -12,6 +13,7 @@ import {
   usageLabel,
 } from '@/shared/model/document-processing'
 import { reviewError } from './presentation'
+import { formatDateTime } from '@/shared/model/datetime'
 
 const emit = defineEmits<{ open: [documentId: string] }>()
 const filters = reactive<ReviewFilters>({ knowledgeBaseId: '', sourceKind: '', state: '' })
@@ -108,7 +110,7 @@ const query = useQuery({
         <tr v-for="item in query.data.value?.items" :key="item.document_id">
           <td>
             <strong>{{ item.title || '未命名资料' }}</strong
-            ><small>{{ new Date(item.updated_at).toLocaleString('zh-CN') }}</small>
+            ><small>{{ formatDateTime(item.updated_at) }}</small>
           </td>
           <td>
             {{ item.knowledge_base_name
@@ -136,21 +138,15 @@ const query = useQuery({
         </tr>
       </tbody>
     </table>
-    <div v-if="offset > 0 || query.data.value?.has_more" class="directory-pagination">
-      <BaseButton
-        variant="outline"
-        :disabled="offset === 0 || query.isFetching.value"
-        @click="offset -= 25"
-        >上一页</BaseButton
-      >
-      <span>第 {{ offset / 25 + 1 }} 页</span>
-      <BaseButton
-        variant="outline"
-        :disabled="!query.data.value?.has_more || query.isFetching.value"
-        @click="offset += 25"
-        >下一页</BaseButton
-      >
-    </div>
+    <BasePager
+      v-if="offset > 0 || query.data.value?.has_more"
+      :page="offset / REVIEW_PAGE_SIZE + 1"
+      :has-previous="offset > 0"
+      :has-more="query.data.value?.has_more ?? false"
+      :busy="query.isFetching.value"
+      @previous="offset -= REVIEW_PAGE_SIZE"
+      @next="offset += REVIEW_PAGE_SIZE"
+    />
   </section>
 </template>
 
@@ -161,8 +157,7 @@ const query = useQuery({
   min-width: 0;
 }
 .directory-toolbar,
-.directory-actions,
-.directory-pagination {
+.directory-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -237,10 +232,6 @@ const query = useQuery({
 }
 .processing-label[data-attention='true'] {
   color: var(--danger);
-}
-.directory-pagination {
-  justify-content: flex-end;
-  font-size: var(--fs-sm);
 }
 @media (max-width: 800px) {
   .directory-filters {

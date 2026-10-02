@@ -4,6 +4,7 @@ import BaseField from '@/shared/ui/BaseField.vue'
 import BaseInput from '@/shared/ui/BaseInput.vue'
 import BaseSelect from '@/shared/ui/BaseSelect.vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
+import BasePager from '@/shared/ui/BasePager.vue'
 import type { ScheduledTaskTypeDto } from '@/api/scheduled-jobs'
 import { RUN_STATUSES } from '@/api/tasks'
 import type { TaskExecutions } from '../composables/useTaskExecutions'
@@ -114,24 +115,14 @@ defineProps<{
       </li>
     </ol>
     <nav class="pagination" aria-label="任务执行分页">
-      <BaseButton
-        variant="ghost"
-        size="sm"
-        :disabled="executions.offset.value === 0 || executions.list.isFetching.value"
-        @click="executions.changePage(-1)"
-        >上一页</BaseButton
-      >
-      <span>第 {{ executions.offset.value / executions.pageSize + 1 }} 页</span>
-      <BaseButton
-        variant="ghost"
-        size="sm"
-        :disabled="
-          (executions.list.data.value?.length ?? 0) < executions.pageSize ||
-          executions.list.isFetching.value
-        "
-        @click="executions.changePage(1)"
-        >下一页</BaseButton
-      >
+      <BasePager
+        :page="executions.offset.value / executions.pageSize + 1"
+        :has-previous="executions.offset.value > 0"
+        :has-more="(executions.list.data.value?.length ?? 0) >= executions.pageSize"
+        :busy="executions.list.isFetching.value"
+        @previous="executions.changePage(-1)"
+        @next="executions.changePage(1)"
+      />
     </nav>
     <section v-if="executions.selectedId.value" class="detail-section" aria-label="按编号查询结果">
       <p v-if="executions.detail.isPending.value" role="status">
@@ -237,13 +228,11 @@ defineProps<{
   margin-top: var(--space-2);
   overflow-wrap: anywhere;
 }
+/* 这层只负责把分页器贴右与上间距：翻页键之间的距离归 Pager 自己。 */
 .pagination {
   display: flex;
-  align-items: center;
   justify-content: flex-end;
-  gap: var(--space-3);
   margin-top: var(--space-3);
-  font-size: var(--fs-xs);
 }
 .detail-section {
   margin-top: var(--space-4);

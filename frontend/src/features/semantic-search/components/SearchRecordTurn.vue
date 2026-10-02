@@ -149,7 +149,7 @@ function toggle(): void {
 <style scoped>
 .record {
   position: relative;
-  padding-left: 32px;
+  padding-left: var(--space-8);
   background: transparent;
 }
 
@@ -198,11 +198,11 @@ function toggle(): void {
 .record-toggle {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   flex: 1 1 auto;
   min-width: 0;
   min-height: 44px;
-  padding: 8px 14px;
+  padding: var(--space-2) var(--space-3-5);
   border: 0;
   border-radius: var(--radius-md);
   background: transparent;
@@ -234,13 +234,17 @@ function toggle(): void {
   transition: color var(--duration-fast) var(--ease-out-smooth);
 }
 
+/* 元信息（范围 · 命中数）靠右；内容长了要自己省略，不能顶到右边的折叠箭头上去。
+   有 min-width: 0 只解决了「不肯缩」，还差 overflow 与省略号，缺了这两条长文本会溢出到框外。 */
 .record-meta {
   flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
   color: var(--text-tertiary);
   font-size: var(--fs-xs);
   white-space: nowrap;
   text-align: right;
+  text-overflow: ellipsis;
 }
 
 .record-chevron {
@@ -254,11 +258,11 @@ function toggle(): void {
 }
 
 .record-body {
-  padding: 4px 0 24px;
+  padding: var(--space-1) 0 var(--space-6);
 }
 
 .record-scope {
-  margin: 0 14px 6px;
+  margin: 0 var(--space-3-5) var(--space-1-5);
   color: var(--text-secondary);
   font-size: var(--fs-xs);
   overflow-wrap: anywhere;
@@ -267,9 +271,9 @@ function toggle(): void {
 .state-panel {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 15px;
+  gap: var(--space-3-5);
   align-items: center;
-  padding: 30px 2px 8px;
+  padding: var(--space-8) var(--space-0-5) var(--space-2);
 }
 
 .state-icon {
@@ -294,26 +298,26 @@ function toggle(): void {
 }
 
 .state-panel p {
-  margin-top: 4px;
+  margin-top: var(--space-1);
   color: var(--text-secondary);
   font-size: var(--fs-sm);
   line-height: 1.6;
 }
 
 .retry-button {
-  margin-top: 14px;
+  margin-top: var(--space-3-5);
 }
 
 .result-list {
   display: grid;
-  gap: 11px;
-  padding-top: 16px;
+  gap: var(--space-2-5);
+  padding-top: var(--space-4);
 }
 
 .skeleton-card {
   display: grid;
-  gap: 12px;
-  padding: 22px;
+  gap: var(--space-3);
+  padding: var(--space-5);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface-base);
@@ -333,24 +337,24 @@ function toggle(): void {
 .loading-caption {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  margin: 4px 0 0;
+  gap: var(--space-1-5);
+  margin: var(--space-1) 0 0;
   color: var(--text-tertiary);
   font-size: var(--fs-xs);
 }
 
 @container (max-width: 600px) {
   .record {
-    padding-left: 20px;
+    padding-left: var(--space-5);
   }
 
   .record-body {
-    padding: 2px 0 14px;
+    padding: var(--space-0-5) 0 var(--space-3-5);
   }
 
   .record-toggle {
-    padding: 8px 10px;
-    gap: 8px;
+    padding: var(--space-2) var(--space-2-5);
+    gap: var(--space-2);
   }
 }
 </style>
