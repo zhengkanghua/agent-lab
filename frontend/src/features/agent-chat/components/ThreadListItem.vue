@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { Trash2 } from '@lucide/vue'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
+import { formatDateTime } from '@/shared/model/datetime'
 import type { AgentThreadSummaryDto } from '@/api/agent-threads'
 
 const props = defineProps<{
@@ -38,7 +39,7 @@ const relativeTime = computed(() => {
 /** 完整时间戳留在 title 里：需要精确时间的人悬停就能看到，列表本身保持清爽。 */
 const exactTime = computed(() => {
   const then = Date.parse(props.thread.last_active_at)
-  return Number.isNaN(then) ? '' : new Date(then).toLocaleString('zh-CN')
+  return Number.isNaN(then) ? '' : formatDateTime(props.thread.last_active_at)
 })
 </script>
 
@@ -75,7 +76,7 @@ const exactTime = computed(() => {
 .thread-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 2px;
+  gap: var(--space-0-5);
   align-items: center;
   border-radius: var(--radius-sm);
   transition: background-color var(--duration-fast) var(--ease-out-smooth);
@@ -96,11 +97,21 @@ const exactTime = computed(() => {
   opacity: 0.6;
 }
 
+/* 一行一条：标题占满剩余宽度，相对时间靠右同排。
+ *
+ * 时间是「我上一条聊的是哪个」的判据，要留在列表里（见上面 relativeTime 的说明），
+ * 但不该为它单开一行——原来标题一行、时间一行，一行占 59px，264px 宽的侧栏只放得下 6 条。
+ * 同排之后一行约 36px，同样的高度能看到 11 条左右，而字号一个没动：14px 是界面默认档，
+ * 12px 是中文可读下限，压字号换不来密度还伤可读性。
+ *
+ * 基线对齐（align-items: baseline）而不是居中：12px 的时间与 14px 的标题重心一致，
+ * 用 center 会让它在视觉上浮起来一点。 */
 .open-button {
-  display: grid;
-  gap: 3px;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
   min-width: 0;
-  padding: 9px 8px 9px 11px;
+  padding: var(--space-1-5) var(--space-2) var(--space-1-5) var(--space-2-5);
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -114,6 +125,8 @@ const exactTime = computed(() => {
 
 /* 省略号交给 CSS，不在后端截断时加：宽屏放得下整句时不该带个多余的点。 */
 .title {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   color: var(--text-primary);
   font-size: var(--fs-sm);
@@ -126,7 +139,9 @@ const exactTime = computed(() => {
   font-weight: var(--fw-semibold);
 }
 
+/* 时间不参与挤压：它被截断就没有意义了，宁可让标题先省略。 */
 .time {
+  flex: 0 0 auto;
   color: var(--text-tertiary);
   font-size: var(--fs-xs);
 }
@@ -135,7 +150,7 @@ const exactTime = computed(() => {
    而删除是低频且不可逆的动作。用 opacity 而不是 display 切换，这样它始终在 Tab 序里——
    只靠键盘操作的人否则永远到不了它。 */
 .remove-button {
-  margin-right: 5px;
+  margin-right: var(--space-1);
   opacity: 0;
   transition: opacity var(--duration-fast) var(--ease-out-smooth);
 }
@@ -152,6 +167,12 @@ const exactTime = computed(() => {
 @media (pointer: coarse) {
   .remove-button {
     opacity: 1;
+  }
+
+  /* 36px 的行是为鼠标精度换来的密度，手指点不中：触屏下把行撑到可点高度那一档
+     （20px 文字行 + 上下各 12px）。 */
+  .open-button {
+    padding: 12px 8px 12px 10px;
   }
 }
 </style>

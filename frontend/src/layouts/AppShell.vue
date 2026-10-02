@@ -278,9 +278,14 @@ function handlePrimary(): void {
 /* .app-shell、.skip-link 见 style.css。 */
 
 /* 头部偏移对外暴露：桌面端为 0px，窄屏的汉堡条在断点里改写成 57px。
-   自定义属性沿 DOM 继承，不受 scoped 限制，所以子页面能读到。 */
+   自定义属性沿 DOM 继承，不受 scoped 限制，所以子页面能读到。
+
+   侧栏宽度同样提成变量：它原来在 .shell-sidebar 与 .shell-body 里各写一遍 264px，
+   改一处漏一处就会出现「内容区压在侧栏下面」或凭空多一条缝。288px 是行业区间内的取值
+   （Claude ~288、ChatGPT ~260），比原来的 264 宽一档，给会话标题多留两个字。 */
 .app-shell {
   --app-header-offset: 0px;
+  --sidebar-width: 288px;
 }
 
 /* 侧栏固定贴左、全高；内容区用 margin-left 让位。 */
@@ -290,7 +295,7 @@ function handlePrimary(): void {
   z-index: var(--z-drawer-sidebar);
   display: flex;
   flex-direction: column;
-  width: 264px;
+  width: var(--sidebar-width);
   background: var(--surface-sunken);
   border-right: 1px solid var(--border-subtle);
 }
@@ -454,7 +459,7 @@ function handlePrimary(): void {
 .shell-body {
   flex: 1;
   min-width: 0;
-  margin-left: 264px;
+  margin-left: var(--sidebar-width);
 }
 
 .mobile-bar {

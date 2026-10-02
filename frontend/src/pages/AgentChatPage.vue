@@ -17,6 +17,8 @@ import {
   useThreadList,
   AGENT_EXAMPLES,
 } from '@/features/agent-chat'
+import ScrollToBottomButton from '@/shared/ui/ScrollToBottomButton.vue'
+import { useStickToBottom } from '@/shared/composables/useStickToBottom'
 import type { AgentThreadSummaryDto } from '@/api/agent-threads'
 import type { DocumentEvidence } from '@/api/agent-evidence'
 import { useDocumentReader } from '@/shared/composables/useDocumentReader'
@@ -75,7 +77,14 @@ const threadList = useThreadList({
 // 输入条上的停止键（chat.cancel）。
 const { loggingOut, logoutError, logout } = useLogout({ beforeLogout: chat.abandonRun })
 
-const transcriptEndRef = ref<HTMLElement | null>(null)
+/* 贴底跟随的观察对象是整块记录区：它长高就说明来了新内容（流式 token、新轮次、状态行）。 */
+const transcriptRegionRef = ref<HTMLElement | null>(null)
+const composerRef = ref<InstanceType<typeof AgentComposer> | null>(null)
+const {
+  atBottom: transcriptAtBottom,
+  hasNewContent: transcriptHasNewContent,
+  scrollToBottom,
+} = useStickToBottom(transcriptRegionRef)
 
 const hasHistory = computed(() => chat.turns.value.length > 0)
 
@@ -88,7 +97,16 @@ const routeThreadId = computed(() => {
 
 onMounted(() => {
   void threadList.load()
+  // 从侧栏点「Agent 对话」过来的人是来提问的，光标直接落进输入框。
+  // 触屏不这么做：那会立刻弹出软键盘，把整屏内容顶掉一半，而用户多半只是想先看看。
+  if (routeThreadId.value === null) focusComposer()
 })
+
+/** 把光标送进输入框；触屏下不抢（会蹦出软键盘）。 */
+function focusComposer(): void {
+  if (window.matchMedia('(pointer: coarse)').matches) return
+  composerRef.value?.focusInput()
+}
 
 /*
  * 路由参数是唯一的真相来源：URL 变了就按它切会话，包括前进后退。
@@ -112,7 +130,7 @@ watch(
       return
     }
     if (id === chat.threadId.value) return
-    void chat.loadThread(id)
+    void openThreadAtLatest(id)
   },
   { immediate: true },
 )
@@ -141,31 +159,29 @@ function openThread(threadId: string): void {
   void router.push({ name: 'agent-thread', params: { threadId } })
 }
 
-function startNewConversation(): void {
+async function startNewConversation(): Promise<void> {
   chat.startNewConversation()
   if (routeThreadId.value !== null) void router.push({ name: 'agent-chat' })
+  await nextTick()
+  // 新对话之后光标留在输入框：这一步之后最可能发生的事就是提问。
+  focusComposer()
 }
 
-// 有新一轮时把视口带到底部。只在轮数变化时滚动，不跟着每个 token 滚——逐 token 滚动会
-// 抢走用户往上翻看历史的操作。
-watch(
-  () => chat.turns.value.length,
-  async () => {
-    await nextTick()
-    transcriptEndRef.value?.scrollIntoView({ block: 'end', behavior: 'smooth' })
-  },
-)
-
-// 「正在生成 / 正在重连」这类底部状态是低频的状态切换（不是每个 token），出现时把它带进
-// 视口，否则贴在底部也会落在折叠线以下看不见。
-watch(
-  [() => chat.isAwaitingRun.value, () => chat.isReconnecting.value],
-  async ([awaiting, reconnecting], [wasAwaiting, wasReconnecting]) => {
-    if ((!awaiting || wasAwaiting) && (!reconnecting || wasReconnecting)) return
-    await nextTick()
-    transcriptEndRef.value?.scrollIntoView({ block: 'end', behavior: 'smooth' })
-  },
-)
+/**
+ * 打开一个会话：载入完再跳到最新一条。
+ *
+ * 这一次滚动是显式的，不交给 useStickToBottom 猜——「打开会话」本身就是「我要看最新的」，
+ * 而长会话首屏停在顶部会让人以为历史没读出来。载入完成前不滚：那时记录区还是空的，
+ * 滚了也没有落点。
+ *
+ * 原来的「轮数一变就滚到底」和「生成/重连状态出现就滚到底」两条 watch 由
+ * useStickToBottom 统一接管：它只在已经贴底时跟随，上翻的人不会被拽走。
+ */
+async function openThreadAtLatest(id: string): Promise<void> {
+  await chat.loadThread(id)
+  await nextTick()
+  scrollToBottom()
+}
 
 async function chooseExample(value: string): Promise<void> {
   chat.draft.value = value
@@ -211,7 +227,11 @@ async function chooseExample(value: string): Promise<void> {
       <div class="chat-column">
         <!-- 空态时这一格在剩余高度里居中（问候主角 + 建议卡）；
              有历史时它从顶部开始正常流动。切换在 .is-empty 上。 -->
-        <div class="transcript-region" :class="{ 'is-empty': !hasHistory }">
+        <div
+          ref="transcriptRegionRef"
+          class="transcript-region"
+          :class="{ 'is-empty': !hasHistory }"
+        >
           <p v-if="chat.isLoadingThread.value" class="thread-state" aria-live="polite">
             正在读取这个会话的历史…
           </p>
@@ -289,13 +309,18 @@ async function chooseExample(value: string): Promise<void> {
           >
             <template #icon><LoaderCircle :size="14" aria-hidden="true" /></template>
           </BaseCallout>
-
-          <!-- 滚动锚点。滚 transcript 本身会把它的顶部带进视口，方向正好相反。 -->
-          <div ref="transcriptEndRef" class="scroll-anchor" aria-hidden="true"></div>
         </div>
 
         <div class="composer-dock" :class="{ 'has-history': hasHistory }">
+          <!-- 「回到最新」浮在输入坞上沿外侧，只在用户上翻之后出现。
+               定位与进出场都归组件自己（检索页用同一个组件，少一份会漂移的副本）。 -->
+          <ScrollToBottomButton
+            :open="hasHistory && !transcriptAtBottom"
+            :has-new-content="transcriptHasNewContent"
+            @jump="scrollToBottom('smooth')"
+          />
           <AgentComposer
+            ref="composerRef"
             v-model="chat.draft.value"
             :custom-prompt-active="preferences.agentSystemPrompt.trim().length > 0"
             :input-error="chat.inputError.value"
@@ -371,28 +396,28 @@ async function chooseExample(value: string): Promise<void> {
 }
 
 .thread-state {
-  padding: 6px 2px 12px;
+  padding: var(--space-1-5) var(--space-0-5) var(--space-3);
   color: var(--text-tertiary);
   font-size: var(--fs-sm);
 }
 
 /* 面板本体归 BaseCallout；这里只留节奏。 */
 .thread-error {
-  margin-bottom: 14px;
+  margin-bottom: var(--space-3-5);
 }
 
 .history-note {
-  margin-bottom: 14px;
+  margin-bottom: var(--space-3-5);
 }
 
 /* 刷新之后如果上一轮还在跑，这里如实说出来并等它结束。不设放弃上限：服务端的失活判定会
    结束这个状态，界面与服务端因此不会各说各话。 */
 .run-note {
-  margin-bottom: 14px;
+  margin-bottom: var(--space-3-5);
 }
 
 .summary-background {
-  margin: 0 0 18px;
+  margin: 0 0 var(--space-4);
   color: var(--text-secondary);
   font-size: var(--fs-sm);
   line-height: 1.7;
@@ -401,7 +426,7 @@ async function chooseExample(value: string): Promise<void> {
   cursor: pointer;
 }
 .summary-background p {
-  margin-top: 10px;
+  margin-top: var(--space-2-5);
 }
 .summary-text {
   white-space: pre-wrap;
@@ -410,7 +435,7 @@ async function chooseExample(value: string): Promise<void> {
 .scope-note {
   display: inline-flex;
   align-items: center;
-  margin: 0 4px;
+  margin: 0 var(--space-1);
   color: var(--text-tertiary);
   font-size: var(--fs-xs);
 }
@@ -421,14 +446,14 @@ async function chooseExample(value: string): Promise<void> {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  padding-top: 26px;
+  padding-top: var(--space-6);
 }
 
 /* 空态在剩余高度里居中（与检索页空态同一形态）：问候是主角，建议卡陪衬。
    有历史时不居中：第一轮从顶部开始正常流动。 */
 .transcript-region.is-empty {
   justify-content: center;
-  padding-bottom: 8px;
+  padding-bottom: var(--space-2);
 }
 
 /* 矮视口的空态从顶部排列，超出内容交给文档滚动。 */
@@ -438,18 +463,13 @@ async function chooseExample(value: string): Promise<void> {
   }
 }
 
-/* 高度为 0 的锚点：它只用来给 scrollIntoView 一个落点，不占布局。
-   flex: 0 0 auto 拦住 flex 容器给它分配高度。 */
-.scroll-anchor {
-  flex: 0 0 auto;
-  height: 0;
-}
+/* 「回到最新」的定位与进出场归 ScrollToBottomButton 自己（检索页共用同一份）。 */
 
 /* 开始会话后输入区贴底，空态保持正常流向，避免遮住尚未点击的建议。
    sticky 留在文档流里，记录区不需要额外预留输入区高度。
    顶部那道渐变是让滚上来的内容在贴近输入区时淡出，而不是被一条硬边裁断。 */
 .composer-dock {
-  padding: 12px 0 10px;
+  padding: var(--space-3) 0 var(--space-2-5);
   background: linear-gradient(to bottom, transparent, var(--surface-base) 22%);
 }
 
@@ -462,8 +482,8 @@ async function chooseExample(value: string): Promise<void> {
 .dock-note {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
-  padding: 8px 4px 0;
+  gap: var(--space-1-5);
+  padding: var(--space-2) var(--space-1) 0;
   color: var(--text-secondary);
   font-size: var(--fs-xs);
   line-height: 1.5;
@@ -471,7 +491,7 @@ async function chooseExample(value: string): Promise<void> {
 
 .dock-note svg {
   flex: 0 0 auto;
-  margin-top: 2px;
+  margin-top: var(--space-0-5);
   color: var(--accent);
 }
 
@@ -487,11 +507,11 @@ async function chooseExample(value: string): Promise<void> {
   }
 
   .transcript-region {
-    padding-top: 18px;
+    padding-top: var(--space-4);
   }
 
   .composer-dock {
-    padding: 10px 0 8px;
+    padding: var(--space-2-5) 0 var(--space-2);
   }
 }
 </style>

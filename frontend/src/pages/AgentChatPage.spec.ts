@@ -36,6 +36,8 @@ const threadsApi = vi.hoisted(() => ({
 
 vi.mock('../api/agent-threads', () => threadsApi)
 
+import { resetConfirm, settleConfirm } from '@/shared/composables/confirm'
+
 const knowledgeApi = vi.hoisted(() => ({ listKnowledgeBases: vi.fn() }))
 const documentsApi = vi.hoisted(() => ({ fetchDocument: vi.fn() }))
 vi.mock('../api/knowledge-bases', () => knowledgeApi)
@@ -167,8 +169,10 @@ describe('AgentChatPage', () => {
     ])
     documentsApi.fetchDocument.mockReset()
     scripted([agentDone()])
-    // jsdom 没有实现 scrollIntoView。
-    Element.prototype.scrollIntoView = vi.fn()
+    // jsdom 没有实现 window.scrollTo，而「打开会话后跳到最新一条」会调它。
+    vi.stubGlobal('scrollTo', vi.fn())
+    // 确认请求是模块级单例：本文件直接给出决定，不渲染 ConfirmDialog（它挂在 App 上）。
+    resetConfirm()
   })
 
   afterEach(() => {
@@ -734,12 +738,14 @@ describe('AgentChatPage', () => {
         total: 1,
       })
       threadsApi.deleteAgentThread.mockResolvedValue({ thread_id: THREAD_ID })
-      vi.stubGlobal('confirm', vi.fn().mockReturnValue(true))
       const { wrapper, router } = await mountThreadPage()
       expect(wrapper.text()).toContain('之前问过的')
 
       threadsApi.listAgentThreads.mockResolvedValue({ items: [], total: 0 })
       await wrapper.get('.thread-item .remove-button').trigger('click')
+      await flushPromises()
+      // 确认框由 App 挂载，页面单测里不渲染它——直接给出「确认」这个决定。
+      settleConfirm(true)
       await flushPromises()
 
       expect(router.currentRoute.value.name).toBe('agent-chat')

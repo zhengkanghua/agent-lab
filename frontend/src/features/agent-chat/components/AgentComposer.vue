@@ -72,6 +72,13 @@ function onEnter(event: KeyboardEvent): void {
   event.preventDefault()
   if (props.canSend) emit('submit')
 }
+
+/** 让调用方能把光标送进输入框（落地页与「新对话」之后）。与 SearchComposer 同一约定。 */
+function focusInput(): void {
+  messageInputRef.value?.focus()
+}
+
+defineExpose({ focusInput })
 </script>
 
 <template>

@@ -4,6 +4,7 @@ import { CircleAlert, RotateCcw } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
+import BasePager from '@/shared/ui/BasePager.vue'
 import type { AgentThreadSummaryDto } from '@/api/agent-threads'
 import type { AgentErrorPresentation } from '../model/agent-error'
 import type { ThreadListState } from '../composables/useThreadList'
@@ -124,19 +125,15 @@ const groups = computed(() => {
       </section>
     </div>
 
-    <div v-if="hasPrevious || hasMore" class="pager">
-      <BaseButton
-        variant="outline"
-        size="sm"
-        :disabled="!hasPrevious"
-        @click="emit('previousPage')"
-      >
-        上一页
-      </BaseButton>
-      <BaseButton variant="outline" size="sm" :disabled="!hasMore" @click="emit('nextPage')">
-        下一页
-      </BaseButton>
-    </div>
+    <BasePager
+      v-if="hasPrevious || hasMore"
+      class="thread-pager"
+      align="start"
+      :has-previous="hasPrevious"
+      :has-more="hasMore"
+      @previous="emit('previousPage')"
+      @next="emit('nextPage')"
+    />
   </nav>
 </template>
 
@@ -144,23 +141,23 @@ const groups = computed(() => {
 .thread-sidebar {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-2);
   /* 定位与滚动不归这里管：本组件挂在外壳侧栏的 #rail 容器里，
      那个容器负责吃掉剩余高度并自己滚动。 */
 }
 
 .sidebar-head {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   align-items: center;
   justify-content: space-between;
-  padding-right: 4px;
+  padding-right: var(--space-1);
 }
 
 .sidebar-title {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--space-1-5);
   color: var(--text-tertiary);
   font-size: var(--fs-xs);
   font-weight: var(--fw-bold);
@@ -168,7 +165,7 @@ const groups = computed(() => {
 }
 
 .count {
-  padding: 1px 6px;
+  padding: 1px var(--space-1-5);
   border-radius: var(--radius-pill);
   color: var(--text-secondary);
   background: var(--surface-sunken);
@@ -179,44 +176,43 @@ const groups = computed(() => {
 .sidebar-state {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 6px 4px;
+  gap: var(--space-1-5);
+  padding: var(--space-1-5) var(--space-1);
   color: var(--text-tertiary);
   font-size: var(--fs-xs);
   line-height: 1.6;
 }
 
 .group-label {
-  margin: 0 0 3px;
-  padding: 0 4px;
+  margin: 0 0 var(--space-0-5);
+  padding: 0 var(--space-1);
   color: var(--text-tertiary);
   font-size: var(--fs-xs);
   font-weight: var(--fw-semibold);
 }
 
 .thread-group + .thread-group {
-  margin-top: 12px;
+  margin-top: var(--space-2-5);
 }
 
 .thread-list {
   display: grid;
-  gap: 2px;
+  gap: var(--space-0-5);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .sidebar-error {
-  margin-top: 10px;
+  margin-top: var(--space-2-5);
 }
 
 .retry {
-  margin-top: 9px;
+  margin-top: var(--space-2);
 }
 
-.pager {
-  display: flex;
-  gap: 8px;
-  padding: 4px 4px 0;
+/* 侧栏里的分页器比表格里窄，只保留一点上间距；对齐与键距归 Pager。 */
+.thread-pager {
+  padding: var(--space-1) var(--space-1) 0;
 }
 </style>

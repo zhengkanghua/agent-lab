@@ -136,6 +136,7 @@ describe('颜色 token 分层', () => {
      所以这里放行不等于放松检查。 */
   const PUBLISHED_BY_COMPONENTS: Readonly<Record<string, string>> = {
     '--app-header-offset': 'layouts/AppShell.vue',
+    '--sidebar-width': 'layouts/AppShell.vue',
     '--user-row-columns': 'features/user-admin/components/UserDirectoryTable.vue',
     '--job-row-columns': 'features/scheduled-jobs/components/JobDirectoryTable.vue',
   }
