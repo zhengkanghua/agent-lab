@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { authSession } from '../features/auth/auth-session'
+import { authSession } from '@/features/auth'
 
 const router = createRouter({
   history: createWebHistory(),

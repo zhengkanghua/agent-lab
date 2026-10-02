@@ -54,7 +54,7 @@ const layerBoundaries = [
           patterns: [
             ...crossLayerRelativeImport.patterns,
             {
-              group: ['@/features/*/*/**'],
+              group: ['@/features/*/*', '@/features/*/*/**'],
               message:
                 '禁止深度导入 Feature 内部模块。请通过 Feature 根目录 (index.ts) 的公开 API 引入。',
             },
@@ -73,7 +73,7 @@ const layerBoundaries = [
           patterns: [
             ...pagesRelativeImport.patterns,
             {
-              group: ['@/features/*/*/**'],
+              group: ['@/features/*/*', '@/features/*/*/**'],
               message:
                 '禁止深度导入 Feature 内部模块。请通过 Feature 根目录 (index.ts) 的公开 API 引入。',
             },
@@ -127,7 +127,9 @@ const layerBoundaries = [
 
 export default withVueTs(
   {
-    ignores: ['dist/**', 'src/api/generated/**', 'scripts/**'],
+    /* .devshots/ 是截图与一次性核验脚本的落地目录（已 gitignore）。里面的 .mjs 是开发脚手架，
+       跟 scripts/ 同样不守 src/ 的分层铁律，也不该因为本地跑过可视化工具就让 npm run lint 变红。 */
+    ignores: ['dist/**', 'src/api/generated/**', 'scripts/**', '.devshots/**'],
   },
   pluginVue.configs['flat/recommended'],
   vueTsConfigs.recommended,

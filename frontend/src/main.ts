@@ -3,7 +3,7 @@ import { VueQueryPlugin } from '@tanstack/vue-query'
 import router from './app/router'
 import { queryClient } from './app/query-client'
 import { setUnauthorizedHandler } from './api/client'
-import { authSession } from './features/auth/auth-session'
+import { authSession } from '@/features/auth'
 import './styles/tokens.css'
 // style.css 先引入，由它的首行 @layer 语句确立层序；下面几个文件再并入 components 层。
 import './style.css'

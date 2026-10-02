@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import FileDocumentDirectory from '@/features/file-documents/FileDocumentDirectory.vue'
+import { FileDocumentDirectory } from '@/features/file-documents'
 import { useDocumentReader } from '@/shared/composables/useDocumentReader'
 import DocumentReader from '@/shared/ui/DocumentReader.vue'
 import type { FileDocumentDto } from '@/api/file-documents'

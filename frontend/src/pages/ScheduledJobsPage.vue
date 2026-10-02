@@ -4,11 +4,11 @@ import { Check, Plus, RefreshCw } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseDialog from '@/shared/ui/BaseDialog.vue'
 import { authSession } from '@/features/auth'
-import { listKnowledgeBases, type KnowledgeBaseDto } from '@/api/knowledge-bases'
 import {
   JobDirectoryTable,
   JobForm,
   useJobForm,
+  useKnowledgeBaseOptions,
   useScheduledJobDirectory,
   useTaskExecutions,
   useTaskSubmissions,
@@ -21,7 +21,8 @@ import type { PipelineRequest } from '@/api/tasks'
 
 /* 定时任务管理页：作为 /admin 的子路由渲染在 AdminShell 的内容区里。
  * 侧边栏、顶部标题栏、退出登录都由 AdminShell 提供；本页只负责正文内容。
- * 创建与编辑共用 JobForm（受控字段归 useJobForm），行内操作归 useScheduledJobDirectory。 */
+ * 创建与编辑共用 JobForm（受控字段归 useJobForm），行内操作归 useScheduledJobDirectory。
+ * 维护清理范围的可选项归 useKnowledgeBaseOptions——本页不再自己发请求。 */
 
 const accountId = authSession.user.value?.id ?? 'anonymous'
 const executions = useTaskExecutions(accountId)
@@ -35,18 +36,12 @@ async function submitPipeline(params: PipelineRequest): Promise<void> {
   await submissions.submit({ kind: 'pipeline', params }, '手动 Pipeline')
 }
 
-/* 维护清理允许显式选择停用库，选项必须覆盖任务中已有的全部范围。 */
-const knowledgeBaseOptions = ref<KnowledgeBaseDto[]>([])
-const knowledgeBaseError = ref('')
-
-async function loadKnowledgeBases(): Promise<void> {
-  try {
-    knowledgeBaseOptions.value = await listKnowledgeBases(true)
-    knowledgeBaseError.value = ''
-  } catch {
-    knowledgeBaseError.value = '知识库选项加载失败，清理范围暂不可选。'
-  }
-}
+/* 维护清理允许显式选择停用库，选项必须覆盖任务中已有的全部范围（见该组合式函数的说明）。 */
+const {
+  options: knowledgeBaseOptions,
+  error: knowledgeBaseError,
+  load: loadKnowledgeBases,
+} = useKnowledgeBaseOptions()
 
 const createPanel = ref(false)
 

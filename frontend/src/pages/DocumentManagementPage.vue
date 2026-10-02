@@ -3,8 +3,7 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
 import { isUuid } from '@/api/json-guards'
-import DocumentReviewDirectory from '@/features/document-review/DocumentReviewDirectory.vue'
-import DocumentReviewWorkbench from '@/features/document-review/DocumentReviewWorkbench.vue'
+import { DocumentReviewDirectory, DocumentReviewWorkbench } from '@/features/document-review'
 
 const route = useRoute()
 const router = useRouter()
