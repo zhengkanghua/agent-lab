@@ -133,10 +133,11 @@ describe('颜色 token 分层', () => {
      它们的值是布局量测结果（头部偏移多少、表格分几列），放进 tokens.css 就得把断点也搬过去，
      那会让同一件事有两个来源。两个都用来让「必须对齐的两处」共用一份数字：头部偏移给
      正文算视口余量，列宽给表头与每一行对齐。下面那条用例盯住它们真的有声明，
-     所以这里放行不等于放松检查。 */
+     所以这里放行不等于放松检查。
+     --sidebar-width 曾经也在表里，2026-10 提进了 tokens.css（两个外壳共用，
+     留在这里就得各写一个值，实际也真的各写了一个）。 */
   const PUBLISHED_BY_COMPONENTS: Readonly<Record<string, string>> = {
     '--app-header-offset': 'layouts/AppShell.vue',
-    '--sidebar-width': 'layouts/AppShell.vue',
     '--user-row-columns': 'features/user-admin/components/UserDirectoryTable.vue',
     '--job-row-columns': 'features/scheduled-jobs/components/JobDirectoryTable.vue',
   }

@@ -185,6 +185,10 @@
 
   /* 布局宽度 */
   --content-width: 1420px;
+  /* 侧栏宽度。前台与后台两个外壳共用（Claude ~288、ChatGPT ~260 是行业区间）：
+     前台的侧栏要放会话标题，后台只有几个菜单项，但两个抽屉宽度不一致本身就没来由，
+     窄的那个还会把品牌名挤成两行。提到这里之前它写在 AppShell 里，AdminShell 另写 232px。 */
+  --sidebar-width: 288px;
   /* 单列正文的阅读宽度。--content-width 是给检索页两栏结果用的，拿它排一列正文，
      一行会有 140+ 字符，眼睛要来回扫。760px 在 0.92rem 下约 68 字符。 */
   --reading-width: 760px;
@@ -290,9 +294,11 @@
   --text-error: var(--brick-600);
   --text-success: var(--pine-700);
 
-  /* 6、语义层——描边：覆盖写死的浅色代码 */
-  --border-subtle: var(--neutral-300);
-  --border-strong: var(--neutral-400);
+  /* 6、语义层——描边：覆盖写死的浅色代码。
+     深色下比浅色模式更需要描边：卡片与页面底的明度差本来就小，阴影又不可见，
+     描边是唯一还能让「这是一块浮起来的面」看得见的东西。所以取色阶里再亮一档。 */
+  --border-subtle: var(--neutral-400);
+  --border-strong: var(--neutral-500);
 
   /* 7、语义层——强调与状态 */
   --accent: var(--pine-600);

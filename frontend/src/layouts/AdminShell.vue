@@ -217,14 +217,16 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
   min-height: 100vh;
 }
 
-/* 侧边栏固定贴左，全高。内容区用 margin-left 让位，宽度交给 flex。 */
+/* 侧边栏固定贴左，全高。内容区用 margin-left 让位，宽度交给 flex。
+   宽度与前台侧栏共用 tokens.css 的 --sidebar-width：原先这里写死 232px，
+   比前台窄 56px，品牌名「Signal Desk」被挤成两行（2026-10 统一）。 */
 .admin-sidebar {
   position: fixed;
   inset: 0 auto 0 0;
   z-index: var(--z-drawer-sidebar);
   display: flex;
   flex-direction: column;
-  width: 232px;
+  width: var(--sidebar-width);
   background: var(--surface-raised);
   border-right: 1px solid var(--border-subtle);
 }
@@ -253,6 +255,9 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
   display: grid;
   gap: 1px;
   min-width: 0;
+  /* 撑开：窄屏那枚关闭键才会被推到右端。缺了它，X 紧贴品牌文字
+     （AppShell 的 .brand-lockup 用 flex:1 达到同一效果）。 */
+  flex: 1;
 }
 
 .sidebar-brand-copy strong {

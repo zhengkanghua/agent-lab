@@ -280,12 +280,11 @@ function handlePrimary(): void {
 /* 头部偏移对外暴露：桌面端为 0px，窄屏的汉堡条在断点里改写成 57px。
    自定义属性沿 DOM 继承，不受 scoped 限制，所以子页面能读到。
 
-   侧栏宽度同样提成变量：它原来在 .shell-sidebar 与 .shell-body 里各写一遍 264px，
-   改一处漏一处就会出现「内容区压在侧栏下面」或凭空多一条缝。288px 是行业区间内的取值
-   （Claude ~288、ChatGPT ~260），比原来的 264 宽一档，给会话标题多留两个字。 */
+   侧栏宽度不在这里：它是两个外壳（前台侧栏、后台抽屉）共用的布局常量，
+   已提到 tokens.css 的 --sidebar-width。原先本文件与 AdminShell 各写一个值
+   （288 与 232），后台那个窄到把品牌名挤成两行。 */
 .app-shell {
   --app-header-offset: 0px;
-  --sidebar-width: 288px;
 }
 
 /* 侧栏固定贴左、全高；内容区用 margin-left 让位。 */

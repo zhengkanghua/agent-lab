@@ -222,8 +222,11 @@ function openDocument(result: ReadableResult, trigger: HTMLButtonElement | null)
   padding-bottom: var(--space-2);
 }
 
-/* 矮视口的空态从顶部排列，超出内容交给文档滚动。 */
-@media (max-width: 560px), (max-height: 700px) {
+/* 只有「矮视口」需要把空态压到顶部——内容比视口还高时，居中会把问候推出屏幕。
+   宽度不是理由：390×844 的手机又窄又高，居中完全放得下，ChatGPT / Gemini 的空态
+   也是居中的。原先这条带着 `max-width: 560px`，于是窄而高的手机被当成矮视口，
+   上方白白空出半屏（2026-10 与老板核对后收窄条件）。 */
+@media (max-height: 700px) {
   .stream-region.is-empty {
     justify-content: flex-start;
   }
