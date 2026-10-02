@@ -2,7 +2,7 @@
 
 Signal Desk 是知识库语义检索工作台的 Vue 3 前端。检索页 `/` 走 `POST /document-search`：
 后端按 Document 分组返回相关片段（分组与排序规则在后端，见 `backend/docs/architecture.md`），
-前端把命中结果按“最新一条检索贴在输入框正下方、旧记录往下沉”的检索流（仿 Agent 会话体感）
+前端把命中结果按“旧的在上、最新的贴在底部输入坞上方”的检索流（仿 Agent 会话体感）
 逐轮向下累积，多条历史记录可折叠回看，刷新即清空。该页不生成答案、不调用生成式 LLM，只返回检索到的
 原文片段；用户点击“阅读全文”后才调用 `GET /documents/{document_id}` 读取 PostgreSQL 当前
 完整正文。
@@ -51,7 +51,7 @@ Agent 提示词草稿在设置分区之间切换时保留，只有保存后才�
 
 检索只走按 Document 分组这一种形态：`document_limit` 决定一次检索返回多少篇不同文档，`matches_per_document` 决定每篇带回几个相关片段，两个参数的下限、上限和默认值是 `api/document-search.ts` 里的契约常量。它们的默认值在设置中心的「检索偏好」分区维护、存在账号上，提交那一刻读到什么值这一轮就用什么值。分组和排序由后端完成，前端按返回顺序渲染，不重排、不聚合、不二次去重。
 
-每次搜索固化成一条“检索记录”，追加成一条向下生长的检索流：最新一条顶在输入框正下方完整展开，旧记录折叠成“检索词 + 命中数”的标题行，可以点开回看。刷新或离开页面即清空，这不是真会话，也不落后端。一次只允许一条在途搜索，提交新搜索会取消上一条。输入条常驻顶部，一轮进入终态后只清空本次提交的草稿，等待期间新写的内容保留；用户仍在原操作位置时恢复输入焦点，正在阅读全文或已经转到其他控件时不抢焦点。
+每次搜索固化成一条“检索记录”，追加成一条向下生长的检索流：记录按提交先后从上往下排，最新的那条在最下面、紧邻底部输入坞并完整展开，旧记录折叠成“检索词 + 命中数”的标题行，可以点开回看。刷新或离开页面即清空，这不是真会话，也不落后端。一次只允许一条在途搜索，提交新搜索会取消上一条。输入坞贴底，一轮进入终态后只清空本次提交的草稿，等待期间新写的内容保留；提交后把视口带到最新一条，用户仍在原操作位置时恢复输入焦点，正在阅读全文或已经转到其他控件时不抢焦点。记录区在长高时只在用户仍贴底的情况下跟随滚动，上翻后由输入坞上方的“回到最新”按钮给出回去的入口（与 Agent 对话页共用 `src/shared/composables/useStickToBottom.ts`）。
 
 每篇文档默认只展示最高分片段，其他相关片段用无框分隔列表展开；score 始终显示原始数值，不换算成概率或百分比。全文由 Vue Query 以 `document_id + content_hash` 为缓存 key 按需加载，每次打开都重新核对当前正文，加载中和失败时隐藏旧缓存，关闭或快速切换时取消旧请求；全文失败不清空检索流。搜索结果里的 hash 与 PostgreSQL 当前 hash 不同时展示版本更新提示，并显示数据库里的最新正文。正文用 Vue 文本插值渲染，Markdown 文件交给共享的 `SafeMarkdown` 安全解析，不使用 `v-html`，外链图片不加载；没有 Source 或 URL 的文件同样能阅读。桌面端用右侧阅读面板，移动端用全屏阅读层，两者都支持 Esc、明确的关闭按钮、焦点约束和关闭后把焦点还给触发按钮。
 
@@ -62,6 +62,8 @@ Agent 提示词草稿在设置分区之间切换时保留，只有保存后才�
 流式接口用 `fetch` 加 `response.body.getReader()`，不用 `EventSource`：后者只能发 GET、不能带请求体，提问就得进 query string，会被网关日志和浏览器历史记下来。超时分连接与空闲两道，常量在 `api/agent-chat.ts`，空闲那一道按后端心跳间隔留了四倍余量；不复用 `client.ts` 里整个请求的总时长上限，一次 Agent 运行可能要几分钟，用它会在模型还在写的时候掐断。调用方提前 `break` 时会 `reader.cancel()` 关掉连接，否则后端那次运行会继续跑、继续计费。取消一轮对话靠两道闸，`AbortController` 之外还有一个自增序号：事件已经拿在手里、`await` 还没恢复的那个窗口里 abort 拦不住任何东西，只有比对序号能阻止一次已取消的运行往界面写字，取消后到达的 `done` 因此也不会写回会话 id。
 
 会话 id 和实际范围由服务端在 `run_started` 给出。新会话默认所有启用知识库，选择通过独立的 PATCH 保存，重新打开继续沿用；运行期间改选只影响下一次，页面保留每次运行的范围快照。切换历史会话和浏览器前进后退以路由参数为准，离开后取消在途的历史加载，迟到的响应不会重新改写地址，只有新建会话取得服务端 id 时才补全当前地址。
+
+视口由 `src/shared/composables/useStickToBottom.ts` 管理：内容长高（流式 token、新轮次、状态行）只在用户仍贴底时跟随，上翻之后由输入坞上方的“回到最新”给出回去的入口，不会被后台到达的内容拽走；打开一个已有会话是显式的“我要看最新的”，由页面在载入完成后直接滚到底。会话列表里的删除走 `ConfirmDialog`（应用自己的确认框，文案点名删的是哪个会话），不再弹浏览器原生 confirm。
 
 临时 token 只供流式预览，`done.answer` 校正最终文字并给出完成状态和引用，缺少 Done 的流不能当成完成。结束后同步最新 checkpoint，压缩后只展示保留的近期问答，同步失败可以重试。工具调用和结果优先按本轮 `tool_call_id` 配对，缺 ID 的旧记录保留按名字配对，不会跨问答配对；缺失的结果明确呈现，工具进一步缩小范围时展示实际范围。
 
@@ -195,13 +197,20 @@ npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated/o
 - `src/features/scheduled-jobs`：周期配置、任务执行、Pipeline 提交与策略面板；
 - `src/features/settings`：设置中心（账号安全 / 检索偏好 / Agent 偏好）与账号偏好
   store（读写 `/auth/me/preferences`）；
-- `src/shared/ui`：`Base*` 基础控件（含 `BaseSwitch` 开关）、`ComposerDock` 输入坞、
+- `src/shared/ui`：`Base*` 基础控件（含 `BaseSwitch` 开关）、`ConfirmDialog`（全站破坏性
+  操作的确认框，挂在 `App.vue` 上一次，由 `requestConfirm()` 驱动）、`ComposerDock` 输入坞、
+  `ScrollToBottomButton`（输入坞上方的「回到最新」，检索页与 Agent 页共用）、
   `KnowledgeBaseScopePicker`、`ThemeToggle`，以及答案与 Markdown 文件共用的安全渲染器
   `SafeMarkdown.vue`、检索 / Agent / 文件资料三处共用的全文阅读器 `DocumentReader.vue`；
 - `src/shared/composables/useKnowledgeBaseScope.ts`：启用知识库目录与选择有效性；
 - `src/shared/composables/useDocumentReader.ts`：全文 Query 与阅读层状态（三处入口共用）；
+- `src/shared/composables/useStickToBottom.ts`：贴底跟随与「回到最新」的判定（检索页与 Agent 页共用），
+  暴露 `atBottom` / `scrollToBottom()`，由 `ScrollToBottomButton` 呈现；
+- `src/shared/composables/confirm.ts`：确认请求的单槽队列（渲染方是 `ConfirmDialog`）。
+  feature 里的 composable 借它把「弹个确认框」委托出去并拿回用户的选择，写法与 `window.confirm`
+  一样是「等一个布尔值」，但弹的是应用自己的框；
 - `src/shared/model`：跨功能共用的纯函数与类型（文档处理状态显示、密码规则、
-  打开全文所需的文档身份 `ReadableResult` 与引用快照）；
+  打开全文所需的文档身份 `ReadableResult` 与引用快照、固定东八区的时间格式化 `datetime.ts`）；
 - `src/pages`：登录、检索、Agent 对话、设置中心与后台控制台（单路由
   `/admin/:section?`，AdminPage 按分区组合账号、知识库、来源、文件与任务管理）的路由级组合，
   不直接执行 `fetch`；
