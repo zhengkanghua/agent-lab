@@ -604,11 +604,36 @@ docker inspect -f '{{.State.Pid}}' "$C" | xargs -I{} awk '{print "进程状态="
 WARNING agent_lab.agent.middleware Agent 工具调用失败 tool=search_documents error_type=QdrantSearchResponseError code=qdrant_response_invalid
 ```
 
-用户侧表现为模型查不到资料、很快就给一个泛泛的回答（工具一调就失败，重试几次后收尾），而**检索页本身
-正常**——失败在 Agent 调 Qdrant 那一步的响应校验上，与部署方式无关、也不是网络问题。
+用户侧表现为模型查不到资料、很快就给一个泛泛的回答；而**带时间过滤的提问看起来「正常」**——那只是结果被筛成了空，
+空结果不经过响应校验。**根因是读侧配置漂移：`.env` 里的 `QDRANT_COLLECTION_SCHEMA_VERSION` 与 current Alias
+指向的集合不是一个版本。** 2026-10-01 实测：`.env` 写 `v1`，Alias 指向的 `..._v3_001` 及其每个 Point 的 payload
+里都写着 `v3`，于是每个命中都被逐点契约拒掉。检索页与 Agent 走同一条校验路径，会一起坏；同一个漂移还会让写链路
+在集合规格校验上失败——索引也一起停摆。
 
-**这是改造前就存在的缺陷（2026-10-01 实测确认：改造成 Swarm 之前的容器日志里同样有），待单独一轮处理**，
-不在本次部署改造范围内；排查时不要先怀疑部署。
+判定只要一条命令（容器里生效的值 vs 集合里写的值，两者必须相等，且等于 Point payload 里的
+`index_schema_version`／`embedding_model`）：
+
+```bash
+CID=$(docker ps -q -f name=agent-lab_backend | head -1)
+docker exec "$CID" env | grep -E '^(QDRANT_COLLECTION_SCHEMA_VERSION|OLLAMA_EMBEDDING_MODEL)='
+docker exec -i "$CID" python - <<'PY'
+import json, httpx
+from agent_lab.config.qdrant import get_qdrant_settings
+qs = get_qdrant_settings()
+key = qs.api_key.get_secret_value().strip()
+info = httpx.get(f"{str(qs.base_url).rstrip('/')}/collections/{qs.collection_alias}",
+                 headers={"api-key": key} if key else {}, timeout=30).json()["result"]
+print(json.dumps(info["config"].get("metadata"), ensure_ascii=False))
+PY
+```
+
+修法是改 `<DEPLOY_DIR>/.env` 那一项再重新部署（`.env` 的值是部署时读进服务定义的），**不要反过来把配置降到旧版本**：
+旧版本的集合根本不存在，而且当前代码按 `index_instance_id` 分组、只有新形状的 payload 才有这个字段。改完从第一次
+检索起，读侧会先自己核一次集合规格：不一致会直接报 `QdrantSearchIndexSpecMismatchError`
+（`code=qdrant_configuration_invalid`），消息里写明哪个字段对不上、期望什么、实际什么（见 ADR 0041）。
+
+**规矩：读写用同一份 `.env`。** 这次索引是用另一份配置（v3）建的、服务端那份（v1）在读，两边不一致才没人当场发现；
+不要再拿另一台机器或另一份 `.env` 去建索引或做重建。
 
 ### 每次提问都失败，`agent_internal_error` 500
 
@@ -724,9 +749,15 @@ docker ps --filter name=agent-lab --format '{{.Names}}\t{{.Status}}'         # 3
 ```
 
 退回后写入口变成普通容器（1Panel 会重新管到它们）；确认可用之后再按第二节的流程切回 Swarm。
-**这条路径尚未演练过**（验收 6 被跳过了，2026-10-01 决定）：它的每条命令都是改造前长期在用的，很可能直接
-能用，但第一次真用它时请逐步核实三件事——`docker stack rm` 后端口是否真的释放（`sleep 20` 之后
-`ss -tlnp | grep 18000`）、旧容器是否三个都起来（`docker ps`）、以及它们的日志里有没有连不上依赖的报错。
+
+**这条路径是刻意不演练的（2026-10-01 决定），因为它不是常规退路、而是最后手段。** 保留它的目的只有一个：
+**真要退的那天有一个照着走、不用重新想的方向**；日常回滚用不上它（回上一版镜像用第三节的 `--rollback`，
+而且不停机）。它的每条命令都是改造前长期在用的，很可能直接能用，但代价要提前知道：
+
+- **它会中断服务**：旧方式是「停旧、跑迁移、起新」，不像 Swarm 那样先起后停；用它就挑低峰期。
+- **第一次真用它时请逐步核实三件事**：`docker stack rm` 之后端口是否真释放（`sleep 20` 后
+  `ss -tlnp | grep 18000`）、旧容器是否三个都起来（`docker ps`）、日志里有没有连不上依赖——三个依赖容器
+  被我们接在 `agent-lab-net` 上，而旧编排引用的是 `1panel-network`，要确认它们在两张网上都在。
 
 ## 四、手动运维命令
 
