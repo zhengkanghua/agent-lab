@@ -62,9 +62,11 @@ function isLast(index: number): boolean {
 </template>
 
 <style scoped>
+/* 轮与轮之间拉开，轮内收窄（见 AgentTurnCard 的 .turn）：这条必须大于轮内那条，
+   否则「上一轮的回答 + 这一轮的提问」会被读成一组。 */
 .turn-list {
   display: grid;
-  gap: 16px;
+  gap: var(--space-8);
 }
 
 /* 空态不再是一张虚线卡片：单列布局里它就是这一列的全部内容，再画个框等于给

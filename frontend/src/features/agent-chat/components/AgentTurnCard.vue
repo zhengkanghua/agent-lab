@@ -70,10 +70,13 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
 </script>
 
 <template>
-  <!-- 去气泡（2026-09 重设计 P3）：提问是通栏标题块，回答跟在 32px 之下，
-       角色身份靠排版顺序本身表达，不再画头像与气泡框——我们是文档问答，
-       通栏比气泡适合阅读。 -->
-  <article class="turn" :class="`is-${turn.status}`">
+  <!-- 去气泡（2026-09 重设计 P3）：提问是通栏标题块，回答跟在其下，角色身份靠排版顺序
+       本身表达，不再画头像与气泡框——我们是文档问答，通栏比气泡适合阅读。
+       2026-10 补左侧时间线：没有气泡就没有「靠右对齐」那种一眼可辨的位置线索，
+       一轮轮往上翻时找不到自己的提问。圆点 + 竖线把这条线索还回来（与检索流同一套，
+       见 styles/components/stream.css），代价是下面那条间距规则要跟着改。 -->
+  <article class="turn stream-item" :class="`is-${turn.status}`">
+    <span class="stream-mark" aria-hidden="true"></span>
     <!-- 用文本插值渲染，不用 v-html：这段是用户原文，注入 HTML 会直接变成 XSS。 -->
     <h3 class="question-text">{{ turn.question }}</h3>
 
@@ -159,8 +162,20 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
 <style scoped>
 .turn {
   display: grid;
-  /* 提问与回答之间的 32px 分层是唯一的空间语言：层级靠留白，不靠卡片框。 */
-  gap: 32px;
+  /* 轮内 16px、轮间 32px（轮间那条在 AgentTranscript 的 .turn-list 上）：
+     挨得近的才成一组。原来是反的——轮内 32px 比轮间 16px 还大，
+     于是「上一轮的回答 + 这一轮的提问」看起来才是一对，正好读反。 */
+  gap: var(--space-4);
+}
+
+/* 圆点落在 18px 提问标题的首行中心（共享层默认的 top:19px 是给检索页那个 44px 标题行
+   算的）；竖线相应地从圆点下沿起画。scoped 不分层，压得过 @layer components。 */
+.turn .stream-mark {
+  top: 9px;
+}
+
+.turn::before {
+  top: 19px;
 }
 
 /* 提问按用户原文保留换行；18/600 让它在阅读流里像一节小标题。 */
@@ -296,6 +311,13 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
   .ghost-action {
     min-height: var(--tap-target);
     padding: 4px 12px;
+  }
+}
+
+/* 窄屏收窄左侧留白，与检索流同一档——手机上没有 32px 可以白让。 */
+@container (max-width: 560px) {
+  .turn {
+    padding-left: var(--space-5);
   }
 }
 </style>

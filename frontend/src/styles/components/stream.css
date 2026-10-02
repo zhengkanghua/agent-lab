@@ -1,0 +1,45 @@
+/* 会话/检索「流」的左侧时间线：每一条记录、每一轮对话起点的圆点，以及把这一条串起来
+ * 的竖线。
+ *
+ * 原先只有检索流有它（SearchRecordTurn 的 .record / .record-mark），Agent 会话是一列
+ * 裸的通栏段落：一轮一屏地翻上去，眼睛没有任何可抓的锚点，回头找「我上一条问的是什么」
+ * 只能一行行读。可这两页本来就是同一种流——检索流的注释里写着它的体感仿的就是 Agent
+ * 会话，形态不该只做一半。这里把时间线收敛成一套，两页共用。
+ *
+ * 只共享样式，不共享结构：圆点的垂直落点由这一条的首行高度决定（检索记录的首行是 44px
+ * 的标题行，Agent 一轮的首行是 18px 的提问标题），「这一条往下延伸到哪」也各家不同
+ * （检索记录要往下桥接 12px 去接住下一条，Agent 一轮就画到自己末尾）。这类差异留在各自
+ * 的 scoped 样式里——scoped 不分层，恒定压过这里（见 frontend/AGENTS.md 第 6 条）。
+ */
+
+@layer components {
+  .stream-item {
+    position: relative;
+    padding-left: var(--space-8);
+  }
+
+  /* 竖线。落点默认对齐 44px 标题行的圆点下方；末条不再往页面外延伸。 */
+  .stream-item::before {
+    content: '';
+    position: absolute;
+    top: 26px;
+    bottom: 0;
+    left: 2.5px;
+    width: 1px;
+    background: var(--surface-sunken);
+    border-radius: var(--radius-pill);
+  }
+
+  /* 锚点圆点。压一圈页面底色的环，让竖线在圆点处断开而不是从它中间穿过去。 */
+  .stream-mark {
+    position: absolute;
+    left: 0;
+    top: 19px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 3px var(--surface-base);
+    z-index: var(--z-local);
+  }
+}

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ChevronDown, CircleAlert, RotateCcw, Search, SearchX } from '@lucide/vue'
+import { ChevronDown, CircleAlert, RotateCcw, SearchX } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
 import type { DocumentResult } from '../model/search-result'
@@ -47,13 +47,13 @@ function toggle(): void {
 
 <template>
   <article
-    class="record"
+    class="record stream-item"
     :class="[`is-${record.status}`, { 'is-collapsed': !expanded }]"
     style="container-type: inline-size"
   >
     <!-- 头：检索词是这条记录的识别主信息。展开态也放，让每条记录自带归属；latest 不提供折叠。 -->
     <header class="record-head" :aria-expanded="expanded ? 'true' : 'false'">
-      <span class="record-mark" aria-hidden="true"><Search :size="15" /></span>
+      <span class="stream-mark" aria-hidden="true"></span>
 
       <button
         v-if="!isLatest"
@@ -147,21 +147,16 @@ function toggle(): void {
 </template>
 
 <style scoped>
+/* 左侧时间线（圆点 + 竖线）的公共部分在 styles/components/stream.css 的
+   .stream-item / .stream-mark 上，与 Agent 会话共用。这里只留本页特有的两处：
+   竖线要往下多画 12px 去接住下一条记录，失败时整条线换成危险色。
+   scoped 不分层，压得过 @layer components 里的那份（frontend/AGENTS.md 第 6 条）。 */
 .record {
-  position: relative;
-  padding-left: var(--space-8);
   background: transparent;
 }
 
 .record::before {
-  content: '';
-  position: absolute;
-  top: 26px;
   bottom: -12px;
-  left: 2.5px;
-  width: 1px;
-  background: var(--surface-sunken);
-  border-radius: var(--radius-pill);
 }
 
 .record:last-child::before {
@@ -176,23 +171,6 @@ function toggle(): void {
   display: flex;
   align-items: center;
   min-height: 44px;
-}
-
-.record-mark {
-  position: absolute;
-  left: 0;
-  top: 19px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  color: transparent;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px var(--surface-base);
-  z-index: var(--z-local);
-}
-
-.record-mark svg {
-  display: none;
 }
 
 .record-toggle {
