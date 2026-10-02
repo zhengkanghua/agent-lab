@@ -2,7 +2,7 @@ import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/client'
-import DocumentReader from '../components/DocumentReader.vue'
+import DocumentReader from '../DocumentReader.vue'
 
 const result = {
   documentId: '20000000-0000-4000-8000-000000000001',

@@ -4,7 +4,7 @@ import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/client'
 import { fetchDocument } from '@/api/documents'
-import { useDocumentReader } from '../composables/useDocumentReader'
+import { useDocumentReader } from '../useDocumentReader'
 
 vi.mock('../../../api/documents', () => ({
   fetchDocument: vi.fn(),

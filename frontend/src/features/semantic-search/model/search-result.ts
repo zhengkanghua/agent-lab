@@ -1,19 +1,9 @@
 import type { DocumentSearchMatchDto, DocumentSearchResultDto } from '@/api/document-search'
+import type { ReadableResult } from '@/shared/model/readable-result'
 
-/** 检索结果打开全文时所需的稳定文档身份和回退元数据。 */
-export interface ReadableResult {
-  documentId: string
-  knowledgeBaseId: string
-  knowledgeBaseName?: string
-  uploadFilename?: string | null
-  contentHash: string
-  title: string
-  url: string | null
-  sourceName: string | null
-  publishedAt: string | null
-  labels: string[]
-  authors: string[]
-}
+// ReadableResult（打开全文所需的文档身份）与 formatPublishedAt 归 shared/model/readable-result.ts：
+// 它们被阅读器、结果卡、Agent 引用三处共用，留在这个 feature 里会让另外两个反向依赖它。
+export type { ReadableResult }
 
 export interface DocumentMatch {
   id: string
@@ -68,29 +58,10 @@ function toDocumentMatch(dto: DocumentSearchMatchDto): DocumentMatch {
   }
 }
 
-const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
-  year: 'numeric',
-  month: 'short',
-  day: 'numeric',
-  timeZone: 'Asia/Shanghai',
-})
-
 const scoreFormatter = new Intl.NumberFormat('zh-CN', {
   minimumFractionDigits: 3,
   maximumFractionDigits: 3,
 })
-
-export function formatPublishedAt(value: string | null): string {
-  if (!value) {
-    return '时间未提供'
-  }
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return '时间未提供'
-  }
-  return dateFormatter.format(date)
-}
 
 export function formatScore(value: number): string {
   return scoreFormatter.format(value)

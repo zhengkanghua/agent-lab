@@ -7,15 +7,15 @@ import BaseSuggestionList from '@/shared/ui/BaseSuggestionList.vue'
 import KnowledgeBaseScopePicker from '@/shared/ui/KnowledgeBaseScopePicker.vue'
 import { useKnowledgeBaseScope } from '@/shared/composables/useKnowledgeBaseScope'
 import {
-  DocumentReader,
   SearchComposer,
   SearchRecordTurn,
   SEARCH_EXAMPLES,
-  useDocumentReader,
   useSearchStream,
-  type ReadableResult,
   type SearchRecord,
 } from '@/features/semantic-search'
+import { useDocumentReader } from '@/shared/composables/useDocumentReader'
+import type { ReadableResult } from '@/shared/model/readable-result'
+import DocumentReader from '@/shared/ui/DocumentReader.vue'
 
 /* 语义检索页（Q1–Q15 的落地）。
  *
@@ -46,10 +46,9 @@ const { loggingOut, logoutError, logout } = useLogout()
 /** 用户手动展开过的旧记录的 id（latest 不需要进这里，恒展开）。 */
 const expandedIds = ref<Set<number>>(new Set())
 
-/** 悬停在输入条设置入口上时给的当前值摘要。 */
+/** 输入条上那枚偏好入口显示的当前值（悬停提示与无障碍名也用它）。 */
 const preferenceSummary = computed(
-  () =>
-    `每次检索 ${preferences.documentLimit} 篇 · 每篇 ${preferences.matchesPerDocument} 条（在设置中调整）`,
+  () => `每次 ${preferences.documentLimit} 篇 · 每篇 ${preferences.matchesPerDocument} 条`,
 )
 
 const hasRecords = computed(() => stream.records.value.length > 0)

@@ -1,15 +1,19 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { AlertTriangle, Clock3, ExternalLink, FileText, RotateCcw, X } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
 import SafeMarkdown from '@/shared/ui/SafeMarkdown.vue'
 import type { ApiError } from '@/api/client'
-import type { DocumentEvidence } from '@/api/agent-evidence'
 import { resolveErrorCopy, type ErrorCopy } from '@/api/error-copy'
-import type { DocumentDetail } from '../model/document-detail'
-import { formatPublishedAt, type ReadableResult } from '../model/search-result'
+import { useModalLayer } from '@/shared/composables/useModalLayer'
+import type { DocumentDetail } from '@/shared/model/document-detail'
+import {
+  formatPublishedAt,
+  type EvidenceSnapshot,
+  type ReadableResult,
+} from '@/shared/model/readable-result'
 
 const props = defineProps<{
   open: boolean
@@ -18,7 +22,7 @@ const props = defineProps<{
   loading: boolean
   error: ApiError | null
   hashMismatch: boolean
-  evidence?: DocumentEvidence | null
+  evidence?: EvidenceSnapshot | null
 }>()
 
 const emit = defineEmits<{
@@ -29,8 +33,6 @@ const emit = defineEmits<{
 
 const panel = ref<HTMLElement | null>(null)
 const closeButton = ref<InstanceType<typeof BaseIconButton> | null>(null)
-let previousBodyOverflow = ''
-let effectsActive = false
 
 // 全文接口的失败按 HTTP 状态分类就够：它不像检索链路那样有一串上游 code，
 // 「没这篇」和「服务不可用」正好对应 404 与 503。
@@ -66,62 +68,15 @@ const readerSourceName = computed(() =>
     : (props.result?.sourceName ?? props.result?.uploadFilename ?? '未指定来源'),
 )
 
-watch(
-  () => props.open,
-  async (open) => {
-    if (open) {
-      previousBodyOverflow = document.body.style.overflow
-      effectsActive = true
-      document.body.style.overflow = 'hidden'
-      document.addEventListener('keydown', handleKeydown)
-      await nextTick()
-      closeButton.value?.focus()
-      return
-    }
-    releaseDialogEffects()
-  },
-  { immediate: true },
-)
-
-onBeforeUnmount(releaseDialogEffects)
-
-function releaseDialogEffects(): void {
-  if (!effectsActive) return
-  effectsActive = false
-  document.removeEventListener('keydown', handleKeydown)
-  document.body.style.overflow = previousBodyOverflow
-}
-
-function handleKeydown(event: KeyboardEvent): void {
-  if (!props.open) return
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    emit('close')
-    return
-  }
-  if (event.key !== 'Tab' || !panel.value) return
-
-  const focusable = [
-    ...panel.value.querySelectorAll<HTMLElement>(
-      'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    ),
-  ].filter((element) => !element.hasAttribute('hidden'))
-  if (!focusable.length) {
-    event.preventDefault()
-    panel.value.focus()
-    return
-  }
-
-  const first = focusable[0]
-  const last = focusable[focusable.length - 1]
-  if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault()
-    last?.focus()
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault()
-    first?.focus()
-  }
-}
+/* 滚动锁、Esc、Tab 焦点循环都归 useModalLayer。焦点归还走 emit('closed') 那条链：
+   阅读层有退场动画，归还时机由调用方在动画结束后自己接（父页面的 @closed）。 */
+useModalLayer({
+  open: () => props.open,
+  container: panel,
+  onEscape: () => emit('close'),
+  initialFocus: () => closeButton.value?.$el ?? null,
+  restoreFocus: () => null,
+})
 </script>
 
 <template>

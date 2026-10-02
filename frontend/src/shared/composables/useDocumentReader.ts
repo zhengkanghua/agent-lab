@@ -2,8 +2,8 @@ import { computed, onScopeDispose, ref, shallowRef } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ApiError } from '@/api/client'
 import { fetchDocument } from '@/api/documents'
-import { toDocumentDetail } from '../model/document-detail'
-import type { ReadableResult } from '../model/search-result'
+import { toDocumentDetail } from '@/shared/model/document-detail'
+import type { ReadableResult } from '@/shared/model/readable-result'
 
 export function documentDetailQueryKey(documentId: string, contentHash: string) {
   // UUID 与 SHA-256 十六进制字符串大小写不影响业务身份；统一 key 可避免同一
@@ -59,7 +59,7 @@ export function useDocumentReader() {
     return value instanceof ApiError
       ? value
       : new ApiError({
-          message: 'Unexpected document loading failure.',
+          message: '读取文档全文出现了未预期的失败。',
           code: 'unknown_error',
           cause: value,
         })

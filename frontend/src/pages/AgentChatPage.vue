@@ -19,7 +19,8 @@ import {
 } from '@/features/agent-chat'
 import type { AgentThreadSummaryDto } from '@/api/agent-threads'
 import type { DocumentEvidence } from '@/api/agent-evidence'
-import { DocumentReader, useDocumentReader } from '@/features/semantic-search'
+import { useDocumentReader } from '@/shared/composables/useDocumentReader'
+import DocumentReader from '@/shared/ui/DocumentReader.vue'
 
 const route = useRoute()
 const router = useRouter()

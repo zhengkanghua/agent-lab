@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { BookOpenText, ChevronDown, Clock3, ExternalLink, Layers3, Tag } from '@lucide/vue'
+import { formatPublishedAt } from '@/shared/model/readable-result'
 import {
   collapseExcerpt,
   formatAuthorLine,
-  formatPublishedAt,
   formatScore,
   isExcerptLong,
   type DocumentResult,
@@ -394,9 +394,12 @@ function requestFullText(event: MouseEvent): void {
   background: var(--surface-hover);
 }
 
+/* 触屏：这三个都是行内小键，桌面密集尺寸在手指导下点不中，统一撑到可点高度。 */
 @media (pointer: coarse) {
   .read-button,
-  .result-actions a {
+  .result-actions a,
+  .text-button,
+  .related-toggle {
     min-height: var(--tap-target);
   }
 }
