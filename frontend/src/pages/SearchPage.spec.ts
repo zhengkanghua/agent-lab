@@ -1,6 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import SearchPage from '@/pages/SearchPage.vue'
 import { _resetRecordSequence } from '@/features/semantic-search'
@@ -50,6 +50,11 @@ function makeRouter() {
 }
 
 describe('SearchPage search stream', () => {
+  beforeEach(() => {
+    // jsdom 没有实现 window.scrollTo，而「提交后跟到最新一条」会调它。
+    vi.stubGlobal('scrollTo', vi.fn())
+  })
+
   afterEach(() => {
     document.body.replaceChildren()
     vi.unstubAllGlobals()
@@ -128,9 +133,17 @@ describe('SearchPage search stream', () => {
 
     expect(wrapper.findAll('.record')).toHaveLength(2)
 
-    // 模型二：最新一条（楼市）贴顶，旧记录（利率）往下。
-    const firstQuery = wrapper.get('.record .record-query')
-    expect(firstQuery.text()).toBe('楼市')
+    // 2026-10 输入坞下移之后：按提交先后从上往下排，最新一条（楼市）在最下面、
+    // 紧邻底部输入坞；旧记录（利率）在上方折叠着。判据用「最后一条」而不是「第一条」，
+    // 断言的仍然是「最新那条离输入坞最近」这件事。
+    const queries = wrapper.findAll('.record .record-query').map((node) => node.text())
+    expect(queries).toEqual(['利率', '楼市'])
+    const lastRecord = wrapper.findAll('.record')[1]!
+    const composer = wrapper.get('.composer-dock')
+    expect(
+      lastRecord.element.compareDocumentPosition(composer.element) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
     wrapper.unmount()
   })
 

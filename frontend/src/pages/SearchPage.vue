@@ -5,7 +5,9 @@ import { useLogout } from '@/features/auth'
 import { usePreferences } from '@/features/settings'
 import BaseSuggestionList from '@/shared/ui/BaseSuggestionList.vue'
 import KnowledgeBaseScopePicker from '@/shared/ui/KnowledgeBaseScopePicker.vue'
+import ScrollToBottomButton from '@/shared/ui/ScrollToBottomButton.vue'
 import { useKnowledgeBaseScope } from '@/shared/composables/useKnowledgeBaseScope'
+import { useStickToBottom } from '@/shared/composables/useStickToBottom'
 import {
   SearchComposer,
   SearchRecordTurn,
@@ -17,15 +19,17 @@ import { useDocumentReader } from '@/shared/composables/useDocumentReader'
 import type { ReadableResult } from '@/shared/model/readable-result'
 import DocumentReader from '@/shared/ui/DocumentReader.vue'
 
-/* 语义检索页（Q1–Q15 的落地）。
+/* 语义检索页（Q1–Q15 的落地 + 2026-10 输入坞下移）。
  *
- * 检索从「单次覆盖式搜索」重构为一条仿 Agent 会话体感、向下累积的检索流：
- *  - 顶部一条常驻输入框（Q3 / Q4 模型二），不再有两态跳变、也没有「按片段」模式；
- *  - 最新一次检索记录顶在输入框正下方展开，旧记录折叠成标题行往下沉（Q5 乙 / Q8 / Q9）；
- *  - 每搜一次追加一条，刷新即清空，不做真会话、不落后端（Q1 b）；
- *  - 有「清空检索流」入口（Q6）。
+ * 检索流是「仿 Agent 会话体感、向下累积」的：一条条检索记录按提交先后从上往下排，
+ * 最新的那条在最下面、贴着输入坞展开，旧记录折叠成标题行留在上方（Q5 乙 / Q8 / Q9）。
+ * 刷新即清空，不做真会话、不落后端（Q1 b）。有「清空检索流」入口（Q6）。
  *
- * 折叠态由本页维护：latest 恒展开，旧记录默认折叠、手动展开的保留在 expandedIds 里。
+ * 输入坞从顶部挪到底部：与 Agent 对话页同一形态。原来输入坞常驻顶部、最新记录贴顶，
+ * 是为了让新结果紧挨着输入框出现；但同一件事用「输入在下面、内容往上长」表达更符合
+ * 聊天类界面的习惯，也让两页共用同一个外壳、同一个浮层与同一套滚动规则。
+ *
+ * 折叠态由本页维护：最新的那条恒展开，旧记录默认折叠、手动展开的保留在 expandedIds 里。
  */
 
 const composerRef = ref<InstanceType<typeof SearchComposer> | null>(null)
@@ -43,7 +47,17 @@ const stream = useSearchStream({
 
 const { loggingOut, logoutError, logout } = useLogout()
 
-/** 用户手动展开过的旧记录的 id（latest 不需要进这里，恒展开）。 */
+/* 记录区的贴底跟随：结果落地时记录会长高，贴着底看的人不该被落下；
+   已经上翻的人由「回到最新」给出回去的入口。规则与 Agent 页完全一致。 */
+const streamRegionRef = ref<HTMLElement | null>(null)
+const {
+  atBottom: streamAtBottom,
+  hasNewContent: streamHasNewContent,
+  scrollToBottom,
+  syncAtBottom,
+} = useStickToBottom(streamRegionRef)
+
+/** 用户手动展开过的旧记录的 id（最新的那条不需要进这里，恒展开）。 */
 const expandedIds = ref<Set<number>>(new Set())
 
 /** 输入条上那枚偏好入口显示的当前值（悬停提示与无障碍名也用它）。 */
@@ -53,9 +67,6 @@ const preferenceSummary = computed(
 
 const hasRecords = computed(() => stream.records.value.length > 0)
 const latest = computed<SearchRecord | null>(() => stream.latestRecord.value)
-
-/** 渲染顺序：最新贴顶（模型二），旧的按提交先后往下沉。 */
-const newestFirst = computed<SearchRecord[]>(() => [...stream.records.value].reverse())
 
 function recordExpanded(id: number): boolean {
   return latest.value?.id === id || expandedIds.value.has(id)
@@ -78,6 +89,8 @@ async function submitSearch(query?: string): Promise<void> {
   if (document.activeElement === trigger || document.activeElement === document.body) {
     composerRef.value?.focusInput()
   }
+  // 提交是「我要看这一次的结果」：把视口带到最新一条（旧的在上、新的贴着输入坞）。
+  scrollToBottom('smooth')
 }
 
 async function clearStream(): Promise<void> {
@@ -89,6 +102,8 @@ async function clearStream(): Promise<void> {
 async function startNewSearch(): Promise<void> {
   await clearStream()
   await nextTick()
+  // 清空后文档一下变短，浏览器会夹住滚动位置；这里对一次状态，免得浮层留在屏幕上。
+  syncAtBottom()
   composerRef.value?.focusInput()
 }
 
@@ -111,11 +126,42 @@ function openDocument(result: ReadableResult, trigger: HTMLButtonElement | null)
     <main id="search-workspace" class="workspace" :class="{ 'is-empty': !hasRecords }">
       <h1 class="sr-only">知识库语义检索</h1>
 
-      <!-- 空态问候是主角：还没检索时，整页只回答一个问题——想查点什么。 -->
-      <h2 v-if="!hasRecords" class="empty-greeting">想查点什么？</h2>
+      <div ref="streamRegionRef" class="stream-region" :class="{ 'is-empty': !hasRecords }">
+        <!-- 空态：还没有任何检索记录。问候是主角，示例点一下直接搜。 -->
+        <template v-if="!hasRecords">
+          <h2 class="empty-greeting">想查点什么？</h2>
+          <div class="empty-state">
+            <BaseSuggestionList
+              :examples="SEARCH_EXAMPLES"
+              aria-label="示例检索"
+              @select="submitSearch"
+            />
+            <!-- 「只给原文」的工具定位说明：空态正是「这个页面是什么」的说明位。 -->
+            <p class="empty-note">文档检索 · 只给原文</p>
+          </div>
+        </template>
 
-      <!-- 顶部常驻输入条。检索页不渲染页脚：底部要让位给向下长的检索流。 -->
-      <div class="composer-dock" :class="{ 'is-sticky': hasRecords }">
+        <!-- 检索流：按提交先后从上往下排，最新的那条在最下面、贴着输入坞。 -->
+        <div v-else class="stream" aria-label="检索记录">
+          <SearchRecordTurn
+            v-for="record in stream.records.value"
+            :key="record.id"
+            :record="record"
+            :is-latest="record.id === latest?.id"
+            :expanded="recordExpanded(record.id)"
+            @toggle="toggleRecord(record)"
+            @retry="submitSearch(record.query)"
+            @read="openDocument"
+          />
+        </div>
+      </div>
+
+      <div class="composer-dock" :class="{ 'has-history': hasRecords }">
+        <ScrollToBottomButton
+          :open="hasRecords && !streamAtBottom"
+          :has-new-content="streamHasNewContent"
+          @jump="scrollToBottom('smooth')"
+        />
         <SearchComposer
           ref="composerRef"
           v-model="stream.draft.value"
@@ -137,32 +183,6 @@ function openDocument(result: ReadableResult, trigger: HTMLButtonElement | null)
           </template>
         </SearchComposer>
       </div>
-
-      <!-- 空态：还没有任何检索记录。只有示例，点一下直接搜。 -->
-      <div v-if="!hasRecords" class="empty-state">
-        <BaseSuggestionList
-          :examples="SEARCH_EXAMPLES"
-          aria-label="示例检索"
-          @select="submitSearch"
-        />
-        <!-- 「只给原文」的工具定位说明：P1 从外壳区移除后回到空态——
-             空态正是「这个页面是什么」的说明位。 -->
-        <p class="empty-note">文档检索 · 只给原文</p>
-      </div>
-
-      <!-- 检索流：最新贴顶展开，旧记录折叠。 -->
-      <div v-else class="stream" aria-label="检索记录">
-        <SearchRecordTurn
-          v-for="record in newestFirst"
-          :key="record.id"
-          :record="record"
-          :is-latest="record.id === latest?.id"
-          :expanded="recordExpanded(record.id)"
-          @toggle="toggleRecord(record)"
-          @retry="submitSearch(record.query)"
-          @read="openDocument"
-        />
-      </div>
     </main>
 
     <DocumentReader
@@ -180,8 +200,7 @@ function openDocument(result: ReadableResult, trigger: HTMLButtonElement | null)
 </template>
 
 <style scoped>
-/* 整页占满「视口 - 汉堡条」（桌面端没有 bar，值即视口高）；单列检索流用检索流宽度居中，
-   比 agent 页的阅读宽度宽一档容纳结果卡的混合排版（令牌取舍见 tokens.css）。 */
+/* 整页占满「视口 - 汉堡条」（桌面端没有 bar，值即视口高）。 */
 .workspace {
   display: flex;
   flex-direction: column;
@@ -189,49 +208,57 @@ function openDocument(result: ReadableResult, trigger: HTMLButtonElement | null)
   min-height: calc(100dvh - var(--app-header-offset, 0px));
 }
 
-.workspace.is-empty {
-  justify-content: center;
+/* 记录区吃掉剩余高度：空态在这一格里居中，有记录时从顶部正常流动。
+   flex: 1 也不只是为了让空态居中——不占满剩余高度，输入坞就浮在半空。 */
+.stream-region {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  padding-top: var(--space-6);
 }
 
+.stream-region.is-empty {
+  justify-content: center;
+  padding-bottom: var(--space-2);
+}
+
+/* 矮视口的空态从顶部排列，超出内容交给文档滚动。 */
+@media (max-width: 560px), (max-height: 700px) {
+  .stream-region.is-empty {
+    justify-content: flex-start;
+  }
+}
+
+/* 检索流比 Agent 的阅读列宽一档：结果卡是「标签 + 标题 + 片段」的混合排版，
+   纯正文宽度会让标签换行（令牌取舍见 tokens.css）。 */
+.stream {
+  display: grid;
+  gap: var(--space-3);
+  width: min(100%, calc(var(--stream-width) + 80px));
+  margin: 0 auto;
+  padding: 0 0 var(--space-2);
+}
+
+/* 开始检索后输入坞贴底，空态保持正常流向，避免遮住尚未点击的建议。
+   sticky 留在文档流里，记录区不需要额外预留输入坞的高度。
+   顶部那道渐变是让滚上来的记录在贴近输入坞时淡出，而不是被一条硬边裁断。 */
 .composer-dock {
   width: min(100%, calc(var(--stream-width) + 80px));
   margin: 0 auto;
-  padding: 16px 0 14px;
-  /* 底色与页面同色，常态不可见；吸附后换成 --surface-scrim。这里刻意不加
-     transition：background-color 的 250ms 渐变会让主题切换的瞬间留下一块
-     「旧底色矩形」——整页瞬时翻转，唯独它还在渐变（2026-09 老板录屏实测）。 */
-  background: var(--surface-base);
-  border-bottom: 1px solid transparent;
+  padding: var(--space-3) 0 var(--space-2-5);
+  background: linear-gradient(to bottom, transparent, var(--surface-base) 22%);
   z-index: var(--z-dock);
 }
 
-.composer-dock.is-sticky {
+.composer-dock.has-history {
   position: sticky;
-  top: var(--app-header-offset, 0px);
-  border-bottom-color: var(--surface-sunken);
-  /* 半透明表面用 --surface-scrim（96% 不透明）。不配 backdrop-filter：
-     那点模糊肉眼不可见，却会在主题切换时闪出一帧黑色矩形（Chromium 伪影）。 */
-  background: var(--surface-scrim);
-}
-
-.stream {
-  display: grid;
-  gap: 12px;
-  width: min(100%, calc(var(--stream-width) + 80px));
-  margin: 0 auto;
-  padding: 4px 0 90px;
-}
-
-/* 空态沿用 agent 页的居中引导：示例建议卡收在阅读宽度内。 */
-.empty-state {
-  width: min(100%, calc(var(--reading-width) - 140px));
-  margin: 0 auto;
+  bottom: 0;
 }
 
 /* 空态问候是这一屏的主角（2026-09 重设计 P2-D）。展示字体令牌只给
    空态问候与登录主标这两处开关，默认回退无衬线。 */
 .empty-greeting {
-  margin: 0 0 18px;
+  margin: 0 0 var(--space-4);
   color: var(--text-primary);
   font-family: var(--display-font);
   font-size: var(--fs-3xl);
@@ -240,22 +267,32 @@ function openDocument(result: ReadableResult, trigger: HTMLButtonElement | null)
   text-align: center;
 }
 
+/* 空态沿用 agent 页的居中引导：示例建议卡收在阅读宽度内。 */
+.empty-state {
+  width: min(100%, calc(var(--reading-width) - 140px));
+  margin: 0 auto;
+}
+
 .empty-note {
-  margin: 14px 0 0;
+  margin: var(--space-3-5) 0 0;
   color: var(--text-tertiary);
   font-size: var(--fs-xs);
   text-align: center;
 }
 
 @media (max-width: 560px) {
+  .stream-region {
+    padding-top: var(--space-4);
+  }
+
   .composer-dock {
     width: calc(100% - 24px);
-    padding: 12px 0 10px;
+    padding: var(--space-2-5) 0 var(--space-2);
   }
 
   .stream {
     width: calc(100% - 24px);
-    padding-top: 2px;
+    padding-top: var(--space-0-5);
   }
 
   .empty-state {
