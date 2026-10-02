@@ -111,4 +111,24 @@ function onChange(event: Event): void {
   outline: 3px solid var(--accent-ring);
   outline-offset: 2px;
 }
+
+/* 触屏：32×18 的轨道是给鼠标精度的尺寸，手指点不中。轨道等比放大到可点高度那一档，
+   滑块尺寸与位移跟着改，否则会从轨道里滑出去。 */
+@media (pointer: coarse) {
+  .base-switch-track {
+    width: 44px;
+    height: 26px;
+  }
+
+  .base-switch-track::after {
+    top: 3px;
+    left: 3px;
+    width: 18px;
+    height: 18px;
+  }
+
+  .base-switch input:checked + .base-switch-track::after {
+    transform: translateX(18px);
+  }
+}
 </style>

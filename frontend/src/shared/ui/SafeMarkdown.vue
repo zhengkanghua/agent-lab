@@ -246,8 +246,10 @@ const linkAttrs: CustomAttrs = {
   white-space: nowrap;
 }
 
-/* 悬停摘要卡：纯 CSS 的 ::after 浮层（data-summary 提供纯文本，无注入面）。
-   读屏用户不走悬停，点击后的全文阅读层才是完整的引用信息，这条只是鼠标的预览。 */
+/* 预览卡：纯 CSS 的 ::after 浮层（data-summary 提供纯文本，无注入面）。
+   悬停与键盘聚焦都给：这条是链接，键盘用户本来就到得了它，只给 :hover 会让「看一眼来源」
+   变成鼠标专属。触屏没有悬停也点不出聚焦态，那里点引用直接进全文阅读层——完整信息本来就在
+   那一步里，这条只是省一次跳转的预览。 */
 .markdown-answer :deep(.verified-citation)::after {
   content: attr(data-summary);
   position: absolute;
@@ -274,7 +276,8 @@ const linkAttrs: CustomAttrs = {
   pointer-events: none;
 }
 
-.markdown-answer :deep(.verified-citation:hover)::after {
+.markdown-answer :deep(.verified-citation:hover)::after,
+.markdown-answer :deep(.verified-citation:focus-visible)::after {
   opacity: 1;
 }
 
