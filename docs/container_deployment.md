@@ -202,17 +202,10 @@ bash verify-agent-lab-net.sh 1panel-network      # 查面板那张网（老路�
 
 **断开某根线**（回退用）：`docker network disconnect agent-lab-net <容器名>`。
 
-**「线丢了」的症状与恢复。** 面板重建 `redis` / `postgresql` / `minio` 容器时，新容器默认只插在面板
-那张网上，这张 overlay 上的线就断了。症状分别是：
-
-| 丢的是 | 症状 |
-|---|---|
-| `redis` | 容器健康、页面照开，但队列与缓存静默停摆（任务不再受理/投递） |
-| `postgresql` | 接口大量失败，甚至进程起不来（生命周期里同步环境管理员那一步会抛错） |
-| `minio` | 原件上传与读取失败 |
-
-恢复就是重新接一次（上面那段 `for c in ...`），接完用验证脚本确认。部署工作流在停旧进程之前会跑
-一次 Redis 连接自检（它跑在同一张网上），所以「线丢了」会挡住部署，而不是静默上线。
+**「线丢了」怎么办。** 面板重建 `redis` / `postgresql` / `minio` 容器时，新容器默认只插在面板那张
+网上，这张 overlay 上的线就断了；恢复就是重新接一次（上面那段 `for c in ...`），接完用验证脚本
+确认。**症状对照表在第三节「应急速查」**。部署工作流在停旧进程之前会跑一次 Redis 连接自检（它跑
+在同一张网上），所以「线丢了」会挡住部署，而不是静默上线。
 
 ### 6. 确认端口未被占用
 
@@ -427,10 +420,10 @@ docker ps -a --filter name=agent-lab_ --filter status=exited --format '{{.Names}
 |---|---|
 | 站点/接口大面积报错，怀疑是新版本 | **回上一版**（下面第 1 条）——秒级，不用构建 |
 | 某个服务卡住（例如回答一直不返回） | API 的副本卡住会自己好（看「某个 API 副本卡住」）；其他服务**重启那个服务**（第 3 条） |
-| 队列不动、上传失败、库连不上 | 查那张 overlay 的三根线：`bash verify-agent-lab-net.sh`；症状对照见第一节第 5 小节 |
+| 队列不动、上传失败、库连不上 | 查那张 overlay 的三根线：`bash verify-agent-lab-net.sh`；症状对照见下面那张表 |
 | 分不清 | 先看现状（第 4 条） |
 
-**四条命令（都在部署目录下执行）**
+**四条命令（都在部署目录下执行；也做成了脚本：`bash emergency-ops.sh [部署目录]` 出菜单）**
 
 ```bash
 # 1) 回到上一版：三个服务各回滚一次，然后比对摘要确认真的换了版本
@@ -448,6 +441,14 @@ docker service update --force agent-lab_backend
 docker service ls --filter name=agent-lab
 docker ps --filter name=agent-lab_ --format '{{.Names}}\t{{.Status}}'
 ```
+
+**「线丢了」症状对照**（面板重建过 `redis` / `postgresql` / `minio` 之后常见；接线与恢复见第一节第 5 小节）：
+
+| 丢的线 | 症状 |
+|---|---|
+| `redis` | 容器健康、页面照开，但队列与缓存静默停摆（任务不再受理/投递） |
+| `postgresql` | 接口大量失败，甚至进程起不来（生命周期里同步环境管理员那一步会抛错） |
+| `minio` | 原件上传与读取失败 |
 
 **在面板里操作的三条规矩（Portainer）**
 
