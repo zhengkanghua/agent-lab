@@ -30,6 +30,15 @@ export interface ErrorCopy {
  * `DocumentReader.vue`、`LoginPage.vue`。新增错误展示位置时加一张表传进来，
  * 不要再手写 if-else 判定链——之前四处各写一套，依据还不一致（检索页混用 code 和 status、
  * 全文阅读只看 status、账号管理只看 code），新增错误码时容易只补其中一处。
+ *
+ * 两处刻意不走这里（2026-10 核对过，它们的规则不是「查表」，硬并会改变行为）：
+ *   - `features/document-review/presentation.ts` 的 reviewError：把三类瞬时故障
+ *     （超时/网络/响应无效）归成同一句「结果未确认」，其余一律显示服务端 detail；
+ *   - `features/settings/model/account-error.ts` 的 getAccountErrorCopy：查表命中就用表，
+ *     否则显示服务端 detail。
+ *   共同点是「兜底要显示服务端 detail」，而本函数的兜底是一个固定值。要并进来就得给
+ *   fallback 加一个「按 error 算」的函数式形态，只为这两处服务——按工程取舍 1，不划算。
+ *   代价是：新增错误码时这两处要自己补，本函数的调用方不受影响。
  */
 export function resolveErrorCopy<TCopy>(
   error: unknown,

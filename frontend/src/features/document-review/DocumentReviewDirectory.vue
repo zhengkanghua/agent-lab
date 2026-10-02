@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
+import { CircleAlert, RefreshCw } from '@lucide/vue'
 import { listKnowledgeBases } from '@/api/knowledge-bases'
 import { listManagedDocuments, type ReviewFilters, REVIEW_PAGE_SIZE } from '@/api/document-review'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BasePager from '@/shared/ui/BasePager.vue'
+import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
 import {
   isProcessing,
   processingLabel,
@@ -21,6 +23,18 @@ const offset = ref(0)
 watch(filters, () => {
   offset.value = 0
 })
+
+/* 三个下拉是即生效的筛选。给一枚「重置筛选」：一是不用逐个改回全部，二是它的存在本身
+   就说明这几个控件是筛选而不是待提交的表单。 */
+const hasFilters = computed(
+  () => filters.knowledgeBaseId !== '' || filters.sourceKind !== '' || filters.state !== '',
+)
+
+function resetFilters(): void {
+  filters.knowledgeBaseId = ''
+  filters.sourceKind = ''
+  filters.state = ''
+}
 const directory = useQuery({
   queryKey: ['review-knowledge-bases'],
   queryFn: () => listKnowledgeBases(true),
@@ -76,25 +90,52 @@ const query = useQuery({
         </select></label
       >
     </div>
+    <div class="filter-actions">
+      <BaseButton v-if="hasFilters" variant="ghost" size="sm" @click="resetFilters"
+        >重置筛选</BaseButton
+      >
+    </div>
     <BaseCallout
       v-if="directory.isError.value"
       tone="danger"
       description="知识库筛选目录加载失败。"
     >
-      <template #actions
-        ><BaseButton @click="directory.refetch()">重新加载目录</BaseButton></template
-      >
+      <template #icon><CircleAlert :size="16" aria-hidden="true" /></template>
+      <template #actions>
+        <BaseButton size="sm" variant="outline" @click="directory.refetch()">
+          <template #icon><RefreshCw :size="15" aria-hidden="true" /></template>
+          重试
+        </BaseButton>
+      </template>
     </BaseCallout>
-    <p v-if="query.isPending.value" role="status">正在加载文档…</p>
+    <!-- 失败横幅里直接给重试：文案说的动作与按钮上的字对得上（此前横幅只说
+         「请刷新后重试」，而唯一的重试入口是顶部那枚叫「刷新状态」的键）。 -->
     <BaseCallout
-      v-else-if="query.error.value"
+      v-if="query.error.value"
       tone="danger"
       :description="reviewError(query.error.value)"
-    />
-    <p v-else-if="!query.data.value?.items.length" class="empty">
+    >
+      <template #icon><CircleAlert :size="16" aria-hidden="true" /></template>
+      <template #actions>
+        <BaseButton
+          size="sm"
+          variant="outline"
+          :disabled="query.isFetching.value"
+          @click="query.refetch()"
+        >
+          <template #icon><RefreshCw :size="15" aria-hidden="true" /></template>
+          重试
+        </BaseButton>
+      </template>
+    </BaseCallout>
+    <!-- 三态行归共享层（styles/components/directory.css），与其余四个目录同一套。 -->
+    <div v-if="query.isPending.value" class="directory-state" role="status">
+      <BaseSpinner :size="20" />正在读取文档目录
+    </div>
+    <div v-else-if="!query.data.value?.items.length && !query.error.value" class="directory-state">
       当前筛选下没有文档。可以调整筛选，或上传 MD、TXT 文件。
-    </p>
-    <table v-else class="review-table">
+    </div>
+    <table v-if="query.data.value?.items.length" class="review-table">
       <caption class="sr-only">
         文档的已采用状态与候选处理进度
       </caption>
@@ -164,11 +205,15 @@ const query = useQuery({
   flex-wrap: wrap;
   gap: 12px;
 }
-.directory-toolbar > p,
-.empty {
+.directory-toolbar > p {
   font-size: var(--fs-sm);
   color: var(--text-secondary);
   line-height: 1.7;
+}
+.filter-actions {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 28px;
 }
 .directory-filters {
   display: grid;

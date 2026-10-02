@@ -99,6 +99,58 @@ const SOURCES = [
   },
 ]
 
+/* 用量：字段与 src/api/usage.ts 的 readSummary / readRecord 校验一致（snake_case、
+ * cached_tokens 可空）。缺了这三条路由，设置中心的「用量」分区整页停在读取失败。 */
+const USAGE_MODEL = 'gpt-x'
+const USAGE_RECORDS = [
+  {
+    call_id: '40000000-0000-4000-8000-000000000001',
+    occurred_at: new Date(Date.now() - 42 * 60_000).toISOString(),
+    model_name: USAGE_MODEL,
+    status: 'completed',
+    source: 'upstream',
+    input_tokens: 1820,
+    output_tokens: 240,
+    cached_tokens: null,
+    total_tokens: 2060,
+    duration_ms: 4300,
+    thread_id: null,
+    run_id: '50000000-0000-4000-8000-000000000001',
+  },
+  {
+    call_id: '40000000-0000-4000-8000-000000000002',
+    occurred_at: new Date(Date.now() - 26 * 3_600_000).toISOString(),
+    model_name: USAGE_MODEL,
+    status: 'failed',
+    source: 'missing',
+    input_tokens: 900,
+    output_tokens: 0,
+    cached_tokens: null,
+    total_tokens: 900,
+    duration_ms: 1500,
+    thread_id: null,
+    run_id: null,
+  },
+]
+
+/* model 与 [start, end) 真的参与过滤：日期不生效的话，页面上改范围看不到任何变化，
+   会被当成筛选坏了（比缺数据更难查）。 */
+function filterUsage(params) {
+  const model = params.get('model')
+  const start = params.get('start')
+  const end = params.get('end')
+  return USAGE_RECORDS.filter((record) => {
+    if (model && record.model_name !== model) return false
+    const at = Date.parse(record.occurred_at)
+    if (start && at < Date.parse(start)) return false
+    if (end && at >= Date.parse(end)) return false
+    return true
+  })
+}
+
+/* 文档审核的数据在 FILE_DOCUMENT / DOCUMENT_RESULT 之后定义——它们要引用那两个常量，
+   放到前面会踩 const 的暂时性死区（模块加载即抛错）。 */
+
 const DOCUMENT_RESULT = {
   document_id: '20000000-0000-4000-8000-000000000001',
   knowledge_base_id: NEWS_ID,
@@ -194,6 +246,10 @@ const DOC_DETAIL = {
   content_text: '央行在季度例会上重申将根据经济运行情况择机调整利率，保持流动性合理充裕。',
 }
 
+/* 文件文档。字段必须齐 `src/api/file-documents.ts` 的 isFileDocument 校验——它要求
+ * management_revision / processing_id / candidate_* / current_version_id / usage_status
+ * 全都在场。缺任何一个，/admin/files 整页只会渲染成「文件列表加载失败」，
+ * 那页就永远没法用这套工具看（2026-10 补上，之前一直缺这 7 个字段）。 */
 const FILE_DOCUMENT = {
   document_id: '20000000-0000-4000-8000-000000000010',
   knowledge_base_id: FILES_ID,
@@ -204,6 +260,16 @@ const FILE_DOCUMENT = {
   mime_type: 'text/markdown',
   content_hash: 'b'.repeat(64),
   revision: 2,
+  management_revision: 3,
+  /* candidate_state 才是列表那一列「处理状态」的真源（见 FileDocumentDirectory 的
+     statusLabel）；processing_status 管的是旧口径。写成 null 会显示成「尚未处理」，
+     与下面「已采用版本可用」自相矛盾。 */
+  processing_id: '70000000-0000-4000-8000-000000000001',
+  candidate_revision: 3,
+  candidate_state: 'adopted',
+  candidate_error: null,
+  current_version_id: '60000000-0000-4000-8000-000000000001',
+  usage_status: 'active',
   processing_status: 'indexed',
   processing_error: null,
   updated_at: timestamp,
@@ -227,6 +293,96 @@ const details = new Map([
     },
   ],
 ])
+/* 文档审核：/admin/documents 的目录与工作台。字段与 src/api/document-review.ts 的
+ * isManagedDocument / isProcessing / isVersion / 决策校验逐项对齐——少一个字段，
+ * 整页只会渲染成「请求失败」，这两页就一直没法用这套工具看。 */
+const REVIEW_PROCESSING_ID = '70000000-0000-4000-8000-000000000001'
+const REVIEW_VERSION_ID = '80000000-0000-4000-8000-000000000001'
+const REVIEW_DRAFT_TEXT =
+  '# 运行手册\n\n日常备份保留 **14 天**。\n\n| 项目 | 规定 |\n| --- | --- |\n| 恢复演练 | 每月一次 |\n'
+const REVIEW_PREVIEW = {
+  document: {
+    title: '运行手册',
+    body: REVIEW_DRAFT_TEXT,
+    text_format: 'markdown',
+    outline: [{ id: 'h1', title: '运行手册', level: 1, parent_id: null }],
+    blocks: [
+      { id: 'b1', kind: 'heading', text: '运行手册', heading_ids: ['h1'] },
+      { id: 'b2', kind: 'paragraph', text: '日常备份保留 14 天。', heading_ids: ['h1'] },
+    ],
+  },
+  chunk_result: {
+    specification: { max_tokens: 256 },
+    chunks: [
+      {
+        sequence: 0,
+        text: '运行手册\n\n日常备份保留 14 天。',
+        embedding_text: '运行手册 日常备份保留 14 天。',
+        token_count: 21,
+        block_ids: ['b1', 'b2'],
+        heading_ids: ['h1'],
+        headings: ['运行手册'],
+      },
+    ],
+  },
+}
+const REVIEW_PROCESSING = {
+  processing_id: REVIEW_PROCESSING_ID,
+  document_id: FILE_DOCUMENT.document_id,
+  source_kind: 'file',
+  state: 'review',
+  title: '运行手册',
+  candidate_revision: 3,
+  requires_review: true,
+  source_stored: true,
+  issue_codes: [],
+  preview_fingerprint: 'f'.repeat(64),
+  error_code: null,
+  source_sha256: 'b'.repeat(64),
+  created_at: timestamp,
+  updated_at: timestamp,
+}
+const MANAGED_DOCUMENTS = [
+  {
+    document_id: FILE_DOCUMENT.document_id,
+    knowledge_base_id: FILES_ID,
+    knowledge_base_name: '技术资料',
+    knowledge_base_active: true,
+    title: '运行手册',
+    source_kind: 'file',
+    usage_status: 'active',
+    revision: 2,
+    management_revision: 3,
+    current_version_id: FILE_DOCUMENT.current_version_id,
+    latest_processing_id: REVIEW_PROCESSING_ID,
+    draft_processing_id: null,
+    upload_filename: '运行手册.md',
+    processing_state: 'review',
+    error_code: null,
+    deletion_pending: false,
+    updated_at: timestamp,
+  },
+  {
+    document_id: DOCUMENT_RESULT.document_id,
+    knowledge_base_id: NEWS_ID,
+    knowledge_base_name: '新闻',
+    knowledge_base_active: true,
+    title: DOCUMENT_RESULT.title,
+    source_kind: 'freshrss',
+    usage_status: 'active',
+    revision: 1,
+    management_revision: 1,
+    current_version_id: '60000000-0000-4000-8000-000000000002',
+    latest_processing_id: null,
+    draft_processing_id: null,
+    upload_filename: null,
+    processing_state: 'adopted',
+    error_code: null,
+    deletion_pending: false,
+    updated_at: timestamp,
+  },
+]
+
 const FILE_RESULT = {
   ...DOCUMENT_RESULT,
   document_id: FILE_DOCUMENT.document_id,
@@ -300,6 +456,28 @@ export async function matchApi(url, authed, options = {}) {
     return json({ ...PREFERENCES })
   }
   if (!authed) return unauth
+  if (suffix === '/usage/models') return json([USAGE_MODEL])
+  if (suffix === '/usage/summary') {
+    const items = filterUsage(requestUrl.searchParams)
+    const input = items.reduce((sum, item) => sum + item.input_tokens, 0)
+    const output = items.reduce((sum, item) => sum + item.output_tokens, 0)
+    return json({
+      input_tokens: input,
+      output_tokens: output,
+      cached_tokens: null,
+      total_tokens: input + output,
+      call_count: items.length,
+    })
+  }
+  if (suffix === '/usage/records') {
+    const items = filterUsage(requestUrl.searchParams)
+    const offset = Number(requestUrl.searchParams.get('offset') ?? 0)
+    const limit = Number(requestUrl.searchParams.get('limit') ?? 50)
+    return json({
+      items: items.slice(offset, offset + limit),
+      has_more: offset + limit < items.length,
+    })
+  }
   const task = matchTaskApi(suffix, requestUrl.searchParams, method, body, options.requestKey ?? '')
   if (task) return task
   if (suffix === '/knowledge-bases')
@@ -411,6 +589,77 @@ export async function matchApi(url, authed, options = {}) {
     return json(item)
   }
   if (suffix === '/vector-search') return json([CHUNK_RESULT])
+  if (suffix === '/document-management' && method === 'GET') {
+    const offset = Number(requestUrl.searchParams.get('offset') ?? 0)
+    const sourceKind = requestUrl.searchParams.get('source_kind') ?? ''
+    const state = requestUrl.searchParams.get('state') ?? ''
+    const knowledgeBaseId = requestUrl.searchParams.get('knowledge_base_id') ?? ''
+    const items = MANAGED_DOCUMENTS.filter(
+      (item) =>
+        (!sourceKind || item.source_kind === sourceKind) &&
+        (!state || item.processing_state === state) &&
+        (!knowledgeBaseId || item.knowledge_base_id === knowledgeBaseId),
+    )
+    return json({ items: items.slice(offset, offset + 25), has_more: false })
+  }
+  /* 命令回执（保存草稿 / 重新生成预览 / 采用 / 拒绝 / 重试）：字段与 ProcessingReceipt 的
+     校验一致。本地不真的改状态——点了有回应，便于走界面流程。 */
+  if (suffix.startsWith('/document-management/candidates/') && method !== 'GET')
+    return json({
+      document_id: FILE_DOCUMENT.document_id,
+      processing_id: REVIEW_PROCESSING_ID,
+      candidate_revision: 3,
+      state: 'review',
+    })
+  const managedId = /^\/document-management\/([^/]+)$/.exec(suffix)?.[1]
+  if (managedId) {
+    if (suffix.endsWith('/candidates')) return json({ items: [REVIEW_PROCESSING], has_more: false })
+    if (suffix.endsWith('/versions'))
+      return json({
+        items: [
+          {
+            version_id: REVIEW_VERSION_ID,
+            processing_id: REVIEW_PROCESSING_ID,
+            revision: 2,
+            title: '运行手册',
+            content_hash: 'b'.repeat(64),
+            created_at: timestamp,
+          },
+        ],
+        has_more: false,
+      })
+    if (suffix.endsWith('/reviews'))
+      return json({
+        items: [
+          {
+            review_id: '90000000-0000-4000-8000-000000000001',
+            processing_id: REVIEW_PROCESSING_ID,
+            candidate_revision: 2,
+            decision: 'adopted',
+            decision_source: 'automatic',
+            conclusion: null,
+            created_at: timestamp,
+            content_snapshot: { title: '运行手册' },
+          },
+        ],
+        has_more: false,
+      })
+    const document = MANAGED_DOCUMENTS.find((item) => item.document_id === managedId)
+    if (!document)
+      return json({ code: 'document_not_found', detail: '文档不存在。', retryable: false }, 404)
+    return json({
+      document,
+      candidate: {
+        ...REVIEW_PROCESSING,
+        document_id: managedId,
+        draft_text: REVIEW_DRAFT_TEXT,
+        text_format: 'markdown',
+        preview: REVIEW_PREVIEW,
+      },
+      latest_source: null,
+      draft: null,
+    })
+  }
   if (suffix === '/agent/default-prompt')
     return json({ system_prompt: '你是知识库检索助手，请基于本次取得的原文作答并引用。' })
   if (suffix.startsWith('/agent/threads') && suffix !== '/agent/threads') {

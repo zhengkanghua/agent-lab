@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseField from '@/shared/ui/BaseField.vue'
 import BaseInput from '@/shared/ui/BaseInput.vue'
 import { useTaskPolicy } from '../composables/useTaskPolicy'
@@ -19,7 +20,13 @@ defineEmits<{ close: [] }>()
     </header>
     <p class="hint">每次受理会保存当时的策略。修改不影响已有执行和它的自动重试。</p>
     <p v-if="policy.query.isPending.value" role="status">正在读取策略</p>
-    <p v-if="policy.loadError.value" class="error" role="alert">{{ policy.loadError.value }}</p>
+    <!-- 面板级错误一律走 BaseCallout（与其余表单同一形态：图标 + 说明 + 可选操作），
+         不再各写一个 .error 段落。 -->
+    <BaseCallout
+      v-if="policy.loadError.value"
+      tone="danger"
+      :description="policy.loadError.value"
+    />
     <form v-if="policy.draft.value" @submit.prevent="policy.save">
       <!-- 字段外壳与说明的 aria 接线归 BaseField（hint 会被 aria-describedby 指到）。 -->
       <BaseField label="最多自动重试次数" hint="初次尝试之外的次数；0 表示不自动重试。">
@@ -74,14 +81,16 @@ defineEmits<{ close: [] }>()
     <BaseButton variant="ghost" size="sm" :disabled="policy.saving.value" @click="policy.reload"
       >重新读取</BaseButton
     >
-    <p v-if="policy.error.value" class="error" role="alert">{{ policy.error.value }}</p>
+    <BaseCallout v-if="policy.error.value" tone="danger" :description="policy.error.value" />
     <p v-if="policy.feedback.value" role="status">{{ policy.feedback.value }}</p>
     <details>
       <summary>最近修改记录</summary>
       <p v-if="policy.changes.isPending.value" role="status">正在读取修改记录</p>
-      <p v-else-if="policy.changes.isError.value" class="error" role="alert">
-        修改记录读取失败，请重新读取。
-      </p>
+      <BaseCallout
+        v-else-if="policy.changes.isError.value"
+        tone="danger"
+        description="修改记录读取失败，请重新读取。"
+      />
       <p v-else-if="!policy.changes.data.value?.length" class="hint">尚无修改记录。</p>
       <ol v-else>
         <li v-for="item in policy.changes.data.value" :key="item.id">
@@ -128,11 +137,7 @@ form {
   gap: var(--space-4);
   margin: var(--space-5) 0;
 }
-/* 字段外壳（标签 + 间距 + aria 接线）归 BaseField。 */
-.error {
-  color: var(--danger);
-  margin-top: var(--space-3);
-}
+/* 字段外壳（标签 + 间距 + aria 接线）归 BaseField，错误面板归 BaseCallout。 */
 details {
   margin-top: var(--space-4);
   border-top: 1px solid var(--border-subtle);
