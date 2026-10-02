@@ -123,6 +123,34 @@ const layerBoundaries = [
       ],
     },
   },
+  {
+    /* api 层是纯 HTTP 与契约层：只依赖网络客户端、生成类型与同层的纯工具。
+       它被 features 与 pages 依赖，一旦反过来引用上层（拿一个 store、引一个组件），
+       依赖方向就断了，而这类引用不会立刻报错，只会让层次悄悄失效。
+
+       今天 src/api 下没有任何一处这样的引用，这条规则是把现状钉住，不是修问题。
+       ../ 起步也算跨层：src/api 是扁平目录，一个 ../ 就出了这一层。 */
+    files: ['src/api/**/*.{ts,vue}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          ...crossLayerRelativeImport,
+          patterns: [
+            ...crossLayerRelativeImport.patterns,
+            {
+              regex: '^\\.\\./',
+              message: 'src/api 是扁平目录，`../` 一步就出层了。同层的 `./` 不受限。',
+            },
+            {
+              group: ['@/features/*', '@/pages/*', '@/layouts/*', '@/app/*', '@/shared/ui/*'],
+              message: 'api 层不要引用 feature、页面、布局或组件。共用逻辑请下沉到 shared/model。',
+            },
+          ],
+        },
+      ],
+    },
+  },
 ]
 
 export default withVueTs(
