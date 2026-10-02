@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { Check, X } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
+import BaseField from '@/shared/ui/BaseField.vue'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 import BaseInput from '@/shared/ui/BaseInput.vue'
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/shared/model/password'
@@ -65,28 +66,33 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
     </div>
 
     <form class="create-form" novalidate @submit.prevent="emit('submit')">
-      <label class="field-control">
-        <span>账号邮箱</span>
-        <BaseInput
-          v-model="emailDraft"
-          type="email"
-          name="new-email"
-          autocomplete="off"
-          placeholder="name@example.com"
-          :disabled="submitting"
-        />
-      </label>
-      <label class="field-control">
-        <span>初始密码</span>
-        <BaseInput
-          v-model="passwordDraft"
-          type="password"
-          name="new-password"
-          autocomplete="new-password"
-          :placeholder="passwordHint"
-          :disabled="submitting"
-        />
-      </label>
+      <!-- 字段外壳走 BaseField：标签、aria-invalid 与 aria-describedby 由它算一次。 -->
+      <BaseField id="new-email" label="账号邮箱">
+        <template #default="{ control }">
+          <BaseInput
+            v-bind="control"
+            v-model="emailDraft"
+            type="email"
+            name="new-email"
+            autocomplete="off"
+            placeholder="name@example.com"
+            :disabled="submitting"
+          />
+        </template>
+      </BaseField>
+      <BaseField id="new-password" label="初始密码">
+        <template #default="{ control }">
+          <BaseInput
+            v-bind="control"
+            v-model="passwordDraft"
+            type="password"
+            name="new-password"
+            autocomplete="new-password"
+            :placeholder="passwordHint"
+            :disabled="submitting"
+          />
+        </template>
+      </BaseField>
       <label class="check-control">
         <input v-model="superuserDraft" type="checkbox" :disabled="submitting" />
         <span>
@@ -138,41 +144,8 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
   margin-top: 22px;
 }
 
-.field-control {
-  display: grid;
-  gap: 7px;
-  color: var(--text-secondary);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-bold);
-}
-
-/* 输入框皮肤在 BaseInput（全站一份）；这里只管外壳排版。 */
-
-.check-control {
-  display: flex;
-  align-items: center;
-  min-height: 42px;
-  gap: 10px;
-  color: var(--text-secondary);
-  font-size: var(--fs-xs);
-}
-
-.check-control input {
-  width: 17px;
-  height: 17px;
-  accent-color: var(--accent);
-}
-
-.check-control span {
-  display: grid;
-  gap: 1px;
-}
-
-.check-control small {
-  color: var(--text-tertiary);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-normal);
-}
+/* 字段外壳归 BaseField，复选行外观归 styles/components/form-controls.css，
+   输入框皮肤归 BaseInput。这里只剩本表单自己的排布。 */
 
 .editor-error {
   grid-column: 1 / -1;

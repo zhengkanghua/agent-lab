@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseField from '@/shared/ui/BaseField.vue'
 import BaseInput from '@/shared/ui/BaseInput.vue'
 import type { ScheduledTaskTypeDto } from '@/api/scheduled-jobs'
 import type { PipelineRequest } from '@/api/tasks'
@@ -54,17 +55,20 @@ function submit(): void {
     </header>
     <p>先同步 FreshRSS，再处理一批文档。受理后返回执行编号，统计在任务详情中更新。</p>
     <form @submit.prevent="submit">
-      <label v-for="field in fields" :key="field.key"
-        >{{ field.label }}
-        <BaseInput
-          v-model="params[field.key]"
-          type="number"
-          step="1"
-          :disabled="busy || pending"
-          :min="parameterBounds(spec, field.key).min"
-          :max="parameterBounds(spec, field.key).max"
-        />
-      </label>
+      <!-- 字段外壳走 BaseField：标签与 aria 接线由它算一次。 -->
+      <BaseField v-for="field in fields" :key="field.key" :label="field.label">
+        <template #default="{ control }">
+          <BaseInput
+            v-bind="control"
+            v-model="params[field.key]"
+            type="number"
+            step="1"
+            :disabled="busy || pending"
+            :min="parameterBounds(spec, field.key).min"
+            :max="parameterBounds(spec, field.key).max"
+          />
+        </template>
+      </BaseField>
       <p v-if="!spec" role="alert">任务类型尚未加载，请关闭后刷新任务目录。</p>
       <p v-if="pending" role="status">已有待确认请求，请关闭此表单后确认原请求的受理结果。</p>
       <BaseButton variant="primary" type="submit" :disabled="!valid || pending" :loading="busy"
@@ -99,8 +103,5 @@ form {
   gap: var(--space-4);
   margin-top: var(--space-5);
 }
-label {
-  display: grid;
-  gap: 7px;
-}
+/* 字段外壳（标签 + 间距 + aria 接线）归 BaseField。 */
 </style>

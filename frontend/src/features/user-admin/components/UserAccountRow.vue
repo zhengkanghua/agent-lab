@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { KeyRound, RefreshCw, ShieldCheck, Trash2, UserRound } from '@lucide/vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
+import BaseSwitch from '@/shared/ui/BaseSwitch.vue'
 import type { UserAdminDto } from '@/api/user-admin'
 import { formatAccountDate } from '../model/user-account'
 import UserPasswordResetForm from './UserPasswordResetForm.vue'
@@ -59,20 +60,6 @@ const deleteTitle = computed(() => {
    后端各有规则拦它们（`account_self_protected` / `account_already_deleted`），
    界面不提供只是体验，真正的边界在后端。 */
 const stateControlsVisible = computed(() => !isCurrentUser.value && !deregistered.value)
-
-/* 两个开关各写一个转发函数，不合成「传事件名进来」的那一个：
-   defineEmits 的重载签名把事件名与载荷绑在一起，传进来的联合类型两个重载都不匹配。 */
-function onActiveToggle(event: Event): void {
-  emit('set-active', checkedOf(event, props.user.is_active))
-}
-
-function checkedOf(event: Event, confirmed: boolean): boolean {
-  const input = event.target as HTMLInputElement
-  const requested = input.checked
-  // 点击先改变了原生控件；显示值仍以接口确认的账号状态为准。
-  input.checked = confirmed
-  return requested
-}
 </script>
 
 <template>
@@ -111,21 +98,15 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
         <small class="deregistered-at">{{ deregisteredAt }} 注销</small>
       </template>
       <template v-else-if="stateControlsVisible">
-        <label
-          class="switch-control"
-          :class="{ 'switch-disabled': managed }"
+        <!-- 开关本体走共享 BaseSwitch；data-testid 透传到真正的 checkbox 上。 -->
+        <BaseSwitch
+          :checked="user.is_active"
+          :disabled="managed || busy"
+          :label="`${user.email} 使用状态`"
           :title="managed ? '由部署 Secret 管理' : '允许或停止账号使用'"
-        >
-          <input
-            type="checkbox"
-            :checked="user.is_active"
-            :disabled="managed || busy"
-            :aria-label="`${user.email} 使用状态`"
-            :data-testid="`active-${user.id}`"
-            @change="onActiveToggle"
-          />
-          <span aria-hidden="true"></span>
-        </label>
+          :data-testid="`active-${user.id}`"
+          @change="emit('set-active', $event)"
+        />
       </template>
       <span
         v-if="!deregistered"
@@ -219,7 +200,7 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
   padding: 8px 14px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface-raised);
-  transition: background-color 200ms ease;
+  transition: background-color var(--duration-fast) var(--ease-out-smooth);
 }
 
 .user-row:hover {
@@ -321,25 +302,9 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
   gap: 8px;
 }
 
-/* 状态软胶囊：启用/超级用户 = accent-soft 底松绿字，停用/普通 = 灰。
+/* 状态软胶囊的公共三档（底色/字号/圆角与 is-on、is-off）归
+   styles/components/chip.css；下面只是这一页专有的「已注销」档。
    开关表达操作，胶囊表达状态——两个说法都在，扫一眼不用猜。 */
-.status-chip {
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-semibold);
-}
-
-.status-chip.is-on {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.status-chip.is-off {
-  color: var(--text-secondary);
-  background: var(--surface-sunken);
-}
-
 .status-chip.is-deregistered {
   color: var(--danger);
   background: var(--danger-soft);
@@ -349,62 +314,7 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
   white-space: nowrap;
 }
 
-.switch-control {
-  position: relative;
-  display: inline-flex;
-}
-
-/* 真正的 checkbox 留在 DOM 里、只是看不见：键盘与读屏都还操作它，
-   下面那个 <span> 只是它的外观。换成 display: none 会把它从可达性树里摘掉。 */
-.switch-control input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-}
-
-.switch-control > span {
-  position: relative;
-  display: block;
-  width: 32px;
-  height: 18px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
-  background: var(--surface-sunken);
-  transition: background 150ms ease;
-}
-
-.switch-control > span::after {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-inset-chip);
-  content: '';
-  transition: transform 150ms ease;
-}
-
-.switch-control input:checked + span {
-  border-color: var(--accent);
-  background: var(--accent);
-}
-
-.switch-control input:checked + span::after {
-  transform: translateX(14px);
-}
-
-.switch-control input:focus-visible + span {
-  outline: 3px solid var(--accent-ring);
-  outline-offset: 2px;
-}
-
-.switch-disabled {
-  cursor: not-allowed;
-  opacity: 0.62;
-}
+/* 开关外观与它的「显示值以接口确认状态为准」行为都归 shared/ui/BaseSwitch.vue。 */
 
 .created-cell span {
   color: var(--text-secondary);
@@ -435,9 +345,9 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
   font-weight: var(--fw-semibold);
   opacity: 0;
   transition:
-    color 150ms ease,
-    background-color 150ms ease,
-    opacity 150ms ease;
+    color var(--duration-fast) var(--ease-out-smooth),
+    background-color var(--duration-fast) var(--ease-out-smooth),
+    opacity var(--duration-fast) var(--ease-out-smooth);
 }
 
 .user-row:hover .row-actions button:not(:disabled),
@@ -461,9 +371,13 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
   opacity: 0.42;
 }
 
+/* 触屏：常驻之外还要撑到可点高度。32px 是鼠标精度换来的密度，
+   手指点不中，只把 opacity 置 1 等于「看得见但点不准」。 */
 @media (pointer: coarse) {
   .row-actions button {
     opacity: 1;
+    min-height: var(--tap-target);
+    padding: 0 12px;
   }
 }
 
@@ -474,7 +388,7 @@ function checkedOf(event: Event, confirmed: boolean): boolean {
   grid-column: 1 / -1;
 }
 
-@container (max-width: 1040px) {
+@container (max-width: 960px) {
   .user-row {
     grid-template-columns: minmax(260px, 1.4fr) repeat(2, minmax(120px, 0.7fr));
   }

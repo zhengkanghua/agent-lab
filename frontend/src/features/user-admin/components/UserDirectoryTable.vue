@@ -201,23 +201,7 @@ function onIncludeDeletedChange(event: Event): void {
    .spin（styles/components/motion.css）：转的是 RefreshCw 图标本身，不是另外冒出
    一个转圈，所以没走 BaseSpinner。 */
 
-.directory-state {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 150px;
-  gap: 10px;
-  border-top: 1px solid var(--border-subtle);
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-tertiary);
-  font-size: var(--fs-sm);
-}
-
-.directory-state-error {
-  flex-direction: column;
-  color: var(--danger);
-}
-
+/* .directory-state 归共享层：styles/components/directory.css（四个目录页同一套）。 */
 /* 表头与每一行共用这一条列宽定义。声明在表格上、由行组件 var() 取用，
    两处各写一份会在改列宽时错开，而错开只能靠眼睛发现。 */
 .user-table {
@@ -248,7 +232,11 @@ function onIncludeDeletedChange(event: Event): void {
   text-align: center;
 }
 
-@container (max-width: 1040px) {
+/* 960 是「五列排得下」的下限：五列的最小宽之和 810 + 四个 18px 间距 + 两侧 14px 内边距
+   = 910px，留 50px 余量。这个数不能凭手感往上抬——.admin-content 的 max-width 是 1100，
+   内容盒最多 1020，阈值一旦超过它，五列那一支就永远到不了（2026-10 实测：原值 1040 时，
+   1440 屏上表头消失、「创建时间」折到邮箱下面，看起来像「这张表没有列头」）。 */
+@container (max-width: 960px) {
   /* 表头撤掉之后列宽不再需要对齐，窄屏的列由行组件自己决定。 */
   .user-table-head {
     display: none;

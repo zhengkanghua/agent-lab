@@ -1,0 +1,33 @@
+/* 目录页的三态行（读取中 / 空 / 失败）：同一段样式曾在四个目录里各写一份。
+ *
+ * 四份并不逐字相同——min-height 有 150 / 200 两种，留白 26 / 24px 两种，空态文字色
+ * 有 tertiary / secondary 两种，边框有的画有的不画。差异没有来由，只是各写各的，
+ * 于是同一件事在四个页面上长得不一样。这里收敛成一套，四个调用方删掉本地那一份。
+ *
+ * 只共享样式、不共享结构：图标用不用、失败时挂不挂重试键，各家自己决定。
+ * 放在 @layer components 内，组件 scoped 样式（未分层）恒定可以覆盖它。
+ */
+
+@layer components {
+  .directory-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-height: 160px;
+    padding: 24px 12px;
+    /* 上下各一条分隔线：状态行取代的是表格体，画上边框才像「这一块暂时没内容」，
+       而不是页面上凭空多出一行字。 */
+    border-top: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-tertiary);
+    font-size: var(--fs-sm);
+    text-align: center;
+  }
+
+  /* 失败态：竖排是给「一行说明 + 一枚重试键」的，字色走危险色。 */
+  .directory-state-error {
+    flex-direction: column;
+    color: var(--danger);
+  }
+}

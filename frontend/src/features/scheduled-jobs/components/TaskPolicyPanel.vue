@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseField from '@/shared/ui/BaseField.vue'
 import BaseInput from '@/shared/ui/BaseInput.vue'
 import { useTaskPolicy } from '../composables/useTaskPolicy'
 import { formatBeijingTime } from '../model/job-copy'
@@ -20,36 +21,52 @@ defineEmits<{ close: [] }>()
     <p v-if="policy.query.isPending.value" role="status">正在读取策略</p>
     <p v-if="policy.loadError.value" class="error" role="alert">{{ policy.loadError.value }}</p>
     <form v-if="policy.draft.value" @submit.prevent="policy.save">
-      <label
-        >最多自动重试次数<BaseInput
-          v-model="policy.draft.value.max_retries"
-          type="number"
-          min="0"
-          max="20"
-          step="1"
-          :disabled="policy.saving.value"
-        /><small>初次尝试之外的次数；0 表示不自动重试。</small></label
+      <!-- 字段外壳与说明的 aria 接线归 BaseField（hint 会被 aria-describedby 指到）。 -->
+      <BaseField label="最多自动重试次数" hint="初次尝试之外的次数；0 表示不自动重试。">
+        <template #default="{ control }">
+          <BaseInput
+            v-bind="control"
+            v-model="policy.draft.value.max_retries"
+            type="number"
+            min="0"
+            max="20"
+            step="1"
+            :disabled="policy.saving.value"
+          />
+        </template>
+      </BaseField>
+      <BaseField
+        label="首次重试间隔（秒）"
+        hint="之后逐次翻倍，最长一天；只有业务确认可安全重试的错误才适用。"
       >
-      <label
-        >首次重试间隔（秒）<BaseInput
-          v-model="policy.draft.value.retry_delay_seconds"
-          type="number"
-          min="1"
-          max="86400"
-          step="1"
-          :disabled="policy.saving.value"
-        /><small>之后逐次翻倍，最长一天；只有业务确认可安全重试的错误才适用。</small></label
+        <template #default="{ control }">
+          <BaseInput
+            v-bind="control"
+            v-model="policy.draft.value.retry_delay_seconds"
+            type="number"
+            min="1"
+            max="86400"
+            step="1"
+            :disabled="policy.saving.value"
+          />
+        </template>
+      </BaseField>
+      <BaseField
+        label="普通历史保留（天）"
+        hint="从结束时间计算；未结束、待核实和必要的重试关联受到保护。"
       >
-      <label
-        >普通历史保留（天）<BaseInput
-          v-model="policy.draft.value.history_retention_days"
-          type="number"
-          min="1"
-          max="36500"
-          step="1"
-          :disabled="policy.saving.value"
-        /><small>从结束时间计算；未结束、待核实和必要的重试关联受到保护。</small></label
-      >
+        <template #default="{ control }">
+          <BaseInput
+            v-bind="control"
+            v-model="policy.draft.value.history_retention_days"
+            type="number"
+            min="1"
+            max="36500"
+            step="1"
+            :disabled="policy.saving.value"
+          />
+        </template>
+      </BaseField>
       <BaseButton variant="primary" type="submit" :loading="policy.saving.value"
         >保存默认策略</BaseButton
       >
@@ -111,10 +128,7 @@ form {
   gap: var(--space-4);
   margin: var(--space-5) 0;
 }
-label {
-  display: grid;
-  gap: 7px;
-}
+/* 字段外壳（标签 + 间距 + aria 接线）归 BaseField。 */
 .error {
   color: var(--danger);
   margin-top: var(--space-3);

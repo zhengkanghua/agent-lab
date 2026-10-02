@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { Check, X } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
+import BaseField from '@/shared/ui/BaseField.vue'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 import BaseInput from '@/shared/ui/BaseInput.vue'
 import BaseSelect from '@/shared/ui/BaseSelect.vue'
@@ -187,131 +188,164 @@ function onSubmit(): void {
     </div>
 
     <form class="job-form" novalidate @submit.prevent="onSubmit">
-      <label class="field-control">
-        <span>任务类型</span>
-        <BaseSelect v-if="isCreate" v-model="taskTypeDraft" :disabled="submitting">
-          <option
-            v-for="type in taskTypes.filter((item) => item.schedulable)"
-            :key="type.task_type"
-            :value="type.task_type"
-            :disabled="!supportsJobForm(type.task_type)"
+      <!-- 字段外壳走 BaseField：标签、aria-invalid 与 aria-describedby 由它算一次，
+           不再每个字段手写一遍（此前这 12 个字段各写各的，接线漏一处也不报错）。 -->
+      <BaseField label="任务类型" :error="errors.taskType">
+        <template #default="{ control }">
+          <BaseSelect
+            v-if="isCreate"
+            v-bind="control"
+            v-model="taskTypeDraft"
+            :disabled="submitting"
           >
-            {{ taskTypeLabel(type.task_type)
-            }}{{ supportsJobForm(type.task_type) ? '' : '（暂不支持编辑）' }}
-          </option>
-        </BaseSelect>
-        <BaseInput v-else :model-value="taskTypeLabel(taskType)" disabled />
-        <em v-if="errors.taskType" class="field-error">{{ errors.taskType }}</em>
-      </label>
+            <option
+              v-for="type in taskTypes.filter((item) => item.schedulable)"
+              :key="type.task_type"
+              :value="type.task_type"
+              :disabled="!supportsJobForm(type.task_type)"
+            >
+              {{ taskTypeLabel(type.task_type)
+              }}{{ supportsJobForm(type.task_type) ? '' : '（暂不支持编辑）' }}
+            </option>
+          </BaseSelect>
+          <BaseInput v-else v-bind="control" :model-value="taskTypeLabel(taskType)" disabled />
+        </template>
+      </BaseField>
 
-      <label v-if="isCreate" class="field-control">
-        <span>任务标识</span>
-        <BaseInput
-          v-model="keyDraft"
-          name="job-key"
-          autocomplete="off"
-          placeholder="freshrss-sync"
-          :disabled="submitting"
-          :aria-invalid="errors.key !== undefined"
-        />
-        <small>小写字母、数字与短横线；创建后不可修改。</small>
-        <em v-if="errors.key" class="field-error">{{ errors.key }}</em>
-      </label>
-      <label v-else class="field-control">
-        <span>任务标识</span>
-        <BaseInput :model-value="job?.key ?? ''" disabled />
-      </label>
+      <BaseField
+        v-if="isCreate"
+        id="job-key"
+        label="任务标识"
+        :error="errors.key"
+        hint="小写字母、数字与短横线；创建后不可修改。"
+      >
+        <template #default="{ control }">
+          <BaseInput
+            v-bind="control"
+            v-model="keyDraft"
+            name="job-key"
+            autocomplete="off"
+            placeholder="freshrss-sync"
+            :disabled="submitting"
+          />
+        </template>
+      </BaseField>
+      <BaseField v-else label="任务标识">
+        <template #default="{ control }">
+          <BaseInput v-bind="control" :model-value="job?.key ?? ''" disabled />
+        </template>
+      </BaseField>
 
-      <label class="field-control">
-        <span>常用周期</span>
-        <BaseSelect v-model="commonSchedule" :disabled="submitting">
-          <option value="">自定义 cron</option>
-          <option v-for="item in commonSchedules" :key="item.value" :value="item.value">
-            {{ item.label }}
-          </option>
-        </BaseSelect>
-        <small>按下方调度时区解释，也可直接修改 cron。</small>
-      </label>
+      <BaseField label="常用周期" hint="按下方调度时区解释，也可直接修改 cron。">
+        <template #default="{ control }">
+          <BaseSelect v-bind="control" v-model="commonSchedule" :disabled="submitting">
+            <option value="">自定义 cron</option>
+            <option v-for="item in commonSchedules" :key="item.value" :value="item.value">
+              {{ item.label }}
+            </option>
+          </BaseSelect>
+        </template>
+      </BaseField>
 
-      <label class="field-control cron-field">
-        <span>执行节奏（cron）</span>
-        <BaseInput
-          v-model="cronDraft"
-          name="job-cron"
-          autocomplete="off"
-          placeholder="*/10 * * * *"
-          :disabled="submitting"
-          :aria-invalid="errors.cron !== undefined || previewState === 'invalid'"
-        />
-        <small v-if="timezone">cron 时区：{{ timezone }}；以下时刻显示为北京时间</small>
-        <em v-if="errors.cron" class="field-error">{{ errors.cron }}</em>
-        <em v-else-if="previewShapeMessage" class="field-error">{{ previewShapeMessage }}</em>
-        <em v-else-if="previewFailureMessage" class="field-error">{{ previewFailureMessage }}</em>
-        <small v-else-if="previewText" class="cron-preview">{{ previewText }}</small>
-      </label>
+      <!-- 校验失败的原因与「未来的执行时刻」是互斥的两条说明：BaseField 的 error
+           与 hint 正好是这层关系（有 error 就不显示 hint），分支链因此压成两个表达式。
+           代价：cron 非法时那行「cron 时区」也不显示——错误态只留错误，避免冲淡。 -->
+      <BaseField
+        class="cron-field"
+        label="执行节奏（cron）"
+        :error="errors.cron ?? previewShapeMessage ?? previewFailureMessage ?? undefined"
+      >
+        <template #default="{ control }">
+          <BaseInput
+            v-bind="control"
+            v-model="cronDraft"
+            name="job-cron"
+            autocomplete="off"
+            placeholder="*/10 * * * *"
+            :disabled="submitting"
+          />
+        </template>
+        <template #hint>
+          <span v-if="timezone" class="cron-timezone">
+            cron 时区：{{ timezone }}；以下时刻显示为北京时间
+          </span>
+          <span v-if="previewText" class="cron-preview">{{ previewText }}</span>
+        </template>
+      </BaseField>
 
       <template v-if="taskType === 'freshrss_sync'">
-        <label class="field-control">
-          <span>每来源单轮上限</span>
-          <BaseInput
-            v-model="limitDraft"
-            type="number"
-            :min="syncBounds.min"
-            :max="syncBounds.max"
-            :disabled="submitting"
-            :aria-invalid="errors.limitPerSource !== undefined"
-          />
-          <small>{{ syncBounds.min }}–{{ syncBounds.max }} 篇</small>
-          <em v-if="errors.limitPerSource" class="field-error">{{ errors.limitPerSource }}</em>
-        </label>
+        <BaseField
+          label="每来源单轮上限"
+          :error="errors.limitPerSource"
+          :hint="`${syncBounds.min}–${syncBounds.max} 篇`"
+        >
+          <template #default="{ control }">
+            <BaseInput
+              v-bind="control"
+              v-model="limitDraft"
+              type="number"
+              :min="syncBounds.min"
+              :max="syncBounds.max"
+              :disabled="submitting"
+            />
+          </template>
+        </BaseField>
       </template>
 
       <template v-if="taskType === 'index_pending'">
-        <label class="field-control">
-          <span>单轮索引篇数</span>
-          <BaseInput
-            v-model="batchDraft"
-            type="number"
-            :min="batchBounds.min"
-            :max="batchBounds.max"
-            :disabled="submitting"
-            :aria-invalid="errors.batchSize !== undefined"
-          />
-          <small>{{ batchBounds.min }}–{{ batchBounds.max }} 篇</small>
-          <em v-if="errors.batchSize" class="field-error">{{ errors.batchSize }}</em>
-        </label>
-        <label class="field-control">
-          <span>卡死回收阈值</span>
-          <BaseInput
-            v-model="staleDraft"
-            type="number"
-            :min="staleBounds.min"
-            :max="staleBounds.max"
-            :disabled="submitting"
-            :aria-invalid="errors.staleAfterMinutes !== undefined"
-          />
-          <small>{{ staleBounds.min }}–{{ staleBounds.max }} 分钟</small>
-          <em v-if="errors.staleAfterMinutes" class="field-error">
-            {{ errors.staleAfterMinutes }}
-          </em>
-        </label>
+        <BaseField
+          label="单轮索引篇数"
+          :error="errors.batchSize"
+          :hint="`${batchBounds.min}–${batchBounds.max} 篇`"
+        >
+          <template #default="{ control }">
+            <BaseInput
+              v-bind="control"
+              v-model="batchDraft"
+              type="number"
+              :min="batchBounds.min"
+              :max="batchBounds.max"
+              :disabled="submitting"
+            />
+          </template>
+        </BaseField>
+        <BaseField
+          label="卡死回收阈值"
+          :error="errors.staleAfterMinutes"
+          :hint="`${staleBounds.min}–${staleBounds.max} 分钟`"
+        >
+          <template #default="{ control }">
+            <BaseInput
+              v-bind="control"
+              v-model="staleDraft"
+              type="number"
+              :min="staleBounds.min"
+              :max="staleBounds.max"
+              :disabled="submitting"
+            />
+          </template>
+        </BaseField>
       </template>
 
       <template v-if="taskType === 'prune_old_documents'">
-        <label class="field-control">
-          <span>保留天数</span>
-          <BaseInput
-            v-model="retentionDraft"
-            name="retention-days"
-            type="number"
-            :min="retentionBounds.min"
-            :max="retentionBounds.max"
-            :disabled="submitting"
-          />
-          <small>{{ retentionBounds.min }}–{{ retentionBounds.max }} 天</small>
-          <em v-if="errors.retentionDays" class="field-error">{{ errors.retentionDays }}</em>
-        </label>
-        <fieldset class="field-control scope-field">
+        <BaseField
+          label="保留天数"
+          :error="errors.retentionDays"
+          :hint="`${retentionBounds.min}–${retentionBounds.max} 天`"
+        >
+          <template #default="{ control }">
+            <BaseInput
+              v-bind="control"
+              v-model="retentionDraft"
+              name="retention-days"
+              type="number"
+              :min="retentionBounds.min"
+              :max="retentionBounds.max"
+              :disabled="submitting"
+            />
+          </template>
+        </BaseField>
+        <fieldset class="scope-field">
           <legend>清理范围</legend>
           <div class="scope-options">
             <label v-for="option in scopeOptions" :key="option.id" class="check-control">
@@ -333,11 +367,11 @@ function onSubmit(): void {
               </span>
             </label>
           </div>
-          <em v-if="unresolvedScopeIds.length" class="field-error"
+          <em v-if="unresolvedScopeIds.length" class="scope-error"
             >部分知识库未找到，清理范围需要更新。</em
           >
           <small>未选中的库不会被本任务清理；列表中的库共用同一保留周期。</small>
-          <em v-if="errors.knowledgeBaseIds" class="field-error">
+          <em v-if="errors.knowledgeBaseIds" class="scope-error">
             {{ errors.knowledgeBaseIds }}
           </em>
         </fieldset>
@@ -360,9 +394,7 @@ function onSubmit(): void {
         </span>
       </label>
 
-      <p v-if="!isCreate" class="field-control">
-        修改只用于之后受理的执行；已有执行继续使用原参数。
-      </p>
+      <p v-if="!isCreate" class="form-note">修改只用于之后受理的执行；已有执行继续使用原参数。</p>
 
       <BaseButton
         class="submit-command"
@@ -413,59 +445,42 @@ function onSubmit(): void {
   margin-top: 22px;
 }
 
-/* 输入框/下拉皮肤在 BaseInput / BaseSelect（全站一份）；这里只管外壳排版。 */
-.field-control {
-  display: grid;
-  align-content: start;
-  gap: 7px;
+/* 字段外壳（标签 / 说明 / 错误 / aria 接线）归 BaseField，输入框与下拉皮肤归
+   BaseInput / BaseSelect，复选行外观归 styles/components/form-controls.css。
+   这里只剩三类本表单自己的排版：不经过 BaseField 的 fieldset、说明段落、以及
+   cron 预览那两行说明字的颜色。 */
+
+.form-note {
+  grid-column: 1 / -1;
   color: var(--text-secondary);
   font-size: var(--fs-xs);
-  font-weight: var(--fw-bold);
 }
 
-.field-control small {
+/* 说明插槽里的两行文字：时区是一般说明，未来执行时刻用强调色。
+   两行各自成块——它们是两条独立信息（时区、接下来的执行时刻），
+   并排成一行读起来会连成一句。 */
+.cron-timezone {
+  display: block;
   color: var(--text-tertiary);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-normal);
 }
 
-.field-control small.cron-preview {
+.cron-preview {
+  display: block;
   color: var(--accent);
 }
 
-.field-error {
+.scope-error {
   color: var(--danger);
   font-size: var(--fs-xs);
   font-style: normal;
 }
 
-.check-control {
-  display: flex;
-  align-items: center;
-  min-height: 42px;
-  gap: 10px;
-  color: var(--text-secondary);
-  font-size: var(--fs-xs);
-}
-
-.check-control input {
-  width: 17px;
-  height: 17px;
-  accent-color: var(--accent);
-}
-
-.check-control span {
-  display: grid;
-  gap: 1px;
-}
-
-.check-control small {
-  color: var(--text-tertiary);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-normal);
-}
-
+/* fieldset 不走 BaseField（它需要 legend 而不是 label，且内部是一组复选行），
+   所以这里补回原来从 .field-control 借来的网格与说明字排版。 */
 .scope-field {
+  display: grid;
+  align-content: start;
+  gap: 7px;
   border: 0;
   padding: 0;
   margin: 0;
@@ -474,6 +489,15 @@ function onSubmit(): void {
 .scope-field legend {
   padding: 0;
   margin-bottom: 8px;
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+}
+
+.scope-field small {
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-normal);
 }
 
 .scope-options {

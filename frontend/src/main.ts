@@ -5,10 +5,14 @@ import { queryClient } from './app/query-client'
 import { setUnauthorizedHandler } from './api/client'
 import { authSession } from './features/auth/auth-session'
 import './styles/tokens.css'
-// style.css 先引入，由它的首行 @layer 语句确立层序；下面三个文件再并入 components 层。
+// style.css 先引入，由它的首行 @layer 语句确立层序；下面几个文件再并入 components 层。
 import './style.css'
 import './styles/components/topbar.css'
 import './styles/components/motion.css'
+import './styles/components/directory.css'
+import './styles/components/chip.css'
+import './styles/components/drawer.css'
+import './styles/components/form-controls.css'
 import App from './App.vue'
 
 setUnauthorizedHandler(() => {

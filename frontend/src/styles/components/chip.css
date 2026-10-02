@@ -1,0 +1,30 @@
+/* 状态软胶囊：账号目录与任务目录各写过一份，尺寸、圆角、字号、字重与
+ * is-on / is-off 两档配色逐项相同，只有类名前缀不同。
+ *
+ * 只共享样式，不共享结构：胶囊里写什么字由各家决定（任务写「已启用/已停用」，
+ * 账号写「启用/停用/超级用户/普通用户」）。各自的专有档位（例如账号表的
+ * `.status-chip.is-deregistered`）留在自己的 scoped 样式里——那是这个组件特有的
+ * 组合类，不是共享层的事。
+ *
+ * 放在 @layer components 内，组件 scoped 样式（未分层）恒定可以覆盖它。
+ */
+
+@layer components {
+  .status-chip {
+    padding: 2px 8px;
+    border-radius: var(--radius-pill);
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-semibold);
+    white-space: nowrap;
+  }
+
+  .status-chip.is-on {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .status-chip.is-off {
+    color: var(--text-secondary);
+    background: var(--surface-sunken);
+  }
+}

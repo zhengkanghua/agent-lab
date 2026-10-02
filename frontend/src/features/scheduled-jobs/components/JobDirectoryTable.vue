@@ -130,19 +130,7 @@ const emit = defineEmits<{
 /* 刷新键走 BaseButton（ghost），与账号目录、执行历史同款；转动用共享 .spin，
    不再私有一份 keyframes。 */
 
-.directory-state {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 26px 12px;
-  color: var(--text-tertiary);
-  font-size: var(--fs-sm);
-}
-
-.directory-state-error {
-  color: var(--danger);
-}
-
+/* .directory-state 归共享层：styles/components/directory.css（四个目录页同一套）。 */
 .job-table {
   /* 列宽分配跟着内容走：执行状态是两行文案的主内容列，多给；操作列收紧到
      按钮组的实际宽度（250px），让按钮组贴着自己的列居中、不再悬在大片空白

@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { Check } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
+import BaseField from '@/shared/ui/BaseField.vue'
 import BaseInput from '@/shared/ui/BaseInput.vue'
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/shared/model/password'
 
@@ -35,17 +36,21 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
 
 <template>
   <form class="reset-editor" style="container-type: inline-size" @submit.prevent="emit('submit')">
-    <label class="field-control">
-      <span>为 {{ email }} 设置新密码</span>
-      <BaseInput
-        v-model="passwordDraft"
-        type="password"
-        name="reset-password"
-        autocomplete="new-password"
-        :placeholder="passwordHint"
-        :disabled="submitting"
-      />
-    </label>
+    <!-- 标签/接线走 BaseField：aria-invalid 与 aria-describedby 由它算一次，
+         不再各字段手写。 -->
+    <BaseField id="reset-password" :label="`为 ${email} 设置新密码`">
+      <template #default="{ control }">
+        <BaseInput
+          v-bind="control"
+          v-model="passwordDraft"
+          type="password"
+          name="reset-password"
+          autocomplete="new-password"
+          :placeholder="passwordHint"
+          :disabled="submitting"
+        />
+      </template>
+    </BaseField>
     <BaseButton class="submit-command" variant="primary" type="submit" :loading="submitting">
       <template #icon><Check :size="16" aria-hidden="true" /></template>
       确认重置
@@ -69,13 +74,7 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
   border-top: 1px dashed var(--border-subtle);
 }
 
-.field-control {
-  display: grid;
-  gap: 7px;
-  color: var(--text-secondary);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-bold);
-}
+/* 字段外壳（标签/错误/说明）归 BaseField；这里只剩本表单自己的排布。 */
 
 /* 输入框皮肤在 BaseInput；取消键走 BaseButton（secondary），与提交键同高同源。 */
 .editor-error {
@@ -88,7 +87,7 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
     padding: 15px 0 1px;
   }
 
-  .field-control,
+  .base-field,
   .editor-error {
     grid-column: 1 / -1;
   }

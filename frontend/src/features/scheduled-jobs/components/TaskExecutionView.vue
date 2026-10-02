@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseField from '@/shared/ui/BaseField.vue'
 import BaseInput from '@/shared/ui/BaseInput.vue'
 import BaseSelect from '@/shared/ui/BaseSelect.vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
@@ -27,38 +28,50 @@ defineProps<{
 <template>
   <section class="executions" aria-label="全部任务执行">
     <form class="lookup" @submit.prevent="executions.selectRun(executions.lookupId.value)">
-      <label
-        >按执行编号查询<BaseInput
-          :model-value="executions.lookupId.value"
-          placeholder="完整的任务执行编号"
-          @update:model-value="executions.setLookupId"
-      /></label>
+      <BaseField class="lookup-field" label="按执行编号查询">
+        <template #default="{ control }">
+          <BaseInput
+            v-bind="control"
+            :model-value="executions.lookupId.value"
+            placeholder="完整的任务执行编号"
+            @update:model-value="executions.setLookupId"
+          />
+        </template>
+      </BaseField>
       <BaseButton type="submit" variant="secondary">查询详情</BaseButton>
     </form>
     <p v-if="executions.lookupError.value" class="error" role="alert">
       {{ executions.lookupError.value }}
     </p>
     <div class="filters">
-      <label
-        >状态<BaseSelect
-          :model-value="executions.status.value"
-          @update:model-value="executions.filterStatus"
-          ><option value="">全部状态</option>
-          <option v-for="status in RUN_STATUSES" :key="status" :value="status">
-            {{ runStatusLabel(status) }}
-          </option></BaseSelect
-        ></label
-      >
-      <label
-        >任务类型<BaseSelect
-          :model-value="executions.taskType.value"
-          @update:model-value="executions.filterTaskType"
-          ><option value="">全部类型</option>
-          <option v-for="type in taskTypes" :key="type.task_type" :value="type.task_type">
-            {{ taskTypeLabel(type.task_type) }}
-          </option></BaseSelect
-        ></label
-      >
+      <BaseField class="filter-field" label="状态">
+        <template #default="{ control }">
+          <BaseSelect
+            v-bind="control"
+            :model-value="executions.status.value"
+            @update:model-value="executions.filterStatus"
+          >
+            <option value="">全部状态</option>
+            <option v-for="status in RUN_STATUSES" :key="status" :value="status">
+              {{ runStatusLabel(status) }}
+            </option>
+          </BaseSelect>
+        </template>
+      </BaseField>
+      <BaseField class="filter-field" label="任务类型">
+        <template #default="{ control }">
+          <BaseSelect
+            v-bind="control"
+            :model-value="executions.taskType.value"
+            @update:model-value="executions.filterTaskType"
+          >
+            <option value="">全部类型</option>
+            <option v-for="type in taskTypes" :key="type.task_type" :value="type.task_type">
+              {{ taskTypeLabel(type.task_type) }}
+            </option>
+          </BaseSelect>
+        </template>
+      </BaseField>
       <BaseButton
         variant="ghost"
         :disabled="executions.list.isFetching.value"
@@ -165,20 +178,15 @@ defineProps<{
   flex-wrap: wrap;
   gap: var(--space-3);
 }
-.lookup label {
+/* 字段外壳（标签 + 间距 + aria 接线）归 BaseField；下面两条只管本页的列宽。 */
+.lookup-field {
   flex: 1;
   min-width: 220px;
-}
-label {
-  display: grid;
-  gap: 6px;
-  color: var(--text-secondary);
-  font-size: var(--fs-xs);
 }
 .filters {
   margin-top: var(--space-4);
 }
-.filters label {
+.filter-field {
   min-width: 160px;
 }
 .hint {

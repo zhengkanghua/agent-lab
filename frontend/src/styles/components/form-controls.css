@@ -1,0 +1,38 @@
+/* 复选行：checkbox 与它右側两行说明。账号创建表单与任务表单各写过一份，规则逐字相同。
+ *
+ * 为什么不是一个 Base* 组件：字段外壳 BaseField 管的是「标签在控件上方」的常规字段，
+ * 而复选行的文字在控件右边、且通常带一行副说明，结构上不是同一件事；checkbox 自己的
+ * v-model 与禁用逻辑也归各家。这里只共享外观。
+ *
+ * 输入框与下拉的皮肤分别在 BaseInput / BaseSelect，字段外壳在 BaseField。
+ *
+ * 放在 @layer components 内，组件 scoped 样式（未分层）恒定可以覆盖它。
+ */
+
+@layer components {
+  .check-control {
+    display: flex;
+    align-items: center;
+    min-height: 42px;
+    gap: 10px;
+    color: var(--text-secondary);
+    font-size: var(--fs-xs);
+  }
+
+  .check-control input {
+    width: 17px;
+    height: 17px;
+    accent-color: var(--accent);
+  }
+
+  .check-control span {
+    display: grid;
+    gap: 1px;
+  }
+
+  .check-control small {
+    color: var(--text-tertiary);
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-normal);
+  }
+}

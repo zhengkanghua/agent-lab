@@ -287,15 +287,7 @@ watch(editorOpen, async (open) => {
 .feedback svg {
   flex: 0 0 auto;
 }
-.directory-state {
-  min-height: 200px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  color: var(--text-secondary);
-  font-size: var(--fs-sm);
-}
+/* .directory-state 归共享层：styles/components/directory.css（四个目录页同一套）。 */
 .knowledge-table {
   width: 100%;
   table-layout: fixed;

@@ -1,0 +1,37 @@
+/* 窄屏抽屉的遮罩与关闭键：前台侧栏（AppShell）与后台侧栏（AdminShell）各写了一份，
+ * 类名不同（.sidebar-overlay / .sidebar-close）、规则逐字相同。
+ *
+ * 只共享这两条外观：两个外壳本身刻意不归并（前台是工作台、后台是控制台，
+ * 导航项、信息密度与读者都不同，见 AdminShell 顶部注释），但「窄屏抽屉怎么盖、
+ * 关闭键什么时候出现」是同一件事，不该有两份。
+ *
+ * 抽屉的关闭键不在这里：它在两个外壳里都是「窄屏才存在」的元素，用 v-if="isMobile"
+ * 控制，而不是共享层的 display:none。理由是层序——BaseIconButton 自己的 scoped 样式
+ * 未分层，恒定压过 @layer components 里的规则，写在这里的 display:none 不会生效
+ * （2026-10 实测：侧栏在桌面端凭空多出一枚关闭键）。
+ */
+
+@keyframes overlayFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@layer components {
+  .drawer-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-drawer-overlay);
+    border: 0;
+    background: var(--surface-overlay);
+  }
+
+  @media (max-width: 900px) {
+    .drawer-overlay {
+      animation: overlayFadeIn var(--duration-normal) var(--ease-out-smooth);
+    }
+  }
+}

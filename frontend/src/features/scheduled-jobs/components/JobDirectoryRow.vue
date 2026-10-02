@@ -4,6 +4,7 @@ import { History, Pencil, Play, Trash2 } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseDialog from '@/shared/ui/BaseDialog.vue'
+import BaseSwitch from '@/shared/ui/BaseSwitch.vue'
 import type { JobRunDto, ScheduledJobDto } from '@/api/scheduled-jobs'
 import { formatBeijingTime, formatLastRunSummary, taskTypeLabel } from '../model/job-copy'
 import JobRunHistory from './JobRunHistory.vue'
@@ -46,13 +47,6 @@ const isHistoryOpen = computed(
   () => props.expanded?.jobId === props.job.id && props.expanded.kind === 'history',
 )
 
-function toggleEnabled(event: Event): void {
-  const input = event.target as HTMLInputElement
-  const requested = input.checked
-  input.checked = props.job.enabled
-  emit('toggle-enabled', props.job, requested)
-}
-
 function onDeleteClick(): void {
   if (props.busy) return
   if (!confirmingDelete.value) {
@@ -75,15 +69,13 @@ function onDeleteClick(): void {
       <code class="job-cron" role="cell" :title="job.cron_expr">{{ job.cron_expr }}</code>
 
       <label class="job-toggle" role="cell">
-        <!-- 真 checkbox 留在可达性树里，track 只是外观（同账号表的开关）。 -->
-        <input
-          type="checkbox"
+        <!-- 开关本体走共享 BaseSwitch：真 checkbox 留在可达性树里，track 只是外观。 -->
+        <BaseSwitch
           :checked="job.enabled"
           :disabled="busy"
-          :aria-label="`启用 ${job.key}`"
-          @change="toggleEnabled"
+          :label="`启用 ${job.key}`"
+          @change="emit('toggle-enabled', job, $event)"
         />
-        <span class="switch-track" aria-hidden="true"></span>
         <span class="status-chip" :class="job.enabled ? 'is-on' : 'is-off'" role="status">
           {{ job.enabled ? '已启用' : '已停用' }}
         </span>
@@ -258,76 +250,7 @@ function onDeleteClick(): void {
   cursor: pointer;
 }
 
-/* 真 checkbox 留在 DOM 里、只是看不见：键盘与读屏都还操作它，
-   track 只是它的外观。display:none 会把它从可达性树里摘掉。 */
-.job-toggle input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-}
-
-.switch-track {
-  position: relative;
-  display: block;
-  width: 32px;
-  height: 18px;
-  flex: 0 0 auto;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
-  background: var(--surface-sunken);
-  transition: background 150ms ease;
-}
-
-.switch-track::after {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-inset-chip);
-  content: '';
-  transition: transform 150ms ease;
-}
-
-.job-toggle input:checked + .switch-track {
-  border-color: var(--accent);
-  background: var(--accent);
-}
-
-.job-toggle input:checked + .switch-track::after {
-  transform: translateX(14px);
-}
-
-.job-toggle input:focus-visible + .switch-track {
-  outline: 3px solid var(--accent-ring);
-  outline-offset: 2px;
-}
-
-.job-toggle input:disabled + .switch-track {
-  opacity: 0.62;
-}
-
-/* 状态软胶囊：启用 = accent-soft 底松绿字，停用 = 灰（同账号表）。 */
-.status-chip {
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-semibold);
-  white-space: nowrap;
-}
-
-.status-chip.is-on {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.status-chip.is-off {
-  color: var(--text-secondary);
-  background: var(--surface-sunken);
-}
+/* 开关外观归 shared/ui/BaseSwitch.vue，状态胶囊归 styles/components/chip.css。 */
 
 .job-schedule {
   display: grid;
