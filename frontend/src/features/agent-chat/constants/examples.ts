@@ -11,5 +11,3 @@ export const AGENT_EXAMPLES = [
   '资料中规定的备份保留期限是多久？',
   '比较所选知识库中的方案，哪些结论有冲突？',
 ] as const
-
-export type AgentExample = (typeof AGENT_EXAMPLES)[number]

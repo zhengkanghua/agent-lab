@@ -144,22 +144,38 @@ const CHUNK_RESULT = {
   embedding_model: 'bge-m3:567m',
 }
 
+/* 会话列表样例：14 条，刻意跨「今天 / 昨天 / 本周 / 更早」四个分组，
+ * 用来核验分组标题、列表密度与长标题截断。
+ *
+ * 时间按运行时刻倒推，不写死日期：写死的话过几天全部落进「更早」，分组就再也截不出来了。 */
+const THREAD_SEEDS = [
+  { title: '最近央行对利率的表态？', hoursAgo: 0.2 },
+  { title: '房地产政策有哪些新动向', hoursAgo: 1.5 },
+  { title: '这份运行手册里的备份流程是怎么走的？', hoursAgo: 5 },
+  { title: '技术资料里有没有提到索引重建的耗时', hoursAgo: 26 },
+  { title: '上次提到的流动性指标具体指哪几个口径', hoursAgo: 30 },
+  { title: '归档资料里的历史公告还能检索到吗', hoursAgo: 50 },
+  { title: '新闻库最近一周的更新都覆盖了哪些主题', hoursAgo: 74 },
+  { title: 'Chunk 的 token 预算在哪里配置', hoursAgo: 98 },
+  { title: '运行手册中关于告警阈值的段落', hoursAgo: 200 },
+  { title: '央行例会纪要里对通胀的措辞变化', hoursAgo: 320 },
+  { title: '部署流程里回滚那一步的判定条件', hoursAgo: 480 },
+  { title: '这两个知识库的范围为什么要分开选', hoursAgo: 700 },
+  { title: '检索结果里 score 的数值怎么理解', hoursAgo: 900 },
+  { title: '文档审核里「拒绝」和「删除」有什么区别', hoursAgo: 1400 },
+]
+
 const THREADS = {
-  items: [
-    {
-      thread_id: '30000000-0000-4000-8000-000000000001',
-      title: '最近央行对利率的表态？',
-      created_at: '2026-08-20T08:00:00Z',
-      last_active_at: '2026-08-20T08:10:00Z',
-    },
-    {
-      thread_id: '30000000-0000-4000-8000-000000000002',
-      title: '房地产政策有哪些新动向',
-      created_at: '2026-08-19T10:00:00Z',
-      last_active_at: '2026-08-19T10:20:00Z',
-    },
-  ],
-  total: 2,
+  items: THREAD_SEEDS.map((seed, index) => {
+    const lastActive = new Date(Date.now() - seed.hoursAgo * 3_600_000)
+    return {
+      thread_id: `30000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+      title: seed.title,
+      created_at: new Date(lastActive.getTime() - 12 * 60_000).toISOString(),
+      last_active_at: lastActive.toISOString(),
+    }
+  }),
+  total: THREAD_SEEDS.length,
 }
 
 const DOC_DETAIL = {

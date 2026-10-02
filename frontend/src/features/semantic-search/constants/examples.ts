@@ -11,5 +11,3 @@ export const SEARCH_EXAMPLES = [
   '备份保留期限与恢复步骤',
   '项目验收标准与交付要求',
 ] as const
-
-export type SearchExample = (typeof SEARCH_EXAMPLES)[number]

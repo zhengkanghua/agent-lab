@@ -160,5 +160,3 @@ export function useJobForm(options: UseJobFormOptions) {
     reset,
   }
 }
-
-export type UseJobFormReturn = ReturnType<typeof useJobForm>

@@ -1,24 +1,14 @@
-/* 顶栏与品牌标识：layouts/AppShell.vue 与 LoginPage 共用的部分。
+/* 品牌标识：LoginPage 用的两个类。
  *
- * 登录后的三页顶栏已经收进 AppShell，那边的差异走 props 与插槽。这个文件剩下的三个类
- * 是 AppShell 与登录页的交集——登录页不进 AppShell：它没有账号区、没有退出键、
- * 外层容器 .login-wrap 刻意收窄到 1080px，用 props 关掉几乎所有东西才能套上去。
- *
- * .topbar-inner 的窄屏覆盖由 AppShell 和登录页分别维护，各自适应不同的导航内容。
+ * 登录后的顶栏已经收进 AppShell（侧栏范式），品牌区在那边由 .shell-brand-mark /
+ * .brand-text 承担，且刻意不重用这里的类名——结构守护禁止组件重声明共享类。
+ * 这里原本还有个 .topbar-inner，但它已无任何消费者，2026-10 随消融一并清掉。
  *
  * 放在 @layer components 内，组件 scoped 样式（未分层）恒定胜出，
  * 各页无需靠特异性即可覆盖。
  */
 
 @layer components {
-  .topbar-inner {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    min-height: 68px;
-    gap: 24px;
-  }
-
   .brand-mark {
     display: grid;
     place-items: center;

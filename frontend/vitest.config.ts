@@ -15,6 +15,8 @@ export default mergeConfig(
       environment: 'jsdom',
       clearMocks: true,
       restoreMocks: true,
+      // 只补 jsdom 缺的浏览器 API（ResizeObserver / matchMedia），不改变被测行为。见该文件头部说明。
+      setupFiles: ['./src/test-support/browser-apis.ts'],
       include: ['src/**/*.spec.ts'],
     },
   }),

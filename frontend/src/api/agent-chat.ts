@@ -13,12 +13,8 @@ import { isCitationList, isInvalidCitationList } from './agent-evidence'
 
 export type AgentChatRequest = components['schemas']['AgentChatRequest']
 export type AgentChatEvent = components['schemas']['AgentChatEventEnvelope']
-export type AgentTokenEvent = components['schemas']['AgentTokenEvent']
 export type AgentToolCallEvent = components['schemas']['AgentToolCallEvent']
 export type AgentToolResultEvent = components['schemas']['AgentToolResultEvent']
-export type AgentDoneEvent = components['schemas']['AgentDoneEvent']
-export type AgentErrorEvent = components['schemas']['AgentErrorEvent']
-export type AgentDefaultPromptResponse = components['schemas']['AgentDefaultPromptResponse']
 
 /**
  * 两帧之间允许的最长静默。

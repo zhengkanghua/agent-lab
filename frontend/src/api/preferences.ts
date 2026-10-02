@@ -3,7 +3,6 @@ import { isRecord, isNonNegativeInteger } from './json-guards'
 import { normalizeMatchesPerDocument, normalizeResultLimit } from './document-search'
 import type { components } from './generated/openapi'
 
-export type UserPreferenceDto = components['schemas']['UserPreferenceResponse']
 export type UserPreferenceUpdateRequest = components['schemas']['UserPreferenceUpdateRequest']
 
 /** 与应用级偏好 store 无关的纯数据：这一层只管 HTTP 与形状校验。 */

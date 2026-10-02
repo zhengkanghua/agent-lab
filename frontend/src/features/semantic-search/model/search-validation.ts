@@ -8,8 +8,6 @@
 
 export const MAX_QUERY_CHARACTERS = 4096
 
-export type SearchStatus = 'idle' | 'loading' | 'success' | 'empty' | 'error'
-
 export function validateQuery(query: string): string | null {
   if (!query.trim()) {
     return '请输入需要研究的问题或主题。'
