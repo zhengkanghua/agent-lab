@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { History, Pencil, Play, Trash2 } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseDialog from '@/shared/ui/BaseDialog.vue'
 import BaseSwitch from '@/shared/ui/BaseSwitch.vue'
+import { requestConfirm } from '@/shared/composables/confirm'
 import type { JobRunDto, ScheduledJobDto } from '@/api/scheduled-jobs'
 import { formatBeijingTime, formatLastRunSummary, taskTypeLabel } from '../model/job-copy'
 import JobRunHistory from './JobRunHistory.vue'
@@ -15,7 +16,8 @@ import { supportsJobForm } from '../model/job-validation'
  *
  * 编辑表单与执行历史都展开在这一行下方，整页同时只开一个面板（expanded 判定）；
  * 所有请求都归 useScheduledJobDirectory，本组件不发请求，只把事件原样往上转。
- * 删除是两步确认：第一次点变成「确认删除」，再点才真正发请求。
+ * 删除的确认归 ConfirmDialog：原来这里是两步按钮（点一下变「确认删除」再点一下），
+ * 换成确认框之后能点名删的是哪个 key、说清后果，也与全站其它不可恢复动作同一个形态。
  */
 
 const props = defineProps<{
@@ -35,7 +37,6 @@ const emit = defineEmits<{
   'run-finished': [jobId: string, run: JobRunDto]
 }>()
 
-const confirmingDelete = ref(false)
 const executionPending = computed(
   () => !!props.job.active_run || [...props.awaitedRunIds.values()].includes(props.job.id),
 )
@@ -47,14 +48,15 @@ const isHistoryOpen = computed(
   () => props.expanded?.jobId === props.job.id && props.expanded.kind === 'history',
 )
 
-function onDeleteClick(): void {
+async function onDeleteClick(): Promise<void> {
   if (props.busy) return
-  if (!confirmingDelete.value) {
-    confirmingDelete.value = true
-    return
-  }
-  confirmingDelete.value = false
-  emit('remove', props.job)
+  const confirmed = await requestConfirm({
+    title: `删除任务 ${props.job.key}？`,
+    description: '这项配置会被删除，之后不再按周期执行；已经受理的执行继续按当时的快照跑完。',
+    confirmLabel: '删除任务',
+    tone: 'danger',
+  })
+  if (confirmed) emit('remove', props.job)
 }
 </script>
 
@@ -129,24 +131,7 @@ function onDeleteClick(): void {
           <template #icon><History :size="13" aria-hidden="true" /></template>
           执行历史
         </BaseButton>
-        <span v-if="confirmingDelete" class="delete-confirm">
-          <BaseButton
-            variant="ghost"
-            size="xs"
-            class="danger-action"
-            :disabled="busy"
-            :aria-label="`确认删除 ${job.key}`"
-            @click="onDeleteClick"
-          >
-            <template #icon><Trash2 :size="13" aria-hidden="true" /></template>
-            确认删除
-          </BaseButton>
-          <BaseButton variant="ghost" size="xs" :disabled="busy" @click="confirmingDelete = false">
-            取消
-          </BaseButton>
-        </span>
         <BaseButton
-          v-else
           variant="ghost"
           size="xs"
           class="danger-action"
@@ -293,12 +278,6 @@ function onDeleteClick(): void {
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-}
-
-.delete-confirm {
-  display: inline-flex;
-  align-items: center;
   gap: 4px;
 }
 

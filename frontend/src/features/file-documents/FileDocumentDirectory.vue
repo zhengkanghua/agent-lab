@@ -1,18 +1,20 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import { BookOpenText, FileUp, RefreshCw } from '@lucide/vue'
-import type { FileDocumentDto } from '@/api/file-documents'
+import { FILE_PAGE_SIZE, type FileDocumentDto } from '@/api/file-documents'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
+import BasePager from '@/shared/ui/BasePager.vue'
 import { useFileDocuments } from './useFileDocuments'
 import { processingLabel, usageLabel } from '@/shared/model/document-processing'
+import { formatDateTime } from '@/shared/model/datetime'
+import { requestConfirm } from '@/shared/composables/confirm'
 
 const files = useFileDocuments()
 const emit = defineEmits<{ 'read-document': [item: FileDocumentDto, trigger: HTMLElement] }>()
 const editorOpen = ref(false)
 const target = ref<FileDocumentDto>()
-const deleting = ref<FileDocumentDto>()
 const knowledgeBaseId = ref('')
 const selectedFile = ref<File>()
 const fileInput = ref<HTMLInputElement>()
@@ -76,9 +78,22 @@ function statusLabel(item: FileDocumentDto): string {
   return processingLabel(item.candidate_state)
 }
 
-async function confirmDelete() {
-  if (deleting.value && ((await files.remove(deleting.value)) || files.needsReselect.value))
-    deleting.value = undefined
+/**
+ * 删除一份文档。
+ *
+ * 确认这一步统一走 ConfirmDialog（原来是一条行内 Callout 常驻在列表上方）：
+ * 全站所有不可恢复的动作共用同一个确认框，文案里点名删的是哪一份，确认键写「完整删除」
+ * 而不是「确定」。删除失败后行上的按钮变成「继续删除」，重试入口不变。
+ */
+async function removeDocument(item: FileDocumentDto) {
+  const confirmed = await requestConfirm({
+    title: `完整删除「${item.title}」？`,
+    description:
+      '原件、草稿、已采用历史、审核结论及索引都会清除；已有回答保留，但无法再打开这篇原文。',
+    confirmLabel: '完整删除',
+    tone: 'danger',
+  })
+  if (confirmed) await files.remove(item)
 }
 </script>
 
@@ -155,19 +170,6 @@ async function confirmDelete() {
     <p v-if="files.feedback.value" class="file-feedback" role="status">
       {{ files.feedback.value }}
     </p>
-    <BaseCallout v-if="deleting" tone="neutral">
-      <p>
-        确认完整删除「{{
-          deleting.title
-        }}」？原件、草稿、已采用历史、审核结论及索引都会清除。已有回答保留，但无法再打开这篇原文。
-      </p>
-      <template #actions>
-        <BaseButton :loading="files.busy.value" @click="confirmDelete">确认删除</BaseButton>
-        <BaseButton variant="outline" :disabled="files.busy.value" @click="deleting = undefined"
-          >取消</BaseButton
-        >
-      </template>
-    </BaseCallout>
     <BaseCallout v-if="files.loadError.value" tone="danger" :description="files.loadError.value" />
     <p v-if="files.loading.value" role="status"><BaseSpinner :size="18" />正在加载文件资料</p>
     <p v-else-if="!files.items.value.length && !files.loadError.value" class="files-empty">
@@ -210,7 +212,7 @@ async function confirmDelete() {
               item.deletion_error || item.candidate_error
             }}</small>
           </td>
-          <td class="file-date">{{ new Date(item.updated_at).toLocaleString('zh-CN') }}</td>
+          <td class="file-date">{{ formatDateTime(item.updated_at) }}</td>
           <td>
             <div class="file-actions">
               <BaseButton
@@ -247,7 +249,7 @@ async function confirmDelete() {
                 variant="ghost"
                 size="sm"
                 :disabled="files.busy.value"
-                @click="deleting = item"
+                @click="removeDocument(item)"
                 >{{ item.deletion_pending ? '继续删除' : '删除' }}</BaseButton
               >
             </div>
@@ -255,21 +257,15 @@ async function confirmDelete() {
         </tr>
       </tbody>
     </table>
-    <div v-if="files.offset.value > 0 || files.hasMore.value" class="files-pagination">
-      <BaseButton
-        variant="outline"
-        :disabled="files.offset.value === 0 || files.busy.value"
-        @click="files.offset.value -= 25"
-        >上一页</BaseButton
-      >
-      <span>第 {{ files.offset.value / 25 + 1 }} 页</span>
-      <BaseButton
-        variant="outline"
-        :disabled="!files.hasMore.value || files.busy.value"
-        @click="files.offset.value += 25"
-        >下一页</BaseButton
-      >
-    </div>
+    <BasePager
+      v-if="files.offset.value > 0 || files.hasMore.value"
+      :page="files.offset.value / FILE_PAGE_SIZE + 1"
+      :has-previous="files.offset.value > 0"
+      :has-more="files.hasMore.value"
+      :busy="files.busy.value"
+      @previous="files.offset.value -= FILE_PAGE_SIZE"
+      @next="files.offset.value += FILE_PAGE_SIZE"
+    />
   </section>
 </template>
 
@@ -279,8 +275,7 @@ async function confirmDelete() {
   gap: 20px;
   min-width: 0;
 }
-.files-toolbar,
-.files-pagination {
+.files-toolbar {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
@@ -391,10 +386,6 @@ async function confirmDelete() {
 .file-status[data-status='failed'] {
   color: var(--danger);
   background: var(--danger-soft);
-}
-.files-pagination {
-  justify-content: flex-end;
-  font-size: var(--fs-sm);
 }
 @media (max-width: 800px) {
   .file-table thead {

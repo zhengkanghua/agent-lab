@@ -8,6 +8,7 @@ import {
   updateUser,
   type UserAdminDto,
 } from '@/api/user-admin'
+import { requestConfirm } from '@/shared/composables/confirm'
 import { presentAdminError } from '../model/admin-error'
 import { validatePassword, type DirectoryLoadState } from '../model/admin-validation'
 import { sortUsers, summarizeUsers } from '../model/user-account'
@@ -178,13 +179,15 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
   async function deleteAccount(user: UserAdminDto): Promise<void> {
     if (isBusy(user.id)) return
     if (user.is_environment_admin || user.id === options.currentUserId()) return
-    if (
-      !window.confirm(
-        `注销账号 ${user.email}？它将无法再登录，已登录的会话也会失效；` +
-          `账号记录、会话归属与个人偏好都会保留，且这是不可恢复的终态。`,
-      )
-    )
-      return
+    const confirmed = await requestConfirm({
+      title: `注销账号 ${user.email}？`,
+      description:
+        '它将无法再登录，已登录的会话也会失效；账号记录、会话归属与个人偏好都会保留，' +
+        '且这是不可恢复的终态。',
+      confirmLabel: '注销账号',
+      tone: 'danger',
+    })
+    if (!confirmed) return
 
     await runRowAction({
       userId: user.id,
@@ -219,7 +222,13 @@ export function useUserDirectory(options: UseUserDirectoryOptions) {
 
   async function revokeSessions(user: UserAdminDto): Promise<void> {
     if (isBusy(user.id)) return
-    if (!window.confirm(`撤销 ${user.email} 的全部登录会话？`)) return
+    const confirmed = await requestConfirm({
+      title: `撤销 ${user.email} 的全部登录会话？`,
+      description: '该账号在当前所有浏览器与设备上的登录都会失效，需要用密码重新登录。',
+      confirmLabel: '撤销会话',
+      tone: 'danger',
+    })
+    if (!confirmed) return
 
     await runRowAction({
       userId: user.id,

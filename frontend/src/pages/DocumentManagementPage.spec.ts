@@ -1,6 +1,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { pendingConfirm, resetConfirm, settleConfirm } from '@/shared/composables/confirm'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { API_REQUEST_TIMEOUT_MS } from '@/api/client'
 import type { ReviewDetailDto } from '@/api/document-review'
@@ -91,6 +92,11 @@ afterEach(() => {
 })
 
 describe('文档审核', () => {
+  beforeEach(() => {
+    // 确认请求是模块级单例，会跨用例存活；不清理的话下一条用例一上来就顶着一个打开态的确认框。
+    resetConfirm()
+  })
+
   it('保存使旧预览失效，预览与采用分别受理，采用完成后停止轮询', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const remote = reviewDetail()
@@ -231,11 +237,19 @@ describe('文档审核', () => {
     const unload = new Event('beforeunload', { cancelable: true })
     window.dispatchEvent(unload)
     expect(unload.defaultPrevented).toBe(true)
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
-    await router.push('/elsewhere')
+
+    // 页内跳转用应用内的确认框：取消留在原处，确认才真的走。
+    const blocked = router.push('/elsewhere')
+    await flushPromises()
+    expect(pendingConfirm.value?.title).toContain('正文修改')
+    settleConfirm(false)
+    await blocked
     expect(router.currentRoute.value.path).toBe('/admin/documents')
-    confirm.mockReturnValue(true)
-    await router.push('/elsewhere')
+
+    const leaving = router.push('/elsewhere')
+    await flushPromises()
+    settleConfirm(true)
+    await leaving
     expect(router.currentRoute.value.path).toBe('/elsewhere')
   })
 

@@ -6,6 +6,7 @@ import {
   type AgentThreadSummaryDto,
 } from '@/api/agent-threads'
 import { ApiError } from '@/api/client'
+import { requestConfirm } from '@/shared/composables/confirm'
 import { presentAgentError, type AgentErrorPresentation } from '../model/agent-error'
 import { agentChatKeys } from '../constants/query-keys'
 
@@ -109,7 +110,13 @@ export function useThreadList(options: UseThreadListOptions) {
   async function remove(thread: AgentThreadSummaryDto): Promise<void> {
     if (deleteMutation.isPending.value && deleteMutation.variables.value === thread.thread_id)
       return
-    if (!window.confirm(`删除会话「${thread.title}」？对话历史会一起清除，且无法恢复。`)) return
+    const confirmed = await requestConfirm({
+      title: '删除这个会话？',
+      description: `「${thread.title}」的对话历史会一起清除，且无法恢复。`,
+      confirmLabel: '删除会话',
+      tone: 'danger',
+    })
+    if (!confirmed) return
 
     listErrorOverride.value = null
     try {

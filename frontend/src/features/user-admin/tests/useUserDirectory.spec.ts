@@ -17,6 +17,14 @@ vi.mock('../../../api/user-admin', () => api)
 import { ApiError } from '@/api/client'
 import type { UserAdminDto } from '@/api/user-admin'
 import { useUserDirectory } from '../composables/useUserDirectory'
+import { pendingConfirm, resetConfirm, settleConfirm } from '@/shared/composables/confirm'
+
+/** 驱动确认框：等请求登记后按 answer 结掉，再把调用方接着走完。 */
+async function withConfirm<T>(answer: boolean, run: Promise<T>): Promise<T> {
+  await flushPromises()
+  settleConfirm(answer)
+  return run
+}
 
 const environmentAdmin: UserAdminDto = {
   id: '10000000-0000-4000-8000-000000000001',
@@ -69,6 +77,8 @@ describe('useUserDirectory', () => {
     api.revokeUserSessions.mockReset()
     api.deleteUser.mockReset()
     api.listUsers.mockResolvedValue([reader, environmentAdmin])
+    // 确认请求是模块级单例，会跨用例存活；不清理的话下一条用例一上来就顶着一个打开态的确认框。
+    resetConfirm()
   })
 
   afterEach(() => {
@@ -250,61 +260,56 @@ describe('useUserDirectory', () => {
     wrapper.unmount()
   })
 
-  it('撤销会话要先确认，拒绝就什么都不做', async () => {
-    const confirm = vi.fn(() => false)
-    vi.stubGlobal('confirm', confirm)
+  it('撤销会话要先确认：文案点名账号，拒绝就什么都不做', async () => {
     const { wrapper, directory } = mountHarness()
     await directory.load()
 
-    await directory.revokeSessions(reader)
+    const running = directory.revokeSessions(reader)
+    await flushPromises()
+    expect(pendingConfirm.value?.title).toContain(reader.email)
+    settleConfirm(false)
+    await running
 
-    expect(confirm).toHaveBeenCalledTimes(1)
     expect(api.revokeUserSessions).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
   it('没有有效会话时的提示与撤销掉若干个不同', async () => {
-    vi.stubGlobal(
-      'confirm',
-      vi.fn(() => true),
-    )
     api.revokeUserSessions.mockResolvedValueOnce({ revoked_sessions: 0 })
     const { wrapper, directory } = mountHarness()
     await directory.load()
 
-    await directory.revokeSessions(reader)
+    await withConfirm(true, directory.revokeSessions(reader))
     expect(directory.feedback.value).toContain('当前没有有效会话')
 
     api.revokeUserSessions.mockResolvedValueOnce({ revoked_sessions: 3 })
-    await directory.revokeSessions(reader)
+    await withConfirm(true, directory.revokeSessions(reader))
     expect(directory.feedback.value).toContain('3')
     wrapper.unmount()
   })
 
-  it('注销账号要先确认，拒绝就什么都不做', async () => {
-    const confirm = vi.fn(() => false)
-    vi.stubGlobal('confirm', confirm)
+  it('注销账号要先确认：说明写清「不可恢复」，拒绝就什么都不做', async () => {
     const { wrapper, directory } = mountHarness()
     await directory.load()
 
-    await directory.deleteAccount(reader)
+    const running = directory.deleteAccount(reader)
+    await flushPromises()
+    expect(pendingConfirm.value?.title).toContain(reader.email)
+    expect(pendingConfirm.value?.description).toContain('不可恢复')
+    settleConfirm(false)
+    await running
 
-    expect(confirm).toHaveBeenCalledTimes(1)
     expect(api.deleteUser).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
   it('注销成功后那一行变成已注销：默认口径下不再出现在列表里', async () => {
-    vi.stubGlobal(
-      'confirm',
-      vi.fn(() => true),
-    )
     api.deleteUser.mockResolvedValue(undefined)
     const { wrapper, directory } = mountHarness()
     await directory.load()
     expect(directory.users.value).toHaveLength(2)
 
-    await directory.deleteAccount(reader)
+    await withConfirm(true, directory.deleteAccount(reader))
 
     expect(api.deleteUser).toHaveBeenCalledWith(reader.id)
     expect(directory.users.value.map((user) => user.id)).toEqual([environmentAdmin.id])
@@ -316,17 +321,13 @@ describe('useUserDirectory', () => {
     // 这一条与上一条是同一份实现的两面：默认那份要把行移出（它不含已注销），
     // 开关那份要把它留在原位（它本来就包含已注销）。写成「无差别把行摘掉」的话，
     // 开关打开时那一行会直接消失，与「行还在、只是已注销」矛盾。
-    vi.stubGlobal(
-      'confirm',
-      vi.fn(() => true),
-    )
     api.deleteUser.mockResolvedValue(undefined)
     const { wrapper, directory } = mountHarness()
     await directory.load()
 
     directory.setIncludeDeleted(true)
     await flushPromises()
-    await directory.deleteAccount(reader)
+    await withConfirm(true, directory.deleteAccount(reader))
 
     const retained = directory.users.value.find((user) => user.id === reader.id)
     expect(retained?.deleted_at).not.toBeNull()
@@ -350,17 +351,13 @@ describe('useUserDirectory', () => {
   })
 
   it('注销失败时错误落在该行，列表不动', async () => {
-    vi.stubGlobal(
-      'confirm',
-      vi.fn(() => true),
-    )
     api.deleteUser.mockRejectedValue(
       new ApiError({ message: 'nope', code: 'last_superuser_protected', status: 409 }),
     )
     const { wrapper, directory } = mountHarness()
     await directory.load()
 
-    await directory.deleteAccount(reader)
+    await withConfirm(true, directory.deleteAccount(reader))
 
     expect(directory.users.value).toHaveLength(2)
     expect(directory.rowErrors.value[reader.id]).toContain('超级用户')
@@ -368,15 +365,16 @@ describe('useUserDirectory', () => {
   })
 
   it('环境托管超级用户与当前账号不能注销，连确认都不弹', async () => {
-    const confirm = vi.fn(() => true)
-    vi.stubGlobal('confirm', confirm)
     const { wrapper, directory } = mountHarness(environmentAdmin.id)
     await directory.load()
 
-    await directory.deleteAccount(environmentAdmin)
-    await directory.deleteAccount({ ...reader, id: environmentAdmin.id })
+    const first = directory.deleteAccount(environmentAdmin)
+    const second = directory.deleteAccount({ ...reader, id: environmentAdmin.id })
+    await flushPromises()
 
-    expect(confirm).not.toHaveBeenCalled()
+    // 守卫在 requestConfirm 之前就返回了：连一个待确认请求都不该登记。
+    expect(pendingConfirm.value).toBeNull()
+    await Promise.all([first, second])
     expect(api.deleteUser).not.toHaveBeenCalled()
     wrapper.unmount()
   })

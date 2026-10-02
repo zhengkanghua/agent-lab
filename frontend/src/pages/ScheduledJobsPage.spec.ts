@@ -7,6 +7,7 @@ import { taskTypes } from '@/api/scheduled-jobs.fixture'
 import { ApiError } from '@/api/client'
 import { makeTaskRun, taskPolicy } from '@/api/tasks.fixture'
 import { newsKnowledgeBase, techKnowledgeBase } from '@/api/knowledge-bases.fixture'
+import { pendingConfirm, resetConfirm, settleConfirm } from '@/shared/composables/confirm'
 
 enableAutoUnmount(afterEach)
 
@@ -143,6 +144,8 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
   vi.clearAllMocks()
   sessionStorage.clear()
+  // 确认请求是模块级单例，会跨用例存活；不清理的话下一条用例一上来就顶着一个打开态的确认框。
+  resetConfirm()
   api.listScheduledTaskTypes.mockResolvedValue(taskTypes)
   api.listKnowledgeBases.mockResolvedValue([
     {
@@ -359,18 +362,32 @@ describe('ScheduledJobsPage', () => {
     expect(wrapper.text()).toContain('手动执行：成功')
   })
 
-  it('delete requires a second confirming click', async () => {
+  it('删除先弹确认框、点名要删哪个 key，确认后才发请求', async () => {
     api.deleteScheduledJob.mockResolvedValue(undefined)
     const wrapper = await mountPage()
 
     await wrapper.get('button[aria-label="删除 freshrss-sync"]').trigger('click')
     await flushPromises()
-    // 第一次只出现确认态，不发请求。
+    // 点「删除」只发出确认请求，不发删除请求。
     expect(api.deleteScheduledJob).not.toHaveBeenCalled()
+    expect(pendingConfirm.value?.title).toContain('freshrss-sync')
+    expect(pendingConfirm.value?.tone).toBe('danger')
 
-    await wrapper.get('button[aria-label="确认删除 freshrss-sync"]').trigger('click')
+    settleConfirm(true)
     await flushPromises()
     expect(api.deleteScheduledJob).toHaveBeenCalledWith(syncJob.id)
+  })
+
+  it('删除的确认框被取消时什么都不做', async () => {
+    api.deleteScheduledJob.mockResolvedValue(undefined)
+    const wrapper = await mountPage()
+
+    await wrapper.get('button[aria-label="删除 freshrss-sync"]').trigger('click')
+    await flushPromises()
+    settleConfirm(false)
+    await flushPromises()
+
+    expect(api.deleteScheduledJob).not.toHaveBeenCalled()
   })
 
   it('opening the editor prefills the job and submits through update', async () => {

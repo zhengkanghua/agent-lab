@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { pendingConfirm, resetConfirm, settleConfirm } from '@/shared/composables/confirm'
 
 const api = vi.hoisted(() => ({
   // 设置页会经 useDefaultAgentPrompt 拉默认提示词；会读写个人偏好；也会读用量。
@@ -90,6 +91,8 @@ async function mountAt(path: string) {
 
 describe('SettingsPage', () => {
   beforeEach(() => {
+    // 确认请求是模块级单例，会跨用例存活；不清理的话下一条用例一上来就顶着一个打开态的确认框。
+    resetConfirm()
     usePreferences().resetForTests()
     api.fetchPreferences.mockReset()
     api.fetchPreferences.mockResolvedValue(remote())
@@ -245,22 +248,29 @@ describe('SettingsPage', () => {
   })
 
   it('分区切换保留提示词草稿，离开时可取消，保存后可直接离开', async () => {
-    const confirm = vi.fn().mockReturnValue(false)
-    vi.stubGlobal('confirm', confirm)
     const { wrapper, router } = await mountAt('/settings/agent')
     await wrapper.get('textarea').setValue('尚未保存的完整提示词')
     await router.push('/settings/search')
     await router.push('/settings/agent')
     expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('尚未保存的完整提示词')
     expect(usePreferences().preferences.agentSystemPrompt).toBe('')
-    expect(confirm).not.toHaveBeenCalled()
-    await router.push('/')
+    // 分区之间切换不算离开，不该弹确认框。
+    expect(pendingConfirm.value).toBeNull()
+
+    // 离开设置中心：确认框弹出并点名是提示词草稿；取消就留在原处。
+    const leaving = router.push('/')
+    await flushPromises()
+    expect(pendingConfirm.value?.title).toContain('提示词')
+    settleConfirm(false)
+    await leaving
     expect(router.currentRoute.value.path).toBe('/settings/agent')
-    expect(confirm).toHaveBeenCalledOnce()
+
+    // 保存之后离开不再问。
     await wrapper.get('.editor-actions button').trigger('click')
+    await flushPromises()
     await router.push('/')
+    expect(pendingConfirm.value).toBeNull()
     expect(router.currentRoute.value.path).toBe('/')
-    expect(confirm).toHaveBeenCalledOnce()
     wrapper.unmount()
   })
 
@@ -274,18 +284,25 @@ describe('SettingsPage', () => {
   })
 
   it('退出前确认未保存草稿，取消不发请求，退出失败仍保留草稿', async () => {
-    const confirm = vi.fn().mockReturnValue(false)
-    vi.stubGlobal('confirm', confirm)
     const { wrapper } = await mountAt('/settings/agent')
     await wrapper.get('textarea').setValue('退出前尚未保存的草稿')
     const logout = wrapper.get('button[aria-label="退出登录"]')
-    await logout.trigger('click')
-    expect(confirm).toHaveBeenCalledOnce()
+
+    // 取消：不退出。
+    const cancelled = logout.trigger('click')
+    await flushPromises()
+    expect(pendingConfirm.value?.title).toContain('提示词')
+    settleConfirm(false)
+    await cancelled
+    await flushPromises()
     expect(session.logout).not.toHaveBeenCalled()
 
-    confirm.mockReturnValue(true)
+    // 确认：真的退出，失败后草稿仍在。
     session.logout.mockRejectedValue(new Error('offline'))
-    await logout.trigger('click')
+    const confirmed = logout.trigger('click')
+    await flushPromises()
+    settleConfirm(true)
+    await confirmed
     await flushPromises()
     expect(session.logout).toHaveBeenCalledOnce()
     expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('退出前尚未保存的草稿')

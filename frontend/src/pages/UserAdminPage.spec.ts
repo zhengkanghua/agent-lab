@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { resetConfirm, settleConfirm } from '@/shared/composables/confirm'
 
 const api = vi.hoisted(() => ({
   listUsers: vi.fn(),
@@ -100,6 +101,8 @@ describe('UserAdminPage', () => {
     api.revokeUserSessions.mockReset()
     session.initialize.mockReset()
     session.logout.mockReset()
+    // 确认请求是模块级单例，会跨用例存活；不清理的话下一条用例一上来就顶着一个打开态的确认框。
+    resetConfirm()
   })
 
   afterEach(() => {
@@ -229,12 +232,11 @@ describe('UserAdminPage', () => {
     expect(wrapper.find('input[name="reset-password"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain(privatePassword)
 
-    vi.stubGlobal(
-      'confirm',
-      vi.fn(() => true),
-    )
     api.revokeUserSessions.mockResolvedValue({ revoked_sessions: 2 })
     await wrapper.get(`[data-testid="sessions-${regularUser.id}"]`).trigger('click')
+    await flushPromises()
+    // 确认框由 App 挂载，页面单测里不渲染它——直接给出「确认」这个决定。
+    settleConfirm(true)
     await flushPromises()
     expect(api.revokeUserSessions).toHaveBeenCalledWith(regularUser.id)
     expect(wrapper.text()).toContain('2 个会话')

@@ -6,6 +6,7 @@ import AppShell from '@/layouts/AppShell.vue'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 import { authSession, useLogout } from '@/features/auth'
 import { useModalLayer } from '@/shared/composables/useModalLayer'
+import { requestConfirm } from '@/shared/composables/confirm'
 import {
   AccountSection,
   AgentPromptSection,
@@ -68,14 +69,31 @@ onMounted(() => {
   void loadPreferences(authSession.user.value?.id)
 })
 
-function confirmDiscardPrompt(): boolean {
-  return !hasUnsavedPrompt.value || window.confirm('提示词尚未保存，确定离开并放弃修改？')
+/**
+ * 有未保存的提示词草稿时先问一句。返回「可以继续」，页面内跳转与退出登录共用。
+ *
+ * 用应用内的确认框而不是 window.confirm：全站不可恢复的动作只有一个确认形态。
+ * 唯一还留原生的地方是下面的 beforeunload——刷新与关标签页由浏览器接管，
+ * 它只接受原生弹窗，自绘框在那条路径上不可能出现，不是写法选择。
+ *
+ * 导航守卫可以是异步的（Vue Router 会等它 resolve），所以这里直接返回那个 Promise，
+ * 不需要「先拦住再手动重推一次」那套绕法。
+ */
+async function confirmDiscardPrompt(): Promise<boolean> {
+  if (!hasUnsavedPrompt.value) return true
+  return requestConfirm({
+    title: '放弃尚未保存的提示词？',
+    description: '设置中心里这段还没保存的草稿会丢失，已保存的版本不受影响。',
+    confirmLabel: '放弃修改',
+    tone: 'danger',
+  })
 }
 
 onBeforeRouteLeave(confirmDiscardPrompt)
 
 async function requestLogout(): Promise<void> {
-  if (confirmDiscardPrompt()) await logout()
+  if (!(await confirmDiscardPrompt())) return
+  await logout()
 }
 
 function warnBeforeUnload(event: BeforeUnloadEvent): void {

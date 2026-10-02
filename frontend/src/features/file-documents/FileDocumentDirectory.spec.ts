@@ -1,11 +1,12 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { API_REQUEST_TIMEOUT_MS } from '@/api/client'
 import type { FileDocumentDto } from '@/api/file-documents'
 import { newsKnowledgeBase, techKnowledgeBase } from '@/api/knowledge-bases.fixture'
 import FileDocumentDirectory from './FileDocumentDirectory.vue'
+import { resetConfirm, settleConfirm } from '@/shared/composables/confirm'
 
 const file: FileDocumentDto = {
   document_id: '20000000-0000-4000-8000-000000000001',
@@ -66,6 +67,9 @@ function listResponse(items: FileDocumentDto[]) {
 }
 
 describe('文件资料管理', () => {
+  // 确认请求是模块级单例，会跨用例存活；不清理的话下一条用例一上来就顶着一个打开态的确认框。
+  beforeEach(() => resetConfirm())
+
   it('文件接口未提供时显示服务提示，服务恢复后刷新可以读到列表', async () => {
     let available = false
     vi.stubGlobal(
@@ -241,7 +245,9 @@ describe('文件资料管理', () => {
     const wrapper = mountDirectory()
     await flushPromises()
     await click(wrapper, '删除')
-    await click(wrapper, '确认删除')
+    await flushPromises()
+    // 确认框由 App 挂载，页面单测里不渲染它——直接给出「确认」这个决定。
+    settleConfirm(true)
     await flushPromises()
     expect(wrapper.get('tbody').text()).toContain('删除未完成')
     expect(wrapper.get('tbody').text()).toContain('继续删除')

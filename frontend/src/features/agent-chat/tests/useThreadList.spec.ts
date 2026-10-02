@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { ApiError } from '@/api/client'
 import type { AgentThreadSummaryDto } from '@/api/agent-threads'
@@ -11,6 +11,14 @@ const api = vi.hoisted(() => ({
 vi.mock('@/api/agent-threads', () => api)
 
 import { THREAD_PAGE_SIZE, useThreadList } from '../composables/useThreadList'
+import { pendingConfirm, resetConfirm, settleConfirm } from '@/shared/composables/confirm'
+
+/** 驱动确认框：等请求登记后按 answer 结掉，再把调用方接着走完。 */
+async function withConfirm<T>(answer: boolean, run: Promise<T>): Promise<T> {
+  await flushPromises()
+  settleConfirm(answer)
+  return run
+}
 
 function thread(index: number, overrides: Partial<AgentThreadSummaryDto> = {}) {
   return {
@@ -66,10 +74,9 @@ describe('useThreadList', () => {
   beforeEach(() => {
     api.listAgentThreads.mockReset()
     api.deleteAgentThread.mockReset()
-    vi.stubGlobal('confirm', vi.fn().mockReturnValue(true))
+    // 确认请求是模块级单例，会跨用例存活；不清理的话下一条用例一上来就顶着一个打开态的确认框。
+    resetConfirm()
   })
-
-  afterEach(() => vi.unstubAllGlobals())
 
   it('载入第一页并记下总数', async () => {
     api.listAgentThreads.mockResolvedValue(page(3, 7))
@@ -123,20 +130,26 @@ describe('useThreadList', () => {
     await flushPromises()
     await list.nextPage()
 
-    await list.remove(thread(21))
+    await withConfirm(true, list.remove(thread(21)))
 
     expect(list.offset.value).toBe(0)
     expect(list.threads.value).toHaveLength(THREAD_PAGE_SIZE)
     scope.stop()
   })
 
-  it('删除前必须确认；点取消就什么都不做', async () => {
+  it('删除前必须确认：文案点名会话，拒绝就什么都不做', async () => {
     api.listAgentThreads.mockResolvedValue(page(1))
-    vi.stubGlobal('confirm', vi.fn().mockReturnValue(false))
     const { list, scope } = build()
     await flushPromises()
 
-    await list.remove(thread(1))
+    const running = list.remove(thread(1))
+    await flushPromises()
+    // 确认框要回答「删的是哪一个」，只写「确定删除吗」等于让用户在不知情下做不可恢复的决定。
+    expect(pendingConfirm.value?.title).toBe('删除这个会话？')
+    expect(pendingConfirm.value?.description).toContain(thread(1).title)
+    expect(pendingConfirm.value?.tone).toBe('danger')
+    settleConfirm(false)
+    await running
 
     expect(api.deleteAgentThread).not.toHaveBeenCalled()
     scope.stop()
@@ -151,7 +164,7 @@ describe('useThreadList', () => {
     })
     await flushPromises()
 
-    await list.remove(target)
+    await withConfirm(true, list.remove(target))
 
     expect(onActiveThreadDeleted).toHaveBeenCalledOnce()
     scope.stop()
@@ -165,7 +178,7 @@ describe('useThreadList', () => {
     })
     await flushPromises()
 
-    await list.remove(thread(2))
+    await withConfirm(true, list.remove(thread(2)))
 
     expect(onActiveThreadDeleted).not.toHaveBeenCalled()
     scope.stop()
@@ -179,7 +192,7 @@ describe('useThreadList', () => {
     const { list, scope } = build()
     await flushPromises()
 
-    await list.remove(thread(1))
+    await withConfirm(true, list.remove(thread(1)))
 
     expect(list.deletingThreadIds.value.has(thread(1).thread_id)).toBe(false)
     expect(list.listError.value?.title).toBeTruthy()
@@ -197,7 +210,7 @@ describe('useThreadList', () => {
     api.listAgentThreads.mockClear()
     api.listAgentThreads.mockResolvedValue({ items: [], total: 0 })
 
-    await list.remove(thread(1))
+    await withConfirm(true, list.remove(thread(1)))
 
     expect(api.listAgentThreads).toHaveBeenCalledOnce()
     scope.stop()
