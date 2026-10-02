@@ -286,9 +286,16 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
   background: var(--surface-hover);
 }
 
+/* 触屏：常驻之外还要撑到可点高度。32px 是为鼠标精度换来的密集尺寸，
+   手指点不中，只有 opacity: 1 让它们可见但没有变好点。 */
 @media (pointer: coarse) {
   .answer-actions {
     opacity: 1;
+  }
+
+  .ghost-action {
+    min-height: var(--tap-target);
+    padding: 4px 12px;
   }
 }
 </style>

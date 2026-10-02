@@ -92,15 +92,18 @@ function openCreate(): void {
 <template>
   <section class="admin-page" aria-labelledby="admin-title" style="container-type: inline-size">
     <div class="page-bar">
+      <!-- 视图切换的选中项用 soft（浅强调底 + 强调字，与侧栏当前项同源）。
+           原来用 secondary——下沉灰底在视觉上等于「按下去的禁用态」，
+           选中的那个反而成了整排里最不显眼的一个。 -->
       <nav class="task-views" aria-label="任务管理视图">
         <BaseButton
-          :variant="executions.view.value === 'configurations' ? 'secondary' : 'ghost'"
+          :variant="executions.view.value === 'configurations' ? 'soft' : 'ghost'"
           :aria-pressed="executions.view.value === 'configurations'"
           @click="executions.setView('configurations')"
           >周期配置</BaseButton
         >
         <BaseButton
-          :variant="executions.view.value === 'executions' ? 'secondary' : 'ghost'"
+          :variant="executions.view.value === 'executions' ? 'soft' : 'ghost'"
           :aria-pressed="executions.view.value === 'executions'"
           @click="executions.setView('executions')"
           >任务执行</BaseButton

@@ -231,7 +231,7 @@ function toggle(): void {
   font-weight: var(--fw-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: color 150ms ease;
+  transition: color var(--duration-fast) var(--ease-out-smooth);
 }
 
 .record-meta {
@@ -246,7 +246,7 @@ function toggle(): void {
 .record-chevron {
   flex: 0 0 auto;
   color: var(--text-tertiary);
-  transition: transform 150ms ease;
+  transition: transform var(--duration-fast) var(--ease-out-smooth);
 }
 
 .record-chevron.is-open {

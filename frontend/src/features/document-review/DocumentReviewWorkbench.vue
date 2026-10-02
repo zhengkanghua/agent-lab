@@ -531,6 +531,7 @@ watch(detail, async (value) => {
 }
 .version-strip button {
   justify-self: start;
+  min-height: 28px;
   border: 0;
   padding: 3px 0;
   background: transparent;
@@ -538,6 +539,12 @@ watch(detail, async (value) => {
   font: inherit;
   font-size: var(--fs-xs);
   cursor: pointer;
+}
+/* 版本条上的按钮是 28px 的密集尺寸，为鼠标精度换来；手指点不准，触屏撑到可点高度。 */
+@media (pointer: coarse) {
+  .version-strip button {
+    min-height: var(--tap-target);
+  }
 }
 .review-note {
   font-size: var(--fs-xs);

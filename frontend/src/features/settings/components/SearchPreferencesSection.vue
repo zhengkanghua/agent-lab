@@ -145,7 +145,7 @@ const hasCustomized = computed(
       </BaseButton>
       <span class="footer-note">
         <Layers3 :size="13" aria-hidden="true" />
-        检索输入条右下角可随时跳回这里调整
+        检索输入条左下角可随时跳回这里调整
       </span>
     </div>
   </section>

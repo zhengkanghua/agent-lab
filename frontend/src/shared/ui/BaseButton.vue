@@ -14,9 +14,12 @@ import BaseSpinner from './BaseSpinner.vue'
  *   danger    浅红底 + 红字（原 .stop-button / .cancel-command）
  *   outline   描边 + 强调字，悬停填实（原 .retry-button / .reader-retry）
  *   ghost     纯文字（原 .text-button / .expand-button / .admin-link）
+ *   soft      浅强调底 + 强调字：表示「当前项」，与侧栏的当前导航态同源。
+ *             视图切换、分段控件用它，不要用 secondary——下沉灰底会被读成「按下去的禁用态」，
+ *             于是选中的那一项反而是整排里最不显眼的（2026-10 审查实测）。
  */
 
-type Variant = 'primary' | 'secondary' | 'danger' | 'outline' | 'ghost'
+type Variant = 'primary' | 'secondary' | 'danger' | 'outline' | 'ghost' | 'soft'
 type Size = 'md' | 'sm' | 'xs'
 
 const props = withDefaults(
@@ -238,7 +241,22 @@ const spinnerSize = computed(() => (props.size === 'md' ? 18 : 15))
   color: var(--accent-hover);
 }
 
+/* 当前项：浅强调底 + 强调字。悬停只换字色，不换底——已经选中的东西不该再浮起来。 */
+.is-soft {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.is-soft:hover:not(:disabled):not(.is-loading) {
+  color: var(--accent-hover);
+}
+
 .is-ghost:active:not(:disabled):not(.is-loading) {
+  transform: scale(0.98);
+  transition-duration: calc(var(--duration-fast) / 2);
+}
+
+.is-soft:active:not(:disabled):not(.is-loading) {
   transform: scale(0.98);
   transition-duration: calc(var(--duration-fast) / 2);
 }

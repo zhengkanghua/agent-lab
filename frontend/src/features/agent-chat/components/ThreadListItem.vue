@@ -78,7 +78,7 @@ const exactTime = computed(() => {
   gap: 2px;
   align-items: center;
   border-radius: var(--radius-sm);
-  transition: background-color 150ms ease;
+  transition: background-color var(--duration-fast) var(--ease-out-smooth);
 }
 
 .thread-item:hover {
@@ -137,7 +137,7 @@ const exactTime = computed(() => {
 .remove-button {
   margin-right: 5px;
   opacity: 0;
-  transition: opacity 150ms ease;
+  transition: opacity var(--duration-fast) var(--ease-out-smooth);
 }
 
 .thread-item:hover .remove-button,

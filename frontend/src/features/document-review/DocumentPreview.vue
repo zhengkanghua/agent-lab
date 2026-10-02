@@ -247,6 +247,14 @@ watch(
   overflow-wrap: anywhere;
   cursor: pointer;
 }
+/* 结构目录的每一项是整行按钮：桌面 34px 左右，手指点不准，触屏撑到可点高度。 */
+@media (pointer: coarse) {
+  .outline button {
+    min-height: var(--tap-target);
+    padding: 10px 4px;
+  }
+}
+
 .heading-level {
   flex-shrink: 0;
   color: var(--accent);
