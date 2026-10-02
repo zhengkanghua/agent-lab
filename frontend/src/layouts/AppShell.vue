@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onScopeDispose, ref, watch } from 'vue'
+import { computed, onMounted, onScopeDispose, ref } from 'vue'
 import {
   Bot,
   LayoutDashboard,
@@ -15,6 +15,7 @@ import {
 import { RouterLink } from 'vue-router'
 import { authSession } from '@/features/auth'
 import { usePreferences } from '@/features/settings'
+import { useModalLayer } from '@/shared/composables/useModalLayer'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 import ThemeToggle from '@/shared/ui/ThemeToggle.vue'
@@ -89,13 +90,13 @@ onMounted(() => {
   void loadPreferences(authSession.user.value?.id)
 })
 
-/* 窄屏抽屉：桌面常驻，窄屏收起为抽屉。逻辑与 AdminShell 同款。 */
+/* 窄屏抽屉：桌面常驻，窄屏收起为抽屉。滚动锁、Esc、Tab 焦点循环与焦点归还
+   都归 useModalLayer（与 BaseDialog、设置浮层、阅读层同一套实现）。 */
 const drawerOpen = ref(false)
 const isMobile = ref(window.innerWidth <= 900)
 const sidebar = ref<HTMLElement | null>(null)
 const menuToggle = ref<InstanceType<typeof BaseIconButton> | null>(null)
 const drawerClose = ref<InstanceType<typeof BaseIconButton> | null>(null)
-let previousBodyOverflow: string | null = null
 
 function openDrawer(): void {
   if (isMobile.value) drawerOpen.value = true
@@ -104,45 +105,13 @@ function closeDrawer(): void {
   drawerOpen.value = false
 }
 
-function releaseDrawer(): void {
-  document.removeEventListener('keydown', handleDrawerKeydown)
-  if (previousBodyOverflow !== null) {
-    document.body.style.overflow = previousBodyOverflow
-    previousBodyOverflow = null
-  }
-}
-
-function handleDrawerKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    closeDrawer()
-    return
-  }
-  if (event.key !== 'Tab') return
-  const controls = sidebar.value?.querySelectorAll<HTMLElement>('a[href], button:not(:disabled)')
-  const first = controls?.[0]
-  const last = controls?.[controls.length - 1]
-  if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault()
-    last?.focus()
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault()
-    first?.focus()
-  }
-}
-
-watch(drawerOpen, async (open) => {
-  if (open) {
-    previousBodyOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    document.addEventListener('keydown', handleDrawerKeydown)
-    await nextTick()
-    if (drawerOpen.value) drawerClose.value?.focus()
-  } else {
-    releaseDrawer()
-    await nextTick()
-    if (isMobile.value) menuToggle.value?.focus()
-  }
+useModalLayer({
+  open: () => drawerOpen.value,
+  container: sidebar,
+  onEscape: closeDrawer,
+  initialFocus: () => drawerClose.value?.$el ?? null,
+  // 关闭后把焦点还给汉堡键，但只在窄屏——桌面端它根本不可见。
+  restoreFocus: () => (isMobile.value ? (menuToggle.value?.$el ?? null) : null),
 })
 
 function updateViewport(): void {
@@ -151,10 +120,7 @@ function updateViewport(): void {
 }
 
 onMounted(() => window.addEventListener('resize', updateViewport))
-onScopeDispose(() => {
-  window.removeEventListener('resize', updateViewport)
-  releaseDrawer()
-})
+onScopeDispose(() => window.removeEventListener('resize', updateViewport))
 
 function handlePrimary(): void {
   emit('primary')
@@ -195,12 +161,10 @@ function handlePrimary(): void {
             <small>知识库工作台</small>
           </span>
         </RouterLink>
-        <BaseIconButton
-          ref="drawerClose"
-          class="sidebar-close"
-          label="关闭导航"
-          @click="closeDrawer"
-        >
+        <!-- 桌面端不收抽屉，这枚键也就不该存在——用 v-if 而不是 display:none：
+             它在 BaseIconButton 自己的 scoped 样式里是 inline-flex（未分层），
+             共享层写 display:none 会被恒定压过去。 -->
+        <BaseIconButton v-if="isMobile" ref="drawerClose" label="关闭导航" @click="closeDrawer">
           <X :size="18" aria-hidden="true" />
         </BaseIconButton>
       </div>
@@ -283,7 +247,7 @@ function handlePrimary(): void {
     <!-- 窄屏抽屉遮罩 -->
     <button
       v-if="drawerOpen"
-      class="sidebar-overlay"
+      class="drawer-overlay"
       aria-label="关闭导航"
       tabindex="-1"
       @click="closeDrawer"
@@ -379,10 +343,6 @@ function handlePrimary(): void {
   font-size: var(--fs-xs);
 }
 
-.sidebar-close {
-  display: none;
-}
-
 /* 主操作：整页唯一一枚填充强调色的大按钮（强调色纪律里「主按钮」那一处）。 */
 .sidebar-primary {
   padding: 4px 16px 12px;
@@ -439,10 +399,14 @@ function handlePrimary(): void {
   border-top: 1px solid var(--border-subtle);
 }
 
+/* 底栏恒定贴侧栏底部：设置、后台入口、账号区是「这一列的最后一段」，
+   不该随上面有没有会话列表而上下浮动。上面的 .sidebar-rail 有 flex: 1 时
+   这条自动失效（剩余高度已被它吃满），没有 #rail 的页面（检索、设置）则靠它贴底。 */
 .sidebar-footer {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  margin-top: auto;
   padding: 10px 12px 14px;
   border-top: 1px solid var(--border-subtle);
 }
@@ -487,15 +451,6 @@ function handlePrimary(): void {
   font-size: var(--fs-xs);
 }
 
-/* 窄屏抽屉遮罩 */
-.sidebar-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-drawer-overlay);
-  border: 0;
-  background: var(--surface-overlay);
-}
-
 .shell-body {
   flex: 1;
   min-width: 0;
@@ -520,23 +475,6 @@ function handlePrimary(): void {
 
   .shell-sidebar.is-open {
     transform: translateX(0);
-  }
-
-  .sidebar-overlay {
-    animation: overlayFadeIn var(--duration-normal) var(--ease-out-smooth);
-  }
-
-  @keyframes overlayFadeIn {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
-
-  .sidebar-close {
-    display: inline-flex;
   }
 
   .shell-body {

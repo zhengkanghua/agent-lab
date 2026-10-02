@@ -117,7 +117,7 @@ describe('AdminShell', () => {
     expect(wrapper.get('.admin-sidebar').classes()).toContain('is-open')
     expect(wrapper.get('.admin-sidebar').attributes('inert')).toBeUndefined()
 
-    await wrapper.get('.sidebar-overlay').trigger('click')
+    await wrapper.get('.drawer-overlay').trigger('click')
     expect(wrapper.get('.admin-sidebar').classes()).not.toContain('is-open')
   })
 
@@ -165,7 +165,7 @@ describe('AdminShell', () => {
       await flushPromises()
       expect(wrapper.get('.admin-sidebar').attributes('inert')).toBeUndefined()
       expect(wrapper.get('.admin-main-wrap').attributes('inert')).toBeUndefined()
-      expect(wrapper.find('.sidebar-overlay').exists()).toBe(false)
+      expect(wrapper.find('.drawer-overlay').exists()).toBe(false)
     } else {
       wrapper.unmount()
     }

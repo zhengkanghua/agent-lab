@@ -311,7 +311,9 @@ describe('SettingsPage', () => {
     expect(panel.attributes('aria-modal')).toBe('true')
 
     // 浮层下面是空内容区，关闭就是回检索页（memory history 的来路）。
-    await panel.trigger('keydown', { key: 'Escape' })
+    // Esc 由 useModalLayer 挂在 document 上（模态打开时焦点可能在容器外，
+    // 挂在面板上会漏掉那些情况），所以这里派发到 document。
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/')
     wrapper.unmount()
@@ -349,7 +351,7 @@ describe('SettingsPage', () => {
 
       // 面板自身不带 dialog 语义（AppShell 抽屉在这个宽度下反而有，不能全局 find）。
       expect(wrapper.get('.settings-panel').attributes('role')).toBeUndefined()
-      await wrapper.get('.settings-panel').trigger('keydown', { key: 'Escape' })
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
       await flushPromises()
       expect(router.currentRoute.value.path).toBe('/settings/account')
       wrapper.unmount()

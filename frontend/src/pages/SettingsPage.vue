@@ -5,6 +5,7 @@ import { X } from '@lucide/vue'
 import AppShell from '@/layouts/AppShell.vue'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 import { authSession, useLogout } from '@/features/auth'
+import { useModalLayer } from '@/shared/composables/useModalLayer'
 import {
   AccountSection,
   AgentPromptSection,
@@ -137,34 +138,17 @@ function onOverlayClick(): void {
   }
 }
 
-/* Esc 关闭与 Tab 循环只在浮层形态生效（模式与外壳抽屉一致）。 */
-function onPanelKeydown(event: KeyboardEvent): void {
-  if (!isFloating.value) return
-  if (event.key === 'Escape') {
-    event.stopPropagation()
-    closeSettings()
-    return
-  }
-  if (event.key !== 'Tab') return
-  const focusables = panelRef.value?.querySelectorAll<HTMLElement>(
-    'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-  )
-  if (!focusables || focusables.length === 0) return
-  const first = focusables[0]!
-  const last = focusables[focusables.length - 1]!
-  if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault()
-    last.focus()
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault()
-    first.focus()
-  }
-}
-
-onMounted(() => {
-  window.addEventListener('resize', updateViewport)
-  if (isFloating.value) panelRef.value?.focus()
+/* Esc 关闭、Tab 循环与滚动锁只在浮层形态生效：窄屏回退整页，那里没有模态可言
+   （喂给 useModalLayer 的 open 直接是 isFloating，false 时它一行都不接管）。
+   焦点归还交给路由——关闭浮层是导航，落点由 router 决定。 */
+useModalLayer({
+  open: () => isFloating.value,
+  container: panelRef,
+  onEscape: closeSettings,
+  restoreFocus: () => null,
 })
+
+onMounted(() => window.addEventListener('resize', updateViewport))
 onScopeDispose(() => window.removeEventListener('resize', updateViewport))
 </script>
 
@@ -190,7 +174,6 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
           :aria-modal="isFloating ? 'true' : undefined"
           aria-label="设置中心"
           :tabindex="isFloating ? -1 : undefined"
-          @keydown="onPanelKeydown"
         >
           <header class="settings-heading">
             <h1>设置中心</h1>

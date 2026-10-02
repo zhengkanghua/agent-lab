@@ -57,10 +57,13 @@ watch(theme, (newTheme) => {
 </script>
 
 <template>
+  <!-- aria-label 与 title 同源：全站图标键都带 title（BaseIconButton 恒给），
+       少了它这一枚在悬停时是唯一没有提示的。 -->
   <button
     type="button"
     class="theme-toggle"
     :aria-label="resolvedTheme === 'light' ? '切换到深色模式' : '切换到浅色模式'"
+    :title="resolvedTheme === 'light' ? '切换到深色模式' : '切换到浅色模式'"
     @click="toggleTheme"
   >
     <Moon v-if="resolvedTheme === 'light'" :size="20" />

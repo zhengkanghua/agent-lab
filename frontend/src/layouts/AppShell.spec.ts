@@ -217,7 +217,7 @@ describe('AppShell', () => {
     expect(sidebar.attributes('inert')).toBeUndefined()
     expect(sidebar.attributes('aria-hidden')).toBeUndefined()
     expect(sidebar.attributes('role')).toBeUndefined()
-    expect(wrapper.find('.sidebar-overlay').exists()).toBe(false)
+    expect(wrapper.find('.drawer-overlay').exists()).toBe(false)
   })
 
   it('窄屏收起为抽屉：点汉堡打开、点遮罩关闭', async () => {
@@ -232,7 +232,7 @@ describe('AppShell', () => {
     expect(wrapper.get('.shell-sidebar').classes()).toContain('is-open')
     expect(wrapper.get('.shell-sidebar').attributes('inert')).toBeUndefined()
 
-    await wrapper.get('.sidebar-overlay').trigger('click')
+    await wrapper.get('.drawer-overlay').trigger('click')
     expect(wrapper.get('.shell-sidebar').classes()).not.toContain('is-open')
   })
 
@@ -283,7 +283,7 @@ describe('AppShell', () => {
       await flushPromises()
       expect(wrapper.get('.shell-sidebar').attributes('inert')).toBeUndefined()
       expect(wrapper.get('.shell-body').attributes('inert')).toBeUndefined()
-      expect(wrapper.find('.sidebar-overlay').exists()).toBe(false)
+      expect(wrapper.find('.drawer-overlay').exists()).toBe(false)
     } else {
       wrapper.unmount()
     }

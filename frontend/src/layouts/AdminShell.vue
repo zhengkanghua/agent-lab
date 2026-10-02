@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onScopeDispose, ref, watch } from 'vue'
+import { onMounted, onScopeDispose, ref } from 'vue'
 import {
   ArrowLeft,
   CalendarClock,
@@ -16,6 +16,7 @@ import {
 } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 import { authSession, useLogout } from '@/features/auth'
+import { useModalLayer } from '@/shared/composables/useModalLayer'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 import ThemeToggle from '@/shared/ui/ThemeToggle.vue'
 
@@ -63,13 +64,13 @@ const adminMenuItems = [
 
 const { loggingOut, logoutError, logout } = useLogout()
 
-/* 移动端抽屉：桌面常驻，窄屏收起为抽屉。 */
+/* 移动端抽屉：桌面常驻，窄屏收起为抽屉。滚动锁、Esc、Tab 焦点循环与焦点归还
+   都归 useModalLayer（与 AppShell 的抽屉同一套实现，此前两份是逐字重复的）。 */
 const drawerOpen = ref(false)
 const isMobile = ref(window.innerWidth <= 900)
 const sidebar = ref<HTMLElement | null>(null)
 const menuToggle = ref<InstanceType<typeof BaseIconButton> | null>(null)
 const drawerClose = ref<InstanceType<typeof BaseIconButton> | null>(null)
-let previousBodyOverflow: string | null = null
 
 function openDrawer(): void {
   if (isMobile.value) drawerOpen.value = true
@@ -78,45 +79,12 @@ function closeDrawer(): void {
   drawerOpen.value = false
 }
 
-function releaseDrawer(): void {
-  document.removeEventListener('keydown', handleDrawerKeydown)
-  if (previousBodyOverflow !== null) {
-    document.body.style.overflow = previousBodyOverflow
-    previousBodyOverflow = null
-  }
-}
-
-function handleDrawerKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    closeDrawer()
-    return
-  }
-  if (event.key !== 'Tab') return
-  const controls = sidebar.value?.querySelectorAll<HTMLElement>('a[href], button:not(:disabled)')
-  const first = controls?.[0]
-  const last = controls?.[controls.length - 1]
-  if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault()
-    last?.focus()
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault()
-    first?.focus()
-  }
-}
-
-watch(drawerOpen, async (open) => {
-  if (open) {
-    previousBodyOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    document.addEventListener('keydown', handleDrawerKeydown)
-    await nextTick()
-    if (drawerOpen.value) drawerClose.value?.focus()
-  } else {
-    releaseDrawer()
-    await nextTick()
-    if (isMobile.value) menuToggle.value?.focus()
-  }
+useModalLayer({
+  open: () => drawerOpen.value,
+  container: sidebar,
+  onEscape: closeDrawer,
+  initialFocus: () => drawerClose.value?.$el ?? null,
+  restoreFocus: () => (isMobile.value ? (menuToggle.value?.$el ?? null) : null),
 })
 
 function updateViewport(): void {
@@ -125,10 +93,7 @@ function updateViewport(): void {
 }
 
 onMounted(() => window.addEventListener('resize', updateViewport))
-onScopeDispose(() => {
-  window.removeEventListener('resize', updateViewport)
-  releaseDrawer()
-})
+onScopeDispose(() => window.removeEventListener('resize', updateViewport))
 </script>
 
 <template>
@@ -155,12 +120,8 @@ onScopeDispose(() => {
           <strong>Signal Desk</strong>
           <small>管理控制台</small>
         </span>
-        <BaseIconButton
-          ref="drawerClose"
-          class="sidebar-close"
-          label="关闭导航"
-          @click="closeDrawer"
-        >
+        <!-- 桌面端不收抽屉，这枚键也就不该存在（同 AppShell：v-if 而不是 display:none）。 -->
+        <BaseIconButton v-if="isMobile" ref="drawerClose" label="关闭导航" @click="closeDrawer">
           <X :size="18" aria-hidden="true" />
         </BaseIconButton>
       </div>
@@ -189,7 +150,7 @@ onScopeDispose(() => {
     <!-- 窄屏抽屉遮罩 -->
     <button
       v-if="drawerOpen"
-      class="sidebar-overlay"
+      class="drawer-overlay"
       aria-label="关闭导航"
       tabindex="-1"
       @click="closeDrawer"
@@ -197,44 +158,49 @@ onScopeDispose(() => {
 
     <!-- 右侧内容区 -->
     <div class="admin-main-wrap" :inert="drawerOpen ? true : undefined">
+      <!-- 顶栏内容是「窄版正文」：与 .admin-content 同一个 max-width 与内边距，
+           标题才和正文左缘对齐（此前顶栏全宽 + 20px，正文 1100 居中 + 40px，
+           1440 屏上错开 75px）。 -->
       <header class="admin-topbar">
-        <BaseIconButton
-          ref="menuToggle"
-          class="menu-toggle"
-          label="打开导航"
-          aria-controls="admin-navigation"
-          :aria-expanded="drawerOpen"
-          @click="openDrawer"
-        >
-          <Menu :size="19" aria-hidden="true" />
-        </BaseIconButton>
-
-        <div class="topbar-heading">
-          <h1 class="topbar-title" :title="props.headingTitle">{{ props.headingTitle }}</h1>
-          <p v-if="props.headingSubtitle" class="topbar-subtitle" :title="props.headingSubtitle">
-            {{ props.headingSubtitle }}
-          </p>
-        </div>
-
-        <div class="topbar-actions">
-          <ThemeToggle />
-
-          <RouterLink
-            v-if="authSession.user.value"
-            :to="{ name: 'settings', params: { section: 'account' } }"
-            class="account-identity"
-            :aria-label="`账号与设置 - ${authSession.user.value.email}`"
-            :title="`账号与设置 - ${authSession.user.value.email}`"
+        <div class="admin-topbar-inner">
+          <BaseIconButton
+            ref="menuToggle"
+            class="menu-toggle"
+            label="打开导航"
+            aria-controls="admin-navigation"
+            :aria-expanded="drawerOpen"
+            @click="openDrawer"
           >
-            <UserRound :size="17" aria-hidden="true" />
-            <span>{{ authSession.user.value.email }}</span>
-          </RouterLink>
-
-          <BaseIconButton label="退出登录" busy-cursor :disabled="loggingOut" @click="logout">
-            <LogOut :size="17" aria-hidden="true" />
+            <Menu :size="19" aria-hidden="true" />
           </BaseIconButton>
 
-          <span v-if="logoutError" class="logout-error" role="alert">退出失败</span>
+          <div class="topbar-heading">
+            <h1 class="topbar-title" :title="props.headingTitle">{{ props.headingTitle }}</h1>
+            <p v-if="props.headingSubtitle" class="topbar-subtitle" :title="props.headingSubtitle">
+              {{ props.headingSubtitle }}
+            </p>
+          </div>
+
+          <div class="topbar-actions">
+            <ThemeToggle />
+
+            <RouterLink
+              v-if="authSession.user.value"
+              :to="{ name: 'settings', params: { section: 'account' } }"
+              class="account-identity"
+              :aria-label="`账号与设置 - ${authSession.user.value.email}`"
+              :title="`账号与设置 - ${authSession.user.value.email}`"
+            >
+              <UserRound :size="17" aria-hidden="true" />
+              <span>{{ authSession.user.value.email }}</span>
+            </RouterLink>
+
+            <BaseIconButton label="退出登录" busy-cursor :disabled="loggingOut" @click="logout">
+              <LogOut :size="17" aria-hidden="true" />
+            </BaseIconButton>
+
+            <span v-if="logoutError" class="logout-error" role="alert">退出失败</span>
+          </div>
         </div>
       </header>
 
@@ -300,11 +266,6 @@ onScopeDispose(() => {
   font-size: var(--fs-xs);
 }
 
-.sidebar-close {
-  display: none;
-  margin-left: auto;
-}
-
 .sidebar-nav {
   display: flex;
   flex-direction: column;
@@ -326,8 +287,8 @@ onScopeDispose(() => {
   font-weight: var(--fw-semibold);
   text-decoration: none;
   transition:
-    color 150ms ease,
-    background-color 150ms ease;
+    color var(--duration-fast) var(--ease-out-smooth),
+    background-color var(--duration-fast) var(--ease-out-smooth);
 }
 
 .menu-back:hover {
@@ -355,8 +316,8 @@ onScopeDispose(() => {
   font-weight: var(--fw-semibold);
   text-decoration: none;
   transition:
-    color 150ms ease,
-    background-color 150ms ease;
+    color var(--duration-fast) var(--ease-out-smooth),
+    background-color var(--duration-fast) var(--ease-out-smooth);
 }
 
 .menu-item:hover {
@@ -377,15 +338,6 @@ onScopeDispose(() => {
   flex: 0 0 auto;
 }
 
-/* 窄屏抽屉遮罩 */
-.sidebar-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-drawer-overlay);
-  border: 0;
-  background: var(--surface-overlay);
-}
-
 .admin-main-wrap {
   flex: 1;
   min-width: 0;
@@ -396,16 +348,23 @@ onScopeDispose(() => {
   position: sticky;
   top: 0;
   z-index: var(--z-admin-topbar);
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  /* 40px 极薄一条（2026-09 重设计 P4）：分区标题 + 说明占一行，操作全收图标。
-     后台不再有自己的「页面头」，分区标题就是这一条的正文。 */
-  min-height: 40px;
-  padding: 0 20px;
   border-bottom: 1px solid var(--border-subtle);
   /* 同 AppShell 顶栏：scrim 已 96% 不透明，blur 不可见却会在主题切换时闪黑。 */
   background: var(--surface-scrim);
+}
+
+/* 40px 极薄一条（2026-09 重设计 P4）：分区标题 + 说明占一行，操作全收图标。
+   后台不再有自己的「页面头」，分区标题就是这一条的正文。
+   宽度与内边距跟 .admin-content 完全一致，标题才与正文左缘对齐。 */
+.admin-topbar-inner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  max-width: 1100px;
+  min-height: 40px;
+  margin: 0 auto;
+  padding: 0 40px;
 }
 
 .menu-toggle {
@@ -461,8 +420,8 @@ onScopeDispose(() => {
   color: var(--text-secondary);
   text-decoration: none;
   transition:
-    color 150ms ease,
-    background-color 150ms ease;
+    color var(--duration-fast) var(--ease-out-smooth),
+    background-color var(--duration-fast) var(--ease-out-smooth);
 }
 
 .account-identity svg {
@@ -512,24 +471,7 @@ onScopeDispose(() => {
     transform: translateX(0);
   }
 
-  .sidebar-overlay {
-    animation: overlayFadeIn var(--duration-normal) var(--ease-out-smooth);
-  }
-
-  @keyframes overlayFadeIn {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
-
   .menu-toggle {
-    display: inline-flex;
-  }
-
-  .sidebar-close {
     display: inline-flex;
   }
 
@@ -537,7 +479,7 @@ onScopeDispose(() => {
     margin-left: 0;
   }
 
-  .admin-topbar {
+  .admin-topbar-inner {
     padding: 0 16px;
   }
 }
@@ -547,7 +489,7 @@ onScopeDispose(() => {
     padding: 22px 16px 56px;
   }
 
-  .admin-topbar {
+  .admin-topbar-inner {
     gap: 10px;
   }
 
