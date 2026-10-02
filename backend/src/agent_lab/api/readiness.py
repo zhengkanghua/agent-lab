@@ -72,8 +72,7 @@ class ReadinessResponse(BaseModel):
     include_in_schema=False,
     summary="内部就绪端点：新版本能不能接班",
     description=(
-        "只读端点，不鉴权。三样一起看：业务库能执行最小查询、checkpointer 连接池能取到连接、"
-        "启动后那次上游配置校验的结论。全部通过返回 200 与 ``{\"status\": \"ready\"}``，"
+        "只读端点，不鉴权。两样一起看：业务库能执行最小查询、checkpointer 连接池能取到连接。全部通过返回 200 与 ``{\"status\": \"ready\"}``，"
         "否则返回 503 与 ``{\"status\": \"not_ready\"}``；两种响应体都不含依赖名与错误原文。"
     ),
 )
@@ -87,7 +86,7 @@ async def readiness(
     结论（不能接班），所以两种情况的响应形状必须一致，不能让其中一个变成 500 或断连接。
 
     Args:
-        request: 当前 HTTP 请求，用于取出进程级 Agent Runtime 与启动配置校验结论。
+        request: 当前 HTTP 请求，用于取出进程级 Agent Runtime。
         session: FastAPI 注入的业务库会话，用于执行最小查询。
 
     Returns:
@@ -107,14 +106,14 @@ async def readiness(
 
 
 async def evaluate_readiness(request: Request, *, session: AsyncSession) -> bool:
-    """三样一起看，任何一样不过就是未就绪。
+    """两样一起看，任何一样不过就是未就绪。
 
     Args:
-        request: 当前 HTTP 请求，用于取出进程级 Agent Runtime 与启动配置校验结论。
+        request: 当前 HTTP 请求，用于取出进程级 Agent Runtime。
         session: 业务库会话。
 
     Returns:
-        三样都通过时为 ``True``。
+        两样都通过时为 ``True``。
 
     Notes:
         探针失败只记异常类型，不把异常文本带进响应体或日志正文——连接串里有凭据。
