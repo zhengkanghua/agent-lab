@@ -224,7 +224,7 @@ export function useAgentChat({
         error instanceof ApiError
           ? error
           : new ApiError({
-              message: 'Unexpected agent failure.',
+              message: 'Agent 对话出现了未预期的失败。',
               code: 'unknown_error',
               cause: error,
             }),
@@ -542,7 +542,7 @@ export function useAgentChat({
         error instanceof ApiError
           ? error
           : new ApiError({
-              message: 'Unexpected thread load failure.',
+              message: '读取这个会话的记录出现了未预期的失败。',
               code: 'unknown_error',
               cause: error,
             }),

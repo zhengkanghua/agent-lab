@@ -182,7 +182,7 @@ function readRecord(value: unknown): UsageRecord {
 
 function invalidUsageResponse(): ApiError {
   return new ApiError({
-    message: 'The usage service returned an invalid response.',
+    message: '用量服务返回了无效的响应。',
     code: 'response_invalid',
   })
 }

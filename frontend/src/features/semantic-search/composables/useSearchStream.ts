@@ -156,7 +156,7 @@ export function useSearchStream({
         caught instanceof ApiError
           ? caught
           : new ApiError({
-              message: 'Unexpected search failure.',
+              message: '检索出现了未预期的失败。',
               code: 'unknown_error',
               cause: caught,
             })

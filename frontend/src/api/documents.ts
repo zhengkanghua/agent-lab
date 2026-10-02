@@ -29,14 +29,14 @@ export async function fetchDocument({
 
   if (!isDocumentDetailDto(response)) {
     throw new ApiError({
-      message: 'The document service returned an invalid article.',
+      message: '文档服务返回的正文无效。',
       code: 'response_invalid',
     })
   }
 
   if (response.document_id.toLowerCase() !== documentId.toLowerCase()) {
     throw new ApiError({
-      message: 'The document service returned a different article.',
+      message: '文档服务返回的正文与请求的不是同一篇。',
       code: 'response_invalid',
     })
   }

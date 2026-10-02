@@ -41,7 +41,7 @@ function isSource(value: unknown): value is SourceDto {
 
 function invalidResponse(): ApiError {
   return new ApiError({
-    message: 'The source service returned an invalid response.',
+    message: '来源服务返回了无效的响应。',
     code: 'response_invalid',
   })
 }

@@ -98,7 +98,7 @@ const canEdit = computed(() => loadState.value === 'ready')
 async function save(next: UserPreferences): Promise<void> {
   if (!canEdit.value) {
     throw new ApiError({
-      message: 'Preferences have not been loaded yet.',
+      message: '偏好设置尚未加载完成。',
       code: 'preferences_not_loaded',
     })
   }

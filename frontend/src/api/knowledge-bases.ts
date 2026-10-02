@@ -60,7 +60,7 @@ function isKnowledgeBase(value: unknown): value is KnowledgeBaseDto {
 
 function invalidResponse(): ApiError {
   return new ApiError({
-    message: 'The knowledge base service returned an invalid response.',
+    message: '知识库服务返回了无效的响应。',
     code: 'response_invalid',
   })
 }

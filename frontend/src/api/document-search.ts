@@ -74,14 +74,14 @@ export async function searchDocuments({
 
   if (!isRecord(response) || !isResolvedScope(response.scope) || !Array.isArray(response.results)) {
     throw new ApiError({
-      message: 'The search service returned an unexpected result shape.',
+      message: '检索服务返回了无法识别的结果结构。',
       code: 'response_invalid',
     })
   }
 
   if (!response.results.every(isDocumentSearchResultDto)) {
     throw new ApiError({
-      message: 'The search service returned an invalid document result.',
+      message: '检索服务返回了无效的文档结果。',
       code: 'response_invalid',
     })
   }

@@ -83,7 +83,7 @@ function readPreferences(value: unknown): RemotePreferences {
 
 function invalidPreferencesResponse(): ApiError {
   return new ApiError({
-    message: 'The account service returned invalid preferences.',
+    message: '账号服务返回了无效的偏好设置。',
     code: 'response_invalid',
   })
 }

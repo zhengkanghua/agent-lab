@@ -96,7 +96,7 @@ export function toApiError(
     message:
       typeof errorBody?.detail === 'string'
         ? errorBody.detail
-        : 'The search service rejected the request.',
+        : '请求失败，服务未说明原因，请刷新后重试。',
     status: response.status,
     code:
       typeof errorBody?.code === 'string'
@@ -122,7 +122,7 @@ export async function requestJson<T>(
   const body = await requestApi(path, init, options)
   if (body === undefined) {
     throw new ApiError({
-      message: 'The service returned an empty response.',
+      message: '服务返回了空响应，请刷新后重试。',
       code: 'response_invalid',
     })
   }
@@ -199,7 +199,7 @@ async function requestApi(
     } catch (error) {
       if (timedOut && !callerSignal?.aborted) {
         throw new ApiError({
-          message: 'The search request timed out.',
+          message: '请求超时，请稍后重试。',
           code: 'request_timeout',
           retryable: true,
           cause: error,
@@ -209,7 +209,7 @@ async function requestApi(
         throw error
       }
       throw new ApiError({
-        message: 'Unable to reach the search service.',
+        message: '无法连接到服务，请检查网络后重试。',
         code: 'network_error',
         retryable: true,
         cause: error,
@@ -224,7 +224,7 @@ async function requestApi(
   } catch (error) {
     if (timedOut && !callerSignal?.aborted && isAbortError(error)) {
       throw new ApiError({
-        message: 'The search request timed out.',
+        message: '请求超时，请稍后重试。',
         code: 'request_timeout',
         retryable: true,
         cause: error,
@@ -254,7 +254,7 @@ export async function readJsonBody(response: Response): Promise<unknown> {
   } catch (error) {
     if (response.ok) {
       throw new ApiError({
-        message: 'The search service returned an unreadable response.',
+        message: '服务返回了无法解析的响应，请刷新后重试。',
         status: response.status,
         code: 'response_invalid',
         cause: error,

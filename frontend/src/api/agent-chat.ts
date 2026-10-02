@@ -123,7 +123,7 @@ export async function* streamAgentChat({
 
     if (response.body === null) {
       throw new ApiError({
-        message: 'The agent service returned a response without a body.',
+        message: 'Agent 服务返回了没有响应体的响应，请重试。',
         status: response.status,
         code: 'response_invalid',
       })
@@ -201,7 +201,7 @@ export async function stopAgentRun(threadId: string, runId: string): Promise<voi
 
   if (!isRecord(response) || !isUuid(response.thread_id) || !isUuid(response.run_id)) {
     throw new ApiError({
-      message: 'The agent service returned an unexpected stop result.',
+      message: 'Agent 服务返回了无法识别的停止结果，请刷新后重试。',
       code: 'response_invalid',
     })
   }
@@ -213,7 +213,7 @@ export async function fetchAgentDefaultPrompt(signal?: AbortSignal): Promise<str
 
   if (!isRecord(response) || !hasText(response.system_prompt)) {
     throw new ApiError({
-      message: 'The agent service returned an unexpected default prompt shape.',
+      message: 'Agent 服务返回了无法识别的默认提示词，请刷新后重试。',
       code: 'response_invalid',
     })
   }
@@ -245,7 +245,7 @@ function parseFrame(frame: string): AgentChatEvent | null {
     parsed = JSON.parse(payload) as unknown
   } catch (error) {
     throw new ApiError({
-      message: 'The agent service sent an unreadable event.',
+      message: 'Agent 服务发来的事件无法解析。',
       code: 'response_invalid',
       cause: error,
     })
@@ -253,7 +253,7 @@ function parseFrame(frame: string): AgentChatEvent | null {
 
   if (!isAgentChatEvent(parsed)) {
     throw new ApiError({
-      message: 'The agent service sent an event that does not match the contract.',
+      message: 'Agent 服务发来的事件不符合约定。',
       code: 'response_invalid',
     })
   }
@@ -325,8 +325,8 @@ function translateStreamFailure(
     return new ApiError({
       message:
         timedOutAt === 'connect'
-          ? 'The agent service did not respond in time.'
-          : 'The agent stream went silent.',
+          ? '连接 Agent 服务超时，请重试。'
+          : 'Agent 的流式响应中断了，请重试。',
       code: 'request_timeout',
       retryable: true,
       cause: error,
@@ -336,7 +336,7 @@ function translateStreamFailure(
   if (isAbortError(error)) return error
 
   return new ApiError({
-    message: 'Unable to reach the agent service.',
+    message: '无法连接到 Agent 服务，请检查网络后重试。',
     code: 'network_error',
     retryable: true,
     cause: error,

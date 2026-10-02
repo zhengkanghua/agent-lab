@@ -48,7 +48,7 @@ export function createAuthSession(): AuthSession {
         cause instanceof ApiError
           ? cause
           : new ApiError({
-              message: 'Unable to check the current session.',
+              message: '无法核对当前登录状态。',
               code: 'session_check_failed',
               cause,
             })
@@ -73,7 +73,7 @@ export function createAuthSession(): AuthSession {
       throw (
         error.value ??
         new ApiError({
-          message: 'The session could not be established.',
+          message: '无法建立登录会话。',
           code: 'session_check_failed',
         })
       )
