@@ -144,7 +144,7 @@ describe('文档审核', () => {
       },
     )
     const { wrapper } = await mountWorkbench()
-    await wrapper.get('textarea[aria-describedby="draft-help"]').setValue('修正后的正文。')
+    await wrapper.get('textarea.draft-body').setValue('修正后的正文。')
     expect(button(wrapper, '确认采用预览').attributes('disabled')).toBeDefined()
     expect(wrapper.text()).toContain('上次预览')
     await click(wrapper, '保存草稿')
@@ -160,9 +160,7 @@ describe('文档审核', () => {
     await click(wrapper, '采用这份预览')
     expect(wrapper.text()).toContain('候选已冻结')
     expect(wrapper.text()).toContain('第 1 版')
-    expect(
-      wrapper.get('textarea[aria-describedby="draft-help"]').attributes('readonly'),
-    ).toBeDefined()
+    expect(wrapper.get('textarea.draft-body').attributes('readonly')).toBeDefined()
     update(remote, 'adopted')
     remote.document.revision = 2
     remote.document.draft_processing_id = null
@@ -206,18 +204,12 @@ describe('文档审核', () => {
       },
     )
     const { wrapper } = await mountWorkbench()
-    await wrapper.get('textarea[aria-describedby="draft-help"]').setValue('自己的编辑')
+    await wrapper.get('textarea.draft-body').setValue('自己的编辑')
     await click(wrapper, '保存草稿')
-    expect(wrapper.get('textarea[aria-describedby="draft-help"]').element).toHaveProperty(
-      'value',
-      '自己的编辑',
-    )
+    expect(wrapper.get('textarea.draft-body').element).toHaveProperty('value', '自己的编辑')
     expect(wrapper.text()).toContain('本地编辑已保留')
     await click(wrapper, '保留本地编辑并继续')
-    expect(wrapper.get('textarea[aria-describedby="draft-help"]').element).toHaveProperty(
-      'value',
-      '自己的编辑',
-    )
+    expect(wrapper.get('textarea.draft-body').element).toHaveProperty('value', '自己的编辑')
     await click(wrapper, '保存草稿')
     expect(saves).toBe(2)
   })
@@ -226,14 +218,11 @@ describe('文档审核', () => {
     const remote = reviewDetail()
     serve(() => remote)
     const { wrapper, router } = await mountWorkbench()
-    await wrapper.get('textarea[aria-describedby="draft-help"]').setValue('还未保存')
+    await wrapper.get('textarea.draft-body').setValue('还未保存')
     remote.document.management_revision++
     remote.candidate.draft_text = '后台最新正文'
     await click(wrapper, '刷新状态')
-    expect(wrapper.get('textarea[aria-describedby="draft-help"]').element).toHaveProperty(
-      'value',
-      '还未保存',
-    )
+    expect(wrapper.get('textarea.draft-body').element).toHaveProperty('value', '还未保存')
     const unload = new Event('beforeunload', { cancelable: true })
     window.dispatchEvent(unload)
     expect(unload.defaultPrevented).toBe(true)
@@ -313,15 +302,12 @@ describe('文档审核', () => {
       },
     )
     const { wrapper } = await mountWorkbench()
-    await wrapper.get('textarea[aria-describedby="draft-help"]').setValue('保留人工草稿')
+    await wrapper.get('textarea.draft-body').setValue('保留人工草稿')
     await click(wrapper, '换用最新来源')
     expect(wrapper.text()).toContain('未保存编辑将被替换')
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0)
     await click(wrapper, '确认替换草稿')
-    expect(wrapper.get('textarea[aria-describedby="draft-help"]').element).toHaveProperty(
-      'value',
-      '最新来源正文',
-    )
+    expect(wrapper.get('textarea.draft-body').element).toHaveProperty('value', '最新来源正文')
     expect(wrapper.text()).toContain('第 1 版')
   })
 

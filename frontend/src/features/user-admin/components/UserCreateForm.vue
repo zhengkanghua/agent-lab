@@ -66,8 +66,9 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
     </div>
 
     <form class="create-form" novalidate @submit.prevent="emit('submit')">
-      <!-- 字段外壳走 BaseField：标签、aria-invalid 与 aria-describedby 由它算一次。 -->
-      <BaseField id="new-email" label="账号邮箱">
+      <!-- 字段外壳走 BaseField：标签、必填标记、aria-invalid 与 aria-describedby 由它算一次。
+           密码规则走 hint 而不是 placeholder——placeholder 一输入就没了，用户中途回看不到。 -->
+      <BaseField id="new-email" label="账号邮箱" required>
         <template #default="{ control }">
           <BaseInput
             v-bind="control"
@@ -80,7 +81,7 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
           />
         </template>
       </BaseField>
-      <BaseField id="new-password" label="初始密码">
+      <BaseField id="new-password" label="初始密码" required :hint="passwordHint">
         <template #default="{ control }">
           <BaseInput
             v-bind="control"
@@ -88,7 +89,6 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
             type="password"
             name="new-password"
             autocomplete="new-password"
-            :placeholder="passwordHint"
             :disabled="submitting"
           />
         </template>
@@ -100,12 +100,19 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
           <small>可管理账号并执行手动 Pipeline</small>
         </span>
       </label>
-      <!-- loading 一并给出转圈、禁用、wait 指针与 aria-busy；原来手写只有前两样。 -->
-      <BaseButton class="submit-command" variant="primary" type="submit" :loading="submitting">
-        <template #icon><Check :size="17" aria-hidden="true" /></template>
-        {{ submitting ? '正在创建' : '确认创建' }}
-      </BaseButton>
-      <BaseCallout v-if="error" class="editor-error" tone="danger" :description="error" />
+      <BaseCallout v-if="error" tone="danger" :description="error" />
+      <!-- 次左主右、右对齐收尾：与全站确认框、其余表单同一个收尾方向。
+           原先只有一枚左对齐的提交键，放弃编辑的唯一出口是右上角的 X。 -->
+      <div class="form-actions">
+        <BaseButton variant="outline" :disabled="submitting" @click="emit('close')"
+          >取消</BaseButton
+        >
+        <!-- loading 一并给出转圈、禁用、wait 指针与 aria-busy；原来手写只有前两样。 -->
+        <BaseButton variant="primary" type="submit" :loading="submitting">
+          <template #icon><Check :size="17" aria-hidden="true" /></template>
+          {{ submitting ? '正在创建' : '确认创建' }}
+        </BaseButton>
+      </div>
     </form>
   </section>
 </template>
@@ -136,38 +143,25 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
   font-weight: var(--fw-bold);
 }
 
+/* 单列：这个表单只出现在 520px 的对话框里，原来那套「宽容器两列、窄容器一列」的
+   断点在对话框里恒走单列，两列那一支是到不了的死写法（2026-10 消融）。 */
 .create-form {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) minmax(200px, 0.8fr) auto;
-  align-items: end;
-  gap: 18px;
+  gap: var(--space-5);
   margin-top: 22px;
 }
 
 /* 字段外壳归 BaseField，复选行外观归 styles/components/form-controls.css，
-   输入框皮肤归 BaseInput。这里只剩本表单自己的排布。 */
-
-.editor-error {
-  grid-column: 1 / -1;
-}
-
-@container (max-width: 1040px) {
-  .create-form {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .create-form .submit-command {
-    justify-self: start;
-  }
+   输入框皮肤归 BaseInput。这里只剩两种收尾。 */
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
 }
 
 @container (max-width: 720px) {
   .create-editor {
     padding: 22px 17px 24px;
-  }
-
-  .create-form {
-    grid-template-columns: 1fr;
   }
 }
 </style>

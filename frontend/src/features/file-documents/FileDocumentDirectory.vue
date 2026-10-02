@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
-import { BookOpenText, FileUp, RefreshCw } from '@lucide/vue'
+import { BookOpenText, CircleAlert, FileUp, RefreshCw } from '@lucide/vue'
 import { FILE_PAGE_SIZE, type FileDocumentDto } from '@/api/file-documents'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
+import BaseField from '@/shared/ui/BaseField.vue'
+import BaseSelect from '@/shared/ui/BaseSelect.vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
 import BasePager from '@/shared/ui/BasePager.vue'
 import { useFileDocuments } from './useFileDocuments'
@@ -19,9 +21,22 @@ const knowledgeBaseId = ref('')
 const selectedFile = ref<File>()
 const fileInput = ref<HTMLInputElement>()
 const localError = ref<string>()
+/* 上界要等文件列表读回来才知道。没读回来时是 null，调用方一律不提「最大多少」——
+   以前这里回落到字符串「加载中」，于是拼进句子里成了「单文件最大 加载中。」。 */
 const maxSizeLabel = computed(() =>
-  files.maxFileBytes.value ? `${files.maxFileBytes.value / 1024 / 1024} MiB` : '加载中',
+  files.maxFileBytes.value ? `${files.maxFileBytes.value / 1024 / 1024} MiB` : null,
 )
+
+const fileHint = computed(() =>
+  maxSizeLabel.value
+    ? `支持 UTF-8 编码的 .txt、.md，单文件最大 ${maxSizeLabel.value}。保存后由后台解析，异常资料在文档审核中处理。`
+    : '支持 UTF-8 编码的 .txt、.md。保存后由后台解析，异常资料在文档审核中处理。',
+)
+
+function onFileChange(event: Event): void {
+  selectedFile.value = (event.target as HTMLInputElement).files?.[0]
+  localError.value = undefined
+}
 
 async function openEditor(item?: FileDocumentDto) {
   const keepSelection =
@@ -53,7 +68,11 @@ async function save() {
     localError.value = '仅支持 txt 和 md 文件。'
     return
   }
-  if (!files.maxFileBytes.value || file.size > files.maxFileBytes.value) {
+  if (!maxSizeLabel.value) {
+    localError.value = '文件大小上限尚未读回来，请先刷新状态再提交。'
+    return
+  }
+  if (file.size > files.maxFileBytes.value!) {
     localError.value = `文件不能超过 ${maxSizeLabel.value}。`
     return
   }
@@ -105,60 +124,70 @@ async function removeDocument(item: FileDocumentDto) {
         <BaseButton variant="outline" :disabled="files.busy.value" @click="files.refresh()"
           ><RefreshCw :size="15" />刷新状态</BaseButton
         >
-        <BaseButton :disabled="files.busy.value" @click="openEditor()"
+        <!-- 上传是这页的主操作，实心强调色；「刷新状态」是次要动作，描边。 -->
+        <BaseButton variant="primary" :disabled="files.busy.value" @click="openEditor()"
           ><FileUp :size="16" />上传文件</BaseButton
         >
       </div>
     </div>
     <form v-if="editorOpen" class="file-editor" @submit.prevent="save">
       <h2>{{ target ? `替换文件：${target.title}` : '上传文件' }}</h2>
-      <p v-if="target">
+      <p v-if="target" class="file-note">
         所属知识库：{{
           target.knowledge_base_name
         }}。替换保留文档身份，新结果采用成功后才更新正式版本。
       </p>
-      <label v-else
-        >所属知识库
-        <select v-model="knowledgeBaseId" :disabled="files.busy.value" required>
-          <option value="" disabled>请选择知识库</option>
-          <option v-for="item in files.knowledgeBases.value" :key="item.id" :value="item.id">
-            {{ item.name }}
-          </option>
-        </select>
-      </label>
-      <label
-        >文本文件
-        <input
-          ref="fileInput"
-          type="file"
-          accept=".txt,.md,text/plain,text/markdown"
-          :disabled="files.busy.value"
-          @change="selectedFile = ($event.target as HTMLInputElement).files?.[0]"
-        />
-      </label>
-      <p class="file-hint">
-        支持 UTF-8 编码的 .txt、.md，单文件最大
-        {{ maxSizeLabel }}。保存后由后台解析，异常资料在文档审核中处理。
-      </p>
+      <BaseField v-else id="upload-knowledge-base" label="所属知识库" required>
+        <template #default="{ control }">
+          <BaseSelect v-bind="control" v-model="knowledgeBaseId" :disabled="files.busy.value">
+            <option value="" disabled>请选择知识库</option>
+            <option v-for="item in files.knowledgeBases.value" :key="item.id" :value="item.id">
+              {{ item.name }}
+            </option>
+          </BaseSelect>
+        </template>
+      </BaseField>
+      <BaseField id="upload-file" label="文本文件" :hint="fileHint">
+        <template #default="{ control }">
+          <!-- 原生 file 控件铺满整块并透明化：它自己就是唯一可点、可聚焦、可访问的控件，
+               下面两个 span 只是它的外观。不为它再挂第二枚按钮、也不加第二个 tab 停靠点。 -->
+          <div class="file-picker">
+            <input
+              v-bind="control"
+              ref="fileInput"
+              class="file-picker-input"
+              type="file"
+              accept=".txt,.md,text/plain,text/markdown"
+              :disabled="files.busy.value"
+              @change="onFileChange"
+            />
+            <span class="file-picker-face" aria-hidden="true">选择文件</span>
+            <span class="file-picker-name" aria-hidden="true">{{
+              selectedFile?.name ?? '未选择文件'
+            }}</span>
+          </div>
+        </template>
+      </BaseField>
       <BaseCallout
         v-if="localError || files.directoryError.value"
         tone="danger"
         :description="localError || files.directoryError.value || ''"
       />
-      <div class="file-actions">
+      <div class="file-form-actions">
         <BaseButton v-if="files.needsReselect.value" variant="outline" @click="reselectTarget">
           使用刷新后的记录继续替换
         </BaseButton>
+        <BaseButton variant="outline" :disabled="files.busy.value" @click="editorOpen = false"
+          >取消</BaseButton
+        >
         <BaseButton
           type="submit"
+          variant="primary"
           :loading="files.busy.value"
           :disabled="
             !files.maxFileBytes.value || !!files.directoryError.value || files.needsReselect.value
           "
           >{{ target ? '确认替换' : '保存文件' }}</BaseButton
-        >
-        <BaseButton variant="outline" :disabled="files.busy.value" @click="editorOpen = false"
-          >取消</BaseButton
         >
       </div>
     </form>
@@ -166,15 +195,35 @@ async function removeDocument(item: FileDocumentDto) {
       v-if="files.actionError.value"
       tone="danger"
       :description="files.actionError.value"
-    />
+    >
+      <template #icon><CircleAlert :size="16" aria-hidden="true" /></template>
+    </BaseCallout>
     <p v-if="files.feedback.value" class="file-feedback" role="status">
       {{ files.feedback.value }}
     </p>
-    <BaseCallout v-if="files.loadError.value" tone="danger" :description="files.loadError.value" />
-    <p v-if="files.loading.value" role="status"><BaseSpinner :size="18" />正在加载文件资料</p>
-    <p v-else-if="!files.items.value.length && !files.loadError.value" class="files-empty">
+    <!-- 失败横幅里直接给重试：文案说的动作与按钮上的字对得上（此前横幅只说
+         「请刷新后重试」，而唯一的重试入口是右上角那枚叫「刷新状态」的键）。 -->
+    <BaseCallout v-if="files.loadError.value" tone="danger" :description="files.loadError.value">
+      <template #icon><CircleAlert :size="16" aria-hidden="true" /></template>
+      <template #actions>
+        <BaseButton
+          size="sm"
+          variant="outline"
+          :disabled="files.busy.value"
+          @click="files.refresh()"
+        >
+          <template #icon><RefreshCw :size="15" aria-hidden="true" /></template>
+          重试
+        </BaseButton>
+      </template>
+    </BaseCallout>
+    <!-- 三态行归共享层（styles/components/directory.css），与其余四个目录同一套。 -->
+    <div v-if="files.loading.value" class="directory-state" role="status">
+      <BaseSpinner :size="20" />正在读取文件资料
+    </div>
+    <div v-else-if="!files.items.value.length && !files.loadError.value" class="directory-state">
       还没有上传文档。选择知识库，上传第一份文本资料。
-    </p>
+    </div>
     <table v-if="files.items.value.length" class="file-table">
       <caption class="sr-only">
         上传文件、所属知识库和处理状态
@@ -245,9 +294,12 @@ async function removeDocument(item: FileDocumentDto) {
                 }"
                 >查看与审核</BaseButton
               >
+              <!-- 破坏性动作单独一档：danger 变体的浅红底 + 多留一段间距，与上面三个
+                   中性动作拉开。以前它也是 ghost，只靠「删除」两个字区分。 -->
               <BaseButton
-                variant="ghost"
+                variant="danger"
                 size="sm"
+                class="row-remove"
                 :disabled="files.busy.value"
                 @click="removeDocument(item)"
                 >{{ item.deletion_pending ? '继续删除' : '删除' }}</BaseButton
@@ -283,8 +335,7 @@ async function removeDocument(item: FileDocumentDto) {
   gap: 14px;
 }
 .files-toolbar > p,
-.file-hint,
-.files-empty {
+.file-note {
   color: var(--text-secondary);
   font-size: var(--fs-sm);
   line-height: 1.7;
@@ -295,10 +346,15 @@ async function removeDocument(item: FileDocumentDto) {
   align-items: center;
   gap: 6px;
 }
+/* 行内破坏性动作与上面几个中性动作再拉开一点。 */
+.row-remove {
+  margin-left: var(--space-2);
+}
 .file-editor {
   display: grid;
-  gap: 14px;
-  padding: 22px;
+  gap: var(--space-4);
+  max-width: 720px;
+  padding: var(--space-5);
   background: var(--surface-raised);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -307,25 +363,61 @@ async function removeDocument(item: FileDocumentDto) {
   font-size: var(--fs-base);
   overflow-wrap: anywhere;
 }
-.file-editor > p {
-  overflow-wrap: anywhere;
-}
-.file-editor label {
-  display: grid;
-  gap: 8px;
-  font-size: var(--fs-sm);
-}
-.file-editor select,
-.file-editor input {
-  width: 100%;
-  min-width: 0;
-  max-width: 520px;
-  padding: 10px;
-  color: var(--text-primary);
-  background: var(--surface-base);
+/* 字段外壳（标签 / 必填标记 / 说明 / aria 接线）归 BaseField，选择器归 BaseSelect。
+   这里只剩文件选择器的外观与表单自己的收尾。 */
+
+/* 原生 file 控件铺满整块并透明化：它自己就是唯一可点、可聚焦、可访问的控件，
+   下面两个 span 只是它的外观（所以 aria-hidden）。这样既没有浏览器原生的
+   英文「Choose File / No file chosen」，也不用为它加第二个 tab 停靠点。 */
+.file-picker {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 42px;
+  padding: 0 10px;
   border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+.file-picker:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.file-picker-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.file-picker-input:disabled {
+  cursor: wait;
+}
+.file-picker-face {
+  flex: 0 0 auto;
+  padding: 3px 10px;
   border-radius: var(--radius-sm);
-  font: inherit;
+  color: var(--text-primary);
+  background: var(--surface-sunken);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+}
+.file-picker-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 次左主右：原先提交键在左、取消在右，主操作反而是先读到的那一个。 */
+.file-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
 }
 .file-feedback {
   color: var(--accent);

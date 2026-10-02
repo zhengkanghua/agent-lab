@@ -8,6 +8,7 @@ import BaseField from '@/shared/ui/BaseField.vue'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 import BaseInput from '@/shared/ui/BaseInput.vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
+import BaseSwitch from '@/shared/ui/BaseSwitch.vue'
 import BaseTextarea from '@/shared/ui/BaseTextarea.vue'
 import { useKnowledgeBases } from './useKnowledgeBases'
 
@@ -41,10 +42,9 @@ async function edit(event: MouseEvent, item?: KnowledgeBaseDto): Promise<void> {
   editor.value?.querySelector<HTMLInputElement>('input:not([disabled])')?.focus()
 }
 
-function changeActive(event: Event, item: KnowledgeBaseDto): void {
-  const input = event.target as HTMLInputElement
-  const requested = input.checked
-  input.checked = item.is_active
+/* BaseSwitch 已经把「改原生 checkbox 再拨回父级的值」做完了，这里只把请求值交给 store——
+   原先本文件自己手写了一遍那段（与账号目录、任务目录同一个逻辑，那两处已收编）。 */
+function changeActive(requested: boolean, item: KnowledgeBaseDto): void {
   void setActive(item, requested)
 }
 
@@ -116,7 +116,7 @@ watch(editorOpen, async (open) => {
             />
           </template>
         </BaseField>
-        <BaseField class="description-field" label="说明" :error="fieldErrors.description">
+        <BaseField class="description-field" label="说明（选填）" :error="fieldErrors.description">
           <template #default="{ control }">
             <BaseTextarea
               v-model="draft.description"
@@ -130,10 +130,12 @@ watch(editorOpen, async (open) => {
         </BaseField>
       </div>
       <div class="editor-footer">
-        <label v-if="!editingId" class="active-control">
+        <label v-if="!editingId" class="check-control">
           <input v-model="draft.isActive" type="checkbox" :disabled="saving" />
-          启用
+          <span>启用</span>
         </label>
+        <!-- 次左主右：原先只有一枚提交键，放弃编辑得靠右上角那枚 X。 -->
+        <BaseButton variant="outline" :disabled="saving" @click="closeEditor">取消</BaseButton>
         <BaseButton type="submit" variant="primary" :loading="saving">
           <template #icon><Save :size="17" aria-hidden="true" /></template>
           {{ editingId ? '保存修改' : '确认创建' }}
@@ -182,17 +184,17 @@ watch(editorOpen, async (open) => {
             <code>{{ item.key }}</code>
           </td>
           <td class="status-cell">
-            <label class="active-control" :class="{ 'is-inactive': !item.is_active }">
-              <input
-                type="checkbox"
-                role="switch"
-                :checked="item.is_active"
-                :aria-label="`启用知识库 ${item.name}`"
-                :disabled="saving"
-                @change="changeActive($event, item)"
-              />
-              <span>{{ item.is_active ? '已启用' : '已停用' }}</span>
-            </label>
+            <!-- 开关与账号目录、任务目录同一个 BaseSwitch：这里原来是个手写的
+                 role="switch" checkbox，三个页面三种长相。 -->
+            <BaseSwitch
+              :checked="item.is_active"
+              :label="`启用知识库 ${item.name}`"
+              :disabled="saving"
+              @change="changeActive($event, item)"
+            />
+            <span class="status-text" :class="{ 'is-inactive': !item.is_active }">
+              {{ item.is_active ? '已启用' : '已停用' }}
+            </span>
           </td>
           <td class="action-cell">
             <BaseIconButton
@@ -243,6 +245,9 @@ watch(editorOpen, async (open) => {
   color: var(--text-primary);
 }
 .knowledge-editor {
+  /* 内联表单不再铺满整行：一是这么宽的表单字段会拉成一条线，二是头部那枚关闭键
+     会离标题上千像素，用户接不上「它关的是这个表单」。 */
+  max-width: 720px;
   padding: 22px 0;
   border-bottom: 1px solid var(--border-subtle);
 }
@@ -269,7 +274,7 @@ watch(editorOpen, async (open) => {
   justify-content: flex-end;
   margin-top: 18px;
 }
-.editor-footer .active-control {
+.editor-footer .check-control {
   margin-right: auto;
 }
 .knowledge-editor > :last-child:not(.editor-footer) {
@@ -341,26 +346,19 @@ td {
   font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
-.active-control {
+/* 状态列：开关归 BaseSwitch（外观、拨回父值的逻辑、触屏放大都在那里），
+   这里只排「开关 + 状态文字」这一行。文字是给读屏和扫视用的明示，不是第二套控件。 */
+.status-cell {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 36px;
+  gap: 10px;
+}
+.status-text {
   color: var(--success);
   font-size: var(--fs-xs);
   white-space: nowrap;
 }
-.active-control input {
-  width: 17px;
-  height: 17px;
-  margin: 0;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-.active-control input:disabled {
-  cursor: wait;
-}
-.active-control.is-inactive {
+.status-text.is-inactive {
   color: var(--text-tertiary);
 }
 .action-cell {

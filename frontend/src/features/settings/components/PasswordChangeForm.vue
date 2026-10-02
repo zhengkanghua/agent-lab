@@ -79,7 +79,13 @@ function getFieldError(field: string): string | undefined {
     <BaseCallout v-if="successMessage" tone="info" role="status" :description="successMessage" />
 
     <!-- loading 期间文案保留，按钮宽度不跳动（见 BaseButton 注释）。 -->
-    <BaseButton type="submit" class="submit-button" :loading="isPending" :disabled="!canSubmit">
+    <BaseButton
+      type="submit"
+      class="submit-button"
+      variant="primary"
+      :loading="isPending"
+      :disabled="!canSubmit"
+    >
       修改密码
     </BaseButton>
   </form>

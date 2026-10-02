@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
-import { useQuery } from '@tanstack/vue-query'
-import { getDocumentVersion } from '@/api/document-review'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
+import BaseField from '@/shared/ui/BaseField.vue'
+import BaseInput from '@/shared/ui/BaseInput.vue'
+import BaseTextarea from '@/shared/ui/BaseTextarea.vue'
 import DocumentOriginal from './DocumentOriginal.vue'
 import DocumentPreview from './DocumentPreview.vue'
 import DocumentReviewHistory from './DocumentReviewHistory.vue'
 import { useDocumentReview } from './useDocumentReview'
+import { useAdoptedVersion } from './useAdoptedVersion'
 import { processingLabel, usageLabel } from '@/shared/model/document-processing'
 import { issueLabel } from './presentation'
 
@@ -56,19 +58,23 @@ const issues = computed(() => [
     ...(detail.value?.candidate.error_code ? [detail.value.candidate.error_code] : []),
   ]),
 ])
-const adopted = useQuery({
-  queryKey: computed(() => [
-    'document-version',
-    props.documentId,
-    detail.value?.document.current_version_id,
-  ]),
-  queryFn: ({ signal }) =>
-    getDocumentVersion(props.documentId, detail.value!.document.current_version_id!, signal),
-  enabled: computed(
-    () => comparison.value === 'adopted' && !!detail.value?.document.current_version_id,
-  ),
-  retry: false,
-})
+/* 正文栏那一行状态说明。原先它是个手写 id 的 <p> 加一条手写的 aria-describedby——
+   「aria 接线由 BaseField 算一次」的既定做法，所以改走它的 hint 槽。 */
+const draftNote = computed(() =>
+  !isDraft.value
+    ? '开始人工复核后可以编辑。'
+    : dirty.value
+      ? '本地修改尚未保存，当前预览不能用于采用。'
+      : '草稿已与服务端同步。保存草稿不会改变正式版本。',
+)
+const bodyLabel = computed(() =>
+  detail.value?.candidate.text_format === 'plain' ? '纯文本正文' : 'Markdown 正文',
+)
+const adopted = useAdoptedVersion(
+  () => props.documentId,
+  () => detail.value?.document.current_version_id,
+  () => comparison.value === 'adopted',
+)
 const confirmationCopy = computed(
   () =>
     ({
@@ -312,28 +318,36 @@ watch(detail, async (value) => {
             @keydown.ctrl.s.prevent="review.save()"
             @keydown.meta.s.prevent="review.save()"
           >
-            <label>文档标题<input v-model="title" :readonly="!editable" /></label>
-            <label class="body-field"
-              >{{ detail.candidate.text_format === 'plain' ? '纯文本正文' : 'Markdown 正文' }}
-              <textarea
-                v-model="text"
-                :readonly="!editable"
-                spellcheck="false"
-                aria-describedby="draft-help"
-              />
-            </label>
-            <p id="draft-help" class="review-note">
-              {{
-                !isDraft
-                  ? '开始人工复核后可以编辑。'
-                  : dirty
-                    ? '本地修改尚未保存，当前预览不能用于采用。'
-                    : '草稿已与服务端同步。保存草稿不会改变正式版本。'
-              }}
-            </p>
+            <!-- 字段外壳走 BaseField：标签、aria-invalid 与 aria-describedby 由它算一次，
+                 控件皮肤归 BaseInput / BaseTextarea（此前这两栏是裸 label + 手写皮肤，
+                 与全站表单不是一套）。 -->
+            <BaseField id="draft-title" label="文档标题">
+              <template #default="{ control }">
+                <BaseInput v-bind="control" v-model="title" :readonly="!editable" />
+              </template>
+            </BaseField>
+            <BaseField id="draft-body" :label="bodyLabel">
+              <template #default="{ control }">
+                <!-- 正文栏不套 BaseTextarea：它是这一页的编辑面，不是普通表单字段
+                     （48vh 高、等宽、12px 内边距是它自己的尺寸语言）。标签与 aria
+                     仍归 BaseField，皮肤留在下面自己的 scoped 里。 -->
+                <textarea
+                  v-bind="control"
+                  v-model="text"
+                  class="draft-body"
+                  :readonly="!editable"
+                  spellcheck="false"
+                />
+              </template>
+              <template #hint>{{ draftNote }}</template>
+            </BaseField>
             <div v-if="isDraft" class="review-actions">
+              <!-- 提交键是这栏的主操作，用实心强调色；「保存并重新生成预览」是它的备选，
+                   描边即可。原先两个都没写 variant，提交落到了 secondary 的灰底上，
+                   反而比备选弱。 -->
               <BaseButton
                 type="submit"
+                variant="primary"
                 :disabled="!editable || !dirty || !title.trim()"
                 :loading="busy"
                 >保存草稿</BaseButton
@@ -422,10 +436,20 @@ watch(detail, async (value) => {
           :tone="confirmation === 'delete' || confirmation === 'reject' ? 'danger' : 'info'"
           :description="confirmationCopy"
         />
-        <label v-if="confirmation === 'adopt' || confirmation === 'reject'"
-          >审核结论（选填）<textarea v-model="conclusion" rows="2" :disabled="busy" />
-        </label>
+        <BaseField
+          v-if="confirmation === 'adopt' || confirmation === 'reject'"
+          id="review-conclusion"
+          label="审核结论（选填）"
+        >
+          <template #default="{ control }">
+            <BaseTextarea v-bind="control" v-model="conclusion" :rows="2" :disabled="busy" />
+          </template>
+        </BaseField>
+        <!-- 次左主右：与全站确认框同一收尾方向（原先取消在右、确认在左）。 -->
         <div class="review-actions">
+          <BaseButton variant="outline" :disabled="busy" @click="confirmation = null"
+            >取消</BaseButton
+          >
           <BaseButton
             :variant="confirmation === 'delete' || confirmation === 'reject' ? 'danger' : 'primary'"
             :loading="busy"
@@ -440,9 +464,6 @@ watch(detail, async (value) => {
               }[confirmation]
             }}
           </BaseButton>
-          <BaseButton variant="outline" :disabled="busy" @click="confirmation = null"
-            >取消</BaseButton
-          >
         </div>
       </div>
     </template>
@@ -591,34 +612,37 @@ watch(detail, async (value) => {
   max-height: 78vh;
   overflow-y: auto;
 }
-.editor-pane label,
-.decision-confirmation label {
-  display: grid;
-  gap: 9px;
-  font-size: var(--fs-sm);
-}
-.editor-pane input,
-.editor-pane textarea,
-.comparison-select select,
-.decision-confirmation textarea {
-  width: 100%;
-  min-width: 0;
-  padding: 12px;
+/* 字段外壳（标签 / 说明 / aria 接线）归 BaseField，单行输入与审核结论的皮肤归
+   BaseInput / BaseTextarea。这里只剩两处本页特有的。 */
+
+/* 对照切换是视图切换器，不是数据录入字段：保持紧凑的行内形态，
+   与后台页那几枚筛选下拉同类，不套 BaseField 的竖排外壳。 */
+.comparison-select select {
+  padding: 8px 10px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   background: var(--surface-raised);
   font: inherit;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
 }
-.editor-pane textarea {
+
+/* 正文编辑面：整页最大的一块输入区域，高度与等宽排版是它自己的尺寸语言。 */
+.draft-body {
+  width: 100%;
+  min-width: 0;
   min-height: 48vh;
-  resize: vertical;
-  line-height: 1.8;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  background: var(--surface-raised);
   font-family: var(--mono-font);
+  font-size: var(--fs-sm);
+  line-height: 1.8;
+  resize: vertical;
 }
-.editor-pane input:read-only,
-.editor-pane textarea:read-only {
+.draft-body:read-only {
   background: var(--surface-sunken);
 }
 .comparison-select {

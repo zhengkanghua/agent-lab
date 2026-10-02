@@ -281,8 +281,12 @@ async function onDeleteClick(): Promise<void> {
   gap: 4px;
 }
 
-/* 删除类是危险操作：ghost 底上换 danger 色（盖过 BaseButton ghost 的 accent 悬停）。 */
+/* 删除是危险操作：ghost 底上换 danger 色（盖过 BaseButton ghost 的 accent 悬停），
+   并与左边三个中性动作多留一段间距——并排等距时它和「执行历史」一样容易误点。
+   这一档只能写在 scoped 里：@layer components 的规则恒定压不过 BaseButton 未分层的
+   scoped 悬停（frontend/AGENTS.md 第 6 条），共享层写不出这个效果。 */
 .job-actions button.danger-action {
+  margin-left: var(--space-2);
   color: var(--danger);
 }
 

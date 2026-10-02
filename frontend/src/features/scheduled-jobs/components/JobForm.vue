@@ -212,10 +212,13 @@ function onSubmit(): void {
         </template>
       </BaseField>
 
+      <!-- 必填标记只标「空着就提交不了、而且没有默认值」的手填字段（本表单只有这两处
+           自由文本）。下拉与数值控件始终带值，逐个加星会把标记变成噪声。 -->
       <BaseField
         v-if="isCreate"
         id="job-key"
         label="任务标识"
+        required
         :error="errors.key"
         hint="小写字母、数字与短横线；创建后不可修改。"
       >
@@ -253,6 +256,7 @@ function onSubmit(): void {
       <BaseField
         class="cron-field"
         label="执行节奏（cron）"
+        required
         :error="errors.cron ?? previewShapeMessage ?? previewFailureMessage ?? undefined"
       >
         <template #default="{ control }">
@@ -396,16 +400,23 @@ function onSubmit(): void {
 
       <p v-if="!isCreate" class="form-note">修改只用于之后受理的执行；已有执行继续使用原参数。</p>
 
-      <BaseButton
-        class="submit-command"
-        variant="primary"
-        type="submit"
-        :loading="submitting"
-        :disabled="!previewCanSubmit || !selectedSpec"
-      >
-        <template #icon><Check :size="17" aria-hidden="true" /></template>
-        {{ submitting ? '正在保存' : isCreate ? '确认创建' : '确认修改' }}
-      </BaseButton>
+      <!-- 次左主右、右对齐收尾：原先只有一枚提交键、靠 align-self:end 落在左列，
+           放弃编辑的唯一出口是右上角那枚 X。 -->
+      <div class="form-actions">
+        <BaseButton variant="outline" :disabled="submitting" @click="emit('close')"
+          >取消</BaseButton
+        >
+        <BaseButton
+          class="submit-command"
+          variant="primary"
+          type="submit"
+          :loading="submitting"
+          :disabled="!previewCanSubmit || !selectedSpec"
+        >
+          <template #icon><Check :size="17" aria-hidden="true" /></template>
+          {{ submitting ? '正在保存' : isCreate ? '确认创建' : '确认修改' }}
+        </BaseButton>
+      </div>
       <BaseCallout v-if="formError" class="editor-error" tone="danger" :description="formError" />
     </form>
   </section>
@@ -414,6 +425,9 @@ function onSubmit(): void {
 <style scoped>
 /* 挂进 BaseDialog 后容器感（底色、描边、圆角）归对话框面板，这里只留内边距与滚动。 */
 .job-editor {
+  /* 内联（新建任务）时不再铺满整行：两列字段拉太开会读不成组，头部那枚关闭键
+     也会离标题上千像素。对话框形态本来就只有 520px，不受这条影响。 */
+  max-width: 880px;
   padding: var(--space-5);
   overflow-y: auto;
 }
@@ -505,8 +519,12 @@ function onSubmit(): void {
   gap: 8px;
 }
 
-.submit-command {
-  align-self: end;
+/* 页脚：次左主右、右对齐。整行横跨两列，与字段网格解耦。 */
+.form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
 }
 
 .editor-error {
