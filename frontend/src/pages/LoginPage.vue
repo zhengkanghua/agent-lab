@@ -200,6 +200,12 @@ async function retrySessionCheck(): Promise<void> {
   background: var(--surface-hover);
 }
 
+/* 按下的一下。它是个链接（点它回首页），按下去会跳走——越是这样越需要
+   「点中了」这一下回执，否则新页面还没出来时会以为点空了。 */
+.login-brand:active {
+  background: var(--surface-sunken-hover);
+}
+
 .login-brand strong {
   font-size: var(--fs-base);
   font-weight: var(--fw-bold);

@@ -83,6 +83,8 @@ function onToggle(event: Event): void {
   /* 去掉默认三角，改用可旋转的箭头；list-style 与 ::marker 两条都要写，
      Safari 只认后者。 */
   list-style: none;
+  /* 两档语气的悬停都只换字色，缺了过渡就是硬切一下：箭头平滑、文字跳色。 */
+  transition: color var(--duration-fast) var(--ease-out-smooth);
 }
 
 /* 按下的一下。折叠键没有位移也没有底色可用（它常常直接坐在正文上），

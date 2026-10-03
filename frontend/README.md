@@ -217,9 +217,10 @@ npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated/o
 - `src/pages`：登录、检索、Agent 对话、设置中心与后台控制台（单路由
   `/admin/:section?`，AdminPage 按分区组合账号、知识库、来源、文件与任务管理）的路由级组合，
   不直接执行 `fetch`；
-- `src/styles`：设计令牌（`tokens.css`）与 `components/` 下的顶栏、动效、目录三态行、
-  状态胶囊、窄屏抽屉遮罩、复选行、会话与检索流的左侧时间线、输入条字数胶囊
-  八个共享样式层；全局 reset/base/components 分层写在
+- `src/styles`：设计令牌（`tokens.css`）与 `components/` 下的共享样式层——顶栏、动效、
+  目录骨架（三态行 / 标题区 / 工具栏）、状态胶囊、窄屏抽屉遮罩、复选行、
+  会话与检索流的左侧时间线、输入条字数胶囊、侧栏导航项、后台页头、
+  输入条底栏的强调胶囊链接、行内强调链接。全局 reset/base/components 分层写在
   `src/style.css`。共享层只放「多个组件长得必须一样」的规则，且只写进 `@layer components`
   ——分层规则恒定输给组件未分层的 scoped 样式，要压过某个组件（比如把 BaseIconButton
   藏起来）得在调用方自己的 scoped 块里写。

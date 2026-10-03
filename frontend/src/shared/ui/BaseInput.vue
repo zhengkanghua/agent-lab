@@ -58,11 +58,21 @@ function onInput(event: Event): void {
   font-size: var(--fs-sm);
   transition:
     border-color var(--duration-fast) var(--ease-out-smooth),
-    box-shadow var(--duration-fast) var(--ease-out-smooth);
+    box-shadow var(--duration-fast) var(--ease-out-smooth),
+    opacity var(--duration-fast) var(--ease-out-smooth);
 }
 
 .base-input::placeholder {
   color: var(--text-tertiary);
+}
+
+/* 悬停：描边加深一档，划过去就知道这里能输入。原来只有聚焦态，静态与悬停同色，
+   鼠标停在输入框上没有任何回应。
+   :where() 把这条的特异性归零（等于只剩 .base-input），聚焦环与错误描边因此
+   永远压过它——鼠标正停在聚焦中的输入框上时，描边不该从强调色退回中性色。
+   禁用态不响应：那不是可用的输入位。 */
+.base-input:where(:not(:disabled):hover) {
+  border-color: var(--border-strong);
 }
 
 .base-input:focus-visible {

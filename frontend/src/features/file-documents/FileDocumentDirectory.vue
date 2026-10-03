@@ -394,6 +394,17 @@ async function removeDocument(item: FileDocumentDto) {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface-raised);
+  transition:
+    border-color var(--duration-fast) var(--ease-out-smooth),
+    box-shadow var(--duration-fast) var(--ease-out-smooth),
+    background-color var(--duration-fast) var(--ease-out-smooth),
+    opacity var(--duration-fast) var(--ease-out-smooth);
+}
+/* 悬停描边加深，与 BaseInput / BaseSelect 同一档手感——这块外壳与它们逐项相同
+   （42px、同一档圆角与描边），原来却只有聚焦态，划过去毫无回应。
+   :where() 把特异性归零，聚焦环因此永远压过它。 */
+.file-picker:where(:not(.is-disabled):hover) {
+  border-color: var(--border-strong);
 }
 .file-picker:focus-within {
   border-color: var(--accent);

@@ -25,7 +25,7 @@ const emit = defineEmits<{ previous: []; next: [] }>()
 </script>
 
 <template>
-  <div class="pager" :class="{ 'is-start': align === 'start' }">
+  <div class="pager" :class="{ 'is-start': align === 'start' }" :aria-busy="busy || undefined">
     <BaseButton
       variant="outline"
       size="sm"
@@ -49,6 +49,14 @@ const emit = defineEmits<{ previous: []; next: [] }>()
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-2);
+  transition: opacity var(--duration-fast) var(--ease-out-smooth);
+}
+
+/* 在途：两条翻页键本来就禁用了，但「按了没反应」与「请求在跑」在界面上长得一模一样。
+   整条退半步并挂 aria-busy，读屏与眼睛都能分辨；拿到结果后自动回来。
+   只降不隐，页码与当前页仍要读得清。 */
+.pager[aria-busy='true'] {
+  opacity: 0.6;
 }
 
 .pager.is-start {

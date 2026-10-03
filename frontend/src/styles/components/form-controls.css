@@ -21,6 +21,16 @@
        style.css 的 base 层只兜 button / select，label 不在其中，漏了这行
        整行文字与副说明都还是箭头，鼠标用户看不出它属于那个复选框。 */
     cursor: pointer;
+    transition: color var(--duration-fast) var(--ease-out-smooth);
+  }
+
+  /* 悬停：整行字色提到主文字档，与 BaseDisclosure 的 plain 语气同一种做法
+     （只让标签变深，副说明不动）。原来整行可点却毫无回应，鼠标用户看不出
+     这一行的边界到哪里为止。
+     不换底色：复选行常常紧贴其他字段，多出一块底会把表单切碎。
+     禁用态不响应，与上面那条 cursor 的收回是同一次判断。 */
+  .check-control:hover:not(:has(input:disabled)) {
+    color: var(--text-primary);
   }
 
   /* 提交中复选框被禁用：整行的可点承诺随之收回，否则点下去毫无反应。 */

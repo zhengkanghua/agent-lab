@@ -298,11 +298,19 @@ useModalLayer({
   font-size: var(--fs-xs);
   font-weight: var(--fw-bold);
   text-decoration: none;
+  transition: color var(--duration-fast) var(--ease-out-smooth);
 }
 
 .reader-origin:hover {
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+/* 按下的一下：这一枚是「跳出去看原文」的外链，点了会离开本站，
+   新页面出来之前没有回执时最容易被当成点空了。悬停只加下划线，
+   按下补一档字色，与结果卡里那几枚纯文字键同一套回执语言。 */
+.reader-origin:active {
+  color: var(--accent);
 }
 
 .reader-panel .version-warning {

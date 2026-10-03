@@ -84,7 +84,8 @@ function onChange(event: Event): void {
   background: var(--surface-sunken);
   transition:
     background-color var(--duration-fast) var(--ease-out-smooth),
-    border-color var(--duration-fast) var(--ease-out-smooth);
+    border-color var(--duration-fast) var(--ease-out-smooth),
+    transform var(--duration-fast) var(--ease-out-smooth);
 }
 
 /* 轨道自己回应鼠标。它只有 32×18，落在密集表格里本就不显眼；有的表连行悬停都没有
@@ -99,6 +100,16 @@ function onChange(event: Event): void {
 .base-switch:not(.is-disabled):hover input:checked + .base-switch-track {
   border-color: var(--accent-hover);
   background: var(--accent-hover);
+}
+
+/* 按下的一下。悬停已经把颜色用掉了（关→描边加深、开→强调色再深一档），
+   按压只能换个维度：整条轨道缩一档。开关没有位移可用，也不该在按下时改色——
+   那会和「已打开」的实色状态撞车，看上去像状态提前变了。
+   scale 与全站按钮的按下语言一致（BaseButton 0.98、BaseIconButton 0.95），
+   这里是全站最小的一个控件，缩得比按钮狠一点才看得出来。
+   写在两条 hover 之后，按下时才能压过它们。 */
+.base-switch:not(.is-disabled):active .base-switch-track {
+  transform: scale(0.9);
 }
 
 .base-switch-track::after {

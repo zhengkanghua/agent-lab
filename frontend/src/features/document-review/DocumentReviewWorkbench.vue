@@ -646,7 +646,9 @@ watch(detail, async (value) => {
    BaseInput / BaseTextarea。这里只剩两处本页特有的。 */
 
 /* 对照切换是视图切换器，不是数据录入字段：保持紧凑的行内形态，
-   与后台页那几枚筛选下拉同类，不套 BaseField 的竖排外壳。 */
+   与后台页那几枚筛选下拉同类，不套 BaseField 的竖排外壳。
+   圆角比其他下拉小一档是这一处的选择（紧凑、行内），但悬停与聚焦的两档反馈
+   和 BaseSelect 保持一致：原生下拉默认只有聚焦环，划过去毫无回应。 */
 .comparison-select select {
   padding: 8px 10px;
   border: 1px solid var(--border-subtle);
@@ -655,6 +657,15 @@ watch(detail, async (value) => {
   background: var(--surface-raised);
   font: inherit;
   font-size: var(--fs-xs);
+  transition: border-color var(--duration-fast) var(--ease-out-smooth);
+}
+
+.comparison-select select:where(:not(:disabled):hover) {
+  border-color: var(--border-strong);
+}
+
+.comparison-select select:focus-visible {
+  border-color: var(--accent);
 }
 
 /* 正文编辑面：整页最大的一块输入区域，高度与等宽排版是它自己的尺寸语言。 */

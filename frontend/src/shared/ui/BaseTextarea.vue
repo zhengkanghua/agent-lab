@@ -51,7 +51,8 @@ function onInput(event: Event): void {
   resize: vertical;
   transition:
     border-color var(--duration-fast) var(--ease-out-smooth),
-    box-shadow var(--duration-fast) var(--ease-out-smooth);
+    box-shadow var(--duration-fast) var(--ease-out-smooth),
+    opacity var(--duration-fast) var(--ease-out-smooth);
 }
 
 .base-textarea.is-mono {
@@ -62,6 +63,12 @@ function onInput(event: Event): void {
 
 .base-textarea::placeholder {
   color: var(--text-tertiary);
+}
+
+/* 悬停描边加深，与 BaseInput / BaseSelect 同一档手感（:where() 归零特异性，
+   见 BaseInput 里的说明）。 */
+.base-textarea:where(:not(:disabled):hover) {
+  border-color: var(--border-strong);
 }
 
 .base-textarea:focus-visible {
