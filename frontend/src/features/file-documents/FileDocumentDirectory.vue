@@ -151,7 +151,7 @@ async function removeDocument(item: FileDocumentDto) {
         <template #default="{ control }">
           <!-- 原生 file 控件铺满整块并透明化：它自己就是唯一可点、可聚焦、可访问的控件，
                下面两个 span 只是它的外观。不为它再挂第二枚按钮、也不加第二个 tab 停靠点。 -->
-          <div class="file-picker">
+          <div class="file-picker" :class="{ 'is-disabled': files.busy.value }">
             <input
               v-bind="control"
               ref="fileInput"
@@ -344,6 +344,10 @@ async function removeDocument(item: FileDocumentDto) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  /* 四个动作（查看 / 替换文件 / 查看与审核 / 删除）合计约 300px，比这一列原来的
+     可用宽度还宽，于是「删除」被挤到第二行、落在处理状态列下面，看起来像排版坏了。
+     靠右收拢：即使真的换行，第二行也贴着右缘，读起来是一排工具而不是掉出来的按钮。 */
+  justify-content: flex-end;
   gap: 6px;
 }
 /* 行内破坏性动作与上面几个中性动作再拉开一点。 */
@@ -383,6 +387,15 @@ async function removeDocument(item: FileDocumentDto) {
 .file-picker:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring);
+}
+/* 忙碌期间这枚选择器是禁用的，但原先除了指针变 wait 之外和可用时一模一样：
+   点下去什么都不会发生，看起来像坏了。压暗整块、连带里面那枚「选择文件」一起退后。 */
+.file-picker.is-disabled {
+  background: var(--surface-sunken);
+  opacity: 0.6;
+}
+.file-picker.is-disabled .file-picker-face {
+  color: var(--text-tertiary);
 }
 .file-picker-input {
   position: absolute;
@@ -442,11 +455,25 @@ async function removeDocument(item: FileDocumentDto) {
   font-size: var(--fs-xs);
   font-weight: var(--fw-normal);
 }
+/* 列宽按各行真实需要的宽度分配（2026-10 实测，表宽约 1018px）：
+   操作列四个动作合计 308px（含间距与 .row-remove 的外边距），给 34% 才有余量；
+   更新时间「2026-09-08 08:00:00」在 12px 下约 127px，给 16% 才不折行。
+   之前是 25% / 中间均分 / 28%，两头都差几像素，结果是日期折成两行、
+   删除键被挤到第二行落在处理状态列下面。 */
 .file-table th:first-child {
-  width: 25%;
+  width: 21%;
+}
+.file-table th:nth-child(2) {
+  width: 13%;
+}
+.file-table th:nth-child(3) {
+  width: 16%;
+}
+.file-table th:nth-child(4) {
+  width: 16%;
 }
 .file-table th:last-child {
-  width: 28%;
+  width: 34%;
 }
 .file-title strong {
   display: block;
@@ -500,6 +527,10 @@ async function removeDocument(item: FileDocumentDto) {
   .file-table td:first-child,
   .file-table td:last-child {
     grid-column: 1 / -1;
+  }
+  /* 手机上操作区占满整行、四枚键本来就要折成两排，靠左读起来才是从上到下的顺序。 */
+  .file-actions {
+    justify-content: flex-start;
   }
   .file-editor {
     padding: 16px;
