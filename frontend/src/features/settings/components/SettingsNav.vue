@@ -45,7 +45,7 @@ const sections: SectionItem[] = [
     <ul class="section-list">
       <li v-for="item in sections" :key="item.key">
         <RouterLink
-          class="section-link"
+          class="nav-item section-link"
           :class="{ 'is-active': section === item.key }"
           :to="{ name: 'settings', params: { section: item.key } }"
           :aria-current="section === item.key ? 'page' : undefined"
@@ -74,41 +74,12 @@ const sections: SectionItem[] = [
   list-style: none;
 }
 
+/* 分区项的皮肤（排布、悬停、按下、当前分区、图标不压缩）归共享层 nav-item.css，
+   与前台、后台两个外壳的侧栏共用一份；「当前分区」走显式 .is-active。 */
 .section-link {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 10px 12px;
+  /* 透明描边只是为了和共享层那套盒子尺寸对齐（1px 边框也算进盒模型），
+     不参与任何状态变化。 */
   border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  text-decoration: none;
-  transition:
-    border-color var(--duration-fast) var(--ease-out-smooth),
-    color var(--duration-fast) var(--ease-out-smooth),
-    background-color var(--duration-fast) var(--ease-out-smooth);
-}
-
-.section-link:hover {
-  color: var(--text-primary);
-  background: var(--surface-hover);
-}
-
-/* 当前分区：用与前台/后台侧栏同一套「当前导航态」（浅强调底 + 强调色字）。
-   原来这里是 `background: --surface-raised`，而设置面板本身就是 --surface-raised
-   （SettingsPage 的 .settings-panel），实测两者完全同色（浅色都是 #ffffff，
-   深色都是 #1f1f1d）——选中项只剩 1px 描边，而且比「悬停」还弱：
-   悬停用的是 --surface-hover，看得见；选中的反而看不见。
-   与账号目录行内操作那次是同一种反相，2026-10 一并修正。 */
-.section-link.is-active {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-
-/* 按下：两类项一起收深一档。写在 .is-active 之后，同特异度时这一条胜出，
-   于是「当前分区被按下」也有回执，不会成为这个导航里唯一没反应的一项。 */
-.section-link:active {
-  background: var(--surface-sunken-hover);
 }
 
 .section-icon {
@@ -126,6 +97,10 @@ const sections: SectionItem[] = [
   display: flex;
   flex-direction: column;
   min-width: 0;
+  /* 共享层把整项的字重定成了 semibold（导航项都这样）。这里两行文案要分开：
+     标签按设置页的层级走 bold，副说明必须退回 normal——否则它会跟着变成
+     semibold，两行糊成一块，读不出哪行是名字。 */
+  font-weight: var(--fw-normal);
 }
 
 .section-label {

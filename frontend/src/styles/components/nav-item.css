@@ -1,0 +1,77 @@
+/* 侧栏导航项：前台外壳（语义检索 / Agent 对话 / 设置 / 后台管理）、后台外壳
+ * （返回工作台 + 六个分区）与设置中心分区导航，三处用的是同一个控件。
+ *
+ * 收编前三份各写一遍，并且已经漂开：前台那一份悬停把字色提到 --text-primary，
+ * 后台那一份悬停染成 --accent——同一个控件在两个外壳里对鼠标的反应不一样，
+ * 从工作台点进后台管理就能看出来。更麻烦的是后台那种做法让「悬停」和「当前页」
+ * 长得几乎一样（当前页正是强调色字），于是「鼠标停在这一项」被读成「你在这里」。
+ * 现在统一成前者：悬停 = 字色提到主文字档 + 中性底，当前页 = 强调色字 + 浅强调底。
+ * 悬停不抢当前页的信号。
+ *
+ * 内边距也统一到 10px 12px（前台原来 9px、后台 10px，同样没有理由）。
+ *
+ * 「当前」有两种挂法，两种都要留：
+ *   .is-active        显式传。前台外壳必须用它——/agent/:threadId 与 /agent 是两条
+ *                     路由名，靠 RouterLink 自动加的 router-link-active 判断会把
+ *                     「正在某个会话里」漏掉。
+ *   .router-link-active 由 RouterLink 在命中时自动加上，后台外壳与设置分区导航用它。
+ *
+ * 只共享皮肤，不共享结构：图标、单行还是两行文案、有没有分组标签，各家自己决定。
+ * 放在 @layer components 内，组件 scoped 样式（未分层）恒定可以覆盖它。
+ */
+
+@layer components {
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-semibold);
+    text-decoration: none;
+    transition:
+      color var(--duration-fast) var(--ease-out-smooth),
+      background-color var(--duration-fast) var(--ease-out-smooth);
+  }
+
+  .nav-item:hover {
+    color: var(--text-primary);
+    background: var(--surface-hover);
+  }
+
+  /* 按下：比悬停再深一档。导航是全站最高频的动作，点完立刻换页——页面切换快的
+     时候，没有这一档根本看不出点中了。 */
+  .nav-item:active {
+    background: var(--surface-sunken-hover);
+  }
+
+  /* 当前页：强调色纪律里「当前导航态」那一处。 */
+  .nav-item.is-active,
+  .nav-item.router-link-active {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  /* 当前页那一项也要有按下回执，否则它是整列里唯一「点了没反应」的。
+     写在上面两条之后：同特异度时这一条胜出。 */
+  .nav-item.is-active:active,
+  .nav-item.router-link-active:active {
+    background: var(--surface-sunken-hover);
+  }
+
+  .nav-item svg {
+    flex: 0 0 auto;
+  }
+
+  /* 触屏：条目自己就是整行可点的目标，10px 内边距 + 一行 14px 字约 43px，
+     差一点点够不到 44px 的推荐下限，手指按偏一点就落到行间空隙里。
+     放宽的只是最小高度，字号与内边距不动——与 BaseButton / BaseIconButton /
+     BaseDisclosure 那几处的触屏兜底是同一档。 */
+  @media (pointer: coarse) {
+    .nav-item {
+      min-height: var(--tap-target);
+    }
+  }
+}

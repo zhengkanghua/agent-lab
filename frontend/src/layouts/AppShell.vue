@@ -248,6 +248,7 @@ function handlePrimary(): void {
     <button
       v-if="drawerOpen"
       class="drawer-overlay"
+      type="button"
       aria-label="关闭导航"
       tabindex="-1"
       @click="closeDrawer"
@@ -376,46 +377,8 @@ function handlePrimary(): void {
   padding: 2px 12px 0;
 }
 
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 12px;
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-semibold);
-  text-decoration: none;
-  transition:
-    color var(--duration-fast) var(--ease-out-smooth),
-    background-color var(--duration-fast) var(--ease-out-smooth);
-}
-
-.nav-item:hover {
-  color: var(--text-primary);
-  background: var(--surface-hover);
-}
-
-/* 按下：比悬停再深一档。导航是全站最高频的动作，点完立刻换页——
-   页面切换快的时候，没有这一档根本看不出点中了。 */
-.nav-item:active {
-  background: var(--surface-sunken-hover);
-}
-
-/* 当前页：强调色纪律里「当前导航态」那一处。 */
-.nav-item.is-active {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-
-/* 当前页那一项也要有按下回执，否则它是整列里唯一「点了没反应」的。 */
-.nav-item.is-active:active {
-  background: var(--surface-sunken-hover);
-}
-
-.nav-item svg {
-  flex: 0 0 auto;
-}
+/* 导航项皮肤（排布、悬停、按下、当前页、图标不压缩）归共享层 nav-item.css，
+   与后台外壳、设置分区导航共用一份。这里不再有 .nav-item 的规则。 */
 
 /* 会话列表区：吃掉侧栏剩余高度并自己滚动——侧栏不再依赖页面滚动来「跟随」。 */
 .sidebar-rail {

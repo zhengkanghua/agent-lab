@@ -127,7 +127,7 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
       </div>
 
       <nav class="sidebar-nav">
-        <RouterLink class="menu-back" :to="{ name: 'search' }" @click="closeDrawer">
+        <RouterLink class="nav-item menu-back" :to="{ name: 'search' }" @click="closeDrawer">
           <ArrowLeft :size="16" aria-hidden="true" />
           <span>返回工作台</span>
         </RouterLink>
@@ -137,7 +137,7 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
         <RouterLink
           v-for="item in adminMenuItems"
           :key="item.label"
-          class="menu-item"
+          class="nav-item menu-item"
           :to="item.to"
           @click="closeDrawer"
         >
@@ -151,6 +151,7 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
     <button
       v-if="drawerOpen"
       class="drawer-overlay"
+      type="button"
       aria-label="关闭导航"
       tabindex="-1"
       @click="closeDrawer"
@@ -282,30 +283,15 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
   overflow-y: auto;
 }
 
-/* 返回工作台：整个后台里最需要「清晰回到前台」的入口，放菜单最顶上。 */
+/* 导航项皮肤归共享层 nav-item.css（与前台外壳、设置分区导航共用一份：
+   排布、悬停、按下、当前页、图标不压缩）。这里只剩两件本页特有的。
+   menu-back / menu-item 是这一层的结构标记，不带样式：它把「返回工作台」
+   这个动作和下面那组分区菜单分开，读的人与测试都靠它区分两者。 */
+
+/* 返回工作台：整个后台里最需要「清晰回到前台」的入口，放菜单最顶上，
+   与下面的分区菜单之间留一道间隔。 */
 .menu-back {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 12px;
   margin-bottom: 6px;
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-semibold);
-  text-decoration: none;
-  transition:
-    color var(--duration-fast) var(--ease-out-smooth),
-    background-color var(--duration-fast) var(--ease-out-smooth);
-}
-
-.menu-back:hover {
-  color: var(--accent);
-  background: var(--surface-hover);
-}
-
-.menu-back:active {
-  background: var(--surface-sunken-hover);
 }
 
 .menu-group-label {
@@ -315,49 +301,6 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
   font-weight: var(--fw-semibold);
   letter-spacing: 0;
   text-transform: uppercase;
-}
-
-.menu-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-semibold);
-  text-decoration: none;
-  transition:
-    color var(--duration-fast) var(--ease-out-smooth),
-    background-color var(--duration-fast) var(--ease-out-smooth);
-}
-
-.menu-item:hover {
-  color: var(--accent);
-  background: var(--surface-hover);
-}
-
-/* 按下：比悬停再深一档（与前台侧栏同一套）。后台分区切换是本页最高频动作。 */
-.menu-item:active {
-  background: var(--surface-sunken-hover);
-}
-
-/* 激活项：松绿浅底 + 强调色文字（「当前导航态」的强调配额用在这里）。
-   router-link-active 由 RouterLink 在命中时自动加上。图标跟文字同色（currentColor），
-   不再单独染绿——每个菜单图标都染绿会让强调色面积超标。 */
-.menu-item.router-link-active {
-  color: var(--accent);
-  font-weight: var(--fw-semibold);
-  background: var(--accent-soft);
-}
-
-/* 当前分区被按下时也换底，理由同前台侧栏：别让它成为唯一没有回执的一项。 */
-.menu-item.router-link-active:active {
-  background: var(--surface-sunken-hover);
-}
-
-.menu-item svg {
-  flex: 0 0 auto;
 }
 
 .admin-main-wrap {
