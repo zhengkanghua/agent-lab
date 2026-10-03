@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
 import { Moon, Sun } from '@lucide/vue'
+import BaseIconButton from './BaseIconButton.vue'
 
 type Theme = 'light' | 'dark' | 'auto'
 
@@ -70,71 +71,15 @@ watch(theme, (newTheme) => {
 </script>
 
 <template>
-  <!-- aria-label 与 title 同源：全站图标键都带 title（BaseIconButton 恒给），
-       少了它这一枚在悬停时是唯一没有提示的。 -->
-  <button
-    type="button"
-    class="theme-toggle"
-    :aria-label="resolvedTheme === 'light' ? '切换到深色模式' : '切换到浅色模式'"
-    :title="resolvedTheme === 'light' ? '切换到深色模式' : '切换到浅色模式'"
+  <!-- 图标键的外观（40px 方框、悬停、按下、焦点环、触屏撑高，以及 title）全归
+       shared/ui/BaseIconButton.vue。这里原来自己写了一份：那份皮肤与 BaseIconButton 逐项重复，
+       而且它带描边+底色，顶栏另外两枚（账号、退出）不带——同一排图标里三种观感。
+       现在三枚同款，都是「静止无框、悬停浮出描边与底」。 -->
+  <BaseIconButton
+    :label="resolvedTheme === 'light' ? '切换到深色模式' : '切换到浅色模式'"
     @click="toggleTheme"
   >
-    <Moon v-if="resolvedTheme === 'light'" :size="20" />
-    <Sun v-else :size="20" />
-  </button>
+    <Moon v-if="resolvedTheme === 'light'" :size="19" aria-hidden="true" />
+    <Sun v-else :size="19" aria-hidden="true" />
+  </BaseIconButton>
 </template>
-
-<style scoped>
-.theme-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-base);
-  color: var(--text-secondary);
-  cursor: pointer;
-  /* 逐个列出要过渡的属性。写 all 会把 width/height/padding 也算进去，
-     碰到触屏媒体查询切换或窗口变化时会跟着补间，出现一瞬间的尺寸错位。 */
-  transition:
-    background-color var(--duration-fast) var(--ease-out-smooth),
-    border-color var(--duration-fast) var(--ease-out-smooth),
-    color var(--duration-fast) var(--ease-out-smooth),
-    transform var(--duration-fast) var(--ease-out-smooth);
-}
-
-.theme-toggle:hover {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-  border-color: var(--border-strong);
-}
-
-.theme-toggle:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--accent-ring);
-}
-
-.theme-toggle:active {
-  transform: scale(0.95);
-}
-
-/* 触屏下撑到 44px：40px 是配顶栏图标一排的桌面尺寸，手指按容易偏。 */
-@media (pointer: coarse) {
-  .theme-toggle {
-    width: var(--tap-target);
-    height: var(--tap-target);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .theme-toggle {
-    transition: color var(--duration-fast);
-  }
-  .theme-toggle:active {
-    transform: none;
-  }
-}
-</style>

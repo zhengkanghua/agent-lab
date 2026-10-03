@@ -83,12 +83,21 @@ const emit = defineEmits<{ jump: [] }>()
   transition:
     color var(--duration-fast) var(--ease-out-smooth),
     border-color var(--duration-fast) var(--ease-out-smooth),
-    background-color var(--duration-fast) var(--ease-out-smooth);
+    background-color var(--duration-fast) var(--ease-out-smooth),
+    transform var(--duration-fast) var(--ease-out-smooth);
 }
 
 .scroll-to-bottom:hover {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+/* 按下时收一档缩并且底色沉下来。这一枚点下去会把视口带到底部，
+   目标可能只在几十像素外——位移小到看不出，没有这档就分不清是点中了还是没反应。 */
+.scroll-to-bottom:active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  transform: scale(0.94);
 }
 
 /* 有新内容：描边与图标换强调色，让「有东西来了」在不读文字时也看得出来。 */
@@ -113,6 +122,13 @@ const emit = defineEmits<{ jump: [] }>()
   .scroll-to-bottom {
     width: var(--tap-target);
     height: var(--tap-target);
+  }
+}
+
+/* 按下时的缩放属于动效，reduce 下撤掉，只留底色与描边的变化。 */
+@media (prefers-reduced-motion: reduce) {
+  .scroll-to-bottom:active {
+    transform: none;
   }
 }
 </style>

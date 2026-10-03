@@ -85,6 +85,13 @@ function onToggle(event: Event): void {
   list-style: none;
 }
 
+/* 按下的一下。折叠键没有位移也没有底色可用（它常常直接坐在正文上），
+   只靠「内容变没变」判断点没点中是不够的——展开与收起本来就可能看不出差别。
+   压一档透明度是唯一不打扰排版的回执。 */
+.disclosure-summary:active {
+  opacity: 0.72;
+}
+
 .disclosure-summary::-webkit-details-marker {
   display: none;
 }
@@ -97,6 +104,17 @@ function onToggle(event: Event): void {
 .is-sm .disclosure-summary {
   min-height: 24px;
   font-size: var(--fs-xs);
+}
+
+/* 触屏下把两档摘要行撑到可点高度。32px（md）与 24px（sm）是为鼠标精度换来的密度，
+   手指点不中：折叠键在手机上常常是「唯一能展开这一段」的入口，点空就等于内容拿不到。
+   放宽的只是最小高度，字号与箭头一个没动。
+   选择器要带上 .is-* ——媒体查询不加特异度，只写 .disclosure-summary 会输给上面两条。 */
+@media (pointer: coarse) {
+  .is-md .disclosure-summary,
+  .is-sm .disclosure-summary {
+    min-height: var(--tap-target);
+  }
 }
 
 .tone-accent .disclosure-summary {

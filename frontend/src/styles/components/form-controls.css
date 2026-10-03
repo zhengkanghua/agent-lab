@@ -17,6 +17,15 @@
     gap: 10px;
     color: var(--text-secondary);
     font-size: var(--fs-xs);
+    /* 整行都是可点标签（点文字也能勾），指针必须说明这一点。
+       style.css 的 base 层只兜 button / select，label 不在其中，漏了这行
+       整行文字与副说明都还是箭头，鼠标用户看不出它属于那个复选框。 */
+    cursor: pointer;
+  }
+
+  /* 提交中复选框被禁用：整行的可点承诺随之收回，否则点下去毫无反应。 */
+  .check-control:has(input:disabled) {
+    cursor: not-allowed;
   }
 
   .check-control input {

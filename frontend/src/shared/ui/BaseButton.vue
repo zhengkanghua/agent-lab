@@ -265,11 +265,29 @@ const spinnerSize = computed(() => (props.size === 'md' ? 18 : 15))
   transition-duration: calc(var(--duration-fast) / 2);
 }
 
-/* 禁用与加载。加载中不压暗到禁用那么狠：内容仍要可读。 */
+/* 禁用态换成实打实的「中性不可用」皮肤，而不是把变体色整体调透明。
+ *
+ * 原来只有一条 opacity: 0.55，它有两个毛病：一是主按钮变成「白字压在 55% 的松绿上」，
+ * 实测对比度约 2.7:1，低于任何一档可读下限，观感更像渲染坏了而不像「点不了」
+ * （登录页与设置中心的「保存」在表单没填时正好是这种状态，全站最容易被看到的两处）；
+ * 二是所有变体一起变透明，反而看不出哪种是按钮了——secondary 本来就是下沉灰底，
+ * 调透明之后与它的正常态几乎一模一样。
+ *
+ * 现在统一成：下沉底 + 细描边 + tertiary 字。细描边是这一版的关键，正是它把禁用态
+ * 与「enabled 的 secondary」（同色底、无描边）分开；tertiary 是 tokens.css 里指派给
+ * disabled 的那一档（浅色下约 4.1:1、深色下约 4.4:1，都还读得清），
+ * 「不可用」靠描边与指针表达，不靠压低文字对比度。
+ * 描边本来就存在（各变体都有 1px solid transparent），改成实色不会引起布局位移。
+ * 选择器特异度 (0,3,0) 高于任一 .is-* 变体，且写在变体之后，两重保险都能压过它们。 */
 .base-button:disabled:not(.is-loading) {
-  opacity: 0.55;
+  border-color: var(--border-subtle);
+  color: var(--text-tertiary);
+  background: var(--surface-sunken);
+  opacity: 1;
 }
 
+/* 加载中不压暗到禁用那么狠：内容仍要可读，也不能丢掉变体色——
+   「正在做的事」还得认得出是哪个动作。 */
 .is-loading {
   opacity: 0.82;
 }

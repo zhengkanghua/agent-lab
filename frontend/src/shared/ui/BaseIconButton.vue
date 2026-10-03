@@ -109,7 +109,11 @@ defineExpose({ focus })
 .base-icon-button:hover:not(:disabled) {
   border-color: var(--border-subtle);
   color: var(--accent);
-  background: var(--surface-base);
+  /* 用 --surface-hover 而不是 --surface-base。后者是「页面底」，不是悬停面：
+     它在这两类宿主上都不对——落在 --surface-raised 的卡片/行里是「变暗」而不是浮起，
+     落在顶栏（--surface-scrim ≈ 页面底）上则几乎不变，悬停只剩一圈描边可看。
+     --surface-hover 正是为这件事准备的语义档，且在深色下会自动变亮而不是变暗。 */
+  background: var(--surface-hover);
   transform: translateY(-1px);
 }
 

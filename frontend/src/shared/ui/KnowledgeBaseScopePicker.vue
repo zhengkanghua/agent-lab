@@ -167,6 +167,11 @@ summary:hover {
   color: var(--text-primary);
   background: var(--surface-hover);
 }
+/* 胶囊按下时收一档底：悬停只换了描边与字色，两者都不是「按到了」，
+   而这一枚点开的是浮层，按下的瞬间没有别的位移可看。 */
+summary:active {
+  background: var(--surface-sunken-hover);
+}
 .scope-chevron {
   margin-left: auto;
 }
@@ -214,6 +219,8 @@ label {
   align-items: center;
   min-height: 32px;
   overflow-wrap: anywhere;
+  /* 这一整行都是可点标签（点库名也能选中），指针要说清楚。 */
+  cursor: pointer;
 }
 input {
   accent-color: var(--accent);
@@ -237,6 +244,10 @@ input {
 .scope-refresh:hover:not(:disabled) {
   color: var(--text-primary);
   background: var(--surface-hover);
+}
+
+.scope-refresh:active:not(:disabled) {
+  background: var(--surface-sunken-hover);
 }
 
 /* 这一枚的 disabled 只有一个来源：后台正在重新拉取知识库。所以它不是「不可用」，
