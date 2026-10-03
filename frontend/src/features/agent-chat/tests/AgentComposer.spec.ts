@@ -110,11 +110,11 @@ describe('AgentComposer', () => {
 
   it('偏好里存了自定义提示词时亮徽章并链到设置页，默认时不打扰', async () => {
     const wrapper = mountComposer({ customPromptActive: false })
-    expect(wrapper.find('.prompt-badge-link').exists()).toBe(false)
+    expect(wrapper.find('.badge-link').exists()).toBe(false)
 
     await wrapper.setProps({ customPromptActive: true })
 
-    const badge = wrapper.get('.prompt-badge-link')
+    const badge = wrapper.get('.badge-link')
     expect(badge.attributes('aria-label')).toContain('自定义提示词')
     expect(badge.attributes('href')).toBe('/settings/agent')
   })

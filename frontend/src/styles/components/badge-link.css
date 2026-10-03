@@ -1,0 +1,54 @@
+/* 输入条底栏上的强调胶囊链接：浅强调底 + 强调字 + 全圆角。
+ *
+ * 检索输入条的「检索偏好」与 Agent 输入条的「自定义提示词」原本各写一份，
+ * 两份的注释都写着「与另一处同一形态」，取值却已经漂开：间距 6px / 7px，
+ * 一个有 min-height: 38px 一个没有，内边距 0 11px / 4px 9px。结果是同一条
+ * 输入条的底栏里，两枚胶囊的高度可以差 10px，紧挨着的圆形发送键定在 38px，
+ * 矮的那枚就明显是「没对齐」。
+ *
+ * 只共享外观，不共享结构：图标、状态小圆点、可见文字都由调用方写在插槽里
+ * （两者收成纯图标时隐藏的是各自那一截文字）。
+ *
+ * 放在 @layer components 内，组件 scoped 样式（未分层）恒定可以覆盖它。
+ */
+
+@layer components {
+  .badge-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 38px;
+    padding: 0 11px;
+    border: 1px solid var(--accent-soft);
+    border-radius: var(--radius-pill);
+    color: var(--accent);
+    background: var(--accent-soft);
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-bold);
+    white-space: nowrap;
+    text-decoration: none;
+    transition:
+      border-color var(--duration-fast) var(--ease-out-smooth),
+      color var(--duration-fast) var(--ease-out-smooth),
+      transform var(--duration-fast) var(--ease-out-smooth);
+  }
+
+  .badge-link:hover {
+    border-color: var(--accent);
+    color: var(--accent-hover);
+  }
+
+  /* 按下的一下：像全站按钮那样缩一档。原来只有悬停，摁下去没有任何回执，
+     而它是个链接——按下去会跳走，越是这样越需要「点中了」这一下。 */
+  .badge-link:active {
+    transform: scale(0.97);
+  }
+
+  /* 触屏下撑到可点高度：38px 是给鼠标精度换来的密度，手指点不中。 */
+  @media (pointer: coarse) {
+    .badge-link {
+      min-height: var(--tap-target);
+    }
+  }
+}

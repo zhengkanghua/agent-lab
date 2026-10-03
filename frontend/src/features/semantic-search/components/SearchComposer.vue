@@ -95,7 +95,7 @@ defineExpose({ focusInput })
              没人知道它通向哪里，而「在哪里调参数」不该是需要翻文档才知道的事。
              窄容器里只收起可见文字，aria-label 仍带着当前值，读屏不丢信息。 -->
         <RouterLink
-          class="prefs-link"
+          class="badge-link"
           :to="{ name: 'settings', params: { section: 'search' } }"
           :aria-label="prefsLabel"
           :title="prefsLabel"
@@ -170,37 +170,9 @@ defineExpose({ focusInput })
 
 /* 校验错误用 BaseField 的普通流内提示：在坞内展开，把底栏自然推下去。 */
 
-/* 设置入口：与 Agent 输入条的自定义提示词徽章同一形态（浅强调底胶囊 + 强调字）。
-   它是链接而不是 BaseIconButton——要中键新开、要读屏报「链接」。 */
-.prefs-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 38px;
-  padding: 0 11px;
-  border: 1px solid var(--accent-soft);
-  border-radius: var(--radius-pill);
-  color: var(--accent);
-  background: var(--accent-soft);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-bold);
-  white-space: nowrap;
-  text-decoration: none;
-  transition:
-    border-color var(--duration-fast) var(--ease-out-smooth),
-    color var(--duration-fast) var(--ease-out-smooth);
-}
-
-.prefs-link:hover {
-  border-color: var(--accent);
-  color: var(--accent-hover);
-}
-
-@media (pointer: coarse) {
-  .prefs-link {
-    min-height: var(--tap-target);
-  }
-}
+/* 设置入口的皮肤（浅强调底胶囊、悬停、按下、触屏高度）归共享层 badge-link.css，
+   与 Agent 输入条的自定义提示词徽章共用一份。这里只留一件事：它为什么是链接而不是
+   BaseIconButton——要中键新开、要读屏报「链接」。 */
 
 /* 字数胶囊的皮肤（三档色、等宽字）归共享层 character-count.css。 */
 /* 圆形发送键：有字才实色（primary 的 disabled 态），空时灰。 */
@@ -237,10 +209,6 @@ defineExpose({ focusInput })
 @container (max-width: 520px) {
   .prefs-label {
     display: none;
-  }
-
-  .prefs-link {
-    padding: 0 10px;
   }
 }
 </style>

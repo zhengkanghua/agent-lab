@@ -97,7 +97,7 @@ defineExpose({ focusInput })
              不受设置页改动影响（见 ADR 0029）。 -->
         <RouterLink
           v-if="customPromptActive"
-          class="prompt-badge-link"
+          class="badge-link"
           :to="{ name: 'settings', params: { section: 'agent' } }"
           aria-label="自定义提示词已启用，新会话会使用它；去设置页调整"
           title="自定义提示词已启用，新会话会使用它；去设置页调整"
@@ -185,28 +185,9 @@ defineExpose({ focusInput })
   color: var(--text-tertiary);
 }
 
-.prompt-badge-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 4px 9px;
-  border: 1px solid var(--accent-soft);
-  border-radius: var(--radius-pill);
-  color: var(--accent);
-  background: var(--accent-soft);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-bold);
-  white-space: nowrap;
-  transition:
-    color var(--duration-fast) var(--ease-out-smooth),
-    border-color var(--duration-fast) var(--ease-out-smooth);
-}
-
-.prompt-badge-link:hover {
-  color: var(--accent-hover);
-  border-color: var(--accent);
-}
-
+/* 徽章皮肤（浅强调底胶囊、悬停、按下、触屏高度）归共享层 badge-link.css，
+   与检索输入条的「检索偏好」同一份——两处原本各写一遍，高度差了 10px。
+   这里只留这一小段特有的结构：图标右上角那枚「已启用」小圆点。 */
 .prompt-trigger {
   position: relative;
   display: inline-flex;
@@ -261,10 +242,6 @@ defineExpose({ focusInput })
   /* 徽章收成纯图标：文字挤占输入行，图标 + 小圆点已足够表达状态。 */
   .prompt-badge-text {
     display: none;
-  }
-
-  .prompt-badge-link {
-    padding: 6px 8px;
   }
 }
 </style>

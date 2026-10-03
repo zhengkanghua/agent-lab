@@ -45,7 +45,7 @@ describe('SearchComposer', () => {
     expect(wrapper.text()).not.toContain('新闻数量')
     // 偏好入口保留，且带当前值：一枚无标签图标不悬停就没人知道它通向哪里。
     // 可见文字在窄容器里会收起，因此当前值也写进无障碍名里，读屏始终读得到。
-    const prefsLink = wrapper.get('.prefs-link')
+    const prefsLink = wrapper.get('.badge-link')
     expect(prefsLink.attributes('aria-label')).toBe('检索偏好设置：每次 10 篇 · 每篇 3 条')
     expect(prefsLink.text()).toContain('每次 10 篇')
   })

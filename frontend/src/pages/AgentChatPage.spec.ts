@@ -393,7 +393,7 @@ describe('AgentChatPage', () => {
     expect(payload.message).toBe('问题')
 
     // 账号配了提示词时输入条亮徽章，链回设置页。
-    const badge = wrapper.get('.prompt-badge-link')
+    const badge = wrapper.get('.badge-link')
     expect(badge.attributes('href')).toBe('/settings/agent')
     wrapper.unmount()
   })

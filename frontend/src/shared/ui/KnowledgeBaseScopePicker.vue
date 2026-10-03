@@ -142,12 +142,14 @@ details {
   position: relative;
 }
 /* 安静胶囊：底栏里的一个过滤器入口，不是主操作——描边用弱档、悬停不沾强调色，
-   把 accent 的 5% 面积纪律留给发送键。 */
+   把 accent 的 5% 面积纪律留给发送键。
+   高度对齐到同排的徽章胶囊与圆形发送键（都是 38px）：「安静」由描边和字色表达，
+   不该再叠一层「比旁边矮一截」。同一行里两枚同形胶囊差 6px，只会被读成没对齐。 */
 summary {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 32px;
+  min-height: 38px;
   padding: 4px 11px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-pill);
@@ -226,9 +228,13 @@ input {
   accent-color: var(--accent);
   flex-shrink: 0;
 }
+/* 刷新键是裸图标、没有描边也没有底，与旁边那两枚胶囊不属于同一类，
+   所以尺寸不必跟到 38；但 28px 低于本仓库给行内图标键定的那一档
+   （BaseIconButton 的 sm = 34px，会话列表的删除键同档），
+   在一行 38px 的控件中间显得缩着。对齐到 34px。 */
 .scope-refresh {
-  width: 28px;
-  height: 28px;
+  width: 34px;
+  height: 34px;
   display: grid;
   place-items: center;
   border: 0;
