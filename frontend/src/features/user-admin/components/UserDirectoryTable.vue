@@ -156,26 +156,8 @@ const deletedCount = computed(() => props.users.filter((user) => user.deleted_at
   margin-top: 36px;
 }
 
-.directory-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding-bottom: 15px;
-}
-
-.directory-heading p {
-  color: var(--text-secondary);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-bold);
-}
-
-.directory-heading h2 {
-  margin-top: 4px;
-  font-size: var(--fs-xl);
-  font-weight: var(--fw-bold);
-}
-
+/* 标题区（.directory-heading 及其 p / h2）归共享层 directory.css：
+   与任务目录那份角色相同，原本只是各写各的、字号还漂开了一档。 */
 .directory-tools {
   display: flex;
   align-items: center;
@@ -192,6 +174,18 @@ const deletedCount = computed(() => props.users.filter((user) => user.deleted_at
   font-size: var(--fs-xs);
   font-weight: var(--fw-semibold);
   cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out-smooth);
+}
+
+/* 悬停把字色提到主文字档，禁用时收回「整行可点」的承诺——两条都对齐共享层的
+   .check-control（表单里那套复选行），否则同一个控件在表单里和目录工具栏里
+   表现不一样：这里划过去毫无回应，加载中整行还是手指指针。 */
+.include-deleted:hover:not(:has(input:disabled)) {
+  color: var(--text-primary);
+}
+
+.include-deleted:has(input:disabled) {
+  cursor: not-allowed;
 }
 
 .include-deleted input {

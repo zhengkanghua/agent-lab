@@ -1,0 +1,34 @@
+/* 行内强调链接：正文或列表里的一个「去看别处」入口。
+ *
+ * 三处各写过一遍——来源管理的订阅地址、任务执行历史里的「查看详情」、执行详情里的
+ * 「查看文档处理与审核状态」。核心三态逐字相同：常态强调色 → 悬停再深一档 + 下划线
+ * （offset 3px）→ 按下加深到正文色。2026-10 给它们补按下态时，同一条规则在三个文件里
+ * 各写了一遍，这就是重复的代价。
+ *
+ * 只共享这三态：各自的增量（字号、字重、上下留白、换行）留着自己的组件里。
+ *
+ * 阅读器里的 .reader-origin 没有并进来。它常态是次级字色、悬停只加下划线、
+ * 按下才转强调色，是另一套语气（它挂在文档标题下面，不该抢标题），不是同一个控件。
+ *
+ * 放在 @layer components 内，组件 scoped 样式（未分层）恒定可以覆盖它。
+ */
+
+@layer components {
+  .text-link {
+    color: var(--accent);
+    transition: color var(--duration-fast) var(--ease-out-smooth);
+  }
+
+  /* 下划线说明「这是入口」，offset 3px 让下划线与中文字底之间留一口气。 */
+  .text-link:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  /* 按下的一下：加深到正文色。纯文字链接的悬停只换色，按下去毫无变化时会怀疑
+     点空了；外链尤其明显——新标签页出来之前没有任何回执，用户会再点一次。 */
+  .text-link:active {
+    color: var(--text-primary);
+  }
+}

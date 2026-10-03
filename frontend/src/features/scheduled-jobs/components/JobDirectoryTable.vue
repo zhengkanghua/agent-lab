@@ -107,25 +107,8 @@ const emit = defineEmits<{
   margin-top: 36px;
 }
 
-.directory-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding-bottom: 16px;
-}
-
-.directory-heading p {
-  color: var(--text-secondary);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-bold);
-}
-
-.directory-heading h2 {
-  margin-top: 4px;
-  font-size: var(--fs-lg);
-  font-weight: var(--fw-bold);
-}
+/* 标题区（.directory-heading 及其 p / h2）归共享层 directory.css：
+   与账号目录那份角色相同，原本只是各写各的、h2 还比那一页小一档。 */
 
 /* 刷新键走 BaseButton（ghost），与账号目录、执行历史同款；转动用共享 .spin，
    不再私有一份 keyframes。 */

@@ -143,6 +143,7 @@ const time = (value: string | null) => (value ? formatBeijingTime(value) : '—'
     </BaseDisclosure>
     <RouterLink
       v-if="run.task_type === 'document_processing' || run.task_type === 'index_pending'"
+      class="text-link detail-link"
       to="/admin/documents"
       >查看文档处理与审核状态</RouterLink
     >
@@ -232,18 +233,12 @@ pre {
   margin-top: var(--space-3);
   font-size: var(--fs-xs);
 }
-a {
+/* 「查看文档处理与审核状态」原样继承正文色时，就是一句普通说明文字，
+   没有下划线也没有颜色，是这一页里最难被发现的一个入口。
+   三态色与下划线归共享层 text-link.css，这里只留它的排布。 */
+.detail-link {
   display: inline-block;
   margin-top: var(--space-4);
-  color: var(--accent);
-  transition: color var(--duration-fast) var(--ease-out-smooth);
-}
-/* 原样继承正文色时，这句「查看文档处理与审核状态」读起来就是普通说明文字，
-   没有下划线也没有颜色，是这一页里最难被发现的一个入口。 */
-a:hover {
-  color: var(--accent-hover);
-  text-decoration: underline;
-  text-underline-offset: 3px;
 }
 @media (max-width: 600px) {
   dl {

@@ -1,8 +1,19 @@
-/* 目录页的三态行（读取中 / 空 / 失败）：同一段样式曾在四个目录里各写一份。
+/* 目录页的共享皮肤：三态行（读取中 / 空 / 失败）、标题区、工具栏。
  *
- * 四份并不逐字相同——min-height 有 150 / 200 两种，留白 26 / 24px 两种，空态文字色
- * 有 tertiary / secondary 两种，边框有的画有的不画。差异没有来由，只是各写各的，
- * 于是同一件事在四个页面上长得不一样。这里收敛成一套，四个调用方删掉本地那一份。
+ * 三态行：同一段样式曾在四个目录里各写一份。四份并不逐字相同——min-height 有
+ * 150 / 200 两种，留白 26 / 24px 两种，空态文字色有 tertiary / secondary 两种，
+ * 边框有的画有的不画。差异没有来由，只是各写各的，于是同一件事在四个页面上长得
+ * 不一样。这里收敛成一套，四个调用方删掉本地那一份。
+ *
+ * 标题区与工具栏是这个页面骨架的两种形态，各自成对，不要互相混：
+ *   .directory-heading  左「账号目录 / 任务目录」小字 + h2，右一组键。无分隔线。
+ *                       账号目录与任务目录用过，两份角色相同、取值漂开（下边距
+ *                       15px 与 16px，h2 一档 20px 一档 18px），统一到 20px。
+ *   .directory-toolbar  左「知识库目录 + 共几条」，右这一块的键，下一条分隔线、
+ *                       最小高度 64px。知识库与来源管理用过，两份逐字相同。
+ *                       文档审核页另有一个同名但不同义的工具栏（无最小高度、无分隔线，
+ *                       是「一行说明 + 筛选」），已改名为 .review-toolbar——
+ *                       同名不同义时，谁先被提成共享层谁就会把另一方染色。
  *
  * 只共享样式、不共享结构：图标用不用、失败时挂不挂重试键，各家自己决定。
  * 放在 @layer components 内，组件 scoped 样式（未分层）恒定可以覆盖它。
@@ -29,5 +40,71 @@
   .directory-state-error {
     flex-direction: column;
     color: var(--danger);
+  }
+
+  .directory-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding-bottom: 16px;
+  }
+
+  .directory-heading p {
+    color: var(--text-secondary);
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-bold);
+  }
+
+  .directory-heading h2 {
+    margin-top: 4px;
+    font-size: var(--fs-xl);
+    font-weight: var(--fw-bold);
+  }
+
+  .directory-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 64px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  /* 工具栏右侧的操作组。与 .toolbar-actions 同名的写法只在这两处出现。 */
+  .toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  /* 「共几条」：等宽数字，前面一枚强调色小图标。margin-left 叠在 gap 之上，
+     让数字与文字之间比图标与文字之间更松。 */
+  .directory-count {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--text-secondary);
+    font-size: var(--fs-sm);
+  }
+
+  .directory-count svg {
+    color: var(--accent);
+  }
+
+  .directory-count strong {
+    margin-left: 8px;
+    color: var(--text-primary);
+    font-family: var(--mono-font);
+    font-weight: var(--fw-semibold);
+  }
+
+  /* 窄容器：工具栏改成可换行，计数与操作各占一行。断点量的是目录根节点
+     （两个页面都用 container-type: inline-size 声明了它），不是视口。 */
+  @container (max-width: 580px) {
+    .directory-toolbar {
+      flex-wrap: wrap;
+    }
   }
 }

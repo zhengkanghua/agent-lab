@@ -113,33 +113,46 @@ function formatCheckpoint(item: SourceDto): string {
             </p>
           </td>
           <td class="feed-cell">
-            <a v-if="item.home_url" :href="item.home_url" target="_blank" rel="noreferrer">
+            <a
+              v-if="item.home_url"
+              class="text-link"
+              :href="item.home_url"
+              target="_blank"
+              rel="noreferrer"
+            >
               {{ item.home_url }}
             </a>
             <span v-else>未提供地址</span>
           </td>
-          <td class="binding-cell">
-            <span class="cell-label">知识库绑定</span>
-            <select
-              :value="bindingValue(item)"
-              :aria-label="`绑定来源 ${item.name}`"
-              :disabled="binding"
-              @change="onBindingChange($event, item)"
-            >
-              <option value="">未配置</option>
-              <option v-if="missingBinding(item)" :value="item.knowledge_base_id!" disabled>
-                {{ item.knowledge_base_key ?? item.knowledge_base_id }}（信息不可用）
-              </option>
-              <option
-                v-for="option in bindingOptions(item)"
-                :key="option.id"
-                :value="option.id"
-                :disabled="!option.is_active"
+          <td class="binding-td">
+            <!-- flex 排在里层的 div 上，不能直接写在 <td> 上：td 一旦变成 flex
+                 容器就脱离表格布局，盒子高度由内容（约 81px）决定而不是行高（约 92px），
+                 它那条 border-bottom 会比同排其他单元格高出一截，整行的分隔线在
+                 「知识库绑定」这一列断成两段并错开——看起来像表格画坏了。
+                 单元格自己保持 table-cell，垂直居中交给 td 的 vertical-align。 -->
+            <div class="binding-cell">
+              <span class="cell-label">知识库绑定</span>
+              <select
+                :value="bindingValue(item)"
+                :aria-label="`绑定来源 ${item.name}`"
+                :disabled="binding"
+                @change="onBindingChange($event, item)"
               >
-                {{ option.name }}{{ !option.is_active ? '（已停用）' : '' }}
-              </option>
-            </select>
-            <span v-if="item.knowledge_base_id === null" class="unbound-badge">待配置</span>
+                <option value="">未配置</option>
+                <option v-if="missingBinding(item)" :value="item.knowledge_base_id!" disabled>
+                  {{ item.knowledge_base_key ?? item.knowledge_base_id }}（信息不可用）
+                </option>
+                <option
+                  v-for="option in bindingOptions(item)"
+                  :key="option.id"
+                  :value="option.id"
+                  :disabled="!option.is_active"
+                >
+                  {{ option.name }}{{ !option.is_active ? '（已停用）' : '' }}
+                </option>
+              </select>
+              <span v-if="item.knowledge_base_id === null" class="unbound-badge">待配置</span>
+            </div>
           </td>
           <td class="checkpoint-cell">
             <span class="cell-label">同步游标</span>
@@ -156,32 +169,8 @@ function formatCheckpoint(item: SourceDto): string {
   container-type: inline-size;
   letter-spacing: 0;
 }
-.directory-toolbar,
-.toolbar-actions,
-.directory-count {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.directory-toolbar {
-  min-height: 64px;
-  justify-content: space-between;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.directory-count {
-  color: var(--text-secondary);
-  font-size: var(--fs-sm);
-}
-.directory-count svg {
-  color: var(--accent);
-}
-.directory-count strong {
-  margin-left: 8px;
-  font-family: var(--mono-font);
-  font-weight: var(--fw-semibold);
-  color: var(--text-primary);
-}
+/* 目录工具栏（.directory-toolbar / .toolbar-actions / .directory-count 及其图标、
+   数字，含窄容器换行）归共享层 directory.css——与知识库目录那份逐字相同。 */
 .feedback {
   display: flex;
   align-items: center;
@@ -227,6 +216,17 @@ td {
   border-bottom: 1px solid var(--border-subtle);
   vertical-align: middle;
 }
+
+/* 行悬停：账号目录与任务目录两行都有，这两张表漏了。四列表摊开在 1400px 上，
+   没有行底就等于没有横向参考线，从「来源」扫到右边的绑定下拉要自己数格子。
+   行本身不可点（下拉才是入口），所以只用底色，不做指针。 */
+.source-table tbody tr {
+  transition: background-color var(--duration-fast) var(--ease-out-smooth);
+}
+
+.source-table tbody tr:hover {
+  background: var(--surface-sunken);
+}
 .name-cell {
   padding-left: 0;
   overflow-wrap: anywhere;
@@ -243,18 +243,11 @@ td {
 .name-cell code {
   font-family: var(--mono-font);
 }
+/* 三态色与下划线归共享层 text-link.css。这里只留这一格的增量：小一号字，
+   长 URL 允许在任意位置断开。 */
 .feed-cell a {
-  color: var(--accent);
   font-size: var(--fs-xs);
   overflow-wrap: anywhere;
-  transition: color var(--duration-fast) var(--ease-out-smooth);
-}
-/* 订阅地址是新标签页外链，颜色已经和正文区分开；补下划线说明它是「跳出去」，
-   而不是站内的普通强调文字。 */
-.feed-cell a:hover {
-  color: var(--accent-hover);
-  text-decoration: underline;
-  text-underline-offset: 3px;
 }
 .feed-cell span {
   color: var(--text-tertiary);
@@ -265,6 +258,12 @@ td {
   align-items: center;
   gap: 10px;
 }
+/* 绑定格里的下拉没有走 BaseSelect，是权衡后的例外，不是漏网：它要在后端确认
+   之前一直显示旧绑定（保存失败就不显示用户刚选的），靠 onBindingChange 里
+   「把原生值拨回去、等缓存回流」这一段实现——BaseSelect 没有这层受控回退。
+   其余取值与 BaseSelect 逐项对齐（圆角原是 --radius-lg=16px，全站其他下拉都是
+   10px，同一个控件在两张表里长得不一样；悬停加深一档、聚焦描边转强调色、
+   状态变化有过渡，原本只有一条全局聚焦环，划过去毫无回应）。 */
 .binding-cell select {
   min-width: 0;
   flex: 1 1 auto;
@@ -274,7 +273,14 @@ td {
   color: var(--text-primary);
   background: var(--surface-raised, transparent);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
+  transition: border-color var(--duration-fast) var(--ease-out-smooth);
+}
+.binding-cell select:where(:not(:disabled):hover) {
+  border-color: var(--border-strong);
+}
+.binding-cell select:focus-visible {
+  border-color: var(--accent);
 }
 .binding-cell select:disabled {
   cursor: wait;
@@ -304,9 +310,6 @@ td {
   display: none;
 }
 @container (max-width: 580px) {
-  .directory-toolbar {
-    flex-wrap: wrap;
-  }
   .source-table thead {
     display: none;
   }
@@ -334,7 +337,9 @@ td {
     grid-column: 1;
     grid-row: 2;
   }
-  .binding-cell {
+  /* 排布落在单元格身上（tr 变成 grid 之后 td 才是 grid item），
+     里层的 .binding-cell 只管 flex 排布。 */
+  .binding-td {
     grid-column: 1 / -1;
     grid-row: 3;
   }

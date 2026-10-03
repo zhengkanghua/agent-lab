@@ -7,6 +7,7 @@ import { listManagedDocuments, type ReviewFilters, REVIEW_PAGE_SIZE } from '@/ap
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BasePager from '@/shared/ui/BasePager.vue'
+import BaseSelect from '@/shared/ui/BaseSelect.vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
 import {
   isProcessing,
@@ -54,9 +55,9 @@ const query = useQuery({
 
 <template>
   <section class="review-directory" aria-label="文档处理列表">
-    <div class="directory-toolbar">
+    <div class="review-toolbar">
       <p>统一检查上传文件与 FreshRSS 的解析结果，异常资料在这里修正。</p>
-      <div class="directory-actions">
+      <div class="review-actions">
         <BaseButton variant="outline" :disabled="query.isFetching.value" @click="query.refetch()"
           >刷新状态</BaseButton
         >
@@ -67,27 +68,27 @@ const query = useQuery({
     </div>
     <div class="directory-filters">
       <label
-        >知识库<select v-model="filters.knowledgeBaseId">
+        >知识库<BaseSelect v-model="filters.knowledgeBaseId">
           <option value="">全部知识库</option>
           <option v-for="item in directory.data.value" :key="item.id" :value="item.id">
             {{ item.name }}{{ item.is_active ? '' : '（已停用）' }}
           </option>
-        </select></label
+        </BaseSelect></label
       >
       <label
-        >来源<select v-model="filters.sourceKind">
+        >来源<BaseSelect v-model="filters.sourceKind">
           <option value="">全部来源</option>
           <option value="file">上传文件</option>
           <option value="freshrss">FreshRSS</option>
-        </select></label
+        </BaseSelect></label
       >
       <label
-        >处理状态<select v-model="filters.state">
+        >处理状态<BaseSelect v-model="filters.state">
           <option value="">全部状态</option>
           <option v-for="[value, label] in processingStates" :key="value" :value="value">
             {{ label }}
           </option>
-        </select></label
+        </BaseSelect></label
       >
     </div>
     <div class="filter-actions">
@@ -207,15 +208,19 @@ const query = useQuery({
   gap: 22px;
   min-width: 0;
 }
-.directory-toolbar,
-.directory-actions {
+/* 这一条叫 review-toolbar 而不是 directory-toolbar：后者是共享层里「左侧目录名 +
+   共几条，右侧一组键，下面一条分隔线」的那套皮（知识库目录、来源管理在用）。
+   这里其实是「一行说明 + 筛选与操作」，没有最小高度也没有分隔线，同名不同义——
+   同名的话，共享层一改，这一页会被顺带染色。 */
+.review-toolbar,
+.review-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px;
 }
-.directory-toolbar > p {
+.review-toolbar > p {
   font-size: var(--fs-sm);
   color: var(--text-secondary);
   line-height: 1.7;
@@ -236,15 +241,12 @@ const query = useQuery({
   font-size: var(--fs-xs);
   color: var(--text-secondary);
 }
+/* 三个下拉的皮肤归 BaseSelect（同宽同高同描边、悬停加深、聚焦转强调色）；
+   它们本来就是「一行一个的筛选字段」，正是那个组件的场景，原先各写一份
+   等于把同样的盒子抄了第三遍，还漏掉了悬停与过渡。这里只留布局：
+   删掉 min-width 的话，长知识库名会把这一列撑破格。 */
 .directory-filters select {
-  padding: 11px;
   min-width: 0;
-  color: var(--text-primary);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--surface-raised);
-  font: inherit;
-  font-size: var(--fs-sm);
 }
 .review-table {
   width: 100%;

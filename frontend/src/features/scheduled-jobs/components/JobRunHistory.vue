@@ -88,7 +88,9 @@ function refresh(): void {
           </span>
           <span class="run-trigger">{{ triggerTypeLabel(run.trigger_type) }}</span>
           <time :datetime="run.accepted_at">{{ formatBeijingTime(run.accepted_at) }}</time>
-          <RouterLink :to="{ query: { view: 'executions', run: run.id } }">查看详情</RouterLink>
+          <RouterLink class="text-link" :to="{ query: { view: 'executions', run: run.id } }"
+            >查看详情</RouterLink
+          >
           <span v-if="run.error_type" class="run-error-type" :title="run.error_type">
             {{ run.error_type }}
           </span>
@@ -193,18 +195,11 @@ function refresh(): void {
 }
 
 /* 「查看详情」原来没有任何规则：它和同一行的触发方式、时间同色同重，
-   整条元信息读下来完全看不出这里有个入口。 */
+   整条元信息读下来完全看不出这里有个入口。
+   三态色与下划线归共享层 text-link.css，这里只留这一处的增量。 */
 .run-meta a {
-  color: var(--accent);
   font-size: var(--fs-xs);
   font-weight: var(--fw-semibold);
-  transition: color var(--duration-fast) var(--ease-out-smooth);
-}
-
-.run-meta a:hover {
-  color: var(--accent-hover);
-  text-decoration: underline;
-  text-underline-offset: 3px;
 }
 
 .run-error-type {

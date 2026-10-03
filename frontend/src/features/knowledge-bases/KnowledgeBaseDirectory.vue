@@ -197,18 +197,25 @@ function requestCloseEditor(): void {
           <td class="key-cell">
             <code>{{ item.key }}</code>
           </td>
-          <td class="status-cell">
-            <!-- 开关与账号目录、任务目录同一个 BaseSwitch：这里原来是个手写的
-                 role="switch" checkbox，三个页面三种长相。 -->
-            <BaseSwitch
-              :checked="item.is_active"
-              :label="`启用知识库 ${item.name}`"
-              :disabled="saving"
-              @change="changeActive($event, item)"
-            />
-            <span class="status-text" :class="{ 'is-inactive': !item.is_active }">
-              {{ item.is_active ? '已启用' : '已停用' }}
-            </span>
+          <td class="status-td">
+            <!-- flex 排在里层的 div 上，不能直接写在 <td> 上：td 变成 flex 容器就
+                 脱离表格布局，盒子高度由内容决定（开关只有 18px 高，这一格合计约 59px），
+                 而不是行高（约 90px）；它那条 border-bottom 于是高出三十来像素，
+                 正好切在行中间，整行的分隔线在这一列明显断开错位。
+                 单元格自己保持 table-cell，垂直居中交给 td 的 vertical-align。 -->
+            <div class="status-cell">
+              <!-- 开关与账号目录、任务目录同一个 BaseSwitch：这里原来是个手写的
+                   role="switch" checkbox，三个页面三种长相。 -->
+              <BaseSwitch
+                :checked="item.is_active"
+                :label="`启用知识库 ${item.name}`"
+                :disabled="saving"
+                @change="changeActive($event, item)"
+              />
+              <span class="status-text" :class="{ 'is-inactive': !item.is_active }">
+                {{ item.is_active ? '已启用' : '已停用' }}
+              </span>
+            </div>
           </td>
           <td class="action-cell">
             <BaseIconButton
@@ -230,33 +237,15 @@ function requestCloseEditor(): void {
   container-type: inline-size;
   letter-spacing: 0;
 }
-.directory-toolbar,
-.toolbar-actions,
-.directory-count,
+/* 目录工具栏（.directory-toolbar / .toolbar-actions / .directory-count 及其图标、
+   数字，含窄容器换行）归共享层 directory.css——与来源管理那份逐字相同。 */
+/* 内联表单的标题与页脚与工具栏同属「一行 flex」，但只出现在这个表单里，
+   不进共享层。 */
 .editor-heading,
 .editor-footer {
   display: flex;
   align-items: center;
   gap: 12px;
-}
-.directory-toolbar {
-  min-height: 64px;
-  justify-content: space-between;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.directory-count {
-  color: var(--text-secondary);
-  font-size: var(--fs-sm);
-}
-.directory-count svg {
-  color: var(--accent);
-}
-.directory-count strong {
-  margin-left: 8px;
-  font-family: var(--mono-font);
-  font-weight: var(--fw-semibold);
-  color: var(--text-primary);
 }
 .knowledge-editor {
   /* 内联表单不再铺满整行：一是这么宽的表单字段会拉成一条线，二是头部那枚关闭键
@@ -339,6 +328,17 @@ td {
   border-bottom: 1px solid var(--border-subtle);
   vertical-align: middle;
 }
+
+/* 行悬停：账号目录与任务目录两行都有，这两张表漏了。四列表摊开在 1400px 上，
+   没有行底就等于没有横向参考线，从「新闻」扫到右边的开关要自己数格子。
+   行本身不可点（开关和编辑键才是入口），所以只用底色，不做指针。 */
+.knowledge-table tbody tr {
+  transition: background-color var(--duration-fast) var(--ease-out-smooth);
+}
+
+.knowledge-table tbody tr:hover {
+  background: var(--surface-sunken);
+}
 .name-cell {
   padding-left: 0;
   overflow-wrap: anywhere;
@@ -380,12 +380,6 @@ td {
   text-align: right;
 }
 @container (max-width: 580px) {
-  .directory-toolbar {
-    flex-wrap: wrap;
-  }
-  .directory-count {
-    font-size: var(--fs-sm);
-  }
   .editor-fields {
     grid-template-columns: 1fr;
   }
@@ -417,7 +411,7 @@ td {
     grid-row: 2;
     margin-top: 8px;
   }
-  .status-cell {
+  .status-td {
     grid-column: 1;
     grid-row: 3;
     margin-top: 8px;

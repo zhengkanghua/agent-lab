@@ -22,3 +22,7 @@
 6. **`@layer components` 里的共享规则压不过组件自己的 scoped 样式。** 组件 scoped 样式不分层，未分层的规则恒定胜过任何分层规则——所以「把 `BaseIconButton` 在桌面端藏起来」这种覆盖，写在 `styles/components/*.css` 里**不会生效**（2026-10 实测：`.drawer-close { display: none }` 搬进共享层后，侧栏在桌面端凭空多出一枚关闭键，而条条检查皆绿）。这类覆盖只有两个正当写法：写进调用方自己的 scoped 块，或者干脆用 `v-if` 控制元素是否存在。
 
 7. **模板里用到 PascalCase 标签就必须 import，漏了没有任何检查会拦。** eslint 不解析模板标签，`vue-tsc` 把未知标签当原生元素，两边都过；只有运行时 Vue 打一条 `[Vue warn]`，界面照常渲染、那个组件整个静默失效（2026-10：`JobForm` 改成 `BaseField` 时少一行 import，12 个字段的标签与 aria 接线消失，700 个测试全绿）。守它的是 `src/template-components.node.spec.ts`，它读源码比对，全局注册的组件（Vue 内置、vue-router 的 `RouterLink`/`RouterView`）在表里放行。
+
+8. **`<td>` / `<th>` 上不要写 `display: flex`（或 `grid`、`block`）。** 表格单元格一旦拿到别的 display，就脱离表格布局：盒子高度由内容决定，而不是被行高撑满，它那条 `border-bottom` 于是跟着内容停在半空。表现是**那一列的行分隔线比同排其他列高一截，整行横线在那里断成两段并错开**，看起来像表格画坏了——而源码、lint、类型检查、单元测试全都没意见，只有截图能看出来（2026-10 实测：来源管理的绑定列差 10px，知识库的状态列差 31px，正好切在行中间）。
+
+   正确写法是把 flex 排布放进 `<td>` 里的一个 `<div>`，单元格自己保持 `table-cell`、垂直居中交给 `vertical-align: middle`。注意窄屏那套容器查询会把 `tr` 改成 `grid`，此时 `grid-column` / `grid-row` 要写在外层那个 `<td>` 上，不是内层的 `<div>` 上——`tr` 的 grid item 是 `<td>`。
