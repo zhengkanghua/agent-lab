@@ -7,6 +7,7 @@ import { useLogout } from '@/features/auth'
 import { usePreferences } from '@/features/settings'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseDisclosure from '@/shared/ui/BaseDisclosure.vue'
 import KnowledgeBaseScopePicker from '@/shared/ui/KnowledgeBaseScopePicker.vue'
 import { useKnowledgeBaseScope } from '@/shared/composables/useKnowledgeBaseScope'
 import {
@@ -257,14 +258,15 @@ async function chooseExample(value: string): Promise<void> {
             <template #icon><History :size="14" aria-hidden="true" /></template>
           </BaseCallout>
 
-          <details
+          <BaseDisclosure
             v-if="chat.isHistoryTruncated.value && chat.historySummary.value"
             class="summary-background"
+            summary="查看背景摘要"
+            tone="plain"
           >
-            <summary>查看背景摘要</summary>
             <p>摘要仅作背景，不是可核验的原文引用。</p>
             <p class="summary-text">{{ chat.historySummary.value }}</p>
-          </details>
+          </BaseDisclosure>
           <BaseCallout
             v-if="chat.historySyncError.value"
             tone="neutral"
@@ -284,6 +286,7 @@ async function chooseExample(value: string): Promise<void> {
             :turns="chat.turns.value"
             :streaming="chat.isStreaming.value"
             :examples="AGENT_EXAMPLES"
+            :loading="chat.isLoadingThread.value"
             @retry="chat.retry"
             @choose-example="chooseExample"
             @open-evidence="openEvidence"
@@ -422,16 +425,11 @@ async function chooseExample(value: string): Promise<void> {
   font-size: var(--fs-sm);
   line-height: 1.7;
 }
-.summary-background summary {
-  cursor: pointer;
-  transition: color var(--duration-fast) var(--ease-out-smooth);
-}
-/* 这一行夹在会话标题和回答之间，本身是次要色；不给悬停反馈就只是一句灰字，
-   而它是「系统提示词从哪来」的唯一入口。 */
-.summary-background summary:hover {
-  color: var(--accent);
-}
-.summary-background p {
+/* 折叠键归 BaseDisclosure。用 tone-plain 而不是默认的 accent：这一行夹在会话标题和
+   回答之间，原文案与注释都要求它保持次要色（「只给悬停反馈」），默认档会让它常驻强调色、
+   在一段对话里格外扎眼。箭头仍是强调色，那也是它「可以点开」的提示。
+   段落之间只留 p + p 的间距：折叠体自己已经给了摘要与正文之间的那一段。 */
+.summary-background p + p {
   margin-top: var(--space-2-5);
 }
 .summary-text {

@@ -8,6 +8,11 @@ const props = defineProps<{
   turns: AgentTurn[]
   streaming: boolean
   examples: readonly string[]
+  /* 正在读取某个会话的历史。这段时间 turns 还是空的，但「空」和「还没读到」是两回事：
+     不区分的话，页面会一边挂着「正在读取这个会话的历史…」，一边渲染出 28px 的
+     「今天想查什么？」问候和一批建议卡——问候字大、加载提示字小，用户先看到的是问候，
+     于是把「正在读」读成「这个会话是空的」。 */
+  loading?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -36,7 +41,7 @@ function isLast(index: number): boolean {
          点一张建议卡看它真的去查，比读一段字有说服力。
          「回答可能有误、请核对原文」那条挪到输入区下方的细则行：它对每一轮都成立，
          只挂在空态等于答案出现后就不再提醒。 -->
-    <div v-if="turns.length === 0" class="empty-state">
+    <div v-if="turns.length === 0 && !props.loading" class="empty-state">
       <h3>今天想查什么？</h3>
       <p class="empty-lead">Agent 在选定的知识库中检索文档、读取全文，并根据查到的资料作答。</p>
 
