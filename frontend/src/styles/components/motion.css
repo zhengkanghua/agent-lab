@@ -67,10 +67,15 @@
     width: 100%;
   }
 
-  /* 与 BaseSpinner 同一处置：不停掉——它在表达「还在跑」——只放慢到不刺眼。 */
+  /* 与 BaseSpinner 同一处置：不停掉——它在表达「还在跑」——只放慢到不刺眼。
+     !important 不能省：style.css 的全局 reduce 块用 `* { animation-* !important }`
+     兜底，普通声明压不过它，原来这条「放慢」从来没生效过。
+     （这条规则在 @layer components 内，而重要声明里分层规则排在未分层之前，
+     所以它天然赢过全局那条未分层的 `*`，不依赖特异度。） */
   @media (prefers-reduced-motion: reduce) {
     .spin {
-      animation-duration: 2s;
+      animation-duration: 2s !important;
+      animation-iteration-count: infinite !important;
     }
 
     .list-move,
