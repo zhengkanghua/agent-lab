@@ -16,6 +16,7 @@ import './styles/components/drawer.css'
 import './styles/components/stream.css'
 import './styles/components/form-controls.css'
 import './styles/components/nav-item.css'
+import './styles/components/admin-page.css'
 import './styles/components/text-link.css'
 import App from './App.vue'
 

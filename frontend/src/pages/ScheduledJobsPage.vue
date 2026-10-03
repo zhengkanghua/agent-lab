@@ -196,7 +196,7 @@ function openCreate(): void {
         @close="createForm.close()"
       />
 
-      <p v-if="directory.feedback.value" class="feedback" role="status">
+      <p v-if="directory.feedback.value" class="page-feedback" role="status">
         <Check :size="16" aria-hidden="true" />
         {{ directory.feedback.value }}
       </p>
@@ -256,25 +256,10 @@ function openCreate(): void {
 </template>
 
 <style scoped>
-.admin-page {
-  padding-top: 8px;
-}
-
-.page-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding-bottom: 26px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.page-intro {
-  max-width: 640px;
-  color: var(--text-secondary);
-  font-size: var(--fs-sm);
-  line-height: 1.6;
-}
+/* 页头（.admin-page / .page-bar / .page-intro / .page-feedback，含窄容器竖排回退）
+   归共享层 admin-page.css——账号管理与任务管理两页原本逐字各写一份。
+   .page-intro 这一页没有用（页头右侧是视图切换与操作，没有说明段），
+   原先那条声明也就一并删掉了，别再往回加。 */
 
 .page-actions,
 .task-views {
@@ -284,18 +269,6 @@ function openCreate(): void {
   gap: var(--space-2);
 }
 
-.feedback {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 18px;
-  padding: 10px 12px;
-  border-left: 3px solid var(--accent);
-  color: var(--accent);
-  background: var(--accent-soft);
-  font-size: var(--fs-xs);
-}
-
 .empty-hint {
   display: flex;
   align-items: center;
@@ -303,13 +276,5 @@ function openCreate(): void {
   margin-top: 14px;
   color: var(--text-tertiary);
   font-size: var(--fs-xs);
-}
-
-@container (max-width: 640px) {
-  .page-bar {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 16px;
-  }
 }
 </style>

@@ -1,0 +1,58 @@
+/* 后台页面的页头：一段说明 + 右侧主操作，下面一条分隔线，分隔线下面是这一页的内容。
+ *
+ * 账号管理与任务管理两页各写过一份，逐字相同，窄容器里的竖排回退也相同。
+ * 知识库、来源、文件、文档审核那几页用的是另一套（`.directory-toolbar`，带
+ * min-height: 64px 和自己的分隔线），结构与这里不同，没有一起收。
+ *
+ * 结果提示那一份在这里叫 `.page-feedback`，不是 `.feedback`。原来的名字跟来源管理
+ * 与知识库目录撞车：那两处的 `.feedback` 是「一行绿色成功提示」（无边框、无底色、
+ * padding: 16px 0），和这里的「带左侧强调条的结果横幅」根本是两样东西。
+ * 同名不同义，谁先被提成共享层，谁就会把另一方染色——先改名，再共享。
+ *
+ * 放在 @layer components 内，组件 scoped 样式（未分层）恒定可以覆盖它。
+ */
+
+@layer components {
+  .admin-page {
+    padding-top: 8px;
+  }
+
+  .page-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding-bottom: 26px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .page-intro {
+    max-width: 640px;
+    color: var(--text-secondary);
+    font-size: var(--fs-sm);
+    line-height: 1.6;
+  }
+
+  .page-feedback {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 18px;
+    padding: 10px 12px;
+    border-left: 3px solid var(--accent);
+    color: var(--accent);
+    background: var(--accent-soft);
+    font-size: var(--fs-xs);
+  }
+
+  /* 窄容器：说明与主操作竖排。断点量的是 .admin-page 这个容器（两页都用
+     container-type: inline-size 声明了它），不是视口——后台的正文列宽由侧栏
+     与 max-width 决定，与视口宽度并不同步。 */
+  @container (max-width: 640px) {
+    .page-bar {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 16px;
+    }
+  }
+}

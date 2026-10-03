@@ -62,7 +62,7 @@ onMounted(() => {
 
     <UserDirectorySummary :stats="directory.stats.value" />
 
-    <p v-if="directory.feedback.value" class="feedback" role="status">
+    <p v-if="directory.feedback.value" class="page-feedback" role="status">
       <Check :size="16" aria-hidden="true" />
       {{ directory.feedback.value }}
     </p>
@@ -91,44 +91,7 @@ onMounted(() => {
 
 <style scoped>
 /* 后台外壳（侧边栏、顶栏标题、退出）在 layouts/AdminShell.vue。
-   本页只排正文内容。表单、概况、目录各自带样式，见 features/user-admin/components/。 */
-.admin-page {
-  padding-top: 8px;
-}
-
-.page-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding-bottom: 26px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.page-intro {
-  max-width: 640px;
-  color: var(--text-secondary);
-  font-size: var(--fs-sm);
-  line-height: 1.6;
-}
-
-.feedback {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 18px;
-  padding: 10px 12px;
-  border-left: 3px solid var(--accent);
-  color: var(--accent);
-  background: var(--accent-soft);
-  font-size: var(--fs-xs);
-}
-
-@container (max-width: 640px) {
-  .page-bar {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 16px;
-  }
-}
+   本页只排正文内容。表单、概况、目录各自带样式，见 features/user-admin/components/。
+   页头（.admin-page / .page-bar / .page-intro / .page-feedback，含窄容器竖排回退）
+   归共享层 admin-page.css——账号管理与任务管理两页原本逐字各写一份。 */
 </style>
