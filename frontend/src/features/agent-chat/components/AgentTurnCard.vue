@@ -321,6 +321,12 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
   background: var(--surface-hover);
 }
 
+/* 复制与重试按下时收一档底。这两个动作的回执都不显眼（复制只换一下图标、重试要等一整轮），
+   按下的这一下是唯一即时的确认。 */
+.ghost-action:active {
+  background: var(--surface-sunken-hover);
+}
+
 /* 触屏：常驻之外还要撑到可点高度。32px 是为鼠标精度换来的密集尺寸，
    手指点不中，只有 opacity: 1 让它们可见但没有变好点。 */
 @media (pointer: coarse) {

@@ -304,6 +304,10 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
   background: var(--surface-hover);
 }
 
+.menu-back:active {
+  background: var(--surface-sunken-hover);
+}
+
 .menu-group-label {
   padding: 16px 12px 7px;
   color: var(--text-tertiary);
@@ -333,6 +337,11 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
   background: var(--surface-hover);
 }
 
+/* 按下：比悬停再深一档（与前台侧栏同一套）。后台分区切换是本页最高频动作。 */
+.menu-item:active {
+  background: var(--surface-sunken-hover);
+}
+
 /* 激活项：松绿浅底 + 强调色文字（「当前导航态」的强调配额用在这里）。
    router-link-active 由 RouterLink 在命中时自动加上。图标跟文字同色（currentColor），
    不再单独染绿——每个菜单图标都染绿会让强调色面积超标。 */
@@ -340,6 +349,11 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
   color: var(--accent);
   font-weight: var(--fw-semibold);
   background: var(--accent-soft);
+}
+
+/* 当前分区被按下时也换底，理由同前台侧栏：别让它成为唯一没有回执的一项。 */
+.menu-item.router-link-active:active {
+  background: var(--surface-sunken-hover);
 }
 
 .menu-item svg {
@@ -443,6 +457,10 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
 .account-identity:hover {
   color: var(--accent);
   background: var(--surface-hover);
+}
+
+.account-identity:active {
+  background: var(--surface-sunken-hover);
 }
 
 .account-identity span {

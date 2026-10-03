@@ -86,6 +86,12 @@ const exactTime = computed(() => {
   background: var(--surface-raised);
 }
 
+/* 整行可点开一个会话。悬停只是把底照亮一档，和「当前会话」那条强调条容易混淆，
+   按下时收深一档才说明「这一下按到的是这一行」。 */
+.thread-item:active {
+  background: var(--surface-sunken);
+}
+
 /* 当前会话用左侧强调条 + 底色标记，不只靠底色：底色差异在深色主题下很弱，
    而这一行是「我在哪」的唯一指示。 */
 .thread-item.is-active {

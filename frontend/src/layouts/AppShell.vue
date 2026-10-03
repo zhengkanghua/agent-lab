@@ -326,6 +326,10 @@ function handlePrimary(): void {
   background: var(--surface-hover);
 }
 
+.brand-lockup:active {
+  background: var(--surface-sunken-hover);
+}
+
 /* 类名带 shell- 前缀：topbar.css 的共享层还占着 .brand-mark/.brand-copy（登录页在用），
    结构守护禁止组件重声明共享类。 */
 .shell-brand-mark {
@@ -392,10 +396,21 @@ function handlePrimary(): void {
   background: var(--surface-hover);
 }
 
+/* 按下：比悬停再深一档。导航是全站最高频的动作，点完立刻换页——
+   页面切换快的时候，没有这一档根本看不出点中了。 */
+.nav-item:active {
+  background: var(--surface-sunken-hover);
+}
+
 /* 当前页：强调色纪律里「当前导航态」那一处。 */
 .nav-item.is-active {
   color: var(--accent);
   background: var(--accent-soft);
+}
+
+/* 当前页那一项也要有按下回执，否则它是整列里唯一「点了没反应」的。 */
+.nav-item.is-active:active {
+  background: var(--surface-sunken-hover);
 }
 
 .nav-item svg {
@@ -450,6 +465,10 @@ function handlePrimary(): void {
 .account-identity:hover {
   color: var(--accent);
   background: var(--surface-hover);
+}
+
+.account-identity:active {
+  background: var(--surface-sunken-hover);
 }
 
 .account-identity span {

@@ -195,6 +195,11 @@ function toggle(): void {
   background: var(--surface-sunken);
 }
 
+/* 旧记录整行可点开。悬停已经把底照亮了，按下再收深一档才能和「只是停在那儿」分开。 */
+.record-toggle:active:not(.record-toggle--static) {
+  background: var(--surface-sunken-hover);
+}
+
 .record-toggle--static {
   cursor: default;
 }

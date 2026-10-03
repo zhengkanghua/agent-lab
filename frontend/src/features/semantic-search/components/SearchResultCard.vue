@@ -297,6 +297,13 @@ function requestFullText(event: MouseEvent): void {
   color: var(--accent-hover);
 }
 
+/* 两枚都是纯文字键，没有底也没有位移可用：按下时加深一档色相，
+   否则「点中了没有」只能靠内容变没变来判断，而展开/收起本来就可能看不出来。 */
+.text-button:active,
+.related-toggle:active {
+  color: var(--text-primary);
+}
+
 .text-button {
   display: inline-flex;
   align-items: center;
@@ -410,6 +417,14 @@ function requestFullText(event: MouseEvent): void {
 .result-actions a:hover {
   color: var(--accent);
   background: var(--surface-hover);
+}
+
+/* 两枚都是 ghost 键：悬停已经浮出底了，按下再收深一档。
+   「访问原文」会离开本站，回执尤其重要——新标签页打开慢的时候，
+   没有这一档用户会以为点空了、再点一次。 */
+.read-button:active,
+.result-actions a:active {
+  background: var(--surface-sunken-hover);
 }
 
 /* 触屏：这三个都是行内小键，桌面密集尺寸在手指导下点不中，统一撑到可点高度。 */
