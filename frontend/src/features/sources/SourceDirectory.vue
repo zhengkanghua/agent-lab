@@ -245,6 +245,14 @@ td {
   color: var(--accent);
   font-size: var(--fs-xs);
   overflow-wrap: anywhere;
+  transition: color var(--duration-fast) var(--ease-out-smooth);
+}
+/* 订阅地址是新标签页外链，颜色已经和正文区分开；补下划线说明它是「跳出去」，
+   而不是站内的普通强调文字。 */
+.feed-cell a:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .feed-cell span {
   color: var(--text-tertiary);

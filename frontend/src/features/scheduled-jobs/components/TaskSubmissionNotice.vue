@@ -87,6 +87,15 @@ small {
   display: block;
   margin-top: 4px;
 }
+/* 这一页原本没有给 summary 任何规则，折叠键只剩浏览器默认三角。这一屏是告警底，
+   底下每一句都可点，补一个悬停色至少让它和上面的说明文字区分开。 */
+summary {
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out-smooth);
+}
+summary:hover {
+  color: var(--accent);
+}
 pre {
   white-space: pre-wrap;
 }

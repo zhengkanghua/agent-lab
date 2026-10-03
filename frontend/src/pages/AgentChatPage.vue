@@ -424,6 +424,12 @@ async function chooseExample(value: string): Promise<void> {
 }
 .summary-background summary {
   cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out-smooth);
+}
+/* 这一行夹在会话标题和回答之间，本身是次要色；不给悬停反馈就只是一句灰字，
+   而它是「系统提示词从哪来」的唯一入口。 */
+.summary-background summary:hover {
+  color: var(--accent);
 }
 .summary-background p {
   margin-top: var(--space-2-5);

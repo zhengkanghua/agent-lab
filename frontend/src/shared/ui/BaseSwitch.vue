@@ -82,7 +82,23 @@ function onChange(event: Event): void {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-pill);
   background: var(--surface-sunken);
-  transition: background var(--duration-fast) var(--ease-out-smooth);
+  transition:
+    background-color var(--duration-fast) var(--ease-out-smooth),
+    border-color var(--duration-fast) var(--ease-out-smooth);
+}
+
+/* 轨道自己回应鼠标。它只有 32×18，落在密集表格里本就不显眼；有的表连行悬停都没有
+   （知识库目录），开关是那一行唯一的交互点，划过去毫无反应就完全看不出能点。
+   关掉的轨道靠描边加深，打开的靠强调色再深一档——两个方向都是「更明确」，不是「按下」。
+   禁用态不响应：那是在说「现在改不了」，给反馈反而是误导。 */
+.base-switch:not(.is-disabled):hover .base-switch-track {
+  border-color: var(--border-strong);
+  background: var(--surface-sunken-hover);
+}
+
+.base-switch:not(.is-disabled):hover input:checked + .base-switch-track {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
 }
 
 .base-switch-track::after {

@@ -312,9 +312,18 @@ function handlePrimary(): void {
   gap: 11px;
   min-width: 0;
   flex: 1;
+  /* 悬停底比品牌块各宽出 8px：pill 有呼吸空间，负外边距把排布还回去，
+     锁本身相对侧栏的位置不变。品牌是「回首页」的入口，但原来点上去毫无回应。 */
+  margin: -6px -8px;
+  padding: 6px 8px;
   border-radius: var(--radius-md);
   color: inherit;
   text-decoration: none;
+  transition: background-color var(--duration-fast) var(--ease-out-smooth);
+}
+
+.brand-lockup:hover {
+  background: var(--surface-hover);
 }
 
 /* 类名带 shell- 前缀：topbar.css 的共享层还占着 .brand-mark/.brand-copy（登录页在用），

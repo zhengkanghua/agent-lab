@@ -93,6 +93,10 @@ const spinnerSize = computed(() => (props.size === 'md' ? 18 : 15))
   font-family: inherit;
   text-decoration: none;
   cursor: pointer;
+  /* 按钮上是控件名，不是正文，任何宽度下都不该折成两行——「创建账号」被挤成
+     「建账 / 号」既认不出，也让同行按钮高度不齐。容器放不下时该由父级换行（flex-wrap）
+     或让它溢出可见，而不是把名字断开。 */
+  white-space: nowrap;
   transition:
     background-color var(--duration-fast) var(--ease-out-smooth),
     border-color var(--duration-fast) var(--ease-out-smooth),

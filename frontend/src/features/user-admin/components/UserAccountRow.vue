@@ -347,6 +347,10 @@ const stateControlsVisible = computed(() => !isCurrentUser.value && !deregistere
   font-size: var(--fs-xs);
   font-weight: var(--fw-semibold);
   opacity: 0;
+  /* 透明不等于不可点：隐藏期间照吃指针事件，「注销」这种不可逆动作不该被误点，
+     而这一列在悬停前看起来是空的。关掉指针命中的同时保留 opacity 切换——
+     换成 visibility/display 会把它们踢出 Tab 序，键盘用户就再也到不了。 */
+  pointer-events: none;
   transition:
     color var(--duration-fast) var(--ease-out-smooth),
     background-color var(--duration-fast) var(--ease-out-smooth),
@@ -354,9 +358,9 @@ const stateControlsVisible = computed(() => !isCurrentUser.value && !deregistere
 }
 
 .user-row:hover .row-actions button:not(:disabled),
-.row-actions button:focus-visible,
-.row-actions button:disabled {
+.row-actions button:focus-visible {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .row-actions button:hover:not(:disabled) {
@@ -372,6 +376,8 @@ const stateControlsVisible = computed(() => !isCurrentUser.value && !deregistere
 .row-actions button:disabled {
   cursor: not-allowed;
   opacity: 0.42;
+  /* 禁用的键本来就常驻可见，保留指针命中只是为了还显示得出 not-allowed。 */
+  pointer-events: auto;
 }
 
 /* 触屏：常驻之外还要撑到可点高度。32px 是鼠标精度换来的密度，
@@ -379,6 +385,7 @@ const stateControlsVisible = computed(() => !isCurrentUser.value && !deregistere
 @media (pointer: coarse) {
   .row-actions button {
     opacity: 1;
+    pointer-events: auto;
     min-height: var(--tap-target);
     padding: 0 12px;
   }

@@ -192,6 +192,21 @@ function refresh(): void {
   font-weight: var(--fw-semibold);
 }
 
+/* 「查看详情」原来没有任何规则：它和同一行的触发方式、时间同色同重，
+   整条元信息读下来完全看不出这里有个入口。 */
+.run-meta a {
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  transition: color var(--duration-fast) var(--ease-out-smooth);
+}
+
+.run-meta a:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .run-error-type {
   margin-left: auto;
   color: var(--danger);

@@ -203,6 +203,8 @@ defineProps<{
 .execution-list li {
   border-bottom: 1px solid var(--border-subtle);
   padding: var(--space-3);
+  /* 选中态是「你刚才点的是这一条」的确认，硬切会让人不确定点没点中。 */
+  transition: background-color var(--duration-normal) var(--ease-out-smooth);
 }
 .execution-list li.selected {
   background: var(--surface-sunken);

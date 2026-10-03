@@ -186,6 +186,9 @@ function toggle(): void {
   background: transparent;
   text-align: left;
   cursor: pointer;
+  /* 底和它里面的检索词要一起渐变。原来只有 .record-query 有过渡，
+     底色却是瞬变——同一个控件里两套节奏，看起来像底色掉了帧。 */
+  transition: background-color var(--duration-fast) var(--ease-out-smooth);
 }
 
 .record-toggle:hover:not(.record-toggle--static) {

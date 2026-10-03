@@ -145,6 +145,10 @@ details {
 }
 summary {
   cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out-smooth);
+}
+summary:hover {
+  color: var(--accent);
 }
 ol {
   padding-left: var(--space-5);

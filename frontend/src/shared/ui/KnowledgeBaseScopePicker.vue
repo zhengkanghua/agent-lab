@@ -114,8 +114,10 @@ onBeforeUnmount(() => {
     <button
       type="button"
       class="scope-refresh"
+      :class="{ 'is-loading': loading }"
       title="重新加载知识库"
       aria-label="重新加载知识库"
+      :aria-busy="loading || undefined"
       :disabled="loading"
       @click="emit('refresh')"
     >
@@ -227,11 +229,39 @@ input {
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease-out-smooth),
+    background-color var(--duration-fast) var(--ease-out-smooth);
 }
 
 .scope-refresh:hover:not(:disabled) {
   color: var(--text-primary);
   background: var(--surface-hover);
+}
+
+/* 这一枚的 disabled 只有一个来源：后台正在重新拉取知识库。所以它不是「不可用」，
+   而是「正在忙」——压暗之外还让图标转起来，指针给 wait。少了这一段，加载中
+   它和可用状态长得一模一样，点下去毫无反应，看起来像坏了。 */
+.scope-refresh:disabled {
+  color: var(--text-tertiary);
+  cursor: wait;
+}
+
+.scope-refresh.is-loading svg {
+  animation: scope-refresh-spin 900ms linear infinite;
+}
+
+@keyframes scope-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scope-refresh.is-loading svg {
+    animation: none;
+    opacity: 0.55;
+  }
 }
 .scope-error {
   flex-basis: 100%;

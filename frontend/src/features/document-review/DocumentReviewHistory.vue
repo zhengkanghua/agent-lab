@@ -203,6 +203,13 @@ watch([kind, () => props.documentId], () => {
   cursor: pointer;
   color: var(--accent);
   padding: 8px 0;
+  transition: color var(--duration-fast) var(--ease-out-smooth);
+}
+/* 展开键的颜色已经是强调色，但整页都是可点元素；悬停下划线把它和静态说明分开。 */
+.history-list summary:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .history-list pre {
   padding: 12px;

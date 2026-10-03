@@ -221,6 +221,12 @@ details {
 }
 summary {
   cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out-smooth);
+}
+/* 这三段折叠默认和正文同色，只有左边一个小三角说明它是控件；悬停补色，
+   让它在这一屏全是静态字段里显出可点。 */
+summary:hover {
+  color: var(--accent);
 }
 pre {
   background: var(--surface-sunken);
@@ -233,6 +239,15 @@ pre {
 a {
   display: inline-block;
   margin-top: var(--space-4);
+  color: var(--accent);
+  transition: color var(--duration-fast) var(--ease-out-smooth);
+}
+/* 原样继承正文色时，这句「查看文档处理与审核状态」读起来就是普通说明文字，
+   没有下划线也没有颜色，是这一页里最难被发现的一个入口。 */
+a:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 @media (max-width: 600px) {
   dl {

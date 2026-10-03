@@ -192,6 +192,13 @@ watch(
   font: inherit;
   font-size: var(--fs-sm);
   cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease-out-smooth),
+    border-color var(--duration-fast) var(--ease-out-smooth);
+}
+/* 未选中的 tab 也要回应鼠标：只在选中态换色，未选中时整排看起来是死的。 */
+.preview-tabs button:hover {
+  color: var(--text-primary);
 }
 .preview-tabs button[aria-pressed='true'] {
   color: var(--accent);
@@ -237,21 +244,32 @@ watch(
 .outline button {
   display: flex;
   gap: 10px;
-  padding: 7px 4px;
+  /* 悬停底比文字各宽 8px：pill 有呼吸空间，标题仍与上面的目录项左对齐。
+     .outline 自身有 12px 内边距，8px 的外溢收得进去。 */
+  width: calc(100% + 16px);
+  margin: 0 -8px;
+  padding: 7px 8px;
   text-align: left;
   border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-primary);
   font: inherit;
   font-size: var(--fs-sm);
   overflow-wrap: anywhere;
   cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-out-smooth);
+}
+/* 目录项是「跳过去看这一段」的入口，和周围的静态文字同色，不补底就看不出能点。
+   底衬在 .outline 的下沉底之上，所以取抬升色而不是再深一档。 */
+.outline button:hover {
+  background: var(--surface-raised);
 }
 /* 结构目录的每一项是整行按钮：桌面 34px 左右，手指点不准，触屏撑到可点高度。 */
 @media (pointer: coarse) {
   .outline button {
     min-height: var(--tap-target);
-    padding: 10px 4px;
+    padding: 10px 8px;
   }
 }
 
@@ -268,7 +286,13 @@ watch(
 .structure-blocks li {
   padding: 12px 8px;
   border-bottom: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
   scroll-margin-top: 90px;
+  /* 从目录跳过来时高亮的是这一块。没有过渡的话它硬切一下，
+     在长文档里会让人错以为滚错了位置。 */
+  transition:
+    background-color var(--duration-normal) var(--ease-out-smooth),
+    box-shadow var(--duration-normal) var(--ease-out-smooth);
 }
 .structure-blocks li::marker {
   color: var(--text-tertiary);
@@ -276,8 +300,7 @@ watch(
 }
 .structure-blocks li.located {
   background: var(--accent-soft);
-  outline: 1px solid var(--accent);
-  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 .block-meta {
   margin-bottom: 7px;
@@ -326,6 +349,11 @@ watch(
   cursor: pointer;
   padding: 8px 0;
   color: var(--text-secondary);
+  transition: color var(--duration-fast) var(--ease-out-smooth);
+}
+/* 展开键默认是次要色，和它上面那些说明文字同色，不回应鼠标就看不出是控件。 */
+.chunk-tools summary:hover {
+  color: var(--accent);
 }
 .chunk-tools details pre {
   padding: 12px;

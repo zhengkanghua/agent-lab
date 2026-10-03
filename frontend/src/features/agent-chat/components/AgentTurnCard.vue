@@ -208,12 +208,16 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
   list-style: none;
 }
 
+/* 引用行是「点开全文对照」的入口，数量多、密度高，靠颜色本身不足以说明它可点。
+   悬停时补一层底，并让底比文字各宽出 8px——pill 有呼吸空间，[1] 又仍与正文左对齐。 */
 .citation-list button {
   display: flex;
   gap: 8px;
-  width: 100%;
-  padding: 6px 0;
+  width: calc(100% + 16px);
+  margin: 0 -8px;
+  padding: 6px 8px;
   border: 0;
+  border-radius: var(--radius-sm);
   color: var(--accent);
   background: transparent;
   text-align: left;
@@ -221,6 +225,19 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
   line-height: 1.55;
   overflow-wrap: anywhere;
   cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease-out-smooth),
+    background-color var(--duration-fast) var(--ease-out-smooth);
+}
+
+.citation-list button:hover {
+  color: var(--accent-hover);
+  background: var(--surface-hover);
+}
+
+/* 按下时沉回去：已经按下去了，不该还浮着。 */
+.citation-list button:active {
+  background: var(--surface-sunken);
 }
 
 .citation-number {
@@ -271,12 +288,15 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
   gap: 2px;
   margin-top: 10px;
   opacity: 0;
+  /* 同 ThreadListItem：透明仍吃点击，隐藏期间关掉指针命中，但不退出 Tab 序。 */
+  pointer-events: none;
   transition: opacity var(--duration-fast) var(--ease-out-smooth);
 }
 
 .answer-region:hover .answer-actions,
 .answer-region:focus-within .answer-actions {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .ghost-action {
@@ -306,6 +326,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
 @media (pointer: coarse) {
   .answer-actions {
     opacity: 1;
+    pointer-events: auto;
   }
 
   .ghost-action {

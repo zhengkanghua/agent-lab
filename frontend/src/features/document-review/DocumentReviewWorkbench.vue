@@ -560,6 +560,14 @@ watch(detail, async (value) => {
   font: inherit;
   font-size: var(--fs-xs);
   cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out-smooth);
+}
+/* 「查看草稿」是纯文字，和旁边的静态标签长得一样；悬停时补下划线，
+   把「这句能点」说出来。颜色只深一档，不足以单独承担这个信号。 */
+.version-strip button:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 /* 版本条上的按钮是 28px 的密集尺寸，为鼠标精度换来；手指点不准，触屏撑到可点高度。 */
 @media (pointer: coarse) {

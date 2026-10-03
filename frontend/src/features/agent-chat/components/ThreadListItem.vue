@@ -152,6 +152,9 @@ const exactTime = computed(() => {
 .remove-button {
   margin-right: var(--space-1);
   opacity: 0;
+  /* 看不见不等于不能点：透明元素照吃指针事件，用户想点行右侧切会话时会撞出一个
+     「确认删除」。隐藏期间关掉命中；不能改用 visibility/display，那会把它踢出 Tab 序。 */
+  pointer-events: none;
   transition: opacity var(--duration-fast) var(--ease-out-smooth);
 }
 
@@ -159,6 +162,7 @@ const exactTime = computed(() => {
 .thread-item:focus-within .remove-button,
 .remove-button[aria-busy='true'] {
   opacity: 1;
+  pointer-events: auto;
 }
 
 /* 触屏没有 hover，也点不出 :focus-within——上面那三条在手机和平板上一条都不会命中，
@@ -167,6 +171,7 @@ const exactTime = computed(() => {
 @media (pointer: coarse) {
   .remove-button {
     opacity: 1;
+    pointer-events: auto;
   }
 
   /* 36px 的行是为鼠标精度换来的密度，手指点不中：触屏下把行撑到可点高度那一档
