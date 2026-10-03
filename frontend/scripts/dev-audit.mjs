@@ -188,7 +188,29 @@ console.log(
   '  点汉堡后 is-open=true:',
   await mob.locator('.admin-sidebar').evaluate((e) => e.classList.contains('is-open')),
 )
-console.log('  遮罩存在:', (await mob.locator('.sidebar-overlay').count()) > 0)
+/* 遮罩这一项原先查的是 .sidebar-overlay —— 那个类名早已随共享层收编改成 .drawer-overlay
+   （见 src/styles/components/drawer.css），于是这里长期恒报 false，看着像遮罩没渲染，
+   实际是查询写错了。这里一并把「存在」和「真的盖住视口」两件事都验掉：
+   遮罩是 position: fixed，offsetParent 恒为 null，所以不能用 offsetParent 判可见性
+   （那也会误报），要看包围盒是否覆盖视口、以及计算样式有没有把它藏起来。 */
+const overlayReport = await mob
+  .locator('.drawer-overlay')
+  .first()
+  .evaluate((el) => {
+    const rect = el.getBoundingClientRect()
+    const style = getComputedStyle(el)
+    return {
+      coversViewport: rect.width >= window.innerWidth - 1 && rect.height >= window.innerHeight - 1,
+      painted: style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0',
+      background: style.backgroundColor,
+    }
+  })
+  .catch(() => null)
+console.log(
+  '  遮罩存在且盖满视口:',
+  overlayReport ? overlayReport.coversViewport && overlayReport.painted : false,
+  overlayReport ? `(底色 ${overlayReport.background})` : '(未找到 .drawer-overlay)',
+)
 
 console.log('\n=== 控制台/页面错误 ===')
 if (errors.length) errors.forEach((e) => console.log('  ✗', e))

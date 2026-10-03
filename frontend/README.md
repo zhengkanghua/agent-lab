@@ -198,7 +198,9 @@ npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated/o
 - `src/features/scheduled-jobs`：周期配置、任务执行、Pipeline 提交与策略面板；
 - `src/features/settings`：设置中心（账号安全 / 检索偏好 / Agent 偏好）与账号偏好
   store（读写 `/auth/me/preferences`）；
-- `src/shared/ui`：`Base*` 基础控件（含 `BaseSwitch` 开关）、`ConfirmDialog`（全站破坏性
+- `src/shared/ui`：`Base*` 基础控件（含 `BaseSwitch` 开关）、`BaseDisclosure`（全站唯一的
+  折叠区皮肤：箭头、开合、悬停/按下、触屏高度都在它一份里，各页不再自己写 `summary` 样式）、
+  `ConfirmDialog`（全站破坏性
   操作的确认框，挂在 `App.vue` 上一次，由 `requestConfirm()` 驱动）、`ComposerDock` 输入坞、
   `ScrollToBottomButton`（输入坞上方的「回到最新」，检索页与 Agent 页共用）、
   `KnowledgeBaseScopePicker`、`ThemeToggle`，以及答案与 Markdown 文件共用的安全渲染器

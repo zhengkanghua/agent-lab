@@ -9,7 +9,7 @@ import type { KnowledgeBaseSelection, ResolvedKnowledgeBaseScope } from '@/api/k
  * 记录下提交时的检索词与数量参数，以及这次请求从发起到结束的状态。旧记录可以折叠成
  * 标题行回看，而不是被新一轮覆盖。记录只在页内存在：刷新或离开即清空，不落任何后端。
  *
- * 与 Agent 侧区分：这不是「运行(run)/会话(thread)/轮(turn)」那些 agent 词——检索侧
+ * 与 Agent 侧区分：这不是「运行（run）/会话（thread）/轮（turn）」那些 agent 词——检索侧
  * 不生成答案、不做多轮推理，每次搜索彼此独立，只是被放在同一条向下长的流里展示。
  */
 export type SearchRecordStatus = 'loading' | 'success' | 'empty' | 'error'
