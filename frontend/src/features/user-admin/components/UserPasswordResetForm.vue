@@ -4,7 +4,7 @@ import { Check } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseField from '@/shared/ui/BaseField.vue'
-import BaseInput from '@/shared/ui/BaseInput.vue'
+import PasswordInput from '@/shared/ui/PasswordInput.vue'
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/shared/model/password'
 
 /* 展开在某一行下方的密码重置表单。
@@ -40,10 +40,9 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
          不再各字段手写。 -->
     <BaseField id="reset-password" :label="`为 ${email} 设置新密码`">
       <template #default="{ control }">
-        <BaseInput
+        <PasswordInput
           v-bind="control"
           v-model="passwordDraft"
-          type="password"
           name="reset-password"
           autocomplete="new-password"
           :placeholder="passwordHint"

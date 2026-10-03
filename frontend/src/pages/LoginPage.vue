@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Eye, EyeOff, LogIn, RefreshCw, Search } from '@lucide/vue'
+import { LogIn, RefreshCw, Search } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
 import { resolveErrorCopy } from '@/api/error-copy'
 import { queryClient } from '@/app/query-client'
@@ -9,13 +9,12 @@ import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseField from '@/shared/ui/BaseField.vue'
 import BaseInput from '@/shared/ui/BaseInput.vue'
-import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
+import PasswordInput from '@/shared/ui/PasswordInput.vue'
 
 const route = useRoute()
 const router = useRouter()
 const email = ref(import.meta.env.VITE_DEV_LOGIN_EMAIL || '')
 const password = ref(import.meta.env.VITE_DEV_LOGIN_PASSWORD || '')
-const showPassword = ref(false)
 const submitting = ref(false)
 const loginError = ref<string | null>(null)
 const sessionUnavailable = computed(() => authSession.status.value === 'error')
@@ -116,25 +115,14 @@ async function retrySessionCheck(): Promise<void> {
           </BaseField>
 
           <BaseField v-slot="{ control }" label="密码">
-            <span class="password-control">
-              <BaseInput
-                v-bind="control"
-                v-model="password"
-                name="password"
-                :type="showPassword ? 'text' : 'password'"
-                autocomplete="current-password"
-                required
-                placeholder="输入密码"
-              />
-              <BaseIconButton
-                class="password-toggle"
-                :label="showPassword ? '隐藏密码' : '显示密码'"
-                @click="showPassword = !showPassword"
-              >
-                <EyeOff v-if="showPassword" :size="18" aria-hidden="true" />
-                <Eye v-else :size="18" aria-hidden="true" />
-              </BaseIconButton>
-            </span>
+            <PasswordInput
+              v-bind="control"
+              v-model="password"
+              name="password"
+              autocomplete="current-password"
+              required
+              placeholder="输入密码"
+            />
           </BaseField>
 
           <BaseCallout
@@ -166,7 +154,10 @@ async function retrySessionCheck(): Promise<void> {
 .login-shell {
   display: flex;
   flex-direction: column;
+  /* 同 style.css 的 body：手机上 100vh 按地址栏收起时的高度算，卡片会被压低、
+     底部那行脚注被推出屏幕。两条都写，dvh 不支持时退回上一条。 */
   min-height: 100vh;
+  min-height: 100dvh;
   background: var(--surface-base);
 }
 
@@ -194,8 +185,18 @@ async function retrySessionCheck(): Promise<void> {
   align-items: center;
   justify-content: center;
   gap: 11px;
+  /* 品牌锁同时是回首页的链接，但原来点上去没有任何回应；补一层悬停底。
+     负外边距把多出来的内边距还回去，锁在卡片里仍然居中、行高不变。 */
+  margin: -6px -10px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
   color: inherit;
   text-decoration: none;
+  transition: background-color var(--duration-fast) var(--ease-out-smooth);
+}
+
+.login-brand:hover {
+  background: var(--surface-hover);
 }
 
 .login-brand strong {
@@ -256,24 +257,8 @@ async function retrySessionCheck(): Promise<void> {
 }
 
 /* 标签、错误、说明与 aria 接线都归 BaseField；输入框皮肤归 BaseInput（全站一份）。
-   .password-toggle 的 34px 与输入框的 42px 是耦合的：上右各内缩 4px，
-   4 + 34 + 4 = 42 才能正好嵌在输入框里，所以这里只调位置，不改尺寸。 */
-.password-control {
-  position: relative;
-  display: block;
-}
-
-/* BaseInput 的圆角框在这里给显示密码键让位：只收右侧内边距。 */
-.password-control :deep(.base-input) {
-  padding-right: 42px;
-}
-
-.password-toggle {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-}
-
+   密码框与「显示密码」开关收在 shared/ui/PasswordInput.vue——改密码、建号、重置密码
+   三处密码框走同一份，不再各自实现一遍。 */
 .login-error {
   margin-bottom: var(--space-2);
 }

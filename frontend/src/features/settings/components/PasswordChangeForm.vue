@@ -3,7 +3,7 @@ import { usePasswordChangeForm } from '../composables/usePasswordChangeForm'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseField from '@/shared/ui/BaseField.vue'
-import BaseInput from '@/shared/ui/BaseInput.vue'
+import PasswordInput from '@/shared/ui/PasswordInput.vue'
 
 const { form, validationErrors, canSubmit, submit, isPending, errorMessage, successMessage } =
   usePasswordChangeForm()
@@ -30,10 +30,9 @@ function getFieldError(field: string): string | undefined {
         label="当前密码"
         :error="getFieldError('currentPassword')"
       >
-        <BaseInput
+        <PasswordInput
           v-bind="control"
           v-model="form.currentPassword"
-          type="password"
           name="current-password"
           autocomplete="current-password"
           :disabled="isPending"
@@ -46,10 +45,9 @@ function getFieldError(field: string): string | undefined {
         label="新密码"
         :error="getFieldError('newPassword')"
       >
-        <BaseInput
+        <PasswordInput
           v-bind="control"
           v-model="form.newPassword"
-          type="password"
           name="new-password"
           autocomplete="new-password"
           :disabled="isPending"
@@ -62,10 +60,9 @@ function getFieldError(field: string): string | undefined {
         label="确认新密码"
         :error="getFieldError('confirmPassword')"
       >
-        <BaseInput
+        <PasswordInput
           v-bind="control"
           v-model="form.confirmPassword"
-          type="password"
           name="confirm-password"
           autocomplete="new-password"
           :disabled="isPending"
