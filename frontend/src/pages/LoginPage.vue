@@ -99,8 +99,11 @@ async function retrySessionCheck(): Promise<void> {
           </BaseButton>
         </div>
 
+        <!-- 两个字段都标 required：提交键在任一为空时是禁用的（见下方 :disabled），
+             而「为什么点不动」只有标签上这枚星标能回答。required 经 BaseField 的
+             controlAttrs 落到 input 上，不必再在 input 上写一遍。 -->
         <form class="login-form" novalidate @submit.prevent="submitLogin">
-          <BaseField v-slot="{ control }" label="账号邮箱">
+          <BaseField v-slot="{ control }" label="账号邮箱" required>
             <BaseInput
               v-bind="control"
               v-model="email"
@@ -108,19 +111,17 @@ async function retrySessionCheck(): Promise<void> {
               type="email"
               autocomplete="username"
               inputmode="email"
-              required
               autofocus
               placeholder="name@example.com"
             />
           </BaseField>
 
-          <BaseField v-slot="{ control }" label="密码">
+          <BaseField v-slot="{ control }" label="密码" required>
             <PasswordInput
               v-bind="control"
               v-model="password"
               name="password"
               autocomplete="current-password"
-              required
               placeholder="输入密码"
             />
           </BaseField>

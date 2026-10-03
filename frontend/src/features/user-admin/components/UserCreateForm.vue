@@ -75,6 +75,7 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
             v-bind="control"
             v-model="emailDraft"
             type="email"
+            inputmode="email"
             name="new-email"
             autocomplete="off"
             placeholder="name@example.com"

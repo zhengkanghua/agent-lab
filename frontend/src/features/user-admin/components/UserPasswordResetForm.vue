@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { Check } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
@@ -26,6 +26,13 @@ const emit = defineEmits<{
   cancel: []
 }>()
 
+const root = ref<HTMLFormElement | null>(null)
+
+/* 打开就把焦点送进密码框。用户点「重置密码」本来就是为了输密码，让他再 Tab 一次是多余的；
+   顺带解决 Esc——keydown 只在焦点位于表单内时才冒泡到这里，不送焦点的话
+   「按 Esc 取消」等于没接线。取第一个可用输入框的写法与知识库编辑器一致。 */
+onMounted(() => root.value?.querySelector<HTMLInputElement>('input:not([disabled])')?.focus())
+
 const passwordDraft = computed({
   get: () => props.password,
   set: (value: string) => emit('update:password', value),
@@ -35,7 +42,16 @@ const passwordHint = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`
 </script>
 
 <template>
-  <form class="reset-editor" style="container-type: inline-size" @submit.prevent="emit('submit')">
+  <!-- Esc 与「取消」同一条路径。监听挂在 form 上而不是 document：useModalLayer 的 Esc
+       也是 document 级、且不拦截冒泡，挂 document 会在弹层开着时把两层一起关掉；
+       挂在 form 上则只有焦点落在这个表单里才会触发。 -->
+  <form
+    ref="root"
+    class="reset-editor"
+    style="container-type: inline-size"
+    @submit.prevent="emit('submit')"
+    @keydown.esc="emit('cancel')"
+  >
     <!-- 标签/接线走 BaseField：aria-invalid 与 aria-describedby 由它算一次，
          不再各字段手写。 -->
     <BaseField id="reset-password" :label="`为 ${email} 设置新密码`">

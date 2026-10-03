@@ -79,7 +79,7 @@ export function usePasswordChangeForm() {
 
       await changeOwnPassword(request)
 
-      successMessage.value = '密码修改成功,其他设备的登录已失效。'
+      successMessage.value = '密码修改成功，其他设备的登录已失效。'
       form.value.currentPassword = ''
       form.value.newPassword = ''
       form.value.confirmPassword = ''

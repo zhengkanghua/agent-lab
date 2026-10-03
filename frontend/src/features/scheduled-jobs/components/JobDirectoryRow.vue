@@ -70,7 +70,11 @@ async function onDeleteClick(): Promise<void> {
 
       <code class="job-cron" role="cell" :title="job.cron_expr">{{ job.cron_expr }}</code>
 
-      <label class="job-toggle" role="cell">
+      <!-- 这一格原先是 <label> 包着 BaseSwitch，而 BaseSwitch 的根节点本身就是一枚
+           <label>：嵌套 label 是非法结构，读屏会把这一格的名字读两遍，外层的隐式关联
+           也指向不了真正的控件。外层改成普通容器，可点范围就是开关自己
+           （桌面 32×18、触屏撑到 44px），紧邻的状态胶囊是只读状态，本来也不该跟着切换。 -->
+      <div class="job-toggle" role="cell">
         <!-- 开关本体走共享 BaseSwitch：真 checkbox 留在可达性树里，track 只是外观。 -->
         <BaseSwitch
           :checked="job.enabled"
@@ -81,7 +85,7 @@ async function onDeleteClick(): Promise<void> {
         <span class="status-chip" :class="job.enabled ? 'is-on' : 'is-off'" role="status">
           {{ job.enabled ? '已启用' : '已停用' }}
         </span>
-      </label>
+      </div>
 
       <div class="job-schedule" role="cell">
         <p class="schedule-line">
@@ -235,7 +239,6 @@ async function onDeleteClick(): Promise<void> {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  cursor: pointer;
 }
 
 /* 开关外观归 shared/ui/BaseSwitch.vue，状态胶囊归 styles/components/chip.css。 */

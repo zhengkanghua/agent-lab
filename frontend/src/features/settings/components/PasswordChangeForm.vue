@@ -17,17 +17,20 @@ function getFieldError(field: string): string | undefined {
   <form class="password-form" @submit.prevent="submit">
     <div class="form-header">
       <h3 class="form-title">修改密码</h3>
-      <p class="form-description">修改成功后,其他设备的登录将自动失效。</p>
+      <p class="form-description">修改成功后，其他设备的登录将自动失效。</p>
     </div>
 
     <div class="form-fields">
       <!-- 控件由本组件经插槽渲染：BaseField 只管外壳与 aria 接线（见其注释）。
            之前把 v-model/type 直接传给 BaseField，插槽没内容，页面上只剩三个
            标签、没有输入框，表单整个不可用。 -->
+      <!-- 三个字段都标 required：提交键在任一为空时是禁用的，而「为什么点不动」
+           只有标签上这枚星标能回答（长度与一致性规则要等提交后才查，那时才给错误）。 -->
       <BaseField
         id="current-password"
         v-slot="{ control }"
         label="当前密码"
+        required
         :error="getFieldError('currentPassword')"
       >
         <PasswordInput
@@ -43,6 +46,7 @@ function getFieldError(field: string): string | undefined {
         id="new-password"
         v-slot="{ control }"
         label="新密码"
+        required
         :error="getFieldError('newPassword')"
       >
         <PasswordInput
@@ -58,6 +62,7 @@ function getFieldError(field: string): string | undefined {
         id="confirm-password"
         v-slot="{ control }"
         label="确认新密码"
+        required
         :error="getFieldError('confirmPassword')"
       >
         <PasswordInput

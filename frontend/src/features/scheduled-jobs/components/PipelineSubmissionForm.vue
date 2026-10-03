@@ -42,6 +42,16 @@ const valid = computed(
       )
     }),
 )
+
+/* 取值范围写在字段上。越界时提交键会被禁用，而禁用的原因只有这个范围本身能说清；
+   原来三个数值字段只挂了 min/max 属性——那是给浏览器校验和微调箭头用的，页面上看不见。
+   写法与 JobForm 的字段提示一致（`min–max`）。 */
+function boundsHint(key: (typeof fields)[number]['key']): string | undefined {
+  if (!props.spec) return undefined
+  const { min, max } = parameterBounds(props.spec, key)
+  if (min === undefined || max === undefined) return undefined
+  return `${min}–${max}`
+}
 function submit(): void {
   if (valid.value && !props.busy && !props.pending) emit('submit', { ...params })
 }
@@ -56,7 +66,12 @@ function submit(): void {
     <p>先同步 FreshRSS，再处理一批文档。受理后返回执行编号，统计在任务详情中更新。</p>
     <form @submit.prevent="submit">
       <!-- 字段外壳走 BaseField：标签与 aria 接线由它算一次。 -->
-      <BaseField v-for="field in fields" :key="field.key" :label="field.label">
+      <BaseField
+        v-for="field in fields"
+        :key="field.key"
+        :label="field.label"
+        :hint="boundsHint(field.key)"
+      >
         <template #default="{ control }">
           <BaseInput
             v-bind="control"
