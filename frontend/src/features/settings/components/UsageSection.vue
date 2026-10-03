@@ -83,12 +83,19 @@ const {
       </BaseField>
     </div>
 
+    <!-- 错误态必须自带出路。原来这里只有一个红框：「刷新」在下面的成功分支里，
+         一报错整段就不渲染，于是用户除了去改筛选没有任何办法再读一次
+         （筛选没改时连触发条件都凑不出来）。与文档审核目录的报错横幅同一个做法。 -->
     <BaseCallout
       v-if="state === 'error'"
       class="load-error"
       tone="danger"
       :description="errorMessage"
-    />
+    >
+      <template #actions>
+        <BaseButton variant="outline" @click="refresh">重试</BaseButton>
+      </template>
+    </BaseCallout>
 
     <p v-else-if="state === 'loading'" class="loading">
       <BaseSpinner :size="15" label="正在读取用量" />

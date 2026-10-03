@@ -94,10 +94,21 @@ const sections: SectionItem[] = [
   background: var(--surface-hover);
 }
 
+/* 当前分区：用与前台/后台侧栏同一套「当前导航态」（浅强调底 + 强调色字）。
+   原来这里是 `background: --surface-raised`，而设置面板本身就是 --surface-raised
+   （SettingsPage 的 .settings-panel），实测两者完全同色（浅色都是 #ffffff，
+   深色都是 #1f1f1d）——选中项只剩 1px 描边，而且比「悬停」还弱：
+   悬停用的是 --surface-hover，看得见；选中的反而看不见。
+   与账号目录行内操作那次是同一种反相，2026-10 一并修正。 */
 .section-link.is-active {
-  border-color: var(--border-subtle);
-  color: var(--text-primary);
-  background: var(--surface-raised);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* 按下：两类项一起收深一档。写在 .is-active 之后，同特异度时这一条胜出，
+   于是「当前分区被按下」也有回执，不会成为这个导航里唯一没反应的一项。 */
+.section-link:active {
+  background: var(--surface-sunken-hover);
 }
 
 .section-icon {

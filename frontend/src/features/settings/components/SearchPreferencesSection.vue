@@ -59,6 +59,11 @@ const matchesPerDocument = computed({
   },
 })
 
+/* 「恢复默认」键上的那串数字直接从 DEFAULT_PREFERENCES 拼出来，不写死。
+   原来是手写的「10 篇 · 每篇 3 条」：默认值一旦调整，按钮文案不会跟着变，
+   于是它在按钮上撒谎——而按钮本身管的就是「恢复成哪两个数」。 */
+const defaultSummary = `${DEFAULT_PREFERENCES.documentLimit} 篇 · 每篇 ${DEFAULT_PREFERENCES.matchesPerDocument} 条`
+
 /** 两个数量参数一起恢复默认。提示词不跟进：清空提示词是 Agent 分区里一个显式动作。 */
 function resetSearchDefaults(): void {
   void commit({
@@ -141,7 +146,7 @@ const hasCustomized = computed(
         @click="resetSearchDefaults"
       >
         <template #icon><ListFilter :size="15" aria-hidden="true" /></template>
-        恢复默认（10 篇 · 每篇 3 条）
+        恢复默认（{{ defaultSummary }}）
       </BaseButton>
       <span class="footer-note">
         <Layers3 :size="13" aria-hidden="true" />

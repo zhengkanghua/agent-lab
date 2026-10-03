@@ -207,6 +207,20 @@ const deletedCount = computed(() => props.users.filter((user) => user.deleted_at
   opacity: 0.5;
 }
 
+/* 触屏下这一行要撑到可点高度。整行虽是 label（点文字也能勾），但 14px 的方框
+   加一行 12px 字只有 26px 高，手指按偏一点就落到标签外面、什么也不会发生。
+   放大的只有行高与方框，字号字重不动。 */
+@media (pointer: coarse) {
+  .include-deleted {
+    min-height: var(--tap-target);
+  }
+
+  .include-deleted input {
+    width: 20px;
+    height: 20px;
+  }
+}
+
 /* 开关打开后的回应：比开关本身淡一档，它是结果不是控件。 */
 .deleted-hint {
   color: var(--text-tertiary);

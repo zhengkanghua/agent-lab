@@ -357,10 +357,19 @@ const stateControlsVisible = computed(() => !isCurrentUser.value && !deregistere
     opacity var(--duration-fast) var(--ease-out-smooth);
 }
 
-.user-row:hover .row-actions button:not(:disabled),
+.user-row:hover .row-actions button,
 .row-actions button:focus-visible {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* 禁用键走同一条显隐规则，只是出现时压到 .42。
+   这里原先只写了一条 `.row-actions button:disabled { opacity: .42 }`，它的特异度
+   压过上一条的 opacity: 0，于是结果整个反了：整行里唯一常驻可见的是既点不动、
+   也不该点的那个键（环境托管那一行的「重置密码」），真正能用的三个键反而要悬停才出现
+   ——2026-10 修正。禁用键仍然保留指针命中，悬停时才拿得到 not-allowed 与 title 说明。 */
+.user-row:hover .row-actions button:disabled {
+  opacity: 0.42;
 }
 
 .row-actions button:hover:not(:disabled) {
@@ -373,10 +382,19 @@ const stateControlsVisible = computed(() => !isCurrentUser.value && !deregistere
   background: var(--danger-soft);
 }
 
+/* 行内键的按下反馈。行本身在悬停时已经换底，少了这一档，点下去和停住看起来一样。 */
+.row-actions button:active:not(:disabled) {
+  background: var(--surface-sunken-hover);
+}
+
+.row-actions button.action-danger:active:not(:disabled) {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+}
+
 .row-actions button:disabled {
   cursor: not-allowed;
-  opacity: 0.42;
-  /* 禁用的键本来就常驻可见，保留指针命中只是为了还显示得出 not-allowed。 */
+  /* 禁用的键随整行一起出现，保留指针命中只是为了还显示得出 not-allowed 与 title。 */
   pointer-events: auto;
 }
 
