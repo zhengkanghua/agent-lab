@@ -125,6 +125,13 @@ watch(confirmation, async (value) => {
     confirmPanel.value?.focus()
   }
 })
+
+/* Esc 与面板里的「取消」走同一条路径，执行中不关（与那枚键的禁用条件一致）。
+   监听挂在面板自己身上（它打开时就被聚焦），不挂 document：useModalLayer 的 Esc
+   也是 document 级、且不拦截冒泡，挂 document 会在弹层开着时把两层一起关掉。 */
+function cancelConfirmation(): void {
+  if (!busy.value) confirmation.value = null
+}
 function targetIdentity() {
   return [
     detail.value?.document.management_revision,
@@ -236,15 +243,19 @@ watch(detail, async (value) => {
       <BaseCallout v-if="issues.length" tone="neutral" title="需要处理">
         {{ issues.map(issueLabel).join('；') }}。可以核对原件、修正正文或重试失败阶段。
       </BaseCallout>
+      <!-- 视图切换的选中项用 soft（浅强调底 + 强调字），与任务页的 task-views 同一档。
+           原来用 outline：它的悬停是「填实强调色」，于是划过某个未选中项时，
+           那个被划过的反而比当前选中项更醒目——选中态被悬停态盖过去了，
+           与 BaseButton 注释里说的 secondary 那笔是同一类反相。 -->
       <div class="review-sections" role="group" aria-label="审核工作区">
         <BaseButton
-          :variant="section === 'review' ? 'outline' : 'ghost'"
+          :variant="section === 'review' ? 'soft' : 'ghost'"
           :aria-pressed="section === 'review'"
           @click="section = 'review'"
           >正文与预览</BaseButton
         >
         <BaseButton
-          :variant="section === 'history' ? 'outline' : 'ghost'"
+          :variant="section === 'history' ? 'soft' : 'ghost'"
           :aria-pressed="section === 'history'"
           @click="section = 'history'"
           >版本与审核结论</BaseButton
@@ -298,13 +309,13 @@ watch(detail, async (value) => {
         </div>
         <div class="mobile-pane-switch" role="group" aria-label="手机审核视图">
           <BaseButton
-            :variant="mobilePane === 'editor' ? 'outline' : 'ghost'"
+            :variant="mobilePane === 'editor' ? 'soft' : 'ghost'"
             :aria-pressed="mobilePane === 'editor'"
             @click="mobilePane = 'editor'"
             >编辑正文</BaseButton
           >
           <BaseButton
-            :variant="mobilePane === 'preview' ? 'outline' : 'ghost'"
+            :variant="mobilePane === 'preview' ? 'soft' : 'ghost'"
             :aria-pressed="mobilePane === 'preview'"
             @click="mobilePane = 'preview'"
             >对照预览</BaseButton
@@ -406,7 +417,7 @@ watch(detail, async (value) => {
             <BaseCallout
               v-else
               tone="neutral"
-              description="尚无有效预览。保存草稿后生成预览，检查正文、目录与 Chunk，再确认采用。"
+              description="尚无有效预览。保存草稿后生成预览，检查正文、目录与片段，再确认采用。"
             />
           </aside>
         </div>
@@ -431,7 +442,13 @@ watch(detail, async (value) => {
           >
         </div>
       </div>
-      <div v-if="confirmation" ref="confirmPanel" tabindex="-1" class="decision-confirmation">
+      <div
+        v-if="confirmation"
+        ref="confirmPanel"
+        tabindex="-1"
+        class="decision-confirmation"
+        @keydown.esc="cancelConfirmation"
+      >
         <BaseCallout
           :tone="confirmation === 'delete' || confirmation === 'reject' ? 'danger' : 'info'"
           :description="confirmationCopy"
@@ -447,7 +464,7 @@ watch(detail, async (value) => {
         </BaseField>
         <!-- 次左主右：与全站确认框同一收尾方向（原先取消在右、确认在左）。 -->
         <div class="review-actions">
-          <BaseButton variant="outline" :disabled="busy" @click="confirmation = null"
+          <BaseButton variant="outline" :disabled="busy" @click="cancelConfirmation"
             >取消</BaseButton
           >
           <BaseButton
@@ -568,6 +585,11 @@ watch(detail, async (value) => {
   color: var(--accent-hover);
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+/* 按下时换正文色：下划线在悬停时已经出现了，单靠它分不出「停住」和「按下」。
+   这里下面板要重新拉取，回执可能来得晚，按下的这一下得先给出来。 */
+.version-strip button:active {
+  color: var(--text-primary);
 }
 /* 版本条上的按钮是 28px 的密集尺寸，为鼠标精度换来；手指点不准，触屏撑到可点高度。 */
 @media (pointer: coarse) {

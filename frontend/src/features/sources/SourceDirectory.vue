@@ -119,6 +119,7 @@ function formatCheckpoint(item: SourceDto): string {
             <span v-else>未提供地址</span>
           </td>
           <td class="binding-cell">
+            <span class="cell-label">知识库绑定</span>
             <select
               :value="bindingValue(item)"
               :aria-label="`绑定来源 ${item.name}`"
@@ -141,6 +142,7 @@ function formatCheckpoint(item: SourceDto): string {
             <span v-if="item.knowledge_base_id === null" class="unbound-badge">待配置</span>
           </td>
           <td class="checkpoint-cell">
+            <span class="cell-label">同步游标</span>
             {{ formatCheckpoint(item) }}
           </td>
         </tr>
@@ -293,6 +295,14 @@ td {
   padding-right: 0;
   text-align: right;
 }
+
+/* 表头在窄屏整行隐藏之后，同步游标那一格只剩一个「09/08 08:00」：读者无从判断它是
+   同步游标、创建时间还是最后更新时间，而这三件事指向的操作完全不同。移动态补一枚
+   只在那时出现的标签（与账号目录 UserAccountRow 的 .cell-label 同一做法，
+   宽度条件与表头消失严格对齐，见文件末尾的容器查询）。 */
+.cell-label {
+  display: none;
+}
 @container (max-width: 580px) {
   .directory-toolbar {
     flex-wrap: wrap;
@@ -332,6 +342,23 @@ td {
     grid-column: 2;
     grid-row: 1;
     text-align: right;
+  }
+
+  /* 表头没了，两个数据格的语义靠这一枚标签扛起来。 */
+  .cell-label {
+    display: block;
+    color: var(--text-tertiary);
+    font-weight: var(--fw-semibold);
+  }
+
+  /* 标签自己占一行，下拉另起一行：并排时「知识库绑定」会和 200px 的下拉抢宽度，
+     390px 下必然把下拉挤到比标签还窄。 */
+  .binding-cell {
+    flex-wrap: wrap;
+  }
+
+  .binding-cell .cell-label {
+    flex: 0 0 100%;
   }
 }
 </style>

@@ -79,6 +79,13 @@ async function save() {
   if (await files.save(file, knowledgeBaseId.value, target.value)) editorOpen.value = false
 }
 
+/* Esc 与「取消」走同一条路径，保存中不关（与那枚键的禁用条件一致）。
+   监听挂在 form 上而不是 document：useModalLayer 的 Esc 也是 document 级、且不拦截冒泡，
+   挂 document 会在弹层开着时把两层一起关掉；挂在 form 上则只有焦点在这个表单里才触发。 */
+function closeEditor(): void {
+  if (!files.busy.value) editorOpen.value = false
+}
+
 function reselectTarget() {
   const current = files.items.value.find((item) => item.document_id === target.value?.document_id)
   if (current) {
@@ -130,7 +137,7 @@ async function removeDocument(item: FileDocumentDto) {
         >
       </div>
     </div>
-    <form v-if="editorOpen" class="file-editor" @submit.prevent="save">
+    <form v-if="editorOpen" class="file-editor" @submit.prevent="save" @keydown.esc="closeEditor">
       <h2>{{ target ? `替换文件：${target.title}` : '上传文件' }}</h2>
       <p v-if="target" class="file-note">
         所属知识库：{{
@@ -177,7 +184,7 @@ async function removeDocument(item: FileDocumentDto) {
         <BaseButton v-if="files.needsReselect.value" variant="outline" @click="reselectTarget">
           使用刷新后的记录继续替换
         </BaseButton>
-        <BaseButton variant="outline" :disabled="files.busy.value" @click="editorOpen = false"
+        <BaseButton variant="outline" :disabled="files.busy.value" @click="closeEditor"
           >取消</BaseButton
         >
         <BaseButton
@@ -247,9 +254,11 @@ async function removeDocument(item: FileDocumentDto) {
             >
           </td>
           <td>
-            {{ item.knowledge_base_name }}<small v-if="!item.knowledge_base_active">已停用</small>
+            <span class="cell-label">知识库</span>{{ item.knowledge_base_name
+            }}<small v-if="!item.knowledge_base_active">已停用</small>
           </td>
           <td>
+            <span class="cell-label">处理状态</span>
             <span
               class="file-status"
               :data-status="item.deletion_pending ? 'failed' : item.processing_status"
@@ -261,7 +270,9 @@ async function removeDocument(item: FileDocumentDto) {
               item.deletion_error || item.candidate_error
             }}</small>
           </td>
-          <td class="file-date">{{ formatDateTime(item.updated_at) }}</td>
+          <td class="file-date">
+            <span class="cell-label">更新时间</span>{{ formatDateTime(item.updated_at) }}
+          </td>
           <td>
             <div class="file-actions">
               <BaseButton
@@ -506,7 +517,23 @@ async function removeDocument(item: FileDocumentDto) {
   color: var(--danger);
   background: var(--danger-soft);
 }
+
+/* 表头在窄屏整行隐藏之后，「技术资料」「已采用」那张胶囊、一串时间戳都失去了列名的
+   上下文：分不清哪个是知识库、那个胶囊说的是什么状态、那串时间是上传时间还是更新时间。
+   移动态补标签（与账号目录 UserAccountRow 的 .cell-label 同一做法，
+   出现条件与下面那条隐藏 thead 的媒体查询严格对齐）。 */
+.cell-label {
+  display: none;
+}
+
 @media (max-width: 800px) {
+  .cell-label {
+    display: block;
+    margin-bottom: 2px;
+    color: var(--text-tertiary);
+    font-weight: var(--fw-semibold);
+  }
+
   .file-table thead {
     display: none;
   }

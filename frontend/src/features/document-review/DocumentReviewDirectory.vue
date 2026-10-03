@@ -132,8 +132,16 @@ const query = useQuery({
     <div v-if="query.isPending.value" class="directory-state" role="status">
       <BaseSpinner :size="20" />正在读取文档目录
     </div>
+    <!-- 空态分两句说。「一个文档都没有」和「筛完没有」是两件事，下一步也完全不同：
+         前者要去上传或绑定来源，后者放宽筛选就行（工具栏那枚「重置筛选」只在有筛选时
+         才出现）。原来不分，第一次进来的人会以为自己筛错了，而他一进来根本没设过筛选。 -->
     <div v-else-if="!query.data.value?.items.length && !query.error.value" class="directory-state">
-      当前筛选下没有文档。可以调整筛选，或上传 MD、TXT 文件。
+      <template v-if="hasFilters">
+        当前筛选下没有文档。放宽或重置筛选，或换一个知识库再看。
+      </template>
+      <template v-else>
+        还没有文档。先在文件资料页上传 MD、TXT 文件，或在来源管理里绑定订阅源。
+      </template>
     </div>
     <table v-if="query.data.value?.items.length" class="review-table">
       <caption class="sr-only">
@@ -154,10 +162,12 @@ const query = useQuery({
             ><small>{{ formatDateTime(item.updated_at) }}</small>
           </td>
           <td>
+            <span class="cell-label">归属与来源</span>
             {{ item.knowledge_base_name
             }}<small>{{ item.source_kind === 'file' ? '上传文件' : 'FreshRSS' }}</small>
           </td>
           <td>
+            <span class="cell-label">处理与使用状态</span>
             <span
               class="processing-label"
               :data-attention="!!item.error_code || item.processing_state === 'review'"
@@ -275,6 +285,13 @@ const query = useQuery({
   color: var(--accent);
   font-size: var(--fs-xs);
 }
+
+/* 表头在窄屏整行隐藏之后，这两格只剩「技术资料 / 上传文件」「待审核 / 已采用版本可用」，
+   分不清哪个是知识库、哪个是来源，也看不出「待审核」说的是什么状态。移动态补标签
+   （与账号目录 UserAccountRow 的 .cell-label 同一做法，宽度条件与表头消失严格对齐）。 */
+.cell-label {
+  display: none;
+}
 .processing-label[data-attention='true'] {
   color: var(--danger);
 }
@@ -305,6 +322,13 @@ const query = useQuery({
   }
   .review-table td:last-child {
     grid-column: 1 / -1;
+  }
+
+  .cell-label {
+    display: block;
+    margin-bottom: 2px;
+    color: var(--text-tertiary);
+    font-weight: var(--fw-semibold);
   }
 }
 </style>

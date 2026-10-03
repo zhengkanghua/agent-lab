@@ -160,7 +160,9 @@ describe('KnowledgeBasesPage', () => {
       .find((button) => button.text() === '重试')!
       .trigger('click')
     await flushPromises()
-    expect(page.text()).toContain('暂无知识库')
+    // 只断言空态那一句的开头，不锁全文：这条用例要验的是「重试之后落到空态」，
+    // 空态的整句文案本身不是它的验收内容（2026-10 给空态补「下一步」时改过一次）。
+    expect(page.text()).toContain('还没有知识库')
   })
 
   it('shows loading and blocks duplicate mutations while a request is pending', async () => {

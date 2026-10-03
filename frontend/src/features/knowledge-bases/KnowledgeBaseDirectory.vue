@@ -54,6 +54,13 @@ watch(editorOpen, async (open) => {
     editorTrigger?.focus()
   }
 })
+
+/* Esc 与「取消」走同一条路径，保存中不关（与那两枚键的禁用条件一致）。
+   监听挂在 form 上而不是 document：useModalLayer 的 Esc 也是 document 级、
+   且不拦截冒泡，挂 document 会在弹层开着时把两层一起关掉。 */
+function requestCloseEditor(): void {
+  if (!saving.value) closeEditor()
+}
 </script>
 
 <template>
@@ -82,6 +89,7 @@ watch(editorOpen, async (open) => {
       class="knowledge-editor"
       novalidate
       @submit.prevent="submit"
+      @keydown.esc="requestCloseEditor"
     >
       <div class="editor-heading">
         <h2>{{ editingId ? '编辑知识库' : '创建知识库' }}</h2>
@@ -160,7 +168,13 @@ watch(editorOpen, async (open) => {
     <div v-if="loading" class="directory-state" role="status">
       <BaseSpinner :size="20" />正在读取知识库
     </div>
-    <div v-else-if="!loadError && items.length === 0" class="directory-state">暂无知识库</div>
+    <!-- 空态要说清下一步。原来只有「暂无知识库」四个字：这是一个后台管理页，
+         第一次进来看到这句话的人正是要建第一个库的人，光说「没有」等于把他
+         丢在原地；翻到页面右上角才发现那枚按钮不是所有人都想到的。
+         与定时任务目录的空态同一写法（那里写「用右上角的『新建任务』创建一个」）。 -->
+    <div v-else-if="!loadError && items.length === 0" class="directory-state">
+      还没有知识库，用右上角的「创建知识库」新建一个。
+    </div>
 
     <table v-if="items.length" class="knowledge-table" :aria-busy="refreshing">
       <caption class="sr-only">
