@@ -148,7 +148,9 @@ describe('useThreadHistory', () => {
   })
 
   it('断流回退：先重试，服务端仍报在途就进入等待态且不重建轮次', async () => {
-    api.getAgentThreadMessages.mockRejectedValueOnce(new ApiError({ message: 'offline', code: 'network_error' }))
+    api.getAgentThreadMessages.mockRejectedValueOnce(
+      new ApiError({ message: 'offline', code: 'network_error' }),
+    )
     const { state, history } = build()
     state.threadId.value = 'thread-1'
     state.turns.value = [{ id: 'streamed-turn' }] as never
@@ -168,7 +170,9 @@ describe('useThreadHistory', () => {
   })
 
   it('回退重试用尽仍连不上：返回 false 并复位重连标记', async () => {
-    api.getAgentThreadMessages.mockRejectedValue(new ApiError({ message: 'offline', code: 'network_error' }))
+    api.getAgentThreadMessages.mockRejectedValue(
+      new ApiError({ message: 'offline', code: 'network_error' }),
+    )
     const { state, history } = build()
     state.threadId.value = 'thread-1'
 
@@ -182,7 +186,9 @@ describe('useThreadHistory', () => {
   it('对账失败时给出可重试的说明，并保住「当前可能不完整」的提示位', async () => {
     const { state, history } = build()
     state.threadId.value = 'thread-1'
-    api.getAgentThreadMessages.mockRejectedValue(new ApiError({ message: 'offline', code: 'network_error' }))
+    api.getAgentThreadMessages.mockRejectedValue(
+      new ApiError({ message: 'offline', code: 'network_error' }),
+    )
 
     await history.synchronizeHistory()
 
