@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { JobRunDto } from '@/api/tasks'
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseDisclosure from '@/shared/ui/BaseDisclosure.vue'
 import {
   executionStatusLabel,
   formatBeijingTime,
@@ -124,20 +125,22 @@ const time = (value: string | null) => (value ? formatBeijingTime(value) : '—'
       </div>
     </dl>
     <p class="hint">以上具体时刻均显示为北京时间（Asia/Shanghai）。资源等待不消耗业务尝试次数。</p>
-    <details>
-      <summary>原始结果摘要</summary>
+    <BaseDisclosure class="run-collapsible" summary="原始结果摘要" tone="plain">
       <pre>{{ JSON.stringify(run.stats, null, 2) }}</pre>
-    </details>
-    <details>
-      <summary>受理时的参数与策略</summary>
+    </BaseDisclosure>
+    <BaseDisclosure class="run-collapsible" summary="受理时的参数与策略" tone="plain">
       <pre>{{
         JSON.stringify({ configuration: run.config_snapshot, policy: run.policy_snapshot }, null, 2)
       }}</pre>
-    </details>
-    <details v-if="Object.keys(run.recovery).length">
-      <summary>恢复依据</summary>
+    </BaseDisclosure>
+    <BaseDisclosure
+      v-if="Object.keys(run.recovery).length"
+      class="run-collapsible"
+      summary="恢复依据"
+      tone="plain"
+    >
       <pre>{{ JSON.stringify(run.recovery, null, 2) }}</pre>
-    </details>
+    </BaseDisclosure>
     <RouterLink
       v-if="run.task_type === 'document_processing' || run.task_type === 'index_pending'"
       to="/admin/documents"
@@ -214,19 +217,12 @@ dd {
   margin: 4px 0 0;
   overflow-wrap: anywhere;
 }
-details {
+/* 三段折叠走 BaseDisclosure 的 tone-plain 档：标签保持正文色、只有箭头点出可点，
+   这一屏其余全是静态字段，不该有一段突然变青。这里只留它们之间的分隔。 */
+.run-collapsible {
   border-top: 1px solid var(--border-subtle);
   margin-top: var(--space-4);
   padding-top: var(--space-3);
-}
-summary {
-  cursor: pointer;
-  transition: color var(--duration-fast) var(--ease-out-smooth);
-}
-/* 这三段折叠默认和正文同色，只有左边一个小三角说明它是控件；悬停补色，
-   让它在这一屏全是静态字段里显出可点。 */
-summary:hover {
-  color: var(--accent);
 }
 pre {
   background: var(--surface-sunken);

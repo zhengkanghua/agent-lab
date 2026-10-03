@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
+import BaseDisclosure from '@/shared/ui/BaseDisclosure.vue'
 import BaseField from '@/shared/ui/BaseField.vue'
 import BaseInput from '@/shared/ui/BaseInput.vue'
 import { useTaskPolicy } from '../composables/useTaskPolicy'
@@ -83,8 +84,7 @@ defineEmits<{ close: [] }>()
     >
     <BaseCallout v-if="policy.error.value" tone="danger" :description="policy.error.value" />
     <p v-if="policy.feedback.value" role="status">{{ policy.feedback.value }}</p>
-    <details>
-      <summary>最近修改记录</summary>
+    <BaseDisclosure class="policy-changes" summary="最近修改记录" tone="plain">
       <p v-if="policy.changes.isPending.value" role="status">正在读取修改记录</p>
       <BaseCallout
         v-else-if="policy.changes.isError.value"
@@ -105,7 +105,7 @@ defineEmits<{ close: [] }>()
           </p>
         </li>
       </ol>
-    </details>
+    </BaseDisclosure>
   </section>
 </template>
 
@@ -138,17 +138,13 @@ form {
   margin: var(--space-5) 0;
 }
 /* 字段外壳（标签 + 间距 + aria 接线）归 BaseField，错误面板归 BaseCallout。 */
-details {
+/* 折叠键（箭头、悬停、按下、reduce-motion）归 BaseDisclosure 的 tone-plain 档：
+   这一行夹在表单标签中间，标签保持中性色、只有箭头是强调色，才和同组字段齐平。
+   这里只留它在面板里的位置。 */
+.policy-changes {
   margin-top: var(--space-4);
   border-top: 1px solid var(--border-subtle);
   padding-top: var(--space-3);
-}
-summary {
-  cursor: pointer;
-  transition: color var(--duration-fast) var(--ease-out-smooth);
-}
-summary:hover {
-  color: var(--accent);
 }
 ol {
   padding-left: var(--space-5);

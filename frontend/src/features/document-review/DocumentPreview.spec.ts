@@ -10,7 +10,7 @@ afterEach(() => {
   document.body.replaceChildren()
 })
 
-it('Chunk 展示真实向量化文本和标题路径，并按结构 ID 定位内容', async () => {
+it('片段展示真实向量化文本和标题路径，并按结构 ID 定位内容', async () => {
   const wrapper = mount(DocumentPreview, {
     props: { preview: reviewPreview() },
     attachTo: document.body,
@@ -34,7 +34,7 @@ it('Chunk 展示真实向量化文本和标题路径，并按结构 ID 定位内
   try {
     await wrapper
       .findAll('button')
-      .find((button) => button.text().startsWith('Chunk'))!
+      .find((button) => button.text().startsWith('片段'))!
       .trigger('click')
     expect(wrapper.text()).toContain('维护手册 / 备份')
     expect(wrapper.text()).toContain('18 / 512 token')

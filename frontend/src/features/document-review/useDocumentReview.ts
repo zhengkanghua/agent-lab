@@ -240,7 +240,7 @@ export function useDocumentReview(documentId: MaybeRefOrGetter<string>) {
     if (!(await save())) return false
     return perform(
       (current) => previewDocumentDraft(current.candidate.processing_id, expected(current)),
-      '预览任务已保存，后台正在生成结构和 Chunk。',
+      '预览任务已保存，后台正在生成结构和片段。',
     )
   }
 

@@ -10,6 +10,7 @@ import {
 } from '@/api/document-review'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
+import BaseDisclosure from '@/shared/ui/BaseDisclosure.vue'
 import BasePager from '@/shared/ui/BasePager.vue'
 import DocumentOriginal from './DocumentOriginal.vue'
 import DocumentPreview from './DocumentPreview.vue'
@@ -76,7 +77,7 @@ watch([kind, () => props.documentId], () => {
           ['candidates', '处理记录'],
         ]"
         :key="key"
-        :variant="kind === key ? 'outline' : 'ghost'"
+        :variant="kind === key ? 'soft' : 'ghost'"
         :aria-pressed="kind === key"
         @click="kind = key!"
         >{{ label }}</BaseButton
@@ -112,10 +113,9 @@ watch([kind, () => props.documentId], () => {
           >{{ formatDateTime(item.created_at) }} · 草稿修订 {{ item.candidate_revision }}</small
         >
         <p>{{ item.conclusion || '未填写附加结论' }}</p>
-        <details>
-          <summary>查看决定时的正文</summary>
+        <BaseDisclosure class="snapshot-disclosure" summary="查看决定时的正文">
           <pre>{{ snapshotBody(item.content_snapshot) }}</pre>
-        </details>
+        </BaseDisclosure>
       </li>
     </ol>
     <ol v-else class="history-list">
@@ -147,7 +147,7 @@ watch([kind, () => props.documentId], () => {
       </BaseCallout>
       <article v-else-if="version.data.value" class="version-detail">
         <h3>已采用历史 · 第 {{ version.data.value.revision }} 版</h3>
-        <p class="history-note">这是当时采用的正文和 Chunk，不会随当前草稿修改。</p>
+        <p class="history-note">这是当时采用的正文和片段，不会随当前草稿修改。</p>
         <DocumentOriginal
           :processing-id="version.data.value.processing_id"
           :filename="filename"
@@ -199,15 +199,10 @@ watch([kind, () => props.documentId], () => {
   display: grid;
   gap: 8px;
 }
-.history-list summary {
-  cursor: pointer;
-  color: var(--accent);
-  padding: 8px 0;
-  transition: color var(--duration-fast) var(--ease-out-smooth);
-}
-/* 展开键的颜色已经是强调色，但整页都是可点元素；悬停下划线把它和静态说明分开。 */
-.history-list summary:hover {
-  color: var(--accent-hover);
+/* 折叠键走 BaseDisclosure 的 tone-accent 档（强调色 + 悬停加深 + 按下反馈 + 箭头），
+   不再在这里各写一份 summary 皮肤。只保留原本那条下划线：这一页到处都是可点元素，
+   下划线是它区分于静态说明的老办法，箭头单独一条还不够。 */
+.snapshot-disclosure :deep(.disclosure-summary:hover) {
   text-decoration: underline;
   text-underline-offset: 3px;
 }

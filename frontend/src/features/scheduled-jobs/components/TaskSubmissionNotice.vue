@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseDisclosure from '@/shared/ui/BaseDisclosure.vue'
 import type { TaskSubmissions } from '../composables/useTaskSubmissions'
 import { formatBeijingTime } from '../model/job-copy'
 
@@ -28,10 +29,13 @@ defineEmits<{ 'open-run': [runId: string] }>()
           <div>
             <strong>{{ item.label }}</strong>
             <small>{{ formatBeijingTime(item.createdAt) }}（北京时间）</small>
-            <details v-if="item.command.kind === 'pipeline'">
-              <summary>原请求参数</summary>
+            <BaseDisclosure
+              v-if="item.command.kind === 'pipeline'"
+              summary="原请求参数"
+              tone="plain"
+            >
               <pre>{{ JSON.stringify(item.command.params, null, 2) }}</pre>
-            </details>
+            </BaseDisclosure>
           </div>
           <BaseButton
             variant="secondary"
@@ -87,15 +91,8 @@ small {
   display: block;
   margin-top: 4px;
 }
-/* 这一页原本没有给 summary 任何规则，折叠键只剩浏览器默认三角。这一屏是告警底，
-   底下每一句都可点，补一个悬停色至少让它和上面的说明文字区分开。 */
-summary {
-  cursor: pointer;
-  transition: color var(--duration-fast) var(--ease-out-smooth);
-}
-summary:hover {
-  color: var(--accent);
-}
+/* 折叠键归 BaseDisclosure（tone-plain：标签中性、箭头强调色），这里不再需要
+   summary 规则——它比原来那枚浏览器默认三角更容易认出来，箭头本身就是可点提示。 */
 pre {
   white-space: pre-wrap;
 }
