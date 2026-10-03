@@ -185,6 +185,9 @@ async function onDeleteClick(): Promise<void> {
   /* 行高 52（2026-09 重设计 P4 的表格规范）。 */
   min-height: 52px;
   padding: 8px 10px;
+  /* 悬停换底要和全站同一个节奏。缺了这条，整块底色是瞬变的，
+     在一片 150ms 渐变的界面里像少了一帧。 */
+  transition: background-color var(--duration-fast) var(--ease-out-smooth);
 }
 
 .job-block:focus-within,
@@ -299,7 +302,9 @@ async function onDeleteClick(): Promise<void> {
   margin: 0 10px 12px;
 }
 
-@media (max-width: 1080px) {
+/* 与表头同一条断点，且同样按容器宽而不是视口宽（理由见 JobDirectoryTable）。
+   容器由上游的 .directory 提供。 */
+@container (max-width: 900px) {
   .job-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

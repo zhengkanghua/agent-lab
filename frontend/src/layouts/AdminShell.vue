@@ -214,7 +214,10 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
 <style scoped>
 .admin-shell {
   display: flex;
+  /* 同 style.css 的 body：100vh 按地址栏收起时的高度算，手机上会多出一截滚动。
+     两条都写，dvh 不支持时退回上一条。 */
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 /* 侧边栏固定贴左，全高。内容区用 margin-left 让位，宽度交给 flex。
@@ -346,7 +349,11 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
 .admin-main-wrap {
   flex: 1;
   min-width: 0;
-  margin-left: 232px;
+  /* 让位的宽度必须和上面 .admin-sidebar 的宽度是同一个来源。2026-10 把侧栏统一到
+     --sidebar-width（288）时，这一行还留着旧的 232，于是内容区有 56px 压在侧栏底下：
+     1440 下靠 .admin-content 的 max-width 居中侥幸躲开，1024～1366 直接把标题和正文
+     切掉一截（「账号管理」显示成「号管理」），并顶出横向滚动条。 */
+  margin-left: var(--sidebar-width);
 }
 
 .admin-topbar {

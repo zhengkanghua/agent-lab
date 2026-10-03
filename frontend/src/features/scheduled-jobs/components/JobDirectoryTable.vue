@@ -158,7 +158,11 @@ const emit = defineEmits<{
   text-align: center;
 }
 
-@media (max-width: 1080px) {
+/* 断点必须按「容器」而不是「视口」算。表格真正的可用宽度是视口减去 288 侧栏和各层内边距，
+   五列的最小宽度合计约 894px：视口 1080 时容器只剩约 712，早就该收成两列了。
+   原来按视口写的 1080 来得太晚，1200 视口下容器 832 仍小于 894，整行横向溢出。
+   本组件已在 .directory 上声明 container-type，这里直接按容器宽切。 */
+@container (max-width: 900px) {
   .job-table-head {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
