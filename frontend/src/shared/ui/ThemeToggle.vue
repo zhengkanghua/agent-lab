@@ -7,6 +7,18 @@ type Theme = 'light' | 'dark' | 'auto'
 const theme = ref<Theme>('auto')
 const resolvedTheme = ref<'light' | 'dark'>('light')
 
+/* 移动端浏览器把 theme-color 画在地址栏/状态栏上，而它不跟随 data-theme：
+   深色页面顶上会横着一条浅色栏。取值直接读语义 token，tokens.css 改色时这里不用跟着改。
+   jsdom 下自定义属性取到空串，跳过即可（测试环境不关心这条 meta）。 */
+function syncThemeColor(): void {
+  const meta = document.querySelector('meta[name="theme-color"]')
+  if (!meta) return
+  const surface = getComputedStyle(document.documentElement)
+    .getPropertyValue('--surface-base')
+    .trim()
+  if (surface) meta.setAttribute('content', surface)
+}
+
 function applyTheme(t: Theme) {
   // data-theme 永远落「解析后的结果值」：'auto' 在这里解析成 light/dark 再写进 DOM，
   // 而不是删属性交给 CSS 媒体查询。这样 tokens.css 的深色覆盖只需要 [data-theme='dark']
@@ -24,6 +36,7 @@ function applyTheme(t: Theme) {
     document.documentElement.dataset.theme = t
     resolvedTheme.value = t
   }
+  syncThemeColor()
 }
 
 function toggleTheme() {
@@ -84,7 +97,13 @@ watch(theme, (newTheme) => {
   background: var(--surface-base);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-out-smooth);
+  /* 逐个列出要过渡的属性。写 all 会把 width/height/padding 也算进去，
+     碰到触屏媒体查询切换或窗口变化时会跟着补间，出现一瞬间的尺寸错位。 */
+  transition:
+    background-color var(--duration-fast) var(--ease-out-smooth),
+    border-color var(--duration-fast) var(--ease-out-smooth),
+    color var(--duration-fast) var(--ease-out-smooth),
+    transform var(--duration-fast) var(--ease-out-smooth);
 }
 
 .theme-toggle:hover {

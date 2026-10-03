@@ -42,7 +42,11 @@
 
 @layer base {
   body {
+    /* 移动端浏览器的地址栏收起/展开会改变可视高度，而 100vh 永远按「最大的那一档」算：
+       工具栏露出时页面就比屏幕高一截，无端多出一条滚动。两条都写，dvh 不支持时退回上一条
+       （与 SearchPage / AgentChatPage / 弹层同一写法）。 */
     min-height: 100vh;
+    min-height: 100dvh;
     color: var(--text-primary);
     background: var(--surface-base);
     font-family: var(--body-font);
@@ -81,6 +85,7 @@
 @layer components {
   .app-shell {
     min-height: 100vh;
+    min-height: 100dvh;
   }
 
   p {
