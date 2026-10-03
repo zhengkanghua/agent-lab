@@ -222,10 +222,14 @@ defineExpose({ focusInput })
   }
 }
 
-@container (max-width: 600px) {
-  .character-count {
-    display: none;
-  }
+/* 常态档不显示。底栏右侧孤零零一个「4,096」既没说单位也没说是上限，
+   读起来更像一串编号；而检索词上界 4096 字，真实提问短得多，这个数字
+   在正常使用中永远逼近不到，属于纯噪音。临近与超出两档自带提醒色，
+   那时它才有意义，也才该出现。
+   原来的「600px 以下整个隐藏」被这一条覆盖，去掉：手机上「快超了」同样要看得到。
+   读屏不受影响：完整句子仍在 BaseField 的 hint 里（那条被隐藏的 aria-describedby）。 */
+.character-count:not(.is-near):not(.is-over) {
+  display: none;
 }
 
 /* 窄容器里只留图标：胶囊文字与范围选择器在同一行抢位置。
