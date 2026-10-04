@@ -23,3 +23,5 @@ status: accepted
 `ChatOpenAI` 在自建 `base_url` 下 `stream_usage` 默认为 `False`，于是请求不带 `stream_options={"include_usage": true}`。而 Agent 的**生产入口本来就是流式调用**：`stream_agent_events` 用 `graph.astream(stream_mode=["updates", "messages"])`，`messages` 这个 mode 会挂上 langgraph 的 `StreamMessagesHandler`，`langchain_core` 的 `_should_stream` 据此判定走流式 HTTP。按 OpenAI 官方的流式契约，上游此时不会回 `usage_metadata`，用量就静默记成 0。本项目的生产上游（中转站）实测宽容、流式响应里也会回用量，但那是上游行为、不是能依赖的保证。所以 `build_chat_model` 显式打开 `stream_usage=True`，把「请求用量」变成本项目的主动契约；上线后跑一次真实会话，6 次调用全部记为上游自报、token 非零，这个开关确实在起作用。改动流式调用前先读 `agent/chat_model.py` 里 `stream_usage` 那段。
 
 **每次调用恰好一条记录。** 正常返回记一条完成；抛出异常（含被取消）记一条失败后原样再抛。失败的记录 token 记 0、来源记缺失，但账号、会话与运行照取——失败的那次调用同样属于某次提问。吞掉异常会把「已停止」变成「继续跑」，不记失败则会让「停止」在账本上看不见。
+
+[0046](0046-model-catalog-and-user-model-choice.md) 删掉了备用模型，本文提到的「备用模型」这一类来源从此不再存在；用量记录里的 `model_name` 以后只用来区分不同的**可用模型**，而且记的是上游模型名、不是给用户看的展示名。摘要压缩仍然复用当轮那个模型的包装实例。

@@ -349,7 +349,7 @@ Python 中重排；同一 Document 的多个 Chunk 可以分别返回，不做 d
 
 文档不存在、尚未采用、已拒绝或正在删除时返回固定脱敏 404；没有 Source 的已采用文件仍可读。知识库停用返回 409；数据库不可用返回 503；数据库记录违反公开契约返回
 502（只记异常类型，不把字段值或正文写进日志）。前端比较搜索结果 hash 与详情 hash，不一致时
-提示原文已更新，并使用 PostgreSQL 最新正文，不伪造历史版本。引用阅读另外展示当时取得的片段。
+提示原文已更新，并使用 PostgreSQL 最新正文，不伪造历史版本。引用阅读按引用给出的文档归属与来源打开当前正文。
 
 ## Agent 对话：POST /agent/chat
 
@@ -387,10 +387,11 @@ Python 中重排；同一 Document 的多个 Chunk 可以分别返回，不做 d
 ``agent/`` 的模块分工：
 
 ```text
-config/llm.py       LlmSettings（LLM_ 前缀）与 LangSmithSettings（LANGSMITH_ 前缀）
+config/llm.py       LlmSettings（LLM_ 前缀，只剩温度/超时/UA/连接池）与 LangSmithSettings
 agent/limits.py     一次运行的有界执行参数，全是代码常量、刻意不进 .env
 agent/prompts.py    默认系统提示词与摘要压缩提示词
-agent/chat_model.py 构造模型客户端（OpenAI 兼容协议，指向中转站 base_url）
+agent/chat_model.py 按一行渠道构造模型客户端（接入类型决定用哪个客户端类）
+agent/model_resolution.py 按当轮选定的模型解析客户端（装配期不连库、不发请求）
 agent/context.py    AgentContext：不可变 run_id、实际范围和自定义提示词
 agent/tools/        两个只读工具：search_documents、read_document
 agent/evidence.py   Tool artifact 与引用核验，SSE 和回放共用
@@ -403,21 +404,26 @@ agent/checkpointer.py  四张 checkpointer 表名的唯一真源 + Alembic 的 i
 agent/errors.py     本层的已分类异常（叶子模块，不 import 框架图相关模块）
 ```
 
-图能进程级共享是因为它无状态：会话历史存在 checkpointer 里、按 ``thread_id`` 取；系统提示词
+图能进程级共享是因为它无状态：模型上下文记录存在 checkpointer 里、按 ``thread_id`` 取；系统提示词
 由 ``dynamic_prompt`` 每次从 ``AgentContext`` 读。所以「换会话」和「换提示词」都不需要重新编译。
 
 Agent 装配失败**不致命**：lifespan 捕获、只记异常类型、``app.state.agent_runtime`` 留 ``None``，
-于是只有 ``/agent/*`` 返回 503，检索和流水线照常。反过来会让一个缺失的 ``LLM_API_KEY`` 把整个
+于是只有 ``/agent/*`` 返回 503，检索和流水线照常。反过来会让一个缺失的模型凭据或会话记忆配置把整个
 只读系统一起拖下线。关闭顺序上先关 Agent 再关检索 Runtime——Agent 复用后者的 Service。
 
 有界执行参数全在 ``agent/limits.py``，都是代码常量、刻意不进 ``.env``，数值以该文件为准。这里只记
 每个参数触发后的行为，那是读常量看不出来的：``MODEL_CALL_RUN_LIMIT`` 达到后结束运行并返回已有内容；
 ``TOOL_CALL_RUN_LIMIT`` 达到后只是不再允许调工具，模型仍能用已有材料作答；``MODEL_RETRY_MAX`` 与
-``TOOL_RETRY_MAX`` 是两层各自的重试次数；``SUMMARIZATION_TRIGGER_MESSAGES`` /
-``SUMMARIZATION_KEEP_MESSAGES`` 按消息条数触发并保留历史，不按 token；``MAX_USER_MESSAGE_CHARS`` 与
-``MAX_SYSTEM_PROMPT_CHARS`` 超过直接拒绝而不截断，截断会把提示词砍成半句、行为更难预期；
-``SEARCH_TOOL_MAX_DOCUMENTS`` 与 ``SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT`` 是给模型的上下文预算，不是
-给人看的分页上限；``READ_DOCUMENT_MAX_CHARS`` 这里截断是对的，正文是数据不是指令；
+``TOOL_RETRY_MAX`` 是两层各自的重试次数；``SUMMARIZATION_TRIGGER_FRACTION`` 与
+``SUMMARIZATION_KEEP_FRACTION`` 按**当轮模型的上下文窗口占比**触发并保留历史（触发 80%、压缩后保留
+30%），窗口不是常量——它在每次模型调用时从本次运行的上下文里读，所以换一个窗口不同的模型触发点跟
+着变，而 ``SUMMARIZATION_PLACEHOLDER_WINDOW`` 只是构造期的占位值，唯一职责是通过上游的构造校验；
+``MAX_USER_MESSAGE_CHARS`` 与 ``MAX_SYSTEM_PROMPT_CHARS`` 超过直接拒绝而不截断，截断会把提示词砍成
+半句、行为更难预期；
+``SEARCH_TOOL_MAX_DOCUMENTS`` 与 ``SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT`` 管的是检索请求要几篇几段，
+不是输出长度；一次工具调用交给模型的文本上限由 ``tool_output_char_limit`` 按**当轮模型的上下文窗口**算
+（窗口的 20%、封顶 20000、保底 2000），两个工具共用，超了截断并把截断说出来——这里截断是对的，正文是数据
+不是指令；
 ``SSE_HEARTBEAT_INTERVAL_SECONDS`` 是心跳间隔，前端的空闲超时按它的倍数留余量。
 ``RUN_DRAIN_TIMEOUT_SECONDS`` 是收尾排空的总预算（不是每个运行一份），``RUN_HANDOVER_SCAN_INTERVAL_SECONDS``
 是接手扫描的节奏；它们与容器停止宽限的关系见 ADR 0040 与 ``docker-compose.yml`` 的注释。
@@ -446,13 +452,16 @@ done         持久化最终答案、完成状态、有效和无效引用，以�
 error        已分类的失败，同样带 thread_id（理由见下）
 ```
 
-主模型每次只接收保留的历史问题与当前运行消息；旧答案、Tool 和摘要不作为新运行证据。
+主模型每次接收 checkpoint 里的整份上下文记录（历史提问、回答、Tool 结果与摘要）；范围只约束工具能取到什么，历史内容不再被裁剪，但送出去的那一份会剥掉旧引用标识。
 自定义提示词后仍追加应用的范围与引用规则。实际 Tool 结果带应用生成的引用标识及 artifact，
-保存原文片段和对应 content_hash；只接受本次成功且未越界的证据，身份核验不等于事实正确性判断。
+保存文档归属、来源和读取时的 content_hash；只接受本次成功且未越界的证据，身份核验不等于事实正确性判断。
 
-Done 与回放共用 `build_replay_turns`，避免上游重试临时文字、截断或预算耗尽被显示成完整答案。
-压缩在新提问开始时进行，保留完整近期问答；前端结束后同步最新 checkpoint，早期消息及引用
-不另行归档。设计取舍见 [ADR 0021](../../docs/adr/0021-agent-run-evidence-and-replay.md)。
+Done 与回放口径一致：Done 用 `build_replay_turns` 从 checkpoint 现算，用户回看用 `build_replay_turns_from_rows`
+从会话历史表组装，两边共用完成态判定与 `resolve_citations`，避免上游重试临时文字、截断或预算耗尽被显示成完整答案。
+压缩在新提问开始时进行，触发取模型窗口的 80%、压缩后保留 30%（窗口按调用期读：当轮选定的模型条目
+随运行上下文进来，不按模型 id 回查目录），并先清掉较旧的 Tool 结果
+正文；前端结束后同步最新 checkpoint。压缩会改掉 checkpoint 状态，早期原文因此不再从那里可取——
+用户回看的完整历史由独立的业务表 `agent_thread_messages` 承载，回放接口只读它，见 [ADR 0044](../../docs/adr/0044-session-history-in-own-table.md)。设计取舍见 [ADR 0045](../../docs/adr/0045-model-sees-whole-session-history.md)。
 
 失败为什么走事件而不是状态码：响应头在第一个 token 发出时就已发送，之后改不了状态码。所以流
 开始之前的失败走 HTTP 状态码，开始之后只能走 ``error`` 事件——两条路径共用同一张规则表，同一种
@@ -463,11 +472,11 @@ Done 与回放共用 `build_replay_turns`，避免上游重试临时文字、截
 ``thread_id``，服务端只能当成新会话再建一行——同一次提问在会话列表里占两条，都是「有提问、
 没答案」，重试几次就多几条。上游限流是最常撞见的失败，所以这条路径不是边角情况。
 
-会话历史由 ``langgraph-checkpoint-postgres`` 存在四张 ``checkpoint*`` 表里，**不由 Alembic 管**
+模型上下文记录由 ``langgraph-checkpoint-postgres`` 存在四张 ``checkpoint*`` 表里，**不由 Alembic 管**
 （ADR 0004）。建表是一次性运维步骤：``agent-lab init-checkpointer``。表名只写在
 ``agent/checkpointer.py`` 一处，``alembic/env.py`` 的 ``include_object`` 从那里取——漏改一处的
 后果不是报错而是 ``--autogenerate`` 生成 ``op.drop_table('checkpoints')``，下一次迁移删掉全部
-会话历史。
+上下文记录。
 
 它走的是独立的 psycopg 连接池（上游库自管的表只认 psycopg 连接，见 ADR 0004 与 ``agent/runtime.py`` 的说明），因此业务侧 Engine 的 ``pool_pre_ping`` 保护不到它，
 必须自己配 ``check=AsyncConnectionPool.check_connection`` 做取连接前探活。少了它的表现值得记住，
@@ -585,7 +594,7 @@ checkpointer 按 ADR 0004 走独立的 psycopg 池，不经过 SQLAlchemy，所�
 ``llm_authentication_failed``（401）与 ``llm_request_blocked``（403）分成两条，是被一次真实
 排查逼出来的：两者曾合并在认证失败一条里，于是「中转站按 User-Agent 拦掉了 openai SDK 的默认
 标识」被报成认证失败，排查从换 Key 开始，而 Key 一直是好的。状态码和重试语义相同不足以合并，
-**要动的东西不同就得分开给码**——凭据问题改 ``LLM_API_KEY``，客户端身份问题改
+**要动的东西不同就得分开给码**——凭据问题改那条渠道的凭据，客户端身份问题改
 ``LLM_USER_AGENT``。
 
 两处刻意保留的分叉，不能合并改值：读链路把 ``EmbeddingResponseError`` 归为
@@ -772,6 +781,9 @@ Repository/Service 里，不新建抽象模块。**本节是该清单唯一的�
 | ``UserAdminService.delete_user()`` | 不再删任何行——账号改为**注销** | 只删 ``access_tokens``；``agent_threads`` 的会话归属、``user_preferences`` 的个人偏好、``document_review_records.actor_id`` 全部保留。账号行本身加上 ``deleted_at`` 并置 ``is_active=false``（见 [ADR 0034](../../docs/adr/0034-account-deletion-is-soft-delete.md)）|
 | ``ScheduledJobRepository.delete_job()`` | ``scheduled_jobs`` 那一行 | 把 ``scheduled_job_runs.job_id`` 置空（``source_job_id`` 与受理时的 ``config_snapshot`` 原样保留） |
 | ``TaskRepository`` 的到期清理 | 终态且到期的 ``scheduled_job_runs`` | 只选**没有子行**的记录（``child.retry_of == JobRunRecord.id`` 不存在）才删 |
+| ``AgentThreadService.delete_thread_record()``（用户删会话） | ``agent_threads`` 那一行 | 先按 ``thread_id`` 删 ``agent_thread_messages`` 里这一会话的全部行，再删归属行，两步在**同一个事务**里（删不到归属行就整体回滚，所以消息行那一步不带账号条件）。清 checkpointer 历史不在这两步之内：它跨连接池、没有共同事务，顺序固定为「先清历史、后删业务行」 |
+| ``AgentThreadService.delete_threads()``（``prune-old-threads``） | 一批 ``agent_threads`` 行 | 同一事务里按 ``thread_id`` 批量先删 ``agent_thread_messages`` 的行、再删归属行；调用方仍先清那批会话的 checkpointer 历史，也只把清理成功的那些 id 传进来 |
+| ``AgentThreadService.delete_thread_messages()``（``prune-orphan-threads``） | ``agent_thread_messages`` 里没有归属行的残余 | 这条路径上**没有父行可删**：候选集就是「没有归属记录的 ``thread_id``」（checkpointer 与 ``agent_thread_messages`` 两侧取并集），命令先清那批 id 的 checkpointer 历史，再按 ``thread_id`` 删本表的行 |
 
 ``knowledge_bases`` 与 ``sources`` **没有物理删除路径**（它们被引用的场景当前不可达），因此不需要
 为它们新增级联判断代码。
@@ -791,6 +803,7 @@ Service 里。``AgentChatRequest.thread_id`` 仍允许客户端填，但填别�
 （[ADR 0010](../../docs/adr/0010-sse-routes-use-short-lived-db-sessions.md)）。
 
 归属记录在流开始前就写好，所以首轮失败会留下「有会话、没消息」的行；回放接口对它返回空轮次，
-前端显示成一个可以接着聊的空会话。删除会话要动两个存储，跨两个连接池没有共同事务，顺序固定为
-「先清历史、后删归属记录」：中途失败留下的是可自愈的「历史没了、归属还在」，反过来会留下查不到
-也删不掉的孤儿。孤儿由 ``agent-lab prune-orphan-threads`` 回收，默认只预演。
+前端显示成一个可以接着聊的空会话。删除会话要动三个存储：``agent_thread_messages`` 的行与
+``agent_threads`` 的归属行在**同一个事务**里删，与 checkpointer 的历史之间跨连接池、没有共同事务，
+顺序固定为「先清历史、后删业务行」：中途失败留下的是可自愈的「历史没了、业务行还在」，反过来会留下
+查不到也删不掉的孤儿。孤儿由 ``agent-lab prune-orphan-threads`` 回收，默认只预演。
