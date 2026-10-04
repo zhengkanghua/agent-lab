@@ -63,7 +63,9 @@ async def prepare_shared_collection():
     service, _, spec, settings = build_runtime_components(
         fake_embeddings=embeddings, client=client, knowledge_base_scope=scope,
     )
-    await client.create_collection(settings.collection_name, vectors_config=spec.vector_params)
+    await client.create_collection(
+        settings.collection_name, vectors_config=spec.vector_params, metadata=spec.collection_metadata
+    )
     await client.update_collection_aliases([models.CreateAliasOperation(create_alias=models.CreateAlias(
         collection_name=settings.collection_name, alias_name=settings.collection_alias,
     ))])

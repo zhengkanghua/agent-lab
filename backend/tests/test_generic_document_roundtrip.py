@@ -70,7 +70,9 @@ def test_generic_document_roundtrip(missing, processor):
         provider = OllamaEmbeddingProvider(ollama_settings(), embeddings=embeddings)
         client = AsyncQdrantClient(location=":memory:")
         try:
-            await client.create_collection(settings.collection_name, vectors_config=spec.vector_params)
+            await client.create_collection(
+                settings.collection_name, vectors_config=spec.vector_params, metadata=spec.collection_metadata
+            )
             await client.update_collection_aliases([models.CreateAliasOperation(create_alias=models.CreateAlias(
                 collection_name=settings.collection_name, alias_name=settings.collection_alias,
             ))])

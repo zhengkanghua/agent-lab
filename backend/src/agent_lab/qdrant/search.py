@@ -3,11 +3,12 @@
 接收vector和查询条件，返回chunk
 
 向量搜索 = 拿 query 向量（已经是数字了）去向量库里找「最相似」的新闻 Chunk Point。
-本模块位于 Qdrant 基础设施层，职责有四：
-1. 把应用层的过滤条件（来源/类型/标签/时间）翻译成 Qdrant 的 Filter 结构；
-2. 调 AsyncQdrantClient.query_points 发起一次只读查询；
-3. 把远程错误分类成稳定异常（认证/连接/超时/目标缺失/配置/响应契约）；
-4. 校验返回的每个 Point/Payload 是否符合 v1 契约，转成强类型结果。
+本模块位于 Qdrant 基础设施层，职责有五：
+1. 首次检索前核对 current Alias 指向的集合是否就是本进程规格对应的索引（读侧自证）；
+2. 把应用层的过滤条件（来源/类型/标签/时间）翻译成 Qdrant 的 Filter 结构；
+3. 调 AsyncQdrantClient.query_points 发起一次只读查询；
+4. 把远程错误分类成稳定异常（认证/连接/超时/目标缺失/配置/响应契约）；
+5. 校验返回的每个 Point/Payload 是否符合 v1 契约，转成强类型结果。
 
 本模块是「Qdrant 响应可信度」的信任边界：Qdrant 返回的内容一律当作外部不可信输入，
 Point/Payload 契约和文档分组的跨 Chunk 不变量都在这里一次验干净。上层的 Service 与
@@ -33,6 +34,7 @@ from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedR
 from agent_lab.config.qdrant import QdrantSettings
 from agent_lab.qdrant.index_spec import VectorIndexSpec
 from agent_lab.knowledge.document_contracts import DocumentSearchGroup
+from agent_lab.knowledge.domain import VectorIndexConfigurationError
 from agent_lab.knowledge.visibility import IndexSearchHit
 from agent_lab.schemas.vector_search import (
     VectorSearchFilters,
@@ -62,6 +64,10 @@ class QdrantSearchTargetNotFoundError(QdrantVectorSearchError):
 
 class QdrantSearchConfigurationError(QdrantVectorSearchError):
     """current Alias 下的 Collection 无法接受当前索引规格查询。"""
+
+
+class QdrantSearchIndexSpecMismatchError(QdrantSearchConfigurationError):
+    """current Alias 指向的集合不属于本进程配置的索引规格（读侧配置漂移）。"""
 
 
 class QdrantSearchServiceError(QdrantVectorSearchError):
@@ -133,6 +139,8 @@ class QdrantVectorSearch:
         self._collection_alias = settings.collection_alias
         self._request_timeout_seconds = settings.request_timeout_seconds
         self._spec = spec
+        # 集合规格核对结果：一进程只核一次，避免每次检索都多一次元数据读
+        self._index_spec_verified = False
 
     @property
     def collection_name(self) -> str:
@@ -145,6 +153,43 @@ class QdrantVectorSearch:
         """返回查询结果必须遵守的不可变 VectorIndexSpec。"""
 
         return self._spec
+
+    async def _ensure_index_spec_matches(self) -> None:
+        """核对 current Alias 指向的集合就是本进程规格对应的索引（一进程只核一次）。
+
+        为什么需要这一层：Alias 的名字里不带 schema 版本，同名 Alias 在 schema 升级后会
+        指向另一版集合；写侧每次落盘都校验集合规格，读侧却从来不核。于是「读侧配置与索引
+        不一致」的表现是每个 Point 都被逐点契约拒掉（``QdrantSearchResponseError``），而
+        结果为空时又完全正常——用户看到的是「查不到资料」而不是故障。这里让它在第一次
+        检索前就变成一句能读懂的话。
+
+        代价与边界：多一次 ``get_collection``（亚毫秒），结果缓存在实例上；探针本身失败
+        （Qdrant 不可达、集合不存在、鉴权失败……）时**不改变行为**，交回原查询自己的错误
+        分类，因此这里不新增任何「服务不可用」路径。缓存不随 Alias 切换失效：换指向只
+        发生在写侧的重建发布上，而目标集合那时已经过同规格校验；真有跨规格的写者，逐点的
+        spec 检查仍然是兜底。
+
+        Raises:
+            QdrantSearchIndexSpecMismatchError: 集合规格与当前进程配置不一致。
+        """
+
+        if self._index_spec_verified:
+            return
+        try:
+            info = await self._client.get_collection(collection_name=self._collection_alias)
+        except Exception:  # noqa: BLE001 - 探针失败不下结论，交回原查询自己的错误分类
+            # Qdrant 不可达、集合不存在、鉴权失败都走这条：拿不到集合信息本身不是检索失败的
+            # 理由，真正的原因由接下来那次查询自己分类并上报，这里不新增失败路径。
+            return
+        try:
+            # 与写侧共用同一份判定，读侧才能发现「配置和索引不是一个版本」。
+            self._spec.validate_collection_info(info)
+        except VectorIndexConfigurationError as exc:
+            raise QdrantSearchIndexSpecMismatchError(
+                f"current Alias {self._collection_alias!r} 指向的集合与当前进程的索引规格"
+                f"不一致：{exc}"
+            ) from None
+        self._index_spec_verified = True
 
     async def search(
         self,
@@ -175,16 +220,20 @@ class QdrantVectorSearch:
             QdrantSearchConfigurationError: Collection Vector 配置无法接受当前 query。
             QdrantSearchServiceError: 其他远程服务或客户端错误。
             QdrantSearchResponseError: 返回 Point/Payload 不符合当前 v1 契约。
+            QdrantSearchIndexSpecMismatchError: Alias 指向的集合不属于当前进程的索引规格。
 
         Notes:
             本方法不执行 PostgreSQL、Ollama 或 Embedding I/O，只执行一次 Qdrant 只读
-            query_points 网络 I/O。它不调用 upsert/delete/create_collection/update_alias，
-            不自动创建缺失目标，也不在 Python 中过滤、重排或聚合结果。
+            query_points 网络 I/O（进程内的第一次还会多一次集合元数据读）。它不调用
+            upsert/delete/create_collection/update_alias，不自动创建缺失目标，也不在
+            Python 中过滤、重排或聚合结果。
         """
 
-        # 1、把应用过滤条件翻译成 Qdrant Filter（无过滤时返回 None）
+        # 1、先核对 Alias 指向的集合就是本规格的索引，不一致就不必再查
+        await self._ensure_index_spec_matches()
+        # 2、把应用过滤条件翻译成 Qdrant Filter（无过滤时返回 None）
         query_filter = self._build_filter(filters, excluded_index_instances)
-        # 2、发起一次只读查询：current Alias + query 向量 + 过滤 + Top-K
+        # 3、发起一次只读查询：current Alias + query 向量 + 过滤 + Top-K
         try:
             # 一次只读查询
             response = await self._client.query_points(
@@ -202,13 +251,13 @@ class QdrantVectorSearch:
         except Exception as exc:
             self._raise_mapped_error(exc)
 
-        # 3、校验响应结构：必须有一个 points 列表
+        # 4、校验响应结构：必须有一个 points 列表
         points = getattr(response, "points", None)
         if not isinstance(points, list):
             raise QdrantSearchResponseError(
                 "Qdrant 查询响应必须包含 points 列表。"
             )
-        # 4、逐个 Point 校验并转成强类型结果；不重新排序——Qdrant 的 score 顺序就是公开契约
+        # 5、逐个 Point 校验并转成强类型结果；不重新排序——Qdrant 的 score 顺序就是公开契约
         return [self._map_point(point, index) for index, point in enumerate(points)]
 
     async def search_groups(
@@ -223,7 +272,7 @@ class QdrantVectorSearch:
     ) -> list[DocumentSearchGroup]:
         """通过 Qdrant 正式 grouped query 返回按文档分组的相关 Chunk。
 
-        分组在 Qdrant 侧按 ``document_id`` 完成，不在 Python 里对 top_k 结果二次去重。
+        分组在 Qdrant 侧按 ``index_instance_id`` 完成，不在 Python 里对 top_k 结果二次去重。
 
         Args:
             query_vector: 上层已按 VectorIndexSpec 校验的 query Embedding。
@@ -240,17 +289,22 @@ class QdrantVectorSearch:
                 重复分组、组内 document_id 不一致、组内 chunk_id 重复、组内文档级元数据
                 不一致，或任一 Point 不符合 Payload 契约。
             QdrantVectorSearchError: Qdrant 认证、连接、超时、目标或服务错误。
+            QdrantSearchIndexSpecMismatchError: Alias 指向的集合不属于当前进程的索引规格。
 
         Notes:
-            本方法只执行一次 ``query_points_groups`` 只读网络 I/O，不访问 PostgreSQL，
-            不执行 Point 写入、Alias 生命周期或自动重试。``group_by`` 使用已有的
-            ``document_id`` keyword Payload index，避免前端在有限 top_k 上错误去重。
+            本方法只执行一次 ``query_points_groups`` 只读网络 I/O（进程内的第一次还会多一次
+            集合元数据读），不访问 PostgreSQL，不执行 Point 写入、Alias 生命周期或自动重试。
+            ``group_by`` 使用已有的 ``index_instance_id`` keyword Payload index，避免前端在
+            有限 top_k 上错误去重。
 
             本方法是分组不变量的唯一后端防线：Qdrant 响应属于不可信输入，必须在此
             一次验干净。下游 Service 只做纯映射、``DocumentSearchResult`` 只做字段级
             约束，都不再重复校验这些跨 Chunk 的关系。
         """
 
+        # 先核对 Alias 指向的集合就是本规格的索引：配置漂移时整次结果都会被逐点契约拒掉，
+        # 而结果为空时又看不出来，所以要在查之前自证一次。
+        await self._ensure_index_spec_matches()
         query_filter = self._build_filter(filters, excluded_index_instances)
         try:
             response = await self._client.query_points_groups(

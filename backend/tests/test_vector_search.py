@@ -6,6 +6,7 @@ Alias、Qdrant 原始 score 顺序、Payload 响应契约和搜索不执行任�
 """
 
 import asyncio
+import copy
 import math
 import warnings
 from collections.abc import Sequence
@@ -35,6 +36,7 @@ from agent_lab.qdrant.search import (
     QdrantSearchAuthenticationError,
     QdrantSearchConfigurationError,
     QdrantSearchConnectionError,
+    QdrantSearchIndexSpecMismatchError,
     QdrantSearchResponseError,
     QdrantSearchServiceError,
     QdrantSearchTargetNotFoundError,
@@ -324,7 +326,10 @@ def test_shared_collection_search_does_not_cross_knowledge_bases() -> None:
             client=client,
         )
         collection = settings.collection_name
-        await client.create_collection(collection, vectors_config=spec.vector_params)
+        # 真实生命周期建集合时一定带上规格快照 metadata，测试集合照同一形状建。
+        await client.create_collection(
+            collection, vectors_config=spec.vector_params, metadata=spec.collection_metadata
+        )
         await client.update_collection_aliases(
             [
                 models.CreateAliasOperation(
@@ -419,7 +424,10 @@ def test_query_service_uses_embed_query_and_qdrant_current_alias() -> None:
 
         client.query_points = spy_query_points  # type: ignore[method-assign]
         collection = settings.collection_name
-        await client.create_collection(collection, vectors_config=spec.vector_params)
+        # 同上：带上规格快照 metadata，否则读路径的集合自证会直接拒掉。
+        await client.create_collection(
+            collection, vectors_config=spec.vector_params, metadata=spec.collection_metadata
+        )
         await client.update_collection_aliases(
             [
                 models.CreateAliasOperation(
@@ -886,3 +894,199 @@ def test_search_has_no_qdrant_write_methods_or_physical_collection_name() -> Non
     assert client.calls == ["query_points"]
     assert component.collection_name == settings.collection_alias
     assert settings.collection_name not in repr(component)
+
+
+# 线上 knowledge_chunks_langchain_current 的 `GET /collections` 响应形状（2026-10-02 抓取）。
+# 用例只覆盖向量配置与 metadata 的取值，其余字段保留真实形状，避免夹具自己长成另一种响应。
+REAL_COLLECTION_INFO_SHAPE: dict[str, Any] = {
+    "status": "green",
+    "optimizer_status": "ok",
+    "indexed_vectors_count": 0,
+    "points_count": 307,
+    "segments_count": 5,
+    "config": {
+        "params": {
+            "vectors": {"size": 1024, "distance": "Cosine"},
+            "shard_number": 1,
+            "replication_factor": 1,
+            "write_consistency_factor": 1,
+            "on_disk_payload": True,
+        },
+        "hnsw_config": {
+            "m": 16,
+            "ef_construct": 100,
+            "full_scan_threshold": 10000,
+            "max_indexing_threads": 0,
+            "on_disk": False,
+        },
+        "optimizer_config": {
+            "deleted_threshold": 0.2,
+            "vacuum_min_vector_number": 1000,
+            "default_segment_number": 0,
+            "max_segment_size": None,
+            "memmap_threshold": None,
+            "indexing_threshold": 10000,
+            "flush_interval_sec": 5,
+            "max_optimization_threads": None,
+            "prevent_unoptimized": None,
+        },
+        "wal_config": {"wal_capacity_mb": 32, "wal_segments_ahead": 0, "wal_retain_closed": 1},
+        "quantization_config": None,
+    },
+    "payload_schema": {
+        "document_id": {"data_type": "keyword", "points": 307},
+        "index_instance_id": {"data_type": "keyword", "points": 307},
+        "knowledge_base_id": {"data_type": "uuid", "points": 307},
+        "source_id": {"data_type": "uuid", "points": 307},
+        "source_provider": {"data_type": "keyword", "points": 307},
+        "document_type": {"data_type": "keyword", "points": 307},
+        "published_at": {"data_type": "datetime", "points": 307},
+        "labels": {"data_type": "keyword", "points": 307},
+    },
+}
+
+
+def build_collection_info(spec: VectorIndexSpec, **metadata_overrides: Any) -> models.CollectionInfo:
+    """按真实响应形状构造集合信息；metadata 取当前规格，可覆盖单个字段模拟漂移。"""
+
+    info = copy.deepcopy(REAL_COLLECTION_INFO_SHAPE)
+    info["config"]["params"]["vectors"] = {
+        "size": spec.dimension,
+        "distance": spec.distance.value,
+    }
+    info["config"]["metadata"] = {**spec.collection_metadata, **metadata_overrides}
+    return models.CollectionInfo.model_validate(info)
+
+
+class CollectionInfoClient:
+    """既能回答集合信息（或抛预置异常），也能回答检索请求的 fake client。"""
+
+    def __init__(
+        self,
+        info: models.CollectionInfo | Exception,
+        *,
+        points: list[Any] | None = None,
+        groups: list[Any] | None = None,
+    ) -> None:
+        self.info = info
+        self.points = points or []
+        self.groups = groups or []
+        self.get_collection_calls = 0
+
+    async def get_collection(self, **kwargs: Any) -> models.CollectionInfo:
+        self.get_collection_calls += 1
+        if isinstance(self.info, Exception):
+            raise self.info
+        return self.info
+
+    async def query_points(self, **kwargs: Any) -> Any:
+        return SimpleNamespace(points=self.points)
+
+    async def query_points_groups(self, **kwargs: Any) -> Any:
+        return SimpleNamespace(groups=self.groups)
+
+
+def build_grouped_hit(*, score: float = 0.8) -> tuple[Any, models.ScoredPoint]:
+    """构造一组「组 ID 与 Payload 一致」的分组命中，供读路径 happy path 使用。"""
+
+    payload = build_payload()
+    point = models.ScoredPoint(id=uuid4(), version=1, score=score, payload=payload)
+    return SimpleNamespace(id=payload["index_instance_id"], hits=[point]), point
+
+
+@pytest.mark.parametrize("drifted_field", ["schema_version", "embedding_model"])
+def test_read_path_rejects_collection_whose_spec_differs_from_config(drifted_field: str) -> None:
+    """读侧配置漂移必须在查询前明确失败，**哪怕这次查询的结果是空的**。
+
+    这条是 2026-09-27 那次线上故障的回归点：服务端配置写 v1、Alias 指向的却是 v3 索引时，
+    非空结果会被逐点契约整批拒掉（qdrant_response_invalid），而空结果完全不经过那个检查，
+    于是表现成「模型查不到资料」而不是故障。夹具形状取自线上真实响应。
+    """
+
+    drifted_value = "v1" if drifted_field == "schema_version" else "bge-large-zh-v1.5"
+    spec = VectorIndexSpec.from_settings(qdrant_settings(), ollama_settings())
+    client = CollectionInfoClient(build_collection_info(spec, **{drifted_field: drifted_value}))
+    component = QdrantVectorSearch(client, qdrant_settings(), spec)
+
+    with pytest.raises(QdrantSearchIndexSpecMismatchError, match=drifted_field):
+        run(
+            component.search_groups(
+                [1.0, 0.0, 0.0],
+                document_limit=1,
+                matches_per_document=1,
+                score_threshold=None,
+                filters=VectorSearchFilters(),
+            )
+        )
+    assert client.get_collection_calls == 1
+
+
+def test_chunk_search_also_verifies_alias_spec() -> None:
+    """按 Chunk 返回的那条路径同样要自证，否则只剩一半入口受保护。"""
+
+    spec = VectorIndexSpec.from_settings(qdrant_settings(), ollama_settings())
+    client = CollectionInfoClient(build_collection_info(spec, schema_version="v1"))
+    component = QdrantVectorSearch(client, qdrant_settings(), spec)
+
+    with pytest.raises(QdrantSearchIndexSpecMismatchError):
+        run(
+            component.search(
+                [1.0, 0.0, 0.0],
+                top_k=1,
+                score_threshold=None,
+                filters=VectorSearchFilters(),
+            )
+        )
+
+
+def test_read_path_verifies_alias_spec_once_then_keeps_serving() -> None:
+    """规格一致时只核一次，且不改变两种检索的结果。"""
+
+    spec = VectorIndexSpec.from_settings(qdrant_settings(), ollama_settings())
+    group, point = build_grouped_hit()
+    client = CollectionInfoClient(build_collection_info(spec), points=[point], groups=[group])
+    component = QdrantVectorSearch(client, qdrant_settings(), spec)
+
+    chunk_results = run(
+        component.search(
+            [1.0, 0.0, 0.0],
+            top_k=1,
+            score_threshold=None,
+            filters=VectorSearchFilters(),
+        )
+    )
+    grouped_results = run(
+        component.search_groups(
+            [1.0, 0.0, 0.0],
+            document_limit=1,
+            matches_per_document=1,
+            score_threshold=None,
+            filters=VectorSearchFilters(),
+        )
+    )
+
+    assert len(chunk_results) == 1
+    assert len(grouped_results) == 1
+    assert client.get_collection_calls == 1
+
+
+def test_read_path_probe_failure_does_not_add_a_new_failure_path() -> None:
+    """探针自己失败（Qdrant 不可达）时按「没核过」处理：检索结果与今天一致。"""
+
+    spec = VectorIndexSpec.from_settings(qdrant_settings(), ollama_settings())
+    client = CollectionInfoClient(httpx.ConnectError("qdrant down"), points=[build_grouped_hit()[1]])
+    component = QdrantVectorSearch(client, qdrant_settings(), spec)
+
+    for _ in range(2):
+        results = run(
+            component.search(
+                [1.0, 0.0, 0.0],
+                top_k=1,
+                score_threshold=None,
+                filters=VectorSearchFilters(),
+            )
+        )
+        assert len(results) == 1
+
+    # 没核过就不缓存，下次检索继续尝试核对，而不是把「核不到」记成「核对通过」。
+    assert client.get_collection_calls == 2
