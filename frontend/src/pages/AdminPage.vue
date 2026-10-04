@@ -5,6 +5,8 @@ import AdminShell from '@/layouts/AdminShell.vue'
 import UserAdminPage from './UserAdminPage.vue'
 import ScheduledJobsPage from './ScheduledJobsPage.vue'
 import KnowledgeBasesPage from './KnowledgeBasesPage.vue'
+import LlmProvidersPage from './LlmProvidersPage.vue'
+import LlmModelsPage from './LlmModelsPage.vue'
 import SourcesPage from './SourcesPage.vue'
 import FileDocumentsPage from './FileDocumentsPage.vue'
 import DocumentManagementPage from './DocumentManagementPage.vue'
@@ -21,6 +23,8 @@ const router = useRouter()
 
 const SECTIONS = [
   'users',
+  'llm-providers',
+  'llm-models',
   'scheduled-jobs',
   'knowledge-bases',
   'sources',
@@ -32,6 +36,8 @@ type AdminSection = (typeof SECTIONS)[number]
 
 const SECTION_META: Record<AdminSection, { title: string; subtitle: string }> = {
   users: { title: '账号管理', subtitle: '访问控制' },
+  'llm-providers': { title: '上游渠道', subtitle: '模型目录' },
+  'llm-models': { title: '可用模型', subtitle: '模型目录' },
   'scheduled-jobs': { title: '任务管理', subtitle: '周期配置与任务执行' },
   'knowledge-bases': { title: '知识库', subtitle: '知识管理' },
   sources: { title: '来源管理', subtitle: '订阅绑定' },
@@ -62,6 +68,8 @@ const heading = computed(() => SECTION_META[section.value])
 <template>
   <AdminShell :heading-title="heading.title" :heading-subtitle="heading.subtitle">
     <UserAdminPage v-if="section === 'users'" />
+    <LlmProvidersPage v-else-if="section === 'llm-providers'" />
+    <LlmModelsPage v-else-if="section === 'llm-models'" />
     <ScheduledJobsPage v-else-if="section === 'scheduled-jobs'" />
     <KnowledgeBasesPage v-else-if="section === 'knowledge-bases'" />
     <SourcesPage v-else-if="section === 'sources'" />

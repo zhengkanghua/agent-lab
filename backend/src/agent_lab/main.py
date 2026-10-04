@@ -17,12 +17,15 @@ from agent_lab.api.auth import router as auth_router
 from agent_lab.api.health import router as health_router
 from agent_lab.api.readiness import router as readiness_router
 from agent_lab.api.knowledge_bases import router as knowledge_bases_router
+from agent_lab.api.llm_models import router as llm_models_router
+from agent_lab.api.llm_providers import router as llm_providers_router
 from agent_lab.api.sources import router as sources_router
 from agent_lab.api.file_documents import router as file_documents_router
 from agent_lab.api.document_review import router as document_review_router
 from agent_lab.api.error_contract import build_file_document_error_response, build_processing_error_response
 from agent_lab.knowledge.files import FileDocumentError
 from agent_lab.knowledge.processing.lifecycle import ProcessingApplicationError
+from agent_lab.services.llm_model_errors import LlmModelDomainError
 from agent_lab.api.document_search import router as document_search_router
 from agent_lab.api.documents import router as documents_router
 from agent_lab.api.dependencies import (
@@ -32,6 +35,7 @@ from agent_lab.api.dependencies import (
 from agent_lab.api.error_contract import (
     build_agent_chat_error_response,
     build_knowledge_base_error_response,
+    build_llm_model_error_response,
     build_usage_error_response,
     build_vector_search_error_response,
 )
@@ -126,6 +130,13 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         ),
     },
     {
+        "name": "llm-catalog",
+        "description": (
+            "仅超级用户可访问的模型目录：上游渠道的显示名、接入类型、地址与凭据维护；"
+            "凭据写完就再也读不回来，接口只回「已配置 / 未配置」。"
+        ),
+    },
+    {
         "name": "agent",
         "description": (
             "只读新闻 Agent 对话；模型自行决定是否调用检索与阅读工具，过程以 SSE 流式"
@@ -193,12 +204,12 @@ def build_agent_runtime(
         尚未建连的 Agent Runtime；调用方还要 ``await open()``。
 
     Raises:
-        pydantic.ValidationError: LLM 环境配置缺失或不合法。
-        LlmConfigurationError: provider 为 openai_compatible 但 API Key 为空。
+        pydantic.ValidationError: 进程级 LLM 环境配置（温度、超时、连接池）不合法。
 
     Notes:
         只读本地配置并构造对象，不执行模型、PostgreSQL 或 Qdrant I/O，也不建表——
         checkpointer 的四张表由 ``cli.py init-checkpointer`` 显式创建（见 ADR 0004）。
+        模型目录为空时本函数照样成功：当轮模型在每一次提问时按运行上下文解析。
     """
 
     return AgentRuntime.build(
@@ -488,6 +499,24 @@ def create_app(
 
         return build_knowledge_base_error_response(error)
 
+    @application.exception_handler(LlmModelDomainError)
+    async def llm_model_error(_request: Request, error: LlmModelDomainError) -> JSONResponse:
+        """把模型目录的领域错误映射成它自己带的状态码、code 与安全中文。
+
+        为什么需要应用级 handler：``POST /agent/chat`` 在**开始运行之前**解析当轮模型，失败时
+        抛的就是这一族异常，而那条路由没有自己的 route class 来接（它的其他失败走
+        ``AgentError`` 那张表）。挂在这个基类上可以让「会话里选的模型不可用」在同一条路上
+        变成 HTTP 409/404，而不是流里的事件。
+
+        它不接管 ``/llm-models`` 与 ``/llm-providers`` 那两条管理路由：那两处有自己的 route class，
+        在更内层就把它变成了响应，根本轮不到这里。两边因此共用同一个构造器，不会给出两个 code。
+
+        Notes:
+            只做异常类型映射，不读异常文本，不执行任何 I/O。
+        """
+
+        return build_llm_model_error_response(error)
+
     application.include_router(auth_router)
     @application.exception_handler(FileDocumentError)
     async def file_document_error(_request: Request, error: FileDocumentError) -> JSONResponse:
@@ -523,6 +552,16 @@ def create_app(
         user_admin_router,
         dependencies=[Depends(current_superuser)],
     )
+    # 上游渠道配置：模型目录的第一步，凭据在这里填写并加密落库。与 Pipeline、账号管理同类，
+    # 只对超级用户开放（见 spec 0002 的「实现决策」：沿用既有超级用户门，不新开一档权限）。
+    application.include_router(
+        llm_providers_router,
+        dependencies=[Depends(current_superuser)],
+    )
+    # 可用模型：模型目录的第二步，挂在上面那些渠道下面。这一组**不整组加门**：里面的
+    # 管理路由各自挂着超级用户门，而 /llm-models/available 是任何已登录账号都能读的
+    # 模型选择列表（见 api/llm_models.py 的模块说明）。
+    application.include_router(llm_models_router)
     # 定时任务管理：配置变更直接决定后端会不会自动写外部系统，与 Pipeline 同级定级，
     # 只对超级用户开放。
     application.include_router(

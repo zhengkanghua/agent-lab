@@ -23,7 +23,6 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableBinding
 from langgraph.checkpoint.memory import InMemorySaver
-from pydantic import AnyHttpUrl, SecretStr
 
 from agent_lab.agent.chat_model import build_chat_model
 from agent_lab.agent.context import AgentContext
@@ -32,6 +31,7 @@ from agent_lab.agent.streaming import stream_agent_events
 from agent_lab.agent.usage_recording import wrap_with_usage_recording
 from agent_lab.config.llm import LlmProvider, LlmSettings
 from agent_lab.schemas.agent_chat import AgentErrorEvent, AgentTokenEvent
+from agent_lab.schemas.llm_models import ResolvedLlmModel
 from agent_lab.usage.contracts import UsageRecord, UsageSource, UsageStatus
 
 from tests.agent_helpers import (
@@ -47,15 +47,15 @@ from tests.agent_scope_helpers import NEWS_SCOPE
 
 
 def offline_llm_settings(**overrides: Any) -> LlmSettings:
-    """造一份不需要 API Key 的离线 LLM 配置（本文件的模型都是注入的假模型）。"""
+    """造一份离线的进程级 LLM 配置（本文件的模型都是注入的假模型）。"""
 
-    defaults: dict[str, Any] = {
-        "provider": LlmProvider.OLLAMA,
-        "base_url": "http://127.0.0.1:11434",
-        "model": "offline-test-model",
-        "fallback_model": "offline-test-fallback",
-    }
-    return LlmSettings(**{**defaults, **overrides})
+    return LlmSettings(**overrides)
+
+
+def openai_channel_settings() -> LlmSettings:
+    """造一份 OpenAI 兼容渠道上线时用的进程级配置。"""
+
+    return LlmSettings(temperature=0.0, request_timeout_seconds=60.0, user_agent="agent-lab")
 
 
 class RecordingCollector:
@@ -72,6 +72,20 @@ class RecordingCollector:
         if self.error is not None:
             raise self.error
         self.records.append(record)
+
+
+class SingleModelResolver:
+    """把同一个现成客户端交给所有 id。
+
+    本文件要验的是「真实客户端被构造出来之后发了什么请求」，所以解析来源直接返回现成客户端，
+    不经数据库。
+    """
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    async def resolve_client(self, _model_id: Any) -> Any:
+        return self._client
 
 
 class FakeSearchService:
@@ -295,32 +309,42 @@ def test_the_production_streaming_entry_asks_the_upstream_for_usage(
             request=request,
         )
 
-    settings = LlmSettings(
-        provider=LlmProvider.OPENAI_COMPATIBLE,
-        base_url=AnyHttpUrl("https://gateway.example.com/v1"),
-        api_key=SecretStr("sk-test"),
-        model="offline-test-model",
-        fallback_model="offline-test-fallback",
-    )
+    settings = openai_channel_settings()
     # 探针客户端只为拿到 SDK 真正使用的传输类。openai 3.x 已改用 httpx2，而仓库直接依赖的
     # httpx（也是 tests/conftest.py 离线阻断补的那个）不是同一条链路，所以这里按实际类型补，
     # 而不是把类名写死。
-    probe = build_chat_model(settings)
+    probe = build_chat_model(
+        settings,
+        provider=LlmProvider.OPENAI_COMPATIBLE,
+        base_url="https://gateway.example.com/v1",
+        credential="sk-test",
+        model="offline-test-model",
+    )
     transport_class = type(probe.async_client._client._client._transport)
     monkeypatch.setattr(transport_class, "handle_async_request", fake_transport)
 
     collector = RecordingCollector()
+    model_id = uuid4()
     runtime = AgentRuntime.build(
         llm_settings=settings,
         search_service=FakeSearchService(),
         session_factory=None,  # type: ignore[arg-type]
         database_url="postgresql+psycopg://unused/unused",
         checkpointer=InMemorySaver(),
+        model_resolver=SingleModelResolver(probe),
         usage_collector=collector,
         retry_initial_delay=0.0,
     )
 
-    events = collect_events(runtime, context=AgentContext(scope=NEWS_SCOPE))
+    events = collect_events(
+        runtime,
+        context=AgentContext(
+            scope=NEWS_SCOPE,
+            llm_model=ResolvedLlmModel(
+                id=model_id, display_name="offline-test-model", context_window=32768
+            ),
+        ),
+    )
 
     assert events, "生产入口应当跑完并产出事件"
     assert requests, "真实客户端必须真的发出了请求"
@@ -374,16 +398,17 @@ def test_the_wrapper_does_not_change_observable_attributes(
     """
 
     settings = LlmSettings(
-        provider=provider,
-        base_url=AnyHttpUrl(base_url),
-        api_key=SecretStr("sk-test"),
-        model="test-model",
-        fallback_model="test-fallback",
         temperature=0.3,
         request_timeout_seconds=45.0,
         user_agent="agent-lab",
     )
-    inner = build_chat_model(settings)
+    inner = build_chat_model(
+        settings,
+        provider=provider,
+        base_url=base_url,
+        credential="sk-test" if provider is LlmProvider.OPENAI_COMPATIBLE else "",
+        model="test-model",
+    )
     wrapper = wrap_with_usage_recording(inner, RecordingCollector())
 
     for name in attributes:
@@ -533,7 +558,7 @@ def test_a_failing_collector_does_not_break_the_call() -> None:
 def test_a_failing_model_call_leaves_one_failed_record_per_attempt() -> None:
     """模型报错时，每次尝试留一条失败记录，且不会在成功路径上再补一条。
 
-    ``ModelRetryMiddleware`` 与 ``ModelFallbackMiddleware`` 会把一次提问变成多次真实调用；
+    ``ModelRetryMiddleware`` 会把一次提问变成多次真实调用；
     账本必须**逐次**记下来（重试风暴这种成本异常不能被平均掉），并且每条都带上账号、会话与
     运行——失败的那次调用同样属于某次提问，丢了归属就再也追不回来。
     """

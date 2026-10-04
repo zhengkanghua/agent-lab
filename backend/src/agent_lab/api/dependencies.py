@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from agent_lab.agent.errors import AgentRuntimeUnavailableError
 from agent_lab.db.session import async_session_factory
 from agent_lab.services.agent_thread_service import AgentThreadService
+from agent_lab.services.llm_model_selection_service import LlmModelSelectionService
 from agent_lab.services.vector_search_service import VectorSearchService
 
 
@@ -166,6 +167,24 @@ def get_agent_thread_service() -> AgentThreadService:
     return AgentThreadService(async_session_factory)
 
 
+def get_llm_model_selection_service() -> LlmModelSelectionService:
+    """构造「解析当轮模型」的 Service（FastAPI 依赖注入函数）。
+
+    与 ``get_agent_thread_service`` 同一形状、同一个理由：主要调用方 ``POST /agent/chat`` 返回
+    流式响应，请求级 Session 会被占满整个对话，所以这里交出去的是**进程级 session 工厂**，
+    由 Service 自己按需开短会话（见 ADR 0010）。Service 自身无状态，每次现造一个即可。
+
+    Returns:
+        持有进程级 session 工厂的 ``LlmModelSelectionService``。
+
+    Notes:
+        只构造对象，不建连、不查库。离线测试整体覆盖本依赖
+        （``tests/app_helpers.create_offline_app`` 会把默认值换成内存替身）。
+    """
+
+    return LlmModelSelectionService(async_session_factory)
+
+
 def get_usage_session_factory(
     request: Request,
 ) -> async_sessionmaker[AsyncSession]:
@@ -211,6 +230,7 @@ __all__ = [
     "get_agent_run_registry",
     "get_agent_runtime",
     "get_agent_thread_service",
+    "get_llm_model_selection_service",
     "get_task_service",
     "get_usage_session_factory",
     "get_vector_search_service",

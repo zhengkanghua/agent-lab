@@ -26,7 +26,7 @@ from agent_lab.api.error_contract import (
     AGENT_CHAT_ERROR_RULES,
     resolve_error_contract,
 )
-from agent_lab.config.llm import LlmProvider, LlmSettings
+from agent_lab.config.llm import LlmSettings
 
 from tests.agent_helpers import ScriptedChatModel, run
 
@@ -37,15 +37,9 @@ UNUSED_DATABASE_URL = "postgresql+psycopg://user:pass@127.0.0.1:5432/unused"
 
 
 def offline_llm_settings(*, pool_size: int = 4) -> LlmSettings:
-    """构造一份指向本机 Ollama 的配置，不会被真正调用。"""
+    """构造一份离线进程级配置；模型本身来自模型目录，本文件全程注入假模型。"""
 
-    return LlmSettings(
-        provider=LlmProvider.OLLAMA,
-        base_url="http://127.0.0.1:11434",
-        model="offline-test-model",
-        fallback_model="offline-test-fallback",
-        checkpoint_pool_size=pool_size,
-    )
+    return LlmSettings(checkpoint_pool_size=pool_size)
 
 
 def build_runtime(*, pool_size: int = 4) -> AgentRuntime:

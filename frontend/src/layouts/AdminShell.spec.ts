@@ -78,6 +78,8 @@ describe('AdminShell', () => {
     const labels = wrapper.findAll('.menu-item').map((item) => item.attributes('href'))
     expect(labels).toEqual([
       '/admin/users',
+      '/admin/llm-providers',
+      '/admin/llm-models',
       '/admin/knowledge-bases',
       '/admin/files',
       '/admin/documents',

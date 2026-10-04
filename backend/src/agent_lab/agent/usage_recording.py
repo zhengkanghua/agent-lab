@@ -431,7 +431,7 @@ class UsageRecordingChatModel(BaseChatModel):
         """取这次调用实际用的模型名。
 
         优先用 ``_get_ls_params()['ls_model_name']``：两个 provider 都实现它，值就是配的那个
-        模型名（主模型与备用模型因此能分辨），而且不依赖上游在响应里回什么。取不到时记缺失，
+        模型名（不同的上游模型因此能分辨），而且不依赖上游在响应里回什么。取不到时记缺失，
         不让它把整条记录拖没。
         """
 
@@ -481,7 +481,7 @@ def wrap_with_usage_recording(
     """把模型包一层，让它的每次调用都交给 ``collector``。
 
     Args:
-        model: 要包装的模型客户端，可以是主模型也可以是备用模型。
+        model: 要包装的模型客户端。
         collector: 记录的接收方；生产注入真实采集器，缺省装配注入空实现。
 
     Returns:

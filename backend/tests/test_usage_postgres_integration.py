@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from agent_lab.agent.context import AgentContext
 from agent_lab.agent.runtime import AgentRuntime
-from agent_lab.config.llm import LlmProvider, LlmSettings
+from agent_lab.config.llm import LlmSettings
 from agent_lab.config.settings import get_settings
 from agent_lab.usage.assembly import UsageRuntime
 from agent_lab.usage.collector import NoopUsageCollector, QueuedUsageCollector
@@ -311,12 +311,8 @@ def test_a_conversation_writes_one_row_per_call_sharing_the_run_identity(usage_s
             ]
         )
         runtime = AgentRuntime.build(
-            llm_settings=LlmSettings(
-                provider=LlmProvider.OLLAMA,
-                base_url="http://127.0.0.1:11434",
-                model="usage-integration-model",
-                fallback_model="usage-integration-model",
-            ),
+            # 模型本身来自目录，本用例注入假模型，所以进程级配置用默认值即可。
+            llm_settings=LlmSettings(),
             search_service=EmptySearchService(),
             session_factory=None,  # type: ignore[arg-type]
             database_url="postgresql+psycopg://unused/unused",

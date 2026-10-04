@@ -103,6 +103,7 @@ from agent_lab.qdrant.search import (
     QdrantVectorSearchError,
 )
 from agent_lab.qdrant.store import QdrantPointStoreError
+from agent_lab.services.llm_credential_cipher import LlmCredentialKeyUnavailableError
 from agent_lab.services.vector_search_service import QueryVectorValidationError
 from agent_lab.knowledge.visibility import SearchVisibilityError
 
@@ -496,6 +497,35 @@ USAGE_ERROR_RULES: tuple[ErrorContractRule, ...] = (
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         code="usage_database_unavailable",
         detail="用量库当前不可用。",
+        retryable=True,
+    ),
+)
+
+
+# 模型目录链路（/llm-providers，后续还有可用模型）的错误表。与账号管理、定时任务同构：
+# 领域错误（渠道不存在、接入类型要求凭据）自带稳定 code、状态码与安全中文 detail，由路由的
+# _domain_error 直接构造响应，不进本表。这里两条都是「服务端配置或存储不可用」，必须让用户
+# 拿到一句能照做的话，而不是未分类的 500。
+#
+# 两个 code 都是新开的：数据库那条照「每条链路各有一个 *_database_unavailable」的既有惯例
+# （与 user_admin / scheduled_job / pipeline 三张表刻意不同句，日志里要能一眼认出是哪条链路）；
+# llm_catalog_unavailable 对应的是**凭据主密钥缺失或不是合法 Fernet 密钥**——它没有既有 code
+# 可以复用（llm_unavailable 是上游服务不可达、agent_runtime_unavailable 是 Agent 没装起来，
+# 说的都不是这件事）。retryable=False 是因为「重发同一个请求」永远好不了：要去部署里配好
+# LLM_CREDENTIAL_KEY 并重启，那才叫修好。
+LLM_CATALOG_ERROR_RULES: tuple[ErrorContractRule, ...] = (
+    ErrorContractRule(
+        exceptions=(LlmCredentialKeyUnavailableError,),
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="llm_catalog_unavailable",
+        detail="渠道凭据的加密密钥未配置，暂时不能保存凭据。",
+        retryable=False,
+    ),
+    ErrorContractRule(
+        exceptions=(SQLAlchemyError,),
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="llm_catalog_database_unavailable",
+        detail="模型目录存储当前不可用。",
         retryable=True,
     ),
 )
@@ -1031,6 +1061,60 @@ def build_knowledge_base_error_response(error: BaseException) -> JSONResponse:
     )
 
 
+def build_llm_catalog_error_response(error: BaseException) -> JSONResponse:
+    """把模型目录链路的存储故障与凭据主密钥不可用按类型映射成稳定 503。
+
+    Args:
+        error: 模型目录接口捕获的数据库异常或 ``LlmCredentialKeyUnavailableError``；
+            只读其类型。
+
+    Returns:
+        含稳定 ``code/detail/retryable`` 的 JSONResponse。
+
+    Notes:
+        不读异常文本，因此连接串、SQL 与主密钥都不会进入响应；不执行任何 I/O。
+    """
+
+    rule = resolve_error_contract(error, LLM_CATALOG_ERROR_RULES)
+    return build_error_response(
+        rule.status_code,
+        rule.code,
+        rule.detail,
+        retryable=rule.retryable,
+    )
+
+
+def build_llm_model_error_response(error: BaseException) -> JSONResponse:
+    """把可用模型链路的**领域错误**按它自带的 code/detail/状态码翻成脱敏响应。
+
+    与 ``build_llm_catalog_error_response`` 的分工：那一条管的是「存储或凭据主密钥不可用」这类
+    按异常类型分类的基础设施失败；这一条管的是领域错误——异常自己带着稳定 code、安全中文与
+    状态码（模型不存在、模型已停用、目录里没得选）。两条都要有，因为失败种类不同。
+
+    它同时服务两处：后台管理路由的 ``_domain_error``，以及 ``POST /agent/chat`` 在**开始运行
+    之前**解析当轮模型失败时抛到应用级 handler 的那一下。**两处共用同一个构造器**是有意的：
+    同一个失败不该因为从哪条路由出去而给出不同的 code 或文案。
+
+    Args:
+        error: 自带 ``code`` / ``detail`` / ``status_code`` 的领域错误；只读这三个属性，
+            不读 ``str(error)``。
+
+    Returns:
+        含稳定 ``code/detail/retryable`` 的 JSONResponse。
+
+    Notes:
+        纯内存构造，不执行任何 I/O。``retryable`` 固定为假：这一族的失败都是「换个模型/先配置」
+        才能好的，重发同一个请求不会变。
+    """
+
+    return build_error_response(
+        error.status_code,
+        error.code,
+        error.detail,
+        retryable=False,
+    )
+
+
 def build_scheduled_job_error_response(error: BaseException) -> JSONResponse:
     """把定时任务管理的基础设施异常按类型映射成稳定 503。
 
@@ -1101,6 +1185,7 @@ __all__ = [
     "AGENT_CHAT_ERROR_RULES",
     "AGENT_TOOL_ERROR_RULES",
     "INVALID_REQUEST_RULE",
+    "LLM_CATALOG_ERROR_RULES",
     "PIPELINE_ERROR_RULES",
     "SCHEDULED_JOB_ERROR_RULES",
     "SEARCH_UPSTREAM_EXCEPTIONS",
@@ -1114,6 +1199,7 @@ __all__ = [
     "VectorSearchErrorResponse",
     "build_agent_chat_error_response",
     "build_error_response",
+    "build_llm_catalog_error_response",
     "build_scheduled_job_error_response",
     "build_user_admin_error_response",
     "build_vector_search_error_response",

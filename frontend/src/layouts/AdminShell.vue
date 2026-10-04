@@ -4,11 +4,13 @@ import {
   ArrowLeft,
   CalendarClock,
   ClipboardCheck,
+  Cpu,
   FileText,
   Library,
   LogOut,
   Menu,
   Rss,
+  ServerCog,
   ShieldCheck,
   UserRound,
   UsersRound,
@@ -47,6 +49,18 @@ const props = withDefaults(
 
 const adminMenuItems = [
   { to: { name: 'admin', params: { section: 'users' } }, label: '账号管理', icon: UsersRound },
+  {
+    to: { name: 'admin', params: { section: 'llm-providers' } },
+    label: '上游渠道',
+    icon: ServerCog,
+  },
+  // 模型目录的第二步：渠道下面的可用模型。它与上游渠道列在一起（同属模型目录），
+  // 顺序也是先渠道后模型——先有渠道才挂得上模型。
+  {
+    to: { name: 'admin', params: { section: 'llm-models' } },
+    label: '可用模型',
+    icon: Cpu,
+  },
   { to: { name: 'admin', params: { section: 'knowledge-bases' } }, label: '知识库', icon: Library },
   { to: { name: 'admin', params: { section: 'files' } }, label: '文件资料', icon: FileText },
   {

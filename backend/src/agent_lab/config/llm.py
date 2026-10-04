@@ -2,24 +2,31 @@
 
 生成式 LLM 负责「读了检索结果之后用自然语言回答」，和 Embedding 是两件不同的事：
 Embedding 把文本变成向量供比较距离（见 ``config.ollama_embedding``），本模块配置的模型
-产出文字。本模块只从环境读取并校验 provider、地址、模型名、凭据、超时和采样温度，
-不发起网络请求、不构造客户端（构造在 ``agent.chat_model``）、不持有连接，也不包含
-Embedding、Qdrant 或 checkpointer 的数据库配置。
+产出文字。
+
+**本模块只装不属于「某一个模型」的那几项**：温度、单次请求超时、User-Agent、会话记忆连接池
+大小。接入类型、地址、凭据与模型名已经退休、不再从环境变量读——它们属于某一个模型，由
+后台的模型目录（``llm_providers`` / ``llm_models``）配，多个模型各有各的一份（见
+``docs/adr/0046-model-catalog-and-user-model-choice.md``）。
+
+本模块只从环境读取并校验这几项，不发起网络请求、不构造客户端（构造在 ``agent.chat_model``）、
+不持有连接，也不包含 Embedding、Qdrant 或 checkpointer 的数据库配置。
 """
 
 from enum import StrEnum
 from functools import lru_cache
 
-from pydantic import AnyHttpUrl, Field, SecretStr, field_validator
+from pydantic import AnyHttpUrl, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class LlmProvider(StrEnum):
     """可选的生成式模型接入方式。
 
-    两个分支的差别只在「用哪个客户端类、认证怎么带」，对上层完全透明：
-    ``agent.chat_model.build_chat_model`` 是唯一读取本枚举的地方，其余代码只拿到
-    ``BaseChatModel``。新增第三种 provider 时只改那一个函数。
+    两个分支的差别只在「用哪个客户端类、认证怎么带」，对上层完全透明：模型目录里的一行
+    渠道存的就是它（``llm_providers.provider``），构造客户端的 ``agent.chat_model.build_chat_model``
+    按它分支；``schemas.llm_providers`` 与 ``api/llm_providers`` 只把它当取值读写，其余代码
+    只拿到 ``BaseChatModel``。新增第三种 provider 时只改构造那一个函数。
     """
 
     OPENAI_COMPATIBLE = "openai_compatible"
@@ -27,50 +34,13 @@ class LlmProvider(StrEnum):
 
 
 class LlmSettings(BaseSettings):
-    """调用生成式 LLM 所需的进程级配置。
+    """调用生成式 LLM 所需的**进程级**配置。
 
-    进程内解析一次并被所有请求共享。它只保存连接参数，不持有 HTTP 连接或模型客户端。
-    API Key 用 ``SecretStr`` 包住，因此配置对象的 ``repr`` 和 Pydantic 校验输出都不会
-    显示明文；只有构造客户端那一处会读取秘密值。
+    进程内解析一次并被所有请求共享。它只保存对所有模型都相同的参数（温度、超时、
+    User-Agent、会话记忆连接池大小），因此 ``repr`` 里不会出现任何凭据：渠道凭据在模型目录里，
+    以密文落库（见 ``services.llm_credential_cipher``）。
     """
 
-    provider: LlmProvider = Field(
-        default=LlmProvider.OPENAI_COMPATIBLE,
-        description=(
-            "生成式模型接入方式，来源于 LLM_PROVIDER；只能是 openai_compatible 或 "
-            "ollama，决定 build_chat_model 走哪个客户端分支。"
-        ),
-    )
-    base_url: AnyHttpUrl = Field(
-        default=AnyHttpUrl("https://api.openai.com/v1"),
-        description=(
-            "生成式模型的 HTTP API 根地址，来源于 LLM_BASE_URL；必须是合法 HTTP(S) "
-            "URL。OpenAI 兼容中转站通常需要带 /v1 后缀，Ollama 分支填 Ollama 服务根地址。"
-        ),
-    )
-    api_key: SecretStr = Field(
-        default_factory=lambda: SecretStr(""),
-        description=(
-            "生成式模型的 API Key，来源于 LLM_API_KEY；openai_compatible 分支必须非空，"
-            "Ollama 分支允许为空。明文只在构造客户端时读取一次，不得写入日志或异常。"
-        ),
-    )
-    model: str = Field(
-        default="gpt-4o-mini",
-        min_length=1,
-        description=(
-            "主模型名称，来源于 LLM_MODEL；去除首尾空白后不能为空，必须是所配 "
-            "base_url 那一侧真实存在的模型名。"
-        ),
-    )
-    fallback_model: str = Field(
-        default="gpt-4o-mini",
-        min_length=1,
-        description=(
-            "主模型连续失败后降级使用的备用模型名称，来源于 LLM_FALLBACK_MODEL；"
-            "允许与 model 相同（此时降级只等于多一次重试）。"
-        ),
-    )
     temperature: float = Field(
         default=0.0,
         ge=0.0,
@@ -94,8 +64,9 @@ class LlmSettings(BaseSettings):
         description=(
             "调用生成式模型时发送的 User-Agent，来源于 LLM_USER_AGENT；留空表示不覆盖、"
             "沿用底层 SDK 的默认值。默认值让请求如实报出自己是本项目，而不是伪装成别的"
-            "客户端。之所以需要这个开关：部分 OpenAI 兼容中转站会按 User-Agent 拦截通用 "
-            "SDK 流量，openai SDK 默认发的 'OpenAI/Python x.y.z' 会被判为 403 "
+            "客户端。它不属于某一个模型，所以留在环境变量里（与温度、超时同理）。"
+            "之所以需要这个开关：部分 OpenAI 兼容中转站会按 User-Agent 拦截通用 "
+            "SDK 流量，openai SDK 默认发的 'OpenAI/Python x.y.z' 会被判作 403 "
             "PermissionDeniedError（消息形如 'Your request was blocked.'），而同一个 Key "
             "换个 User-Agent 就能正常调用——凭据没问题，被拒的是客户端身份。"
         ),
@@ -110,26 +81,6 @@ class LlmSettings(BaseSettings):
             "范围 1..32。它和 SQLAlchemy 的业务连接池是两套独立连接，不共享。"
         ),
     )
-
-    @field_validator("model", "fallback_model")
-    @classmethod
-    def normalize_model_name(cls, model: str) -> str:
-        """去除模型名两端空白，并拒绝纯空白名称。
-
-        Args:
-            model: 从默认值或环境变量解析出的模型名称。
-
-        Returns:
-            可直接交给模型客户端的规范化名称。
-
-        Raises:
-            ValueError: 名称只包含空白字符时抛出。
-        """
-
-        normalized_model = model.strip()
-        if not normalized_model:
-            raise ValueError("生成式模型名称不能为空白")
-        return normalized_model
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -193,17 +144,17 @@ class LangSmithSettings(BaseSettings):
 def get_llm_settings() -> LlmSettings:
     """读取并缓存生成式 LLM 配置（进程内只解析一次）。
 
-    为什么和 Embedding 配置分开：这些凭据只在 Agent 对话时需要，拆开可以让「只做检索」
-    或「只用数据库」的代码路径不必要求 LLM 配置齐全——没配中转站也能正常用检索接口。
+    为什么和 Embedding 配置分开：这些参数只在 Agent 对话时需要（其中连接池那项也只服务会话
+    记忆），拆开可以让「只做检索」或「只用数据库」的代码路径不必要求 LLM 配置齐全。
 
     Returns:
         进程内复用的、已完成环境变量解析和约束校验的配置。
 
     Raises:
-        pydantic.ValidationError: provider、URL、模型名、温度、超时或连接池大小不满足约束。
+        pydantic.ValidationError: 温度、超时或连接池大小不满足约束。
 
     Notes:
-        读取配置不进行网络、模型、数据库或向量库 I/O。
+        读取配置不进行网络、模型、数据库或向量库 I/O，也不读任何模型凭据（那些在模型目录里）。
     """
 
     return LlmSettings()

@@ -10,8 +10,9 @@ Agent 把上面的检索能力当工具用，在本次知识库范围内由生�
 **一次运行由服务端自己驱动，不挂在浏览器连接上**：关页面、断网、切走会话都不会中断它，要停下它
 得调 ``POST /agent/stop``（见 [一次运行不因订阅者离开而中止](../docs/adr/0035-run-outlives-its-subscriber.md)）。
 Tool 不修改 Document 或 Qdrant；会话归属和范围写 ``agent_threads``，消息及证据写四张 ``checkpoint*`` 表（见
-[ADR 0003 agent-v1-is-read-only](../docs/adr/0003-agent-v1-is-read-only.md)）。**没配 ``LLM_API_KEY``
-时只有 ``/agent/*`` 返回 503，检索接口照常工作**，所以只想用检索可以完全不管 LLM 配置。
+[ADR 0003 agent-v1-is-read-only](../docs/adr/0003-agent-v1-is-read-only.md)）。**没配任何可用模型时只有 ``/agent/*``
+返回 4xx，检索接口照常工作**（模型在后台的模型目录里配，见下文），所以只想用检索可以完全
+不管模型目录。
 
 本文只讲怎么装、怎么跑、怎么调、怎么测。另外两份：
 
@@ -48,9 +49,10 @@ MinIO/S3     私有原件存储。先创建桶并配置后端读写与删除权�
 Redis        使用环境已有实例，生产 Compose 不创建 Redis；任务消息与后续缓存按键前缀区分。
              启用 AOF、持久数据盘和 noeviction；缓存按 TTL 过期，内存满时拒绝新增写入。
              PostgreSQL 才是受理、状态与结果的事实来源；没有 Celery result backend。
-生成式 LLM   仅 /agent/* 需要。OpenAI 兼容中转站或 Ollama，二选一由 LLM_PROVIDER 决定。
-             和上面的 Ollama Embedding 是两件事：Embedding 产出向量，这个产出文字，
-             即使都指向同一台 Ollama 也是两套配置。不配则只有 /agent/* 返回 503。
+生成式 LLM   仅 /agent/* 需要。模型来自后台上游渠道与可用模型两张表（每一条渠道自带接入
+             类型、地址与凭据）。和上面的 Ollama Embedding 是两件事：Embedding 产出向量，
+             这个产出文字，即使都指向同一台 Ollama 也是两套配置。
+             目录里没有可用模型时会话里提问返回 no_available_llm_models，检索照常。
 用量库       llmops，模型调用的 token 用量记录，与业务表**不同库**（见
              ../docs/adr/0032-usage-data-in-separate-database.md）。必须先建库并跑
              `alembic -c alembic_usage.ini upgrade head`；配置缺失时进程起不来。
@@ -77,7 +79,7 @@ Agent 继续使用 LangChain/LangGraph，向量存储使用官方 qdrant-client�
 第 1 步不到位时 ``/agent/*`` 会返回 503（``agent_thread_database_unavailable``）而不是崩溃：
 归属记录读不出来就不让对话开始，避免在没有归属的情况下写下一段谁都管不了的历史。
 
-API 启动访问 PostgreSQL，同步环境托管管理员并装配受理与查询组件；除了向 LLM 上游拉一次模型列表核对 `LLM_MODEL`（见下文），不在启动时探测其他业务上游或 Redis，也不创建 Collection/Alias。Redis 暂不可用时仍可持久受理，恢复后由 Beat 补投原执行。
+API 启动访问 PostgreSQL，同步环境托管管理员并装配受理与查询组件；不在启动时探测业务上游（含 LLM 上游）或 Redis，也不创建 Collection/Alias。Redis 暂不可用时仍可持久受理，恢复后由 Beat 补投原执行。
 
 API、单个 Beat 和 Worker 使用同一份后端代码、独立进程与数据库连接。Beat 动态读取周期配置并维护补投、恢复及历史；生产 Worker 使用 Linux prefork，子进程在 fork 后建立自己的持久 asyncio 循环和连接池。Windows 原生的 HTTP、Beat 和 solo Worker 已通过受理、补投、资源等待、非空业务处理及正常关停验证；生产 prefork 的多进程与故障验收由 Linux 承担，具体范围见「测试」。`TASK_WORKER_CONCURRENCY` 控制每个 Worker 容器的子进程数；增加 Worker 实例不增加 Beat。API 的进程数在栈编排里写死为 1（一个容器一个进程，并发靠 `deploy.replicas` 的 2 个副本），不由环境变量决定。
 
@@ -85,13 +87,16 @@ API、单个 Beat 和 Worker 使用同一份后端代码、独立进程与数据
 
 清理默认预演，仅选择已采用且超过保留期、没有待处理候选的 Document；待审核、失败和拒绝记录不自动清理。每批 50 连续处理，没有整次上限。失败可能保留删除待办或待核实占用，不能仅因心跳过期就解锁。清理规则见 [ADR 0023](../docs/adr/0023-durable-intake-and-document-review.md)，占用不自动解锁的代价见 [ADR 0019](../docs/adr/0019-scheduled-execution-and-write-coordination.md)，排查与恢复见 [部署文档](../docs/container_deployment.md#任务执行的排查与恢复)。
 
-Agent Runtime 的装配是**非致命**的：LLM 配置缺失或会话记忆连不上时，只记异常类型（配置和
-连接串里都有凭据，异常文本可能带出来），把 ``app.state.agent_runtime`` 留成 ``None``，进程
-照常启动，只有 ``/agent/*`` 返回 503。所以「服务起来了」不等于「Agent 可用」，改完 LLM 配置
-要看启动日志里有没有 ``Agent 运行时装配失败``。``LLM_MODEL`` 填成上游不存在的名字在启动期
-就会失败：``agent/model_catalog.py`` 会向上游拉模型列表比对，不在其中即抛
-``LlmModelNotListedError``，``/agent/*`` 返回 503。**唯一放过的情况是上游列表拉不到**
-（网络不通、接口不支持），此时只记 warning，要等到第一次提问才会暴露。
+Agent Runtime 的装配是**非致命**的：会话记忆连不上、或 LLM 环境配置不合法时，只记异常类型
+（配置和连接串里都有凭据，异常文本可能带出来），把 ``app.state.agent_runtime`` 留成 ``None``，
+进程照常启动，只有 ``/agent/*`` 返回 503。所以「服务起来了」不等于「Agent 可用」，改完配置
+要看启动日志里有没有 ``Agent 运行时装配失败``。
+
+**模型本身不来自环境变量**：接入类型、地址、凭据与模型名由超级用户在后台的「上游渠道」与
+「可用模型」里配，用户在会话里挑一个。所以启动期不做任何模型自检，也**不向上游拉模型列表**
+（见 [ADR 0046](../docs/adr/0046-model-catalog-and-user-model-choice.md)）；目录为空、或某一
+条配错了（地址不通、模型名在上游不存在、凭据无效），都只在有人真的用到它时，以那条提问的
+错误码如实告知。
 
 ## 配置
 
@@ -121,10 +126,6 @@ TASK_QUEUE_PUBLISH_TIMEOUT_SECONDS 单次 Redis 发布/连接超时，失败由�
 TASK_QUEUE_REDELIVERY_SECONDS / TASK_QUEUE_MAINTENANCE_SECONDS 补投间隔与 Beat 维护间隔。
 TASK_WORKER_CONCURRENCY   每个 Worker 容器的 prefork 子进程数，Compose 默认 2。
 QDRANT_DISTANCE         改这个或维度必须新建 Schema/Collection，不能原地改。
-LLM_API_KEY             LLM_PROVIDER=openai_compatible 时必须非空，否则 /agent/* 全部 503；
-                        provider=ollama 时允许为空。检索接口不受影响。
-LLM_MODEL               必须是 LLM_BASE_URL 那一侧真实存在的模型名。填错时启动期会
-                        比对上游模型列表并失败，只有列表拉不到时才拖到第一次提问。
 LLM_USER_AGENT          默认 agent-lab。留空则沿用 SDK 默认值，此时部分中转站会按
                         User-Agent 把 openai SDK 的默认标识拦成 403，见下文。
 LLMOPS_DATABASE_URL     用量库连接串，**必填**；缺失或不合法时进程起不来（报错会指出
@@ -165,7 +166,8 @@ Copy-Item .env.example .env
 # 编辑 .env，同时填写 AUTH_ADMIN_EMAIL/AUTH_ADMIN_PASSWORD；
 # 本地 HTTP 设置 AUTH_COOKIE_SECURE=false，生产 HTTPS 必须保持 true。
 # 文档接收还需 S3_ENDPOINT、S3_BUCKET、S3_ACCESS_KEY、S3_SECRET_KEY；
-# 要用 Agent 对话页还需 LLM_API_KEY（缺失时只有 /agent/* 返回 503，检索照常）。
+# 要用 Agent 对话页还需 LLM_CREDENTIAL_KEY（渠道凭据的加密主密钥），并在后台配好
+# 上游渠道与可用模型；目录为空时只有 /agent/* 返回错误码，检索照常。
 uv run python -m agent_lab.prepare_document_resources
 uv run alembic upgrade head
 # 用量库是独立库（见 .env.example 的 LLMOPS_ 那一段）：先建库，再跑它自己那套迁移。
@@ -230,7 +232,7 @@ uv run agent-lab init-checkpointer
 uv run agent-lab prune-orphan-threads
 uv run agent-lab prune-orphan-threads --yes
 
-# 清掉最后活跃时间早于 N 天前的会话（checkpointer 历史与归属记录一起删）。
+# 清掉最后活跃时间早于 N 天前的会话（checkpointer 历史、会话历史行与归属记录一起删）。
 # 默认只报数不删，看清数字再加 --yes
 uv run agent-lab prune-old-threads --before-days 90
 uv run agent-lab prune-old-threads --before-days 90 --yes
@@ -239,9 +241,11 @@ uv run agent-lab prune-old-threads --before-days 90 --yes
 ``prune-orphan-threads`` 与 ``prune-old-threads`` 都会**不可恢复地删除用户数据**，所以默认都是
 预演：不加 ``--yes`` 只报告将删除的会话数量、一条都不删。它们必须在 ``alembic upgrade head``
 之后跑——
-``agent_threads`` 表还不存在时，**所有**会话都会被判成孤儿。「孤儿」指 checkpointer 里有历史、
-业务表里没有归属记录的会话，来源有三种：归属功能上线之前留下的历史、迁移被回滚过、
-以及删除会话时「清历史成功、删归属记录失败」的残余。它们在网页上既列不出来也删不掉。
+``agent_threads`` 表还不存在时，**所有**会话都会被判成孤儿。「孤儿」指**没有归属记录**的会话，
+候选集从 checkpointer 与会话历史表（``agent_thread_messages``）两侧取并集。来源有四种：归属功能
+上线之前留下的历史、迁移被回滚过、删除会话时「清历史成功、删归属记录失败」的残余，以及会反复产生的
+那一种——删一个正在运行的会话时等它停下的上限到了、删除继续执行，而那次运行随后把收尾内容写回了
+会话历史表。它们在网页上既列不出来也删不掉。
 
 ``init-checkpointer`` 是唯一一个写数据库**结构**的子命令，其余几个写的是业务数据。它单独成
 命令而不是放进启动路径，是因为建表属于运维动作：应用进程平时不该带着 DDL 权限跑，而且
