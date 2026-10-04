@@ -19,8 +19,15 @@ from uuid import uuid4
 import httpx
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
-from tests.agent_helpers import ScriptedChatModel
-from tests.app_helpers import create_agent_app, seed_owned_thread
+from agent_lab.api.dependencies import get_llm_model_selection_service
+from tests.agent_helpers import ScriptedChatModel, window_that_triggers
+from tests.app_helpers import (
+    DEFAULT_OFFLINE_MODEL_ID,
+    InMemoryLlmModelSelectionService,
+    OfflineCatalogModel,
+    create_agent_app,
+    seed_owned_thread,
+)
 from tests.usage_helpers import usage_service
 
 
@@ -31,10 +38,10 @@ def run(coroutine: Any) -> Any:
 
 
 def long_history() -> list[BaseMessage]:
-    """造一段够长的历史，让本轮提问越过摘要压缩的触发阈值。
+    """造一段够长的历史，让本轮提问顶过窗口的 80%。
 
-    触发条件是消息条数（见 ``agent/limits.py`` 的 ``SUMMARIZATION_TRIGGER_MESSAGES``），不是
-    token 数：token 计数依赖分词器，而中转站背后用哪个分词器我们并不掌握。
+    触发口径是按当轮模型窗口的 80%（见 ``agent/limits.py`` 的比例常量），窗口由目录条目给出、
+    经 ``AgentContext.llm_model`` 进运行上下文；这里只负责把消息条数堆到足够越过它。
     """
 
     history: list[BaseMessage] = []
@@ -52,14 +59,22 @@ def test_the_summarization_call_lands_in_the_ledger_too() -> None:
     model = ScriptedChatModel(
         responses=[AIMessage(content="旧背景摘要"), AIMessage(content="当前答案")]
     )
+    history = long_history()
+    # 目录条目的窗口取成「刚好被这段历史顶过 80%」的值。窗口是运行期真正生效的那个
+    # （目录条目 → ``AgentContext.llm_model`` → 中间件），不是构造期那个占位值；不这么改的话
+    # 真实目录那个 32768 得铺十几万字符的历史才能触发一次压缩。
+    window = window_that_triggers([*history, HumanMessage(content="当前提问")])
 
-    async def scenario() -> tuple[dict[str, Any], dict[str, Any]]:
+    async def scenario() -> tuple[dict[str, Any], dict[str, Any], list[str]]:
         async with usage_service() as usage_runtime:
             app, _search = create_agent_app(model, usage_runtime=usage_runtime)
+            app.dependency_overrides[get_llm_model_selection_service] = lambda: InMemoryLlmModelSelectionService(
+                [OfflineCatalogModel(DEFAULT_OFFLINE_MODEL_ID, context_window=window, is_default=True)]
+            )
             async with app.router.lifespan_context(app):
                 seed_owned_thread(app, thread_id)
-                # 预置历史而不是真的聊 20 轮：摘要触发条件只看消息条数，预置能把这条用例从
-                # 20 次 HTTP 往返压成 1 次，而中间件走的仍是真实路径。
+                # 预置历史而不是真的聊 20 轮：预置能把这条用例从 20 次 HTTP 往返压成 1 次，
+                # 而中间件走的仍是真实路径。
                 await app.state.agent_runtime.graph.aupdate_state(
                     {"configurable": {"thread_id": str(thread_id)}},
                     {"messages": long_history()},
@@ -78,13 +93,24 @@ def test_the_summarization_call_lands_in_the_ledger_too() -> None:
                     await usage_runtime.collector.drain()
                     replay = (await client.get(f"/agent/threads/{thread_id}/messages")).json()
                     page = (await client.get("/usage/records")).json()
-            return replay, page
+                    # 摘要正文不再出现在回放里（界面不展示它），所以「这一轮真的压缩过」要回
+                    # checkpoint 看：压缩产生的摘要消息留在状态头部。
+                    snapshot = await app.state.agent_runtime.graph.aget_state(
+                        {"configurable": {"thread_id": str(thread_id)}}
+                    )
+                    summaries = [
+                        message.text
+                        for message in (snapshot.values or {}).get("messages") or []
+                        if getattr(message, "additional_kwargs", {}).get("lc_source")
+                        == "summarization"
+                    ]
+            return replay, page, summaries
 
-    replay, page = run(scenario())
+    replay, page, summaries = run(scenario())
     records = page["items"]
 
-    assert replay["summarized"] is True, "这一轮必须真的触发了摘要压缩，否则用例什么都没证明"
-    assert "旧背景摘要" in (replay["summary"] or "")
+    assert summaries, "这一轮必须真的触发了摘要压缩，否则用例什么都没证明"
+    assert "旧背景摘要" in summaries[0]
     assert model.call_count == 2, "模型客户端被真实调用两次：一次摘要、一次回答"
     assert len(records) == model.call_count, "摘要那次调用也必须留下记录"
     assert {item["run_id"] for item in records} == {replay["turns"][-1]["run_id"]}, (

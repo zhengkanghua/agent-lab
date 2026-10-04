@@ -17,6 +17,7 @@ from agent_lab.agent.limits import (
     SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT,
     SEARCH_TOOL_MAX_WITHIN_DAYS,
     TOOL_CALL_TIMEOUT_SECONDS,
+    tool_output_char_limit,
 )
 from agent_lab.knowledge.scope import ResolvedKnowledgeBaseScope
 from agent_lab.schemas.document_search import DocumentSearchRequest
@@ -86,7 +87,7 @@ def build_search_documents_tool(service: VectorSearchService) -> BaseTool:
                 item = DocumentEvidence(
                     document_id=result.document_id, knowledge_base_id=result.knowledge_base_id,
                     knowledge_base_name=directory[result.knowledge_base_id].name, title=result.title,
-                    content_hash=result.content_hash, excerpt=match.page_content.strip(), kind="match",
+                    content_hash=result.content_hash, kind="match",
                     source_name=result.source_name, upload_filename=result.upload_filename,
                     url=str(result.url) if result.url is not None else None, published_at=result.published_at,
                 )
@@ -96,11 +97,22 @@ def build_search_documents_tool(service: VectorSearchService) -> BaseTool:
                     f"[[{item.citation_id}]] {item.title}\n"
                     f"document_id: {item.document_id}\n知识库: {item.knowledge_base_name}\n"
                     f"来源: {item.source_name or item.upload_filename or '无外部来源'} | 发布: {published}\n"
-                    f"实际命中片段:\n{item.excerpt}"
+                    f"实际命中片段:\n{match.page_content.strip()}"
                 )
         if not results:
             blocks.append("没有检索到相关文档。允许范围内可能没有这个主题，也可以换个说法再查；不要扩大范围补答案。")
+        # 「最多几篇几段」管的是检索请求，管不住输出长度：每段正文多长由文档自己决定，所以这里还要
+        # 按当轮窗口过一道总量上限（口径与 read_document 同一份实现）。超了就截断，**并且像读全文
+        # 那样把截断说出来**——不说的话模型会把「只有前几段」当成「一共只命中这些」，而去下
+        # 「没有提到 X」这类结论。说明本身也算在这次工具输出里，所以先从预算里扣掉它的长度。
+        text = "\n\n".join(blocks)
+        limit = tool_output_char_limit(
+            context.llm_model.context_window if context.llm_model is not None else None
+        )
+        if len(text) > limit:
+            marker = f"\n\n[检索结果超过 {limit} 字的读取上限，以上只是前半部分，后续命中片段未提供；需要完整内容请用 read_document 读取对应文档]"
+            text = text[: max(0, limit - len(marker))] + marker
         artifact = ToolEvidence(run_id=context.run_id, scope=scope, evidence=tuple(evidence))
-        return ToolMessage(content="\n\n".join(blocks), artifact=artifact.model_dump(mode="json"), tool_call_id=runtime.tool_call_id, name="search_documents")
+        return ToolMessage(content=text, artifact=artifact.model_dump(mode="json"), tool_call_id=runtime.tool_call_id, name="search_documents")
 
     return search_documents

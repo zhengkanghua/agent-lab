@@ -11,7 +11,14 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 from langchain_core.outputs import ChatGenerationChunk
 
 from agent_lab.agent.context import AgentContext
-from agent_lab.agent.evidence import DocumentEvidence, ToolEvidence, resolve_citations, tool_evidence
+from agent_lab.agent.evidence import (
+    CITATION_PATTERN,
+    DocumentEvidence,
+    ToolEvidence,
+    resolve_citations,
+    strip_stale_citations,
+    tool_evidence,
+)
 from agent_lab.agent.replay import build_replay_turns
 from agent_lab.agent.streaming import PersistedModelMessage, stream_agent_events
 from agent_lab.agent.tools.read_document import build_read_document_tool
@@ -19,9 +26,10 @@ from agent_lab.agent.tools.search_documents import build_search_documents_tool
 from agent_lab.knowledge.application import KnowledgeBaseService
 from agent_lab.knowledge.domain import KnowledgeBase, KnowledgeBaseStorageError
 from agent_lab.knowledge.scope import KnowledgeBaseSummary, ResolvedKnowledgeBaseScope
+from agent_lab.schemas.llm_models import ResolvedLlmModel
 from tests.agent_helpers import (
     OFFLINE_LANGSMITH_SETTINGS, CountingTool, ScriptedChatModel, StreamingChatModel,
-    build_offline_graph, parallel_tool_call_message, run, tool_call_message,
+    build_offline_graph, parallel_tool_call_message, run, tool_call_message, window_that_triggers,
 )
 from tests.agent_scope_helpers import NEWS_SCOPE, invoke_tool_message
 from tests.app_helpers import create_agent_app, seed_owned_thread
@@ -37,7 +45,7 @@ ALL_SCOPE = ResolvedKnowledgeBaseScope(mode="all", knowledge_bases=(*NEWS_SCOPE.
 def evidence(**changes):
     values = dict(document_id=uuid4(), knowledge_base_id=NEWS_SCOPE.knowledge_base_ids[0],
                   knowledge_base_name="新闻", title="运行手册", content_hash="a" * 64,
-                  excerpt="备份保留 7 天。", kind="match")
+                  kind="match")
     return DocumentEvidence(**(values | changes))
 
 
@@ -87,13 +95,16 @@ def test_search_cannot_expand_selected_scope_or_remove_filter(ids):
     assert not service.requests
 
 
-def test_search_evidence_is_the_actual_indexed_version_and_fragment():
+def test_search_evidence_carries_version_and_the_body_carries_the_fragments():
+    """证据只记文档身份与正文版本；命中片段本身由工具正文交给模型，不再存一份副本。"""
+
     hit = build_result(additional=1)
     context = AgentContext(scope=NEWS_SCOPE)
     message = run(invoke_tool_message(build_search_documents_tool(FakeSearchService([hit])), {"query": "利率"}, context=context))
     artifact = tool_evidence(message, run_id=context.run_id, scope=context.scope)
     assert artifact is not None
-    assert [item.excerpt for item in artifact.evidence] == [hit.best_match.page_content, hit.additional_matches[0].page_content]
+    assert hit.best_match.page_content in message.content
+    assert hit.additional_matches[0].page_content in message.content
     assert all(item.content_hash == hit.content_hash and item.document_id == hit.document_id for item in artifact.evidence)
     assert len({item.citation_id for item in artifact.evidence}) == 2
 
@@ -133,7 +144,7 @@ def test_read_source_less_file_uses_current_hash_and_new_citation():
     artifact = ToolEvidence.model_validate(message.artifact)
     current = artifact.evidence[0]
     assert current.kind == "document" and current.content_hash == "b" * 64
-    assert current.excerpt == record.content_text
+    assert record.content_text in message.content
     assert current.source_name is None and current.upload_filename == "手册.md"
     assert "None" not in message.content
 
@@ -163,13 +174,49 @@ def test_artifact_cannot_claim_old_or_out_of_scope_evidence(change):
 
 def test_only_actual_identifiers_resolve_and_two_document_versions_stay_distinct():
     old = evidence()
-    current = evidence(document_id=old.document_id, content_hash="b" * 64, excerpt="现在保留 14 天。", kind="document")
+    current = evidence(document_id=old.document_id, content_hash="b" * 64, kind="document")
     answer = f"旧资料 [[{old.citation_id}]]；当前资料 [[{current.citation_id}]]；伪造 [[Effffffffffff]]"
     citations, invalid = resolve_citations(answer, [old, current])
     assert citations == (old, current)
     assert invalid == ("Effffffffffff",)
     assert citations[0].document_id == citations[1].document_id
     assert citations[0].content_hash != citations[1].content_hash
+
+
+def test_stale_citation_stripping_handles_both_shapes_without_touching_its_input():
+    """剥旧标识的纯函数：``str`` 与块列表两种形状都处理，入参一个字节不改。
+
+    三条断言各钉一件必须成立的事：替换结果命不中引用正则（单层方括号是刻意的，否则用户
+    真正写下的方括号文字会被静默吃掉）、非文本块（这里是图片 URL）一个字不动、以及
+    **入参对象没被改动**——就地改正文会把剥离后的文本顺着同一批对象写进 checkpoint。
+    块列表里那条裸字符串是 ``BaseMessage.content`` 声明的第二种文本写法，一并厘。
+    """
+
+    citation = "E1a2b3c4d5e6f"
+    text = f"旧资料 [[{citation}]]"
+    blocks = [
+        {"type": "text", "text": text},
+        f"第二段 [[{citation}]]",
+        {"type": "image_url", "image_url": {"url": f"https://example.invalid/{citation}"}},
+    ]
+
+    stripped_text = strip_stale_citations(text)
+    stripped_blocks = strip_stale_citations(blocks)
+
+    assert stripped_text == "旧资料 [出处已失效]"
+    assert stripped_blocks[0] == {"type": "text", "text": "旧资料 [出处已失效]"}
+    assert stripped_blocks[1] == "第二段 [出处已失效]"
+    assert stripped_blocks[2] == blocks[2]
+    assert CITATION_PATTERN.search(stripped_text) is None
+    assert CITATION_PATTERN.search(stripped_blocks[0]["text"]) is None
+    assert CITATION_PATTERN.search(stripped_blocks[1]) is None
+    # 入参原文不变，两个形状都是。
+    assert text == f"旧资料 [[{citation}]]"
+    assert blocks == [
+        {"type": "text", "text": f"旧资料 [[{citation}]]"},
+        f"第二段 [[{citation}]]",
+        {"type": "image_url", "image_url": {"url": f"https://example.invalid/{citation}"}},
+    ]
 
 
 def test_repeated_call_ids_in_later_turn_do_not_rewrite_old_trace():
@@ -221,7 +268,14 @@ def test_successful_retry_final_text_matches_checkpoint_not_discarded_tokens():
     assert events[-1].status == turns[-1].status == "completed"
 
 
-def test_scope_switch_removes_old_answers_tools_and_summary_from_model_input():
+def test_scope_switch_keeps_old_answers_tools_and_summary_in_model_input():
+    """换范围之后模型仍看得见整份往来：历史回答、历史工具结果与摘要都进模型输入。
+
+    这是本次明确推翻的旧行为：过去按范围把这三类内容裁掉，怕模型拿只属于旧范围的事实作答。
+    裁掉的那部分现在由证据层承担（``tool_evidence`` 只认本次运行、范围内的成功结果），
+    所以这里断言它们**确实**进了模型输入，而不是断言它们被挡住。
+    """
+
     model = ScriptedChatModel(responses=[AIMessage(content="当前范围资料不足 [[Effffffffffff]]")])
     graph = build_offline_graph(model)
     thread_id = uuid4()
@@ -237,14 +291,16 @@ def test_scope_switch_removes_old_answers_tools_and_summary_from_model_input():
     events, turns, _, _ = run(verify())
     received = "\n".join(message.text for message in model.received_messages[-1])
     assert "第一问" in received and FILE_BASE.name in received and "自定义风格" in received
-    assert all(text not in received for text in ["摘要中的旧秘密", "旧工具秘密", "旧回答秘密"])
+    assert all(text in received for text in ["摘要中的旧秘密", "旧工具秘密", "旧回答秘密"])
     assert events[-1].citations == turns[-1].citations == ()
     assert events[-1].invalid_citations == turns[-1].invalid_citations == ("Effffffffffff",)
 
 
 def test_real_summarization_keeps_recent_long_turn_whole_and_current_evidence_valid():
-    # 旧 20 条 + 近期一整段 21 条 + 新提问越过 40；原按条数切会删掉近期提问。
+    # 旧 20 条 + 近期一整段 21 条 + 新提问顶过窗口的 80%；按窗口比例切会把切点落在近期这一段里，
+    # 再回退到一轮提问处才保住它（原按条数切会删掉近期提问）。窗口值由用例按历史长度算出。
     history = [message for index in range(10) for message in (HumanMessage(content=f"旧问{index}"), AIMessage(content=f"旧答{index}"))]
+    # 这一条只是给历史消息冻上运行元数据（旧那一轮的 run_id 与范围）。
     context = AgentContext(scope=NEWS_SCOPE)
     item = evidence()
     history.append(question("近期完整提问", context))
@@ -256,19 +312,31 @@ def test_real_summarization_keeps_recent_long_turn_whole_and_current_evidence_va
             for call_id, _, _ in calls)
     history.append(AIMessage(content=f"近期答案 [[{item.citation_id}]]", additional_kwargs={"agent_run": {"run_id": str(context.run_id), "completed": True}}))
     assert len(history) == 41
+    # 窗口放进运行上下文（生产走的就是这条路：目录条目 → ``AgentContext.llm_model`` →
+    # ``stream_agent_events`` 放进按协程隔离的上下文变量）。
+    run_context = AgentContext(
+        scope=NEWS_SCOPE,
+        llm_model=ResolvedLlmModel(
+            id=uuid4(),
+            display_name="演示模型",
+            context_window=window_that_triggers([*history, HumanMessage(content="当前提问")]),
+        ),
+    )
     model = ScriptedChatModel(responses=[AIMessage(content="旧背景摘要"), AIMessage(content="当前答案")])
     graph = build_offline_graph(model)
     thread_id = uuid4()
 
     async def verify():
         await graph.aupdate_state({"configurable": {"thread_id": str(thread_id)}}, {"messages": history})
-        return await run_and_replay(graph, thread_id=thread_id, message="当前提问")
+        return await run_and_replay(graph, thread_id=thread_id, message="当前提问", context=run_context)
 
     _, turns, summarized, summary = run(verify())
     assert summarized and summary and "旧背景摘要" in summary
     assert [turn.question for turn in turns] == ["近期完整提问", "当前提问"]
     assert turns[0].citations == (item,) and turns[0].status == "completed"
-    assert all("近期资料" not in message.text for message in model.received_messages[-1])
+    # 被压缩的是更早那 20 条；近期这一段的工具正文仍在上下文里（裁剪撤掉之后模型自己看得见）——
+    # 旧断言「近期资料不进模型输入」钉的正是本次推翻的裁剪。
+    assert any("近期资料" in message.text for message in model.received_messages[-1])
 
 
 def sse(response):

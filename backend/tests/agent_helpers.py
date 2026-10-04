@@ -12,16 +12,18 @@ from collections.abc import Sequence
 from typing import Any
 
 from fastapi import FastAPI
-from langchain_core.language_models import BaseChatModel
+from langchain_core.language_models import BaseChatModel, ModelProfile
 from langchain_core.language_models.fake_chat_models import (
     FakeMessagesListChatModel,
     GenericFakeChatModel,
 )
 from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.tools import BaseTool, tool
 from langgraph.checkpoint.memory import InMemorySaver
 
 from agent_lab.agent.context import AgentContext
+from agent_lab.agent.limits import SUMMARIZATION_TRIGGER_FRACTION
 from agent_lab.agent.middleware import build_agent_middleware
 from agent_lab.config.llm import LangSmithSettings
 from langchain.agents import create_agent
@@ -196,6 +198,15 @@ async def disconnect_mid_stream(
     return received
 
 
+# 假模型上的上下文窗口。摘要中间件只要用按比例口径，就在**构造期**读模型的 ``profile``
+# （缺了直接抛 ``ValueError``，图根本装不起来），所以假模型必须带上它。
+#
+# 它只是假模型自己的窗口，不是生产里那个构造期占位值：用例要按窗口逼出压缩时，应当给它一个
+# 自己算得清的值——走 HTTP/流入口的用例把它写在目录条目上（经 ``AgentContext.llm_model`` 进
+# 运行期），直接调中间件的用例用 ``middleware.bind_context_window`` 显式放进去。
+OFFLINE_MODEL_PROFILE: ModelProfile = {"max_input_tokens": 32768}
+
+
 class ScriptedChatModel(FakeMessagesListChatModel):
     """按脚本依次返回预置消息的假模型，并记录被调用次数。
 
@@ -209,10 +220,13 @@ class ScriptedChatModel(FakeMessagesListChatModel):
 
     ``received_messages`` 记录每次调用收到的完整消息列表，用来断言系统提示词、历史压缩
     这类「改写请求」的中间件真的改到了模型看见的东西。
+
+    ``profile`` 里的窗口是构造期就要交的（见 ``OFFLINE_MODEL_PROFILE``）。
     """
 
     call_count: int = 0
     received_messages: list[list[BaseMessage]] = []
+    profile: ModelProfile | None = OFFLINE_MODEL_PROFILE
 
     def bind_tools(self, tools: Sequence[Any], **kwargs: Any) -> BaseChatModel:
         """接受工具绑定但不改变脚本行为。"""
@@ -234,6 +248,8 @@ class StreamingChatModel(GenericFakeChatModel):
     真实 provider 也走这条路径。
     """
 
+    profile: ModelProfile | None = OFFLINE_MODEL_PROFILE
+
     def bind_tools(self, tools: Sequence[Any], **kwargs: Any) -> BaseChatModel:
         """接受工具绑定但不改变脚本行为。"""
 
@@ -241,7 +257,7 @@ class StreamingChatModel(GenericFakeChatModel):
 
 
 class FailingChatModel(BaseChatModel):
-    """固定抛出预置异常的假模型，用来验证错误分类和降级。
+    """固定抛出预置异常的假模型，用来验证错误分类。
 
     刻意不继承 ``FakeMessagesListChatModel``：那个类需要一份 responses 脚本，而这里的
     语义是「永远失败」，给脚本反而让人以为它有时会成功。
@@ -249,6 +265,7 @@ class FailingChatModel(BaseChatModel):
 
     error: BaseException
     call_count: int = 0
+    profile: ModelProfile | None = OFFLINE_MODEL_PROFILE
 
     @property
     def _llm_type(self) -> str:
@@ -353,11 +370,27 @@ class CountingTool:
         return _counting_tool
 
 
+def window_that_triggers(messages: Sequence[BaseMessage]) -> int:
+    """取一个让「窗口的 80%」刚好落在给定消息长度上的窗口值。
+
+    摘要压缩的触发线是 ``int(窗口 × SUMMARIZATION_TRIGGER_FRACTION)``，所以要逼出压缩就把窗口
+    取成「消息长度 ÷ 比例」。用例不写死窗口数值：写死就变成「在测那个近似 token 计数器」，而
+    这里要测的是比例本身。
+
+    Args:
+        messages: 将要交给模型的完整消息列表（含本次提问）。
+
+    Returns:
+        能让压缩刚好触发的最小窗口（再大一点就不触发）。
+    """
+
+    return int(count_tokens_approximately(messages) / SUMMARIZATION_TRIGGER_FRACTION)
+
+
 def build_offline_graph(
     model: BaseChatModel,
     tools: Sequence[BaseTool] = (),
     *,
-    fallback_model: BaseChatModel | None = None,
     retry_initial_delay: float = 0.0,
 ) -> Any:
     """用真实中间件流水线装配一个不联网的图。
@@ -368,9 +401,8 @@ def build_offline_graph(
     Args:
         model: 主模型（假的）。
         tools: 要挂上的工具。
-        fallback_model: 备用模型；省略时复用主模型。
         retry_initial_delay: 重试退避秒数，默认 ``0.0``——测试不需要真的等。生产默认是
-            1 秒且指数翻倍，按那个值跑，「主备模型都失败」一条用例就要白等 6 秒纯 sleep，
+            1 秒且指数翻倍，按那个值跑，「模型彻底失败」一条用例就要白等 6 秒纯 sleep，
             而这些用例断言的是「重试了几次、顺序对不对」，跟等多久无关。要专门验证退避
             时长的话显式传一个非零值。
 
@@ -386,7 +418,6 @@ def build_offline_graph(
         model,
         tools=list(tools),
         middleware=build_agent_middleware(
-            fallback_model=fallback_model or model,
             summarization_model=model,
             tool_names=frozenset(each.name for each in tools),
             retry_initial_delay=retry_initial_delay,
@@ -398,6 +429,7 @@ def build_offline_graph(
 
 __all__ = [
     "OFFLINE_LANGSMITH_SETTINGS",
+    "OFFLINE_MODEL_PROFILE",
     "CountingTool",
     "FailingChatModel",
     "ScriptedChatModel",
@@ -407,4 +439,5 @@ __all__ = [
     "open_chat_stream",
     "run",
     "tool_call_message",
+    "window_that_triggers",
 ]

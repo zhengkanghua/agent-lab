@@ -1,7 +1,7 @@
 """定义 Agent 运行的有界执行参数。
 
-本模块位于 Agent 层的共享配置层，只保存不会访问环境或外部服务的常量。它不解析 HTTP
-输入、不调用模型或工具，也不表达部署差异——这些是安全上限，不是可按环境调节的旋钮，
+本模块位于 Agent 层的共享配置层，只保存不会访问环境或外部服务的常量，以及由这些常量直接算出的
+纯函数。它不解析 HTTP 输入、不调用模型或工具，也不表达部署差异——这些是安全上限，不是可按环境调节的旋钮，
 所以刻意不放进 ``.env``：改它们等于改「一次对话最坏情况能消耗多少」，属于代码决策。
 
 和 ``pipeline.limits`` 的区别：那份约束的是 CLI 与手动 HTTP 写流水线，本份约束的是
@@ -27,11 +27,43 @@ TOOL_RETRY_MAX = 2
 # 重试的首次退避秒数。指数退避的基数由中间件默认值（backoff_factor=2）决定。
 RETRY_INITIAL_DELAY_SECONDS = 1.0
 
-# 触发历史摘要压缩的消息条数阈值，以及压缩后保留的最近消息条数。
-# 只按条数触发（不按 token），因为按 token 触发需要可靠的 token 计数器，而中转站的
-# 计费模型和分词器我们并不掌握，条数是此处唯一能确定的量。
-SUMMARIZATION_TRIGGER_MESSAGES = 40
-SUMMARIZATION_KEEP_MESSAGES = 20
+# 历史摘要压缩的触发与保留口径：按**当轮模型的上下文窗口**占比算，触发取 80%、
+# 压缩后保留 30%。窗口不是常量——它在每次模型调用时从本次运行的上下文里读，换一个窗口
+# 不同的模型触发点跟着变，所以这里只固定比例，不固定任何窗口值。
+SUMMARIZATION_TRIGGER_FRACTION = 0.8
+SUMMARIZATION_KEEP_FRACTION = 0.3
+
+# 摘要中间件构造期的占位窗口。**它的唯一职责是通过上游的构造期校验**：上游只要用到按比例
+# 口径，就在 ``SummarizationMiddleware.__init__`` 末尾要求模型对象带 ``max_input_tokens``，
+# 缺了直接 ``ValueError``、进程起不来。它不参与运行期的任何计算（运行期读的是当轮窗口），
+# 所以不要拿它当真值去推任何结论。
+SUMMARIZATION_PLACEHOLDER_WINDOW = 32768
+
+# 压缩前的旧工具正文清理：每条正文只留头与尾，中间换成占位文字。三个值是一套口径，改一个就
+# 改了清出多少量。头尾按工具输出上限的量级选，不是照搬外部默认值：检索一次好几段原文、工具
+# 输出的上限又按窗口算（见 ``tool_output_char_limit``），头尾留到几千字符就等于清不出量，
+# 「清够了就不调摘要模型」那一支永远不会发生。
+#
+# 占位文字会被用户看到（被清掉的轮次在界面上只剩它），所以它是对外文案，改动等于改用户看到
+# 的东西。
+PRUNED_TOOL_RESULT_HEAD_CHARS = 512
+PRUNED_TOOL_RESULT_TAIL_CHARS = 256
+PRUNED_TOOL_RESULT_PLACEHOLDER = "[... tool result middle pruned ...]"
+
+
+# ---- 模型客户端缓存（见 ADR 0046）----
+
+# 已经构造好的客户端被信任多久：这段时间内不再读目录表。它的代价是「改一条已有配置最多这么久
+# 之后全副本生效」——这是换「不需要任何跨进程通知」的那一笔；新建条目没有这个延迟（未命中直接
+# 查库）。取 60 秒是因为它同时要满足两头：管理员改完配置后在一分钟之内看到效果，而一个被频繁
+# 使用的模型不会一分钟丢一次连接池与 TLS 连接（超时只重新校验那一行的内容，内容没变继续复用）。
+MODEL_CLIENT_CACHE_TTL_SECONDS = 60.0
+
+# 缓存里最多留几个模型客户端，超出后按最久未用先淘汰。每个条目就是一个客户端，也就带着一套
+# 连接池与 TLS 会话，所以这个上界说的是「一个 API 进程最坏同时占多少上游连接池」。32 比一次
+# 部署里真正被用过的模型数大一个量级（模型目录通常个位数到几十条），取这个量级是为了让淘汰在
+# 正常情况下永不触发——它只兜住「目录被填进很多条目、而且每一条都被人选过」时内存不无界增长。
+MODEL_CLIENT_CACHE_MAX_ENTRIES = 32
 
 
 # ---- 输入上限：约束用户和外部内容能往模型上下文里塞多少 ----
@@ -57,9 +89,34 @@ SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT = 2
 # 说不清的值。给个明确上限，模型填超了会被参数校验挡下并看到范围说明，比默默接受更好。
 SEARCH_TOOL_MAX_WITHIN_DAYS = 365
 
-# read_document 返回的正文字符上限。超过则截断并在末尾标注被截断——这里截断是对的，
-# 因为正文是数据不是指令，缺尾部只是信息不全，不会让模型误解任务。
-READ_DOCUMENT_MAX_CHARS = 6000
+# 一次工具调用交给模型的文本字符上限：按**当轮模型的上下文窗口**算，取窗口的 20%、封顶
+# 20000 字符、保底 2000 字符。为什么要按窗口成比例：本项目「一轮之内不压缩」，所以每轮只有
+# 「1 − 触发线 0.8」= **窗口的 20%** 留给「本轮工具结果 + 回答」；上限不与窗口成比例的话，
+# 窗口小的模型一次读取就能把这一轮顶出窗口。封顶与保底各管一头：封顶防大窗口的模型一次吃掉
+# 过多额度，保底保证窗口小的模型仍读得到有意义的长度。
+TOOL_OUTPUT_WINDOW_FRACTION = 0.2
+TOOL_OUTPUT_MAX_CHARS = 20000
+TOOL_OUTPUT_MIN_CHARS = 2000
+
+# 运行上下文里没有当轮模型时用的窗口兜底（离线测试直接调工具，或调用方没带模型）。取模型表单
+# 里预填的那个保守值，于是上限约 6553 字符，与它替换掉的 6000 定值同量级——**保底不为零比
+# 「没窗口就不限制」安全得多**。
+#
+# 与 SUMMARIZATION_PLACEHOLDER_WINDOW 数值相同，但两者**不是同一个东西**：那个只用来过上游摘要
+# 中间件的构造期校验、不参与任何计算，这个是真的会算进「一次工具调用能交给模型多少文本」。
+TOOL_OUTPUT_DEFAULT_CONTEXT_WINDOW = 32768
+
+
+def tool_output_char_limit(context_window: int | None) -> int:
+    """一次工具调用交给模型的文本字符上限。
+
+    输入是当轮模型的上下文窗口（token 数），输出是字符数上限；窗口为 ``None`` 表示这次运行的
+    上下文里没带模型，按 ``TOOL_OUTPUT_DEFAULT_CONTEXT_WINDOW`` 算。read_document 与
+    search_documents 共用这一份实现：两条路都把文本直接送进模型上下文，口径必须一致。
+    """
+
+    window = TOOL_OUTPUT_DEFAULT_CONTEXT_WINDOW if context_window is None else context_window
+    return max(TOOL_OUTPUT_MIN_CHARS, min(TOOL_OUTPUT_MAX_CHARS, int(window * TOOL_OUTPUT_WINDOW_FRACTION)))
 
 # 一次工具调用的时长上限。**必须存在**：一次不返回的工具调用会让这次运行卡住，而这次运行
 # 仍然算「活着」（最后活跃时刻照常续期，不会被判成僵尸），于是这个会话一直没法提交新提问——
@@ -136,8 +193,12 @@ __all__ = [
     "MAX_SYSTEM_PROMPT_CHARS",
     "MAX_USER_MESSAGE_CHARS",
     "MODEL_CALL_RUN_LIMIT",
+    "MODEL_CLIENT_CACHE_MAX_ENTRIES",
+    "MODEL_CLIENT_CACHE_TTL_SECONDS",
     "MODEL_RETRY_MAX",
-    "READ_DOCUMENT_MAX_CHARS",
+    "PRUNED_TOOL_RESULT_HEAD_CHARS",
+    "PRUNED_TOOL_RESULT_PLACEHOLDER",
+    "PRUNED_TOOL_RESULT_TAIL_CHARS",
     "RETRY_INITIAL_DELAY_SECONDS",
     "RUN_DRAIN_TIMEOUT_SECONDS",
     "RUN_EVENT_POLL_INTERVAL_SECONDS",
@@ -149,9 +210,15 @@ __all__ = [
     "SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT",
     "SEARCH_TOOL_MAX_WITHIN_DAYS",
     "SSE_HEARTBEAT_INTERVAL_SECONDS",
-    "SUMMARIZATION_KEEP_MESSAGES",
-    "SUMMARIZATION_TRIGGER_MESSAGES",
+    "SUMMARIZATION_KEEP_FRACTION",
+    "SUMMARIZATION_PLACEHOLDER_WINDOW",
+    "SUMMARIZATION_TRIGGER_FRACTION",
     "TOOL_CALL_RUN_LIMIT",
     "TOOL_CALL_TIMEOUT_SECONDS",
+    "TOOL_OUTPUT_DEFAULT_CONTEXT_WINDOW",
+    "TOOL_OUTPUT_MAX_CHARS",
+    "TOOL_OUTPUT_MIN_CHARS",
+    "TOOL_OUTPUT_WINDOW_FRACTION",
     "TOOL_RETRY_MAX",
+    "tool_output_char_limit",
 ]
