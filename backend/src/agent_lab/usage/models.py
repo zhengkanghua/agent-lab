@@ -67,7 +67,7 @@ class UsageRecordRow(UsageBase):
     )
     model_name: Mapped[str | None] = mapped_column(
         String(128),
-        comment="这次调用实际使用的模型名；主模型与备用模型靠它分辨。NULL 表示取不到。",
+        comment="这次调用实际使用的模型名；NULL 表示取不到。",
     )
     input_tokens: Mapped[int] = mapped_column(
         nullable=False,

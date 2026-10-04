@@ -22,12 +22,15 @@ from langgraph.graph.state import CompiledStateGraph
 from psycopg_pool import AsyncConnectionPool
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from agent_lab.agent.chat_model import build_chat_model
 from agent_lab.agent.checkpointer import to_psycopg_conninfo
 from agent_lab.agent.context import AgentContext
 from agent_lab.agent.errors import AgentCheckpointerUnavailableError
 from agent_lab.agent.limits import RETRY_INITIAL_DELAY_SECONDS
 from agent_lab.agent.middleware import build_agent_middleware
+from agent_lab.agent.model_resolution import (
+    ModelClientResolver,
+    build_run_model,
+)
 from agent_lab.agent.tools import build_agent_tools
 from agent_lab.agent.usage_recording import wrap_with_usage_recording
 from agent_lab.config.llm import LlmSettings
@@ -69,22 +72,29 @@ class AgentRuntime:
         database_url: str,
         checkpointer: BaseCheckpointSaver | None = None,
         model: BaseChatModel | None = None,
+        model_resolver: ModelClientResolver | None = None,
         usage_collector: UsageCollector | None = None,
         retry_initial_delay: float = RETRY_INITIAL_DELAY_SECONDS,
     ) -> "AgentRuntime":
         """组装模型、工具、中间件和 checkpointer，编译出可共享的图。
 
         Args:
-            llm_settings: 模型 provider、base_url、凭据、主/备模型名和连接池大小。
+            llm_settings: 进程级的温度、超时、User-Agent 与会话记忆连接池大小。模型本身不
+                在这里——接入类型、地址、凭据与上游模型名都来自模型目录，每一次调用按当轮
+                选定的那一行解析。
             search_service: 只读向量检索 Service，供 ``search_documents`` 工具使用；与 HTTP
                 搜索路由共用同一个进程级实例。
             session_factory: PostgreSQL Session 工厂，供 ``read_document`` 工具按次开
-                Session。传工厂而不是 Session：图是进程级的，而 Session 是一次工作单元。
+                Session、并在解析当轮模型时读一次目录。传工厂而不是 Session：图是进程级的，
+                而 Session 是一次工作单元。
             database_url: SQLAlchemy 风格的数据库 URL，用于建 checkpointer 连接池。
                 注入了 ``checkpointer`` 时忽略。
             checkpointer: 可选的会话历史存储；离线测试注入 ``InMemorySaver``，省略时按
                 ``database_url`` 建 PostgreSQL 连接池。
-            model: 可选的主模型客户端；离线测试注入 fake，省略时按配置构造。
+            model: 可选的主模型客户端；离线测试注入 fake，省略时按当轮选定模型解析。
+                给了它就不再建解析包装。
+            model_resolver: 可选的模型解析来源；省略时按目录表解析（读 ``session_factory``）。
+                离线测试注入一个不连数据库的替身，而装配出来的包装链与生产完全一致。
             usage_collector: 用量记录的接收方。省略时用空实现（什么都不记），因此离线测试
                 不传它既不会要求用量库配置，也不会去连库，而模型包装本身照常发生。生产由
                 API 进程的 lifespan 注入真实采集器。
@@ -95,7 +105,6 @@ class AgentRuntime:
             尚未建连的 Runtime；必须再 ``await open()`` 才能处理请求。
 
         Raises:
-            LlmConfigurationError: provider 为 openai_compatible 但 API Key 为空。
             RuntimeError: 走自建 checkpointer 分支但调用时没有运行中的事件循环——
                 ``AsyncPostgresSaver.__init__`` 会调 ``asyncio.get_running_loop()``。
                 生产路径天然满足（在 lifespan 里被 await），离线测试要注意包一层协程。
@@ -103,27 +112,28 @@ class AgentRuntime:
         Notes:
             本方法不执行数据库、Qdrant 或模型 I/O，也不建表——checkpointer 的四张表由
             ``cli.py init-checkpointer`` 显式创建，不在启动路径隐式改数据库结构
-            （见 ADR 0004）。
+            （见 ADR 0004）。**解析包装在装配期也不读环境变量、不连库、不发请求**，所以
+            模型目录为空时进程照样起得来，失败推到有人真的提问那一刻。
 
             自建的连接池带取连接前探活（``check_connection``）。这不是可选的调优项：
             少了它，空闲期间被服务端掐掉的连接会被原样交出去，表现为「检索一切正常、
             只有提问失败」，因为业务侧 Engine 有 ``pool_pre_ping``、这个池没有。
         """
 
-        # 1、主模型与备用模型。备用模型只在主模型重试耗尽后才会被调用。
-        #    采集点包在这里、而不是包进 build_chat_model：注入假模型的路径也必须被包住，
-        #    否则端到端测试一条记录也不会有，而「生产在被记账、测试没在记账」会让测试失去
-        #    意义。两个模型共用同一个采集器，这样一次运行里的多次调用（含降级）进同一个账本。
-        #    摘要压缩用的也是主模型实例（见下面第 4 步），它已经是包装实例，不需要额外装配。
+        # 1、主模型。层次是**写死的**：用量采集那层在最外面，解析包装在它里面。
+        #    采集靠把客户端包一层实现，模型名与用量都从**被包的那个对象**上读；反过来把
+        #    解析包装或从目录构造出来的客户端再包一次采集，摘要那次调用就会被记两条，破坏
+        #    「每次调用恰好一条记录」。塞进图的必须是 ``wrap_with_usage_recording(解析包装)``
+        #    这一个对象，而它同时就是下面摘要中间件用的那一个。
+        #    注入假模型的路径也必须被采集包住，否则端到端测试一条记录也不会有，而「生产在
+        #    被记账、测试没在记账」会让测试失去意义。
         collector = usage_collector or NoopUsageCollector()
         primary_model = wrap_with_usage_recording(
-            model or build_chat_model(llm_settings),
-            collector,
-        )
-        fallback_model = wrap_with_usage_recording(
-            model or build_chat_model(
-                llm_settings,
-                model=llm_settings.fallback_model,
+            model
+            or build_run_model(
+                settings=llm_settings,
+                session_factory=session_factory,
+                resolver=model_resolver,
             ),
             collector,
         )
@@ -179,7 +189,6 @@ class AgentRuntime:
             primary_model,
             tools=tools,
             middleware=build_agent_middleware(
-                fallback_model=fallback_model,
                 summarization_model=primary_model,
                 # 工具名从刚建好的工具列表算，不写常量：写死会出现「加了工具忘了加名字」，
                 # 而那个错误的表现是新工具一调就被守卫拦下，看起来像新工具本身坏了。

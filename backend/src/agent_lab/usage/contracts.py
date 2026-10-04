@@ -55,7 +55,8 @@ class UsageRecord:
             所以这种记录谁都查不到，采集点会为此留一条日志。**不传 ORM 对象**：传了就搬不走。
         thread_id: 这次调用所属的会话（Agent 会话）。不透明引用，含义由业务侧定义。
         run_id: 这次调用所属的运行（一次提问到最终回答之间的整段执行）。不透明引用。
-        model_name: 实际使用的模型名。主模型、备用模型各自成条，靠这一列分辨。
+        model_name: 实际使用的上游模型名。不同模型各自成条，靠这一列分辨（记的是上游模型名，
+            不是给用户看的展示名，见 ``docs/adr/0046-model-catalog-and-user-model-choice.md``）。
         input_tokens: 上游报的输入 token。它**已经包含**缓存命中的部分，所以它、输出、缓存
             三者不能相加当成消耗。
         output_tokens: 上游报的输出 token。
