@@ -20,12 +20,17 @@ from tests.migration_helpers import VERSIONS_DIR, load_migration, migration_chai
 MIGRATION_FILE = VERSIONS_DIR / "f2b9c7d41a08_会话排空标记_thread_drain_marker.py"
 
 
-def test_the_migration_is_the_current_head() -> None:
-    """它接在改动前的 head 上，而且自己就是最新 head。"""
+def test_the_migration_is_wired_after_the_previous_head() -> None:
+    """它接在原来的 head 上，并且真的在迁移链里——否则部署时不会被跑到。
+
+    这条以前还包括「它就是最新 head」。新增迁移（上游渠道表）之后不再成立，所以那半条断言
+    移到了新迁移自己的测试里（与 ``test_column_comments_migration`` 当初的处理同一做法）；
+    这里只守「挂在链上、down_revision 对」。
+    """
 
     module = load_migration(MIGRATION_FILE)
 
-    assert migration_chain()[0] == module.revision
+    assert module.revision in migration_chain()
     assert module.down_revision == "e1a7c4b93d62"
 
 

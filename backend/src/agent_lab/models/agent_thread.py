@@ -36,8 +36,9 @@ class AgentThreadRecord(Base):
     时间是「最后一次有人在这个会话里提问」，语义不是「ORM 最后一次更新」。混用会让排序键
     在将来某次无关的字段更新后被悄悄改写。
 
-    ``scope`` 与 ``system_prompt`` 两列的写入语义相反（续聊时一个可改、一个不可改），
-    改动前先读 ``system_prompt`` 字段上的注释与 ADR 0029——把其中一处「修」成与另一处一致，
+    ``scope`` 与 ``llm_model_id`` 两列是「用户在这个会话里选的东西」，续聊时可改（改选只影响
+    下一次运行的快照）；``system_prompt`` 相反，建立时定下、续聊不重读偏好表。改动前先读
+    ``system_prompt`` 字段上的注释与 ADR 0029——把其中一处「修」成与另一处一致，
     会分别破坏改选能力或提示词的恒定性。
     """
 
@@ -74,6 +75,15 @@ class AgentThreadRecord(Base):
         default=lambda: {"mode": "all"},
         server_default=text("'{\"mode\": \"all\"}'::jsonb"),
         comment="用户选择的知识库范围，独立于可能压缩的消息历史。",
+    )
+    llm_model_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        nullable=True,
+        comment=(
+            "会话当前选择的可用模型 id；为空表示用默认模型。业务层维护的逻辑外键"
+            "（指向 llm_models.id），库上无约束。条目后来改名或停用都不改写这一列，"
+            "选择器读到它在目录里已不可用时如实提示重选。"
+        ),
     )
     # 与 scope 的写入语义**相反**，这不是疏漏：scope 续聊时可改（改选只影响下一次运行的
     # 快照），system_prompt 建立时定下、续聊不重读偏好表。前者被拼在请求前面的位置，中途改
