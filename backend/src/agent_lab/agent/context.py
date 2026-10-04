@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from uuid import UUID, uuid4
 
 from agent_lab.knowledge.scope import ResolvedKnowledgeBaseScope
+from agent_lab.schemas.llm_models import ResolvedLlmModel
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +37,11 @@ class AgentContext:
             负责。
         thread_id: 本次运行所属的会话（``agent_threads`` 的主键）；``None`` 表示归属未知。
             同样供用量记录留一个可追到具体哪次提问的引用，默认空表示未知。
+        llm_model: **当轮选定的模型**（id、展示名、上下文窗口），在开始运行之前由
+            ``services.llm_model_selection_service`` 读目录表解析出来；``None`` 表示本次运行
+            的上下文里没带上它（离线测试与不关心模型的调用点）。它的窗口是历史压缩那条路的
+            比例基准（见 spec 0001）；填值由 Agent 对话入口负责，接手一条在途运行时读的是
+            提问消息里冻结的那一份，**不重查目录**（目录可能已经被改过）。
         run_id: 本次运行的标识，由本类在构造时生成。同一次运行的多次模型调用（含中间件内部
             的历史摘要压缩调用）拿到的是同一个值。
     """
@@ -43,6 +49,7 @@ class AgentContext:
     system_prompt: str | None = None
     run_id: UUID = field(default_factory=uuid4)
     scope: ResolvedKnowledgeBaseScope | None = None
+    llm_model: ResolvedLlmModel | None = None
     user_id: UUID | None = None
     thread_id: UUID | None = None
 

@@ -82,6 +82,9 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
 
     <div class="answer-region">
       <p v-if="turn.scope" class="run-scope">本次范围：{{ scopeLabel(turn.scope) }}</p>
+      <!-- 这一轮实际用的模型。名字取当轮冻结的那份快照，所以条目后来改名或停用都不会改写
+           已经发生过的这几轮；流式中还没回放，此时不显示，由选择器那边说当前用的是哪个。 -->
+      <p v-if="turn.llmModel" class="run-scope">本次模型：{{ turn.llmModel.display_name }}</p>
       <AgentToolTraceList :traces="turn.traces" :streaming="isStreaming" />
 
       <p v-if="isThinking" class="thinking" aria-live="polite">正在思考…</p>

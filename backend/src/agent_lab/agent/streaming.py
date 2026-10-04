@@ -26,6 +26,7 @@ from langsmith.run_helpers import tracing_context
 
 from agent_lab.agent.context import AgentContext
 from agent_lab.agent.evidence import tool_evidence
+from agent_lab.agent.middleware import bind_context_window
 from agent_lab.agent.replay import build_replay_turns
 from agent_lab.api.error_contract import (
     AGENT_CHAT_ERROR_RULES,
@@ -265,8 +266,11 @@ async def build_terminal_event(
 ) -> AgentDoneEvent:
     """按持久化状态算出这次运行的终态 ``done`` 事件。
 
-   正常跑完和协作式停止共用它，所以「点停止时看到的」与「刷新后看到的」是同一份口径：两条路都从
-   同一份 checkpoint 消息里取答案、完成状态与引用，不各自编一套。
+   正常跑完和协作式停止共用它，所以「点停止时看到的」与「刷新后看到的」是同一份口径：这里从
+   checkpoint 消息里取答案、完成状态与引用，而刷新后回放读的是写入侧从**同一批消息**投影进
+   业务表的行（投影用的是同一批纯函数：``replay.text_of``、``evidence.tool_evidence``，回放
+   组装用 ``replay.turn_status`` 与 ``evidence.resolve_citations``）。两边读的源不同——终态
+   事件发出时这一轮可能还没落表——所以共用的是判定规则，不是数据。
 
    为什么要从持久化结果现算而不是拿流式累计的文本：重试会留下临时输出（被弃用的那一次的文本已经
    发给用户了），预算耗尽与上游截断也都会让实际落库的内容与累计文本不同。以落库结果为准，回放与
@@ -325,7 +329,9 @@ async def stream_agent_events(
         graph: 进程级共享的已编译 Agent 图。
         message: 用户这一轮的提问；``resume`` 为真时忽略。
         thread_id: 会话 id；checkpointer 按它读写历史。
-        context: 本次运行的上下文。
+        context: 本次运行的上下文。它同时是历史压缩那份比例的基准：当轮模型的上下文窗口在图
+            跑起来之前从这里取出来，放进按协程隔离的上下文变量（见中间件的
+            ``_get_profile_limits``）；上下文里没有模型时压缩回落到构造期的占位窗口。
         langsmith_settings: 追踪开关与凭据。
         control: 本次运行的排空控制器；进程收尾时请求它排空，图会在当前 superstep 落盘后
             停下并抛 ``GraphDrained``。
@@ -369,16 +375,34 @@ async def stream_agent_events(
             # 3、跑图，同时订阅两种流。这里只传用户这一条新消息——历史由 checkpointer
             #    按 config 里的 thread_id 自己接在前面，不用我们拼。续跑时输入是 None：
             #    图从 checkpoint 里尚未完成的节点接着跑，不新开一轮。
+            #
+            #    当轮模型的窗口在跑图之前放进按协程隔离的上下文变量：历史压缩按它的占比
+            #    触发与保留，而消费者是中间件，它只能从那里拿到窗口。上下文里没有模型时放
+            #    ``None``，那表示这一轮没窗口可跟，中间件回落到构造期的占位值。
+            #
+            #    **不复位，也不靠它跨多次恢复传递**：消费这个生成器的是 ``runs.py`` 的运行
+            #    驱动者，它把每一次 ``__anext__`` 包成一个 Task，而 Task 只在创建时复制当前
+            #    上下文——上一次恢复里 set 的值下一次恢复看不到（复位会直接抛 ``ValueError``，
+            #    Token 属于另一个上下文）。压缩只发生在本次图执行的第一个超步里，就在
+            #    set 的这一段之内，所以够用；不会串到别处，也不会漏给下一次运行。
+            bind_context_window(
+                context.llm_model.context_window if context.llm_model is not None else None
+            )
+            #    运行标识**无条件**带上：会话历史按提问行上的 ``run_id`` 切分、排空接手按它
+            #    找回这一轮（取不到就按「这一轮已经不在 checkpoint 里」放弃），缺了它整轮认不出
+            #    归属。范围是另一样东西——只有本次运行真有范围时才写进去，回放读取容忍它缺失。
+            #    当轮选定的模型同样只在真的有的时候写：它**连展示名与上下文窗口一起冻结**
+            #    （快照必须自足：条目后来改名或停用不改写已经发生过的那几轮，而接手那一轮
+            #    不许回查目录）。
+            agent_run: dict[str, Any] = {"run_id": str(context.run_id)}
+            if context.scope is not None:
+                agent_run["scope"] = context.scope.model_dump(mode="json")
+            if context.llm_model is not None:
+                agent_run["llm_model"] = context.llm_model.model_dump(mode="json")
             graph_input = (
                 None
                 if resume
-                else {
-                    "messages": [
-                        HumanMessage(content=message, additional_kwargs={
-                            "agent_run": {"run_id": str(context.run_id), "scope": context.scope.model_dump(mode="json")},
-                        } if context.scope is not None else {})
-                    ]
-                }
+                else {"messages": [HumanMessage(content=message, additional_kwargs={"agent_run": agent_run})]}
             )
             async for stream_mode, chunk in graph.astream(
                 graph_input,

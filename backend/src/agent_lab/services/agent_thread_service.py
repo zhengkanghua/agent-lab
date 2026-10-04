@@ -1,8 +1,11 @@
 """管理 Agent 会话的归属校验与会话列表读写。
 
-本模块位于 Service 层，是「某个会话属于谁」的唯一判断处。它只读写 ``agent_threads`` 一张业务表，
-**不碰 LangGraph checkpointer 的四张表**，也不读写消息内容——历史归 checkpointer，删除历史由调用方
-（``api/agent_threads.py``）用 checkpointer 自己的 ``adelete_thread`` 完成。
+本模块位于 Service 层，是「某个会话属于谁」的唯一判断处。它只读写 ``agent_threads`` 与
+``agent_thread_messages`` 两张业务表，**不碰 LangGraph checkpointer 的四张表**：上下文记录归
+checkpointer，而用户能回看的会话历史（``agent_thread_messages``）由本 Service 在运行收尾时写入；
+清 checkpointer 历史由调用方（``api/agent_threads.py``、``cli.py``）用 checkpointer 自己的
+``adelete_thread`` 完成，而删会话行时**连带删这张表那一会话的行**由本 Service 在同一个事务里做
+（见 ``delete_thread_record`` / ``delete_threads`` / ``delete_thread_messages``）。
 
 **为什么持有 session 工厂而不是 session**（改动前必读
 docs/adr/0010-sse-routes-use-short-lived-db-sessions.md）：
@@ -18,6 +21,7 @@ docs/adr/0010-sse-routes-use-short-lived-db-sessions.md）：
 """
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -27,7 +31,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from agent_lab.agent.errors import AgentRunInProgressError, AgentThreadNotFoundError
 from agent_lab.agent.limits import RUN_ZOMBIE_THRESHOLD_SECONDS
+from agent_lab.agent.thread_messages import RunMessageRows, ThreadMessageRow
 from agent_lab.models.agent_thread import AgentThreadRecord
+from agent_lab.models.agent_thread_message import AgentThreadMessageRecord
 from agent_lab.knowledge.scope import KnowledgeBaseSelection
 from agent_lab.services.user_preference_service import UserPreferenceService
 
@@ -89,6 +95,49 @@ def derive_thread_title(message: str) -> str:
     return collapsed[:MAX_THREAD_TITLE_CHARS]
 
 
+def _build_message_record(
+    row: ThreadMessageRow,
+    *,
+    thread_id: UUID,
+    run_id: UUID,
+    seq: int,
+    created_at: datetime,
+) -> AgentThreadMessageRecord:
+    """把投影出来的一行拼成 ORM 记录。
+
+    Args:
+        row: 投影出的行；它的字段名与表里的列名一一对应。
+        thread_id: 这一行所属的会话。
+        run_id: 这一行所属的运行（整组共用）。
+        seq: 这一行在该会话里的顺序号。
+        created_at: 写入时刻，同一次写入的整组共用。
+
+    Returns:
+        可直接 ``session.add`` 的记录。
+
+    Notes:
+        纯构造，不执行 I/O。逐列写出来而不是把字段展开：投影与列分居两层，哪天两边同时改名，
+        这里会直接报错，而不是静默把值放到别的列上。
+    """
+
+    return AgentThreadMessageRecord(
+        id=uuid4(),
+        thread_id=thread_id,
+        run_id=run_id,
+        seq=seq,
+        role=row.role,
+        text=row.text,
+        tool_name=row.tool_name,
+        tool_arguments=row.tool_arguments,
+        tool_call_id=row.tool_call_id,
+        failed=row.failed,
+        evidence=row.evidence,
+        run_meta=row.run_meta,
+        memory_boundary_run_id=row.memory_boundary_run_id,
+        created_at=created_at,
+    )
+
+
 class AgentThreadService:
     """会话归属与会话列表的读写入口。
 
@@ -113,6 +162,7 @@ class AgentThreadService:
         first_message: str,
         run_id: UUID,
         scope: KnowledgeBaseSelection | None = None,
+        llm_model_id: UUID | None = None,
     ) -> tuple[UUID, str | None]:
         """确定本轮提问所属的会话，保证它归当前账号所有，并**原子地占下这次运行的位**。
 
@@ -139,6 +189,9 @@ class AgentThreadService:
             first_message: 本轮提问原文，只在新建时用来取标题。
             run_id: 本次运行的标识；占位写的就是它，停止接口靠比对它才敢写停止标志。
             scope: 本次提交的知识库选择；``None`` 表示沿用/默认。
+            llm_model_id: 本次请求携带的模型选择；``None`` 表示沿用会话里已存的那份（新建时会话
+                行上就是空，即用默认模型）。**它与 ``scope`` 同一条规则：请求里带了就写回会话行**，
+                所以「改了就是记住」，没有「只对这一次」的单次覆盖。
 
         Returns:
             ``(会话 id, 该会话的系统提示词)``。提示词为 ``None`` 表示这个会话用服务端内置默认提示词。
@@ -171,6 +224,7 @@ class AgentThreadService:
                         user_id=user_id,
                         title=derive_thread_title(first_message),
                         scope=(scope or KnowledgeBaseSelection(mode="all")).model_dump(mode="json"),
+                        llm_model_id=llm_model_id,
                         system_prompt=system_prompt,
                         created_at=now,
                         last_active_at=now,
@@ -207,6 +261,9 @@ class AgentThreadService:
                     active_run_id=run_id,
                     stop_requested_at=None,
                     **({"scope": scope.model_dump(mode="json")} if scope is not None else {}),
+                    # 模型那一列与 scope 同一条件：请求里带了才写回。没带就一字不动——会话行上
+                    # 存的是什么就继续是什么，不把「当轮用默认」这一件事写成一条记录。
+                    **({"llm_model_id": llm_model_id} if llm_model_id is not None else {}),
                 )
                 .returning(AgentThreadRecord.system_prompt)
             )
@@ -476,6 +533,92 @@ class AgentThreadService:
                 system_prompt=system_prompt,
             )
 
+    async def record_run_messages(
+        self,
+        *,
+        thread_id: UUID,
+        run_id: UUID,
+        runs: Sequence[RunMessageRows],
+    ) -> int:
+        """把这次运行快照里的消息组写进会话历史表，供用户回看。
+
+        **只写本次运行那一组，加上表里还缺的那些组。** 其余组一字不动：快照里更早的轮次可能在
+        checkpoint 里已经被压成占位文字，重写会把用户看到的原文盖掉；而缺的那些组（例如上一次
+        运行连收尾都没执行到）只能等下一次有人收尾的时候补上。表里已有哪些组在这里查，因为
+        只有这里能同时看到库与「本次运行是谁」。
+
+        **按（会话，运行）整组替换，同一个事务**：先把这一组的旧行删掉、再按顺序插入。所以
+        同一次收尾被执行两遍，表里那些行也只有一份。
+
+        **重复收尾时顺序号沿用第一次写入的那一组**（删之前先读出来、按原样回填）。不这样做的话，
+        先删后插会把一条较早运行的行排到更晚的轮次之后，回看顺序就变了。新的一组从该会话已有的
+        最大顺序号加一开算，按行在组里的先后逐个加一。
+
+        Args:
+            thread_id: 这些消息所属的会话。
+            run_id: 本次运行的标识；决定「哪一组是本次运行那一组」。
+            runs: 本次快照里能组出来的全部组（已投影成行）。
+
+        Returns:
+            实际写入的行数；``0`` 表示没有一组需要写。
+
+        Raises:
+            SQLAlchemyError: 业务库不可用；由调用方记日志（写入失败不中断收尾）。
+
+        Notes:
+            执行 PostgreSQL 读写各一次（读已有行、整组删除后插入）并提交，随后立刻归还连接。
+            调用方是运行驱动者，时机是「运行确定不再继续」的收尾里、**释放会话位之前**
+            ——用户拿到「答完」之后立刻追问，不能撞上一个还没释放的会话位。
+
+            **运行标识缺失的组不会传到这里**：投影那一步就跳过了（见
+            ``agent/thread_messages.project_run_messages``）。
+        """
+
+        now = datetime.now(UTC)
+        async with self._session_factory() as session:
+            # 1、先读这一会话已有的行：它同时给出「哪些运行已经写过」与「最大的顺序号」。
+            #    按 seq 排序，所以每个运行分到的那串顺序号天然递增。
+            stored: dict[UUID, list[int]] = {}
+            rows = await session.execute(
+                select(AgentThreadMessageRecord.run_id, AgentThreadMessageRecord.seq)
+                .where(AgentThreadMessageRecord.thread_id == thread_id)
+                .order_by(AgentThreadMessageRecord.seq)
+            )
+            for stored_run_id, seq in rows.all():
+                stored.setdefault(stored_run_id, []).append(seq)
+            next_seq = max((seq for seqs in stored.values() for seq in seqs), default=-1) + 1
+
+            # 2、逐组写。已经写过、又不是本次运行那一组的直接跳过（一字不动）。
+            written = 0
+            for group in runs:
+                existing = stored.get(group.run_id)
+                if group.run_id != run_id and existing is not None:
+                    # 表里已经有了、又不是本次运行那一组的：一字不动。
+                    continue
+                if existing is not None and len(existing) == len(group.rows):
+                    # 3、这一组写过了：顺序号按原样回填（同一次收尾被执行两遍，或接手后又收了
+                    #    一次尾）。行数与原来的对不上（快照里这一组又长了或短了）就不回填，
+                    #    按新的一组重排，免得顺序号与行错位。
+                    seqs = existing
+                else:
+                    seqs = list(range(next_seq, next_seq + len(group.rows)))
+                    next_seq += len(group.rows)
+                await session.execute(
+                    delete(AgentThreadMessageRecord).where(
+                        AgentThreadMessageRecord.thread_id == thread_id,
+                        AgentThreadMessageRecord.run_id == group.run_id,
+                    )
+                )
+                session.add_all(
+                    _build_message_record(
+                        row, thread_id=thread_id, run_id=group.run_id, seq=seq, created_at=now
+                    )
+                    for seq, row in zip(seqs, group.rows, strict=True)
+                )
+                written += len(group.rows)
+            await session.commit()
+            return written
+
     async def update_scope(self, *, user_id: UUID, thread_id: UUID, scope: KnowledgeBaseSelection) -> None:
         """保存经应用校验的选择；不改正在执行的运行快照，不刷新最近提问时间。"""
         async with self._session_factory() as session:
@@ -483,6 +626,32 @@ class AgentThreadService:
                 update(AgentThreadRecord)
                 .where(AgentThreadRecord.thread_id == thread_id, AgentThreadRecord.user_id == user_id)
                 .values(scope=scope.model_dump(mode="json"))
+            )
+            if result.rowcount == 0:
+                raise AgentThreadNotFoundError
+            await session.commit()
+
+    async def update_llm_model(self, *, user_id: UUID, thread_id: UUID, llm_model_id: UUID) -> None:
+        """保存会话的模型选择；与 ``update_scope`` 同一形状、同一语义。
+
+        **不判这个模型当前可不可用**：可用性只在「开始运行之前解析当轮模型」那道门上判（见
+        ``LlmModelSelectionService``）。保存时判会造出两条不一样的提示——保存报一次、提问再报
+        一次——而且用户刚选的、又被保存拒掉之后，会话里到底存的是什么就没有定义了。所以一个
+        当前已失效的 id 存进来照样成功，由选择器如实显示失效态。
+
+        **不看在途运行、不碰 ``stop_requested_at``**：用户运行中改选照样保存，快照已经冻结的是
+        那次运行的范围与模型，改选只影响下一次运行。
+
+        Raises:
+            AgentThreadNotFoundError: 会话不存在或不属于当前账号。
+            SQLAlchemyError: 业务库不可用；由调用方映射成 503。
+        """
+
+        async with self._session_factory() as session:
+            result = await session.execute(
+                update(AgentThreadRecord)
+                .where(AgentThreadRecord.thread_id == thread_id, AgentThreadRecord.user_id == user_id)
+                .values(llm_model_id=llm_model_id)
             )
             if result.rowcount == 0:
                 raise AgentThreadNotFoundError
@@ -576,13 +745,41 @@ class AgentThreadService:
             raise AgentThreadNotFoundError
         return record
 
+    async def read_thread_messages(self, *, thread_id: UUID) -> list[AgentThreadMessageRecord]:
+        """按顺序号读出这个会话的全部消息行，供回放组装轮次。
+
+        Args:
+            thread_id: 目标会话。
+
+        Returns:
+            该会话的全部行，按 ``seq`` 升序（那是这张表唯一承诺的顺序）。回放另外要用
+            「顺序号最大的那条摘要行」，所以排序不交给调用方去补。
+
+        Raises:
+            SQLAlchemyError: 业务库不可用。
+
+        Notes:
+            执行一次 PostgreSQL 读，只读本表、不碰 checkpointer。
+
+            **不判归属**：调用方（回放路由）先走 ``get_owned_thread``，同一条规则不写两遍。
+            「会话里一行都没有」是正常状态（会话行建好、那一轮没跑完），返回空列表。
+        """
+
+        async with self._session_factory() as session:
+            rows = await session.scalars(
+                select(AgentThreadMessageRecord)
+                .where(AgentThreadMessageRecord.thread_id == thread_id)
+                .order_by(AgentThreadMessageRecord.seq)
+            )
+            return list(rows)
+
     async def delete_thread_record(
         self,
         *,
         user_id: UUID,
         thread_id: UUID,
     ) -> None:
-        """删除一个会话的归属记录。
+        """删除一个会话的归属记录，并连带删掉它在会话历史表里的全部行。
 
         Args:
             user_id: 当前登录账号 id。
@@ -593,13 +790,24 @@ class AgentThreadService:
             SQLAlchemyError: 业务库不可用。
 
         Notes:
-            只删本表这一行，**不删 checkpointer 里的历史**。完整的删除动作是两步，顺序由调用方
-            保证：先让 checkpointer 清历史，成功后才调本方法。反过来会留下「业务行没了、历史还在」
-            的孤儿——查不到也删不掉，只能等 ``prune-orphan-threads`` 收；而按正确顺序留下的是
-            「历史没了、业务行还在」，用户再点一次删除就好，可自愈。
+            只删 ``agent_threads`` 与 ``agent_thread_messages`` 里这个会话的行，**不删
+            checkpointer 里的历史**。完整的删除动作是两步，顺序由调用方保证：先让 checkpointer
+            清历史，成功后才调本方法。反过来会留下「业务行没了、历史还在」的孤儿——查不到也删不掉，
+            只能等 ``prune-orphan-threads`` 收；而按正确顺序留下的是「历史没了、业务行还在」，
+            用户再点一次删除就好，可自愈。
+
+            两张业务表里**先删孩子、再删会话行**，且在同一个事务里（库里没有外键约束，漏掉前一步
+            就留下一批没有归属行、界面上也查不到的残余）。删消息行只按 ``thread_id`` 匹配、
+            不带账号条件：归属判断只有会话行那一处（同 ``get_owned_thread``），会话行没删到时
+            整体回滚，那一步的误伤也一并撤销。
         """
 
         async with self._session_factory() as session:
+            await session.execute(
+                delete(AgentThreadMessageRecord).where(
+                    AgentThreadMessageRecord.thread_id == thread_id
+                )
+            )
             result = await session.execute(
                 delete(AgentThreadRecord).where(
                     AgentThreadRecord.thread_id == thread_id,
@@ -629,6 +837,30 @@ class AgentThreadService:
             rows = await session.scalars(select(AgentThreadRecord.thread_id))
             return set(rows)
 
+    async def list_message_thread_ids(self) -> set[UUID]:
+        """读取会话历史表里出现过的全部 thread_id，供孤儿清理命令取并集。
+
+        Returns:
+            ``agent_thread_messages`` 里所有 thread_id。表里一行都没有时返回空集合。
+
+        Raises:
+            SQLAlchemyError: 业务库不可用。
+
+        Notes:
+            与 ``list_known_thread_ids`` 一起构成孤儿候选集的两侧。候选是「没有归属记录的
+            thread_id」，而残余不一定在 checkpointer 那边——删一个正在运行的会话时，那次运行
+            随后仍会把收尾内容写回本表（见 ``cli.py`` 里 ``prune-orphan-threads`` 的说明），
+            所以只看 checkpointer 会漏掉这种行。
+
+            只读、不分账号——它服务的是运维命令，判断依据与账号无关。请求路径不用它。
+        """
+
+        async with self._session_factory() as session:
+            rows = await session.scalars(
+                select(AgentThreadMessageRecord.thread_id).distinct()
+            )
+            return set(rows)
+
     async def list_threads_before(self, cutoff: datetime) -> list[AgentThreadRecord]:
         """读取最后活跃早于指定时间的所有会话，供旧会话清理命令使用。
 
@@ -655,20 +887,23 @@ class AgentThreadService:
             return list(rows)
 
     async def delete_threads(self, thread_ids: list[str]) -> int:
-        """批量删除指定 id 的会话归属记录，供旧会话清理命令使用。
+        """批量删除指定 id 的会话归属记录与它在会话历史表里的行，供旧会话清理命令使用。
 
         Args:
             thread_ids: 要删除的会话 id 列表，已转成字符串。
 
         Returns:
-            实际删除的记录数。
+            实际删除的会话归属记录数（消息行数不单独计）。
 
         Raises:
             SQLAlchemyError: 业务库不可用。
 
         Notes:
-            只删本表，**不删 checkpointer 里的历史**。调用方必须先删 checkpointer 历史，
+            只删这两张业务表，**不删 checkpointer 里的历史**。调用方必须先删 checkpointer 历史，
             成功后再调本方法。不校验归属——它服务的是运维命令，操作的是跨账号清理。
+
+            同一个事务里**先按 ``thread_id`` 删消息行、再删会话行**（仓库既有约定「先删依赖、
+            再删主体」；库里没有外键约束，漏掉前一步就留下查不到也删不掉的残余）。
         """
 
         if not thread_ids:
@@ -678,8 +913,56 @@ class AgentThreadService:
         uuids = [UUID(tid) for tid in thread_ids]
 
         async with self._session_factory() as session:
+            await session.execute(
+                delete(AgentThreadMessageRecord).where(
+                    AgentThreadMessageRecord.thread_id.in_(uuids)
+                )
+            )
             result = await session.execute(
                 delete(AgentThreadRecord).where(AgentThreadRecord.thread_id.in_(uuids))
+            )
+            await session.commit()
+            return result.rowcount or 0
+
+    async def delete_thread_messages(self, thread_ids: list[str]) -> int:
+        """按 ``thread_id`` 删除会话历史表的行，供孤儿清理命令使用。
+
+        Args:
+            thread_ids: 要清理的 thread_id 列表，字符串形式（与 checkpointer 一致）。
+
+        Returns:
+            实际删除的消息行数。
+
+        Raises:
+            SQLAlchemyError: 业务库不可用。
+
+        Notes:
+            这条路径上**没有父行可删**：候选集就是「没有归属记录的 ``thread_id``」，所以它只动
+            ``agent_thread_messages``、不碰 ``agent_threads``。调用方负责先清那批 id 的
+            checkpointer 历史。
+
+            候选集有一侧来自 checkpointer，那边可能混进手工写库或别的实验留下的非 UUID 值，
+            而本表的 ``thread_id`` 列是 UUID 类型：那种值一行都不可能匹配，跳过它们即可。
+            不能让一个脏值把整个命令炸掉——既能清掉真孤儿、又不删错，是既有行为。
+        """
+
+        if not thread_ids:
+            return 0
+
+        uuids: list[UUID] = []
+        for thread_id in thread_ids:
+            try:
+                uuids.append(UUID(thread_id))
+            except ValueError:
+                continue
+        if not uuids:
+            return 0
+
+        async with self._session_factory() as session:
+            result = await session.execute(
+                delete(AgentThreadMessageRecord).where(
+                    AgentThreadMessageRecord.thread_id.in_(uuids)
+                )
             )
             await session.commit()
             return result.rowcount or 0

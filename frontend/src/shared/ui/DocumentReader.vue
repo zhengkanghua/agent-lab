@@ -9,11 +9,7 @@ import type { ApiError } from '@/api/client'
 import { resolveErrorCopy, type ErrorCopy } from '@/api/error-copy'
 import { useModalLayer } from '@/shared/composables/useModalLayer'
 import type { DocumentDetail } from '@/shared/model/document-detail'
-import {
-  formatPublishedAt,
-  type EvidenceSnapshot,
-  type ReadableResult,
-} from '@/shared/model/readable-result'
+import { formatPublishedAt, type ReadableResult } from '@/shared/model/readable-result'
 
 const props = defineProps<{
   open: boolean
@@ -22,7 +18,6 @@ const props = defineProps<{
   loading: boolean
   error: ApiError | null
   hashMismatch: boolean
-  evidence?: EvidenceSnapshot | null
 }>()
 
 const emit = defineEmits<{
@@ -132,16 +127,6 @@ useModalLayer({
               </a>
               <span v-else class="reader-origin is-missing">未提供原文链接</span>
             </div>
-
-            <section v-if="evidence" class="reader-evidence" aria-label="当时引用的片段">
-              <h3>当时引用的片段</h3>
-              <p class="evidence-source">
-                {{ evidence.knowledge_base_name }} · {{ evidence.title }}
-              </p>
-              <blockquote>{{ evidence.excerpt }}</blockquote>
-              <p v-if="evidence.truncated" class="evidence-note">当时仅读取了部分正文。</p>
-              <p class="evidence-note">下方读取当前原文，旧回答和这段引用保持原样。</p>
-            </section>
 
             <div v-if="hashMismatch" class="version-warning" role="status">
               <AlertTriangle :size="17" aria-hidden="true" />
@@ -409,35 +394,6 @@ useModalLayer({
 
 .reader-article {
   padding-top: 32px;
-}
-
-.reader-evidence {
-  margin-top: 24px;
-  padding: 14px 16px;
-  border-left: 3px solid var(--accent);
-  background: var(--surface-base);
-  font-size: var(--fs-sm);
-  line-height: 1.65;
-}
-.reader-evidence h3 {
-  font-size: var(--fs-sm);
-}
-.reader-evidence .evidence-source {
-  margin-top: 5px;
-  color: var(--text-secondary);
-  overflow-wrap: anywhere;
-}
-.reader-evidence blockquote {
-  max-height: 250px;
-  overflow: auto;
-  margin-top: 12px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.reader-evidence .evidence-note {
-  margin-top: 10px;
-  color: var(--text-secondary);
-  font-size: var(--fs-xs);
 }
 
 .reader-article > p {

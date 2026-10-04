@@ -72,7 +72,6 @@ def test_representative_answers_and_current_document_lifecycle(isolated_database
         embedding_settings = OllamaEmbeddingSettings()
         spec = VectorIndexSpec.from_settings(QdrantSettings(), embedding_settings)
         llm_settings = get_llm_settings()
-        report["model"] = llm_settings.model
         report["embedding_model"] = embedding_settings.embedding_model
         provider = OllamaEmbeddingProvider(embedding_settings)
         try:

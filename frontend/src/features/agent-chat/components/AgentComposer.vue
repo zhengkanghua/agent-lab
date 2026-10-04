@@ -89,6 +89,9 @@ defineExpose({ focusInput })
       </p>
 
       <template #bar-left>
+        <!-- 模型选择器插槽：先模型后范围，与「这一轮用谁、看哪些库」的阅读顺序一致。 -->
+        <slot name="model" />
+
         <!-- 知识库范围选择器插槽（与 SearchComposer 范式对齐） -->
         <slot name="scope" />
 

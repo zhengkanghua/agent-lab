@@ -40,6 +40,9 @@ from tests.app_helpers import create_agent_app, seed_owned_thread, send
 # checkpoint 时这一轮在毫秒级结束，一两次轮询就够。
 _POLL_INTERVAL_SECONDS = 0.02
 _POLL_DEADLINE_SECONDS = 10.0
+# 「发出停止请求」到「收到终态事件」的期限，只用于「模型从不停顿」那条用例。它是那条用例
+# 判红的尺子：模型不自己停下，实现又漏看停止标志时，唯一的结束方式就是它到点。
+_STOP_RESPONSE_DEADLINE_SECONDS = 5.0
 
 
 def _frames(text_chunks: list[str]) -> list[dict[str, Any]]:
@@ -534,6 +537,33 @@ class EndlessStreamModel(StreamingChatModel):
         )
 
 
+class NonstopStreamModel(StreamingChatModel):
+    """持续逐字产出、绝不留出长于轮询节奏停顿的假模型。
+
+    与 ``EndlessStreamModel`` 刚好相反：它**没有**末尾静默，也不设分片上限。模型逐字产出这一段
+    正是停止请求最容易被漏看的形状——事件源源不断时驱动者的 ``asyncio.wait`` 几乎总是立刻返回，
+    只在「这一轮没等到新事件」那一支里看停止标志的实现永远看不到它，这次运行会一直产出下去。
+
+    分片不设上限是有意的：这条用例靠自己的期限判红（实现退化时它以超时报错），而不是靠模型
+    自己停下把用例悄悄放过去。
+
+    Attributes:
+        calls: 被调用了几次；用来确认停止之后没有再产生新的模型调用。
+    """
+
+    calls: int = 0
+
+    async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
+        """不停顿地逐字产出；每片之间只让出事件循环，不真的等。"""
+
+        self.calls += 1
+        while True:
+            # 只 ``sleep(0)``：别的任务能拿到事件循环，但这条流里不留任何停顿，
+            # 于是驱动者每一轮都等得到一个事件。
+            await asyncio.sleep(0)
+            yield ChatGenerationChunk(message=AIMessageChunk(content="字"))
+
+
 async def _read_stream_frames(response: Any) -> list[dict[str, Any]]:
     """把一条 SSE 响应的全部帧读成事件对象。"""
 
@@ -605,6 +635,86 @@ def test_stopping_a_run_ends_it_without_further_model_calls() -> None:
     assert tokens
     assert replay["turns"][-1]["answer"] == tokens
     # 4、前端拿到的终态与刷新后回放到的内容是同一份口径——两者都来自同一份持久化状态。
+    assert events[-1]["answer"] == replay["turns"][-1]["answer"]
+
+
+def test_stopping_a_run_that_never_leaves_a_pause_between_events_ends_it() -> None:
+    """模型逐字产出、从不停顿的那一段也能被停止：停止标志每个循环都会被看到。
+
+    上面那条用例用的是有界、末尾长时间静默的假模型，所以它靠模型自己给的停顿就能停下来（实测：
+    把驱动循环改回旧形状，那条仍然是绿的）。这条是相反的形状：假模型一直产出，不给驱动者任何
+    长于轮询节奏的停顿。只有当驱动者在每个循环开头都看一眼停止标志时才停得下来；只看「这一轮
+    没等到新事件」那一支的实现会让这次运行一直产出下去，直到下面的期限到点。
+
+    期限是这条用例必需的一部分：模型不自己停，没有上限的话实现退化时用例会永远转下去（或等到
+    进程排空超时），分不出是停失败还是停得慢。
+    """
+
+    model = NonstopStreamModel(messages=iter([]))
+    app, _search = create_agent_app(model)
+
+    async def scenario() -> tuple[list[dict[str, Any]], int, dict[str, Any]]:
+        async with app.router.lifespan_context(app):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                task, queue = await open_chat_stream(
+                    app, path="/agent/chat", payload={"message": "央行降息了吗"}
+                )
+                events: list[dict[str, Any]] = []
+                thread_id: str | None = None
+                run_id: str | None = None
+                stop_status: int | None = None
+                loop = asyncio.get_running_loop()
+                deadline = loop.time() + _STOP_RESPONSE_DEADLINE_SECONDS
+                while True:
+                    try:
+                        event = await asyncio.wait_for(
+                            queue.get(), timeout=deadline - loop.time()
+                        )
+                    except TimeoutError:
+                        tokens_so_far = sum(
+                            1 for item in events if item["event"] == "token"
+                        )
+                        raise AssertionError(
+                            f"发出停止请求后 {_STOP_RESPONSE_DEADLINE_SECONDS} 秒内没有收到终态事件"
+                            f"（期间又收到 {tokens_so_far} 个 token，运行还在产出）"
+                        ) from None
+                    if event is None:
+                        break
+                    events.append(event)
+                    if event["event"] == "run_started":
+                        thread_id, run_id = event["thread_id"], event["run_id"]
+                    # 看到第一个字就请求停止：此刻模型确实正在逐字产出，而且不会自己停。
+                    if event["event"] == "token" and stop_status is None:
+                        assert thread_id is not None and run_id is not None
+                        stop_status = (
+                            await client.post(
+                                "/agent/stop",
+                                json={"thread_id": thread_id, "run_id": run_id},
+                            )
+                        ).status_code
+                await task
+
+                assert thread_id is not None
+                replay = await client.get(f"/agent/threads/{thread_id}/messages")
+                assert replay.status_code == 200
+                return events, stop_status, replay.json()
+
+    # 外层上限只用来在实现连「回到循环开头」都做不到时收场；真正判红的是 scenario 里那个期限：
+    # 上面的假模型不会自己停下，所以期限是这次运行唯一的结束方式。
+    events, stop_status, replay = run(asyncio.wait_for(scenario(), timeout=30.0))
+
+    assert stop_status == 200
+    # 1、停止之后在期限内收到终态，而且是「截断」那一档（不是 completed）。
+    assert events[-1]["event"] == "done"
+    assert events[-1]["status"] == "incomplete"
+    # 2、这次运行的模型调用只有一次：停止不是靠「再调一次模型」收场的。
+    assert model.calls == 1
+    # 3、已经推出去的文本留在会话里。
+    tokens = "".join(event["text"] for event in events if event["event"] == "token")
+    assert tokens
+    assert replay["turns"][-1]["answer"] == tokens
+    # 4、前端拿到的终态与刷新后回放到的内容是同一份口径。
     assert events[-1]["answer"] == replay["turns"][-1]["answer"]
 
 
@@ -695,8 +805,8 @@ def test_the_replay_response_reports_the_run_in_flight() -> None:
     """读取会话历史的响应里带出当前在途运行的 id；没有在跑时为空。
 
     它是「刷新之后知道这一轮还在跑」的唯一渠道：「有运行在途」是只有服务端才知道的事，而正在跑的那
-    一轮还没落库，从消息里看不出来。没有它就会出现自相矛盾的组合——界面显示「这一轮没有留下回答」，
-    用户再发一条却被服务端以「还在生成中」拒绝。
+    一轮还没落表（写入只发生在收尾），所以它不会出现在 ``turns`` 里。没有它就会出现自相矛盾的
+    组合——界面显示「这一轮没有留下回答」，用户再发一条却被服务端以「还在生成中」拒绝。
     """
 
     model = SlowStreamModel(messages=iter([AIMessage(content="答案。")]))
@@ -726,9 +836,9 @@ def test_the_replay_response_reports_the_run_in_flight() -> None:
     in_flight, during, after = run(asyncio.wait_for(scenario(), timeout=30.0))
 
     assert during["active_run_id"] == in_flight
-    # 在途那一轮此刻已经在 turns 里（提问在运行开始时就落库了），但还没有答案。光看 turns
-    # 分不清「模型还没写」与「还在写」——这正是前端需要 active_run_id 的原因。
-    assert [turn["answer"] for turn in during["turns"]] == [""]
+    # 在途那一轮此刻**不在** turns 里：会话历史的写入只发生在收尾，正在生成的那一轮还没有行。
+    # 所以「还没回答」与「还在写」从 turns 上分不出来——这正是前端需要 active_run_id 的原因。
+    assert during["turns"] == []
     # 跑完之后空：前端据此结束轮询并换成最终内容。
     assert after["active_run_id"] is None
     assert after["turns"][-1]["answer"] == "答案。"

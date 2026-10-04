@@ -48,6 +48,11 @@ export interface StreamAgentChatOptions {
   /** 续聊时带上上一轮 done 事件给的会话 id；省略表示新建会话。 */
   threadId?: string | null
   scope?: KnowledgeBaseSelection
+  /**
+   * 这一轮要用的模型（选择列表里的 id）；省略沿用会话里保存的选择，会话也没选过就用默认模型。
+   * 带上它同时会写回会话行（改了就是记住），在服务端**开始运行之前**解析与校验。
+   */
+  llmModelId?: string | null
   signal?: AbortSignal
 }
 
@@ -68,12 +73,14 @@ export async function* streamAgentChat({
   message,
   threadId,
   scope,
+  llmModelId,
   signal,
 }: StreamAgentChatOptions): AsyncGenerator<AgentChatEvent, void, void> {
   // 提示词不再由这里携带：它取自会话（新建时由服务端从账号偏好拍快照），见 ADR 0029。
   const payload: AgentChatRequest = { message }
   if (threadId) payload.thread_id = threadId
   if (scope) payload.scope = scope
+  if (llmModelId) payload.llm_model_id = llmModelId
 
   // 内部 controller 同时承载三个中止来源：调用方的 signal、连接超时、空闲超时。
   // 只有它能中止 fetch，所以调用方的 signal 要转发进来。

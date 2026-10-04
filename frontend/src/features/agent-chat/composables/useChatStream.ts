@@ -12,14 +12,15 @@ import {
   type AgentTurn,
 } from '../model/conversation'
 import type { ChatState } from './chat-state'
+import type { useChatModel } from './useChatModel'
 import type { useChatScope } from './useChatScope'
 import type { useThreadHistory } from './useThreadHistory'
 
 /* 一次运行的生命周期：发起、读事件、停止、取消、重发。
  *
  * 从 useAgentChat 里分出来的一块。它替换掉的做法是「用一个 635 行的文件同时管七件事」；
- * 这里只管流本身，历史对账与范围保存通过参数注入（同步历史、读在途 run id），
- * 依赖方向是单向的：流 → 历史，流 → 范围，没有回头边。
+ * 这里只管流本身，历史对账、范围保存与模型保存通过参数注入（同步历史、读在途 run id、
+ * 会话刚建出来时补存改选），依赖方向是单向的：流 → 历史，流 → 范围/模型，没有回头边。
  *
  * 陈旧响应守卫沿用同一招：runSequence 与本轮 runId 比较。AbortController 只能拦住还没 resolve
  * 的读取，而「事件已经拿到、await 还没恢复执行」的窗口内 abort 不起作用，只有序号比较能拦住
@@ -35,6 +36,7 @@ export type AgentRunStopper = typeof stopAgentRun
 const FAILED_TRACE_NOTE = '本轮对话中断，这次工具调用的结果未送达。'
 
 type ScopeApi = ReturnType<typeof useChatScope>
+type ModelApi = ReturnType<typeof useChatModel>
 type HistoryApi = ReturnType<typeof useThreadHistory>
 
 export interface UseChatStreamOptions {
@@ -47,6 +49,7 @@ export interface UseChatStreamOptions {
 export function useChatStream(
   state: ChatState,
   scope: ScopeApi,
+  model: ModelApi,
   history: HistoryApi,
   {
     stream = streamAgentChat,
@@ -98,6 +101,9 @@ export function useChatStream(
     const question = state.draft.value.trim()
     const submittedSelection = copySelection(scope.selection.value)
     const submittedScopeVersion = scope.editVersion()
+    // 这一轮别把「另一个模型」带成上一轮那个：模型也一样在出发前拍一份。
+    const submittedModelId = model.selectedId()
+    const submittedModelVersion = model.editVersion()
     const runId = ++runSequence
     const controller = new AbortController()
     activeController = controller
@@ -115,6 +121,7 @@ export function useChatStream(
         message: question,
         threadId: state.threadId.value,
         scope: submittedSelection,
+        llmModelId: submittedModelId,
         signal: controller.signal,
       })) {
         // 已被取消或已被更新的一轮不再往界面上写：break 会走生成器的 finally，
@@ -128,6 +135,12 @@ export function useChatStream(
             copySelection(scope.selection.value),
             scope.editVersion(),
           )
+        }
+        // 模型那一份同理：会话刚建出来时那次改选不能丢。
+        if (event.event === 'run_started' && submittedModelVersion !== model.editVersion()) {
+          const current = model.selectedId()
+          if (current !== null)
+            void model.persistSelection(event.thread_id, current, model.editVersion())
         }
         if (event.event === 'done' || event.event === 'error') break
       }

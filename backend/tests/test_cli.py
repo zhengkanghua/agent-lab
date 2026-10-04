@@ -4,21 +4,27 @@ import argparse
 import asyncio
 import json
 from contextlib import nullcontext
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
 import agent_lab.cli as cli_module
+from agent_lab.models.agent_thread import AgentThreadRecord
+from agent_lab.models.agent_thread_message import AgentThreadMessageRecord
 from agent_lab.pipeline.write_runtime import PipelineWriteRuntime
 from agent_lab.cli import CommandOutcome, build_parser, main
+from agent_lab.services.agent_thread_service import AgentThreadService
 from agent_lab.services.news_pipeline_execution_service import (
     IndexExecutionFailure,
     NewsSyncExecutionResult,
     PendingIndexExecutionResult,
 )
 from agent_lab.knowledge.document_contracts import SourceSyncFailure
+from tests.test_agent_thread_messages import history_database, read_rows
 
 
 def run(coroutine: Any) -> Any:
@@ -385,11 +391,14 @@ def test_main_reports_only_exception_type_on_command_failure(
 
 
 class _FakeThreadService:
-    """只回答「业务表里有哪些 thread_id」的替身。"""
+    """只回答会话归属表与会话历史表里各有哪些 thread_id 的替身。"""
 
-    def __init__(self, known: set[Any]) -> None:
+    def __init__(self, known: set[Any], recorded: set[Any]) -> None:
         self._known = known
+        self._recorded = recorded
         self.calls = 0
+        # 真删时 ``delete_thread_messages`` 收到的 id 列表；没被调过就是 ``None``。
+        self.deleted_messages: list[str] | None = None
 
     async def list_known_thread_ids(self) -> set[Any]:
         """记一次调用并返回预置集合。"""
@@ -397,12 +406,24 @@ class _FakeThreadService:
         self.calls += 1
         return self._known
 
+    async def list_message_thread_ids(self) -> set[Any]:
+        """返回预置的「会话历史表里出现过的 id」。"""
+
+        return self._recorded
+
+    async def delete_thread_messages(self, thread_ids: list[str]) -> int:
+        """记下收到的 id，不真删。"""
+
+        self.deleted_messages = list(thread_ids)
+        return len(self.deleted_messages)
+
 
 def _patch_prune(
     monkeypatch: pytest.MonkeyPatch,
     *,
     known: set[Any],
     stored: set[str],
+    recorded: set[Any] | None = None,
 ) -> dict[str, Any]:
     """把 prune 命令的四个外部依赖全换成替身。
 
@@ -410,9 +431,10 @@ def _patch_prune(
         monkeypatch: pytest 的替换工具。
         known: 业务表里的归属记录 id（可以是 UUID 对象，与真实实现一致）。
         stored: checkpointer 里存有历史的 thread_id（字符串，与真实实现一致）。
+        recorded: 会话历史表里出现过的 thread_id；省略等同「那边一行都没有」。
 
     Returns:
-        记录本次调用情况的字典，含 ``deleted``（真删时收到的 id 列表）。
+        记录本次调用情况的字典，含 ``deleted``（真删时 checkpointer 收到的 id 列表）。
 
     Notes:
         两侧刻意用不同类型：业务表存 UUID 对象、checkpointer 存字符串，这正是真实情况。
@@ -420,7 +442,7 @@ def _patch_prune(
     """
 
     seen: dict[str, Any] = {"deleted": None, "delete_calls": 0}
-    service = _FakeThreadService(known)
+    service = _FakeThreadService(known, recorded or set())
 
     monkeypatch.setattr(
         cli_module,
@@ -587,3 +609,264 @@ def test_prune_reads_the_ownership_table_before_touching_the_checkpointer(
         )
 
     assert seen["delete_calls"] == 0
+
+
+def test_prune_dry_run_reports_a_leftover_that_only_the_history_table_has(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """预演把「只有会话历史表里有行」的候选也报出来，而且一行都不删。
+
+    候选集从两侧取并集（checkpointer 与 ``agent_thread_messages``），所以预演报的数也必须是并集
+    算出来的那个——只看 checkpointer 的话这种残余一次都不会出现在报告里。
+    """
+
+    leftover = uuid4()
+    seen = _patch_prune(monkeypatch, known=set(), stored=set(), recorded={str(leftover)})
+
+    outcome = run(
+        cli_module.dispatch_command(
+            build_parser().parse_args(["prune-orphan-threads"])
+        )
+    )
+
+    assert outcome.payload == {
+        "command": "prune-orphan-threads",
+        "ok": True,
+        "dry_run": True,
+        "orphan_threads": 1,
+        "deleted_threads": 0,
+    }
+    assert seen["delete_calls"] == 0
+    assert seen["service"].deleted_messages is None
+
+
+def test_prune_with_yes_removes_a_leftover_that_only_the_history_table_has(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--yes`` 时那种残余也要真删：checkpointer 那一步照走，会话历史表那一步按 id 清。
+
+    这种行就是删一个正在运行的会话留下的（那次运行随后把收尾内容写了回来），它不在 checkpointer
+    里，所以「按 thread_id 删会话历史表」这一步是它唯一的出口。
+    """
+
+    leftover = uuid4()
+    seen = _patch_prune(monkeypatch, known=set(), stored=set(), recorded={str(leftover)})
+
+    outcome = run(
+        cli_module.dispatch_command(
+            build_parser().parse_args(["prune-orphan-threads", "--yes"])
+        )
+    )
+
+    assert outcome.payload["dry_run"] is False
+    assert outcome.payload["orphan_threads"] == 1
+    assert set(seen["deleted"]) == {str(leftover)}
+    assert seen["service"].deleted_messages == [str(leftover)]
+
+
+def test_prune_never_treats_a_thread_with_an_ownership_row_as_a_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """会话历史表里有行不等于孤儿：有归属记录的会话一个都不能碰。
+
+    候选集是「两侧取并集、再减去归属记录」。漏掉那个减法就是灾难——每个有历史的会话都会被当成
+    孤儿，归属行和它的对话一起删掉，命令还会报告成功。
+    """
+
+    owned = uuid4()
+    seen = _patch_prune(
+        monkeypatch, known={owned}, stored={str(owned)}, recorded={str(owned)}
+    )
+
+    outcome = run(
+        cli_module.dispatch_command(
+            build_parser().parse_args(["prune-orphan-threads", "--yes"])
+        )
+    )
+
+    assert outcome.payload["orphan_threads"] == 0
+    assert seen["deleted"] == []
+    assert seen["service"].deleted_messages == []
+
+
+# --- 两个清理命令真删时动到的两张表（真实 Service 跑在临时 SQLite 上）-----------
+#
+# 上面的替身证明「候选集怎么算、把哪些 id 交给谁」；「表里的行真的没了」得由真实 Service 在真实
+# 库上证明，所以下面两条把命令整个跑一遍。建表与读行借 tests/test_agent_thread_messages.py 的
+# 夹具（那边是这张表语义的主场，不在这里复制第二份）。
+
+
+async def _seed_thread(sessions: Any, *, thread_id: Any, last_active_at: Any) -> None:
+    """直接写一行会话归属记录。
+
+    本节的断言是「删会话之后那些行没了」，预置只要行存在就够；而「只有历史行、没有归属行」那种
+    残余只有分开写才造得出来，所以两张表的预置分成两个函数。
+    """
+
+    now = datetime.now(UTC)
+    async with sessions() as session:
+        session.add(
+            AgentThreadRecord(
+                thread_id=thread_id,
+                user_id=uuid4(),
+                title="预置会话",
+                scope={"mode": "all"},
+                llm_model_id=None,
+                system_prompt=None,
+                created_at=now,
+                last_active_at=last_active_at,
+                active_run_id=None,
+                stop_requested_at=None,
+                drained_at=None,
+            )
+        )
+        await session.commit()
+
+
+async def _seed_history_row(sessions: Any, *, thread_id: Any) -> None:
+    """直接写一行会话历史行：它是删除时要连带删掉的那一侧。"""
+
+    async with sessions() as session:
+        session.add(
+            AgentThreadMessageRecord(
+                id=uuid4(),
+                thread_id=thread_id,
+                run_id=uuid4(),
+                seq=0,
+                role="question",
+                text="预置的提问",
+                created_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+
+def _patch_databases(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    sessions: Any,
+    stored: set[str],
+) -> dict[str, Any]:
+    """把两个清理命令的库与 checkpointer 依赖换掉，业务库换成给定的 session 工厂。
+
+    Args:
+        monkeypatch: pytest 的替换工具。
+        sessions: 真实 SQLite 上的 ``async_sessionmaker``。
+        stored: checkpointer 那边存有历史的 thread_id。
+
+    Returns:
+        字典，``deleted`` 键里是真删时交给 checkpointer 清理的 id 列表。
+
+    Notes:
+        ``AgentThreadService`` **不替换**：本节要的就是真实 Service 真的去删那两张表。
+    """
+
+    seen: dict[str, Any] = {"deleted": []}
+
+    monkeypatch.setattr(
+        cli_module,
+        "get_settings",
+        lambda: SimpleNamespace(database_url="postgresql+psycopg://unused/unused"),
+    )
+    monkeypatch.setattr(cli_module, "async_session_factory", sessions)
+
+    async def fake_list(_database_url: str) -> set[str]:
+        return stored
+
+    async def fake_delete(_database_url: str, thread_ids: Any) -> int:
+        seen["deleted"] = list(thread_ids)
+        return len(list(thread_ids))
+
+    monkeypatch.setattr(cli_module, "list_checkpointer_thread_ids", fake_list)
+    monkeypatch.setattr(cli_module, "delete_checkpointer_threads", fake_delete)
+    return seen
+
+
+def test_prune_orphan_threads_deletes_a_leftover_that_only_the_history_table_has(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """只存在于会话历史表的残余：预演报得出、``--yes`` 真删得掉。
+
+    造这个场面：表里有该 thread 的历史行、没有任何归属行、checkpointer 里也没有它。删一个正在
+    运行的会话就会留下这种残余（等它停下的上限到了删除继续，而那次运行随后把收尾内容写了回来），
+    所以它必须能被这条命令收拾掉。
+    """
+
+    async def verify() -> tuple[dict[str, Any], list[Any], list[str], list[Any], str]:
+        async with history_database(tmp_path) as sessions:
+            leftover = uuid4()
+            # 只有历史行：归属行直接不写，checkpointer 那边也当成空的。
+            await _seed_history_row(sessions, thread_id=leftover)
+            seen = _patch_databases(monkeypatch, sessions=sessions, stored=set())
+
+            dry = await cli_module.dispatch_command(
+                build_parser().parse_args(["prune-orphan-threads"])
+            )
+            after_dry = await read_rows(sessions, leftover)
+
+            await cli_module.dispatch_command(
+                build_parser().parse_args(["prune-orphan-threads", "--yes"])
+            )
+            return (
+                dry.payload,
+                after_dry,
+                list(seen["deleted"]),
+                await read_rows(sessions, leftover),
+                str(leftover),
+            )
+
+    dry_payload, after_dry, checkpointer_ids, rows_after, leftover_id = run(verify())
+
+    assert dry_payload["dry_run"] is True
+    assert dry_payload["orphan_threads"] == 1 and dry_payload["deleted_threads"] == 0
+    assert len(after_dry) == 1, "预演不该删任何行"
+    assert checkpointer_ids == [leftover_id]
+    assert rows_after == []
+
+
+def test_prune_old_threads_deletes_the_history_rows_of_the_sessions_it_removes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """旧会话清理真删时：那些会话的历史行跟着没，没被选中的会话一行不动。
+
+    连带删除在 ``AgentThreadService.delete_threads`` 里（同一个事务里先删历史行、再删归属行），
+    这条用例从命令那一端把它走通：命令 → ``delete_threads`` → 两张表。
+    """
+
+    async def verify() -> tuple[dict[str, Any], list[str], list[Any], list[Any], str, str, set[Any]]:
+        async with history_database(tmp_path) as sessions:
+            stale, fresh = uuid4(), uuid4()
+            await _seed_thread(
+                sessions,
+                thread_id=stale,
+                last_active_at=datetime.now(UTC) - timedelta(days=30),
+            )
+            await _seed_history_row(sessions, thread_id=stale)
+            await _seed_thread(sessions, thread_id=fresh, last_active_at=datetime.now(UTC))
+            await _seed_history_row(sessions, thread_id=fresh)
+            seen = _patch_databases(monkeypatch, sessions=sessions, stored=set())
+
+            outcome = await cli_module.dispatch_command(
+                build_parser().parse_args(
+                    ["prune-old-threads", "--before-days", "7", "--yes"]
+                )
+            )
+            return (
+                outcome.payload,
+                list(seen["deleted"]),
+                await read_rows(sessions, stale),
+                await read_rows(sessions, fresh),
+                str(stale),
+                str(fresh),
+                await AgentThreadService(sessions).list_known_thread_ids(),
+            )
+
+    payload, checkpointer_ids, stale_rows, fresh_rows, stale_id, fresh_id, owned_left = run(verify())
+
+    assert payload["dry_run"] is False
+    assert payload["old_threads"] == 1 and payload["deleted_threads"] == 1
+    assert checkpointer_ids == [stale_id]
+    # 被选中的会话两张表的行都没了；没被选中的会话一行不动。
+    assert stale_rows == []
+    assert owned_left == {UUID(fresh_id)}
+    assert [(row.role, row.text) for row in fresh_rows] == [("question", "预置的提问")]

@@ -26,8 +26,6 @@ function replay(overrides: Partial<AgentThreadMessagesDto> = {}): AgentThreadMes
     thread_id: 'thread-1',
     scope: { mode: 'all' },
     turns: [],
-    summarized: false,
-    summary: null,
     active_run_id: null,
     ...overrides,
   } as unknown as AgentThreadMessagesDto
@@ -38,17 +36,21 @@ function build(overrides: Record<string, unknown> = {}) {
   const cancelRun = vi.fn()
   const resetScope = vi.fn()
   const adoptScope = vi.fn()
+  const resetModel = vi.fn()
+  const adoptModel = vi.fn()
   const history = useThreadHistory(state, {
     cancelRun,
     resetScope,
     adoptScope,
+    resetModel,
+    adoptModel,
     loadThreadMessages: api.getAgentThreadMessages,
     runWatchIntervalMs: 3000,
     runRecoverAttempts: 3,
     runRecoverIntervalMs: 6000,
     ...overrides,
   })
-  return { state, history, cancelRun, resetScope, adoptScope }
+  return { state, history, cancelRun, resetScope, adoptScope, resetModel, adoptModel }
 }
 
 describe('useThreadHistory', () => {
@@ -107,6 +109,27 @@ describe('useThreadHistory', () => {
     expect(state.threadId.value).toBe('thread-second')
   })
 
+  it('打开会话时把分界标记落到对应那一轮上（界面据此画那条线）', async () => {
+    api.getAgentThreadMessages.mockResolvedValue(
+      replay({
+        turns: [
+          { question: '第一问', answer: '答', run_id: 'run-1', status: 'completed' },
+          { question: '第二问', answer: '答', run_id: 'run-2', status: 'completed' },
+        ] as never,
+        memory_boundary_run_id: 'run-1',
+      }),
+    )
+    const { state, history } = build()
+
+    await history.loadThread('thread-1')
+
+    // 不读这个字段的话，界面上就永远不会出现那条分界线（后端已经给了，前端没人消费）。
+    expect(state.turns.value.map((turn) => [turn.runId, turn.isMemoryBoundary])).toEqual([
+      ['run-1', true],
+      ['run-2', false],
+    ])
+  })
+
   it('服务端报在途运行时轮询等它结束，且轮询期间不动 turns', async () => {
     api.getAgentThreadMessages.mockResolvedValue(replay({ active_run_id: 'run-9' }))
     const { state, history } = build()
@@ -124,9 +147,19 @@ describe('useThreadHistory', () => {
     expect(history.isAwaitingRun.value).toBe(true)
 
     // 第二轮：在途结束 → 按回放渲染一次，等待态解除。
-    api.getAgentThreadMessages.mockResolvedValue(replay({ active_run_id: null }))
+    api.getAgentThreadMessages.mockResolvedValue(
+      replay({
+        active_run_id: null,
+        turns: [
+          { question: '第一问', answer: '答', run_id: 'run-1', status: 'completed' },
+        ] as never,
+        memory_boundary_run_id: 'run-1',
+      }),
+    )
     await vi.advanceTimersByTimeAsync(3000)
     expect(state.turns.value).not.toBe(before)
+    // 轮询结束也是走回放渲染，分界标记同样要吃到。
+    expect(state.turns.value[0]?.isMemoryBoundary).toBe(true)
     expect(history.isAwaitingRun.value).toBe(false)
 
     history.dispose()

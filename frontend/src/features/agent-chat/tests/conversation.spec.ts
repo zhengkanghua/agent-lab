@@ -262,6 +262,36 @@ describe('conversation', () => {
       expect(turn?.traces[0]?.toolCallId).toBeNull()
     })
 
+    it('分界标记指到哪一轮，就只标那一轮', () => {
+      const turns = turnsFromReplay(
+        [
+          { question: '第一问', answer: '答', run_id: 'run-1' },
+          { question: '第二问', answer: '答', run_id: 'run-2' },
+          { question: '第三问', answer: '答', run_id: 'run-3' },
+        ],
+        '未送达。',
+        'run-2',
+      )
+
+      expect(turns.map((turn) => turn.isMemoryBoundary)).toEqual([false, true, false])
+    })
+
+    it('没有分界标记、或标记对不上任何一轮时，一轮都不标', () => {
+      const replayTurns = [
+        { question: '第一问', answer: '答', run_id: 'run-1' },
+        { question: '第二问', answer: '答', run_id: 'run-2' },
+      ]
+
+      // 没有分界标记（这个会话没压缩过）。
+      expect(
+        turnsFromReplay(replayTurns, '未送达。', null).map((turn) => turn.isMemoryBoundary),
+      ).toEqual([false, false])
+      // 对不上说明标记指向的那一轮没落进表里（被强杀或被清空）。宁可不画那条线。
+      expect(
+        turnsFromReplay(replayTurns, '未送达。', 'run-9').map((turn) => turn.isMemoryBoundary),
+      ).toEqual([false, false])
+    })
+
     it('空历史得到空数组', () => {
       expect(turnsFromReplay([], '未送达。')).toEqual([])
     })

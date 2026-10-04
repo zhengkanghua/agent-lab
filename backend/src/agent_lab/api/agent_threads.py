@@ -2,7 +2,7 @@
 ``DELETE /agent/threads/{id}``。
 
 本模块位于 FastAPI 边界层，只做四件事：取依赖、校验分页参数、把归属校验交给
-``AgentThreadService``、把历史翻译交给 ``agent/replay.py``。它不判断归属规则、不解析消息结构，
+``AgentThreadService``、把历史行的翻译交给 ``agent/replay_rows.py``。它不判断归属规则、不解析消息结构，
 也不决定错误文案（那在 ``api/error_contract.py``）。
 
 三条路由的共同前提是**归属**：每条都先确认目标会话属于当前账号，不属于就 404。这条前提只有一处
@@ -27,9 +27,14 @@ from agent_lab.agent.limits import (
     DELETE_RUNNING_THREAD_POLL_INTERVAL_SECONDS,
     DELETE_RUNNING_THREAD_WAIT_SECONDS,
 )
-from agent_lab.agent.replay import build_replay_turns
+from agent_lab.agent.replay_rows import build_replay_turns_from_rows
 from agent_lab.agent.runtime import AgentRuntime
-from agent_lab.api.dependencies import get_agent_runtime, get_agent_thread_service, get_vector_search_service
+from agent_lab.api.dependencies import (
+    get_agent_runtime,
+    get_agent_thread_service,
+    get_llm_model_selection_service,
+    get_vector_search_service,
+)
 from agent_lab.api.error_contract import build_agent_chat_error_response
 from agent_lab.auth.dependencies import current_active_user
 from agent_lab.models.user import UserRecord
@@ -40,9 +45,12 @@ from agent_lab.schemas.agent_thread import (
     AgentThreadDeletionResponse,
     AgentThreadListResponse,
     AgentThreadMessagesResponse,
+    AgentThreadModel,
+    AgentThreadModelSelection,
     AgentThreadSummary,
 )
 from agent_lab.services.agent_thread_service import AgentThreadService
+from agent_lab.services.llm_model_selection_service import LlmModelSelectionService
 from agent_lab.services.vector_search_service import VectorSearchService
 from agent_lab.knowledge.scope import KnowledgeBaseSelection
 
@@ -122,60 +130,113 @@ async def list_agent_threads(
     summary="读取一个会话的历史消息",
     description=(
         "回放某个会话已经存下的问答，供前端在续聊前把界面补齐。"
-        "不分页：历史被压缩中间件封在有限条数内。\n\n"
-        "`summarized` 为真表示早期历史已被压缩成摘要、原始消息已不存在，"
-        "此时 `turns` 不是全部历史，界面必须如实说明。"
+        "不分页：一次会话的消息行本来就有限。\n\n"
+        "读的是我们自己的会话历史表，不是 checkpointer：那份记录写完不再改，"
+        "模型上下文怎么压缩都不影响它。\n\n"
+        "`memory_boundary_run_id` 是「模型只保留了摘要」那条边界的标记，"
+        "为 null 表示历史没有被压缩过。"
     ),
 )
 async def get_agent_thread_messages(
     thread_id: UUID,
     user: Annotated[UserRecord, Depends(current_active_user)],
     threads: Annotated[AgentThreadService, Depends(get_agent_thread_service)],
-    runtime: Annotated[AgentRuntime, Depends(get_agent_runtime)],
+    models: Annotated[LlmModelSelectionService, Depends(get_llm_model_selection_service)],
 ) -> AgentThreadMessagesResponse | JSONResponse:
     """回放一个会话的历史问答。
 
     Args:
         thread_id: 目标会话 id。
         user: 当前登录账号。
-        threads: 会话归属 Service。
-        runtime: 进程级 Agent Runtime，用它的 graph 读 checkpointer 状态。
+        threads: 会话归属 Service，兼读历史表的行。
+        models: 读会话当前那个选择此刻在目录里的展示名（含已停用的条目）。
 
     Returns:
-        按时间排列的历史轮次，以及历史是否被压缩过。
+        按时间排列的历史轮次，以及压缩分界标记。
 
     Raises:
         AgentThreadNotFoundError: 会话不存在或不属于当前账号；由 handler 映射成 404。
 
     Notes:
-        先查业务库确认归属，再读 checkpointer 状态；两者走不同连接池（见 ADR 0004）。
-        不调模型，不写任何东西。
+        先查业务库确认归属，再读同一库里的会话历史表；两次都是普通查询，不碰 checkpointer
+        （见 ADR 0044）。不调模型，不写任何东西。
 
-        历史从 checkpointer 读而不是另存一份副本：副本会因为历史压缩而与模型实际看到的上下文
-        分叉，界面显示的和模型记得的对不上。用 ``aget_state`` 而不是 ``aget_state_history``——
-        后者返回全部 checkpoint（实测两轮对话 21 行），这里只要最新那个状态。
+        分轮、引用核验与完成态判定全在 ``agent/replay_rows.py``；它与终态事件读 checkpointer
+        那条路径共用同一批纯函数，两边的口径必须一致——Done 说答完了、刷新后回放说没答完，
+        用户会以为那一轮丢了。
+
+        每轮用的模型取自那一轮的冻结快照（``turns[].llm_model``），而 ``llm_model`` 是**会话
+        当前**的选择：两者刻意分开，改名或停用不会改写已经发生过的那几轮。
+
+        在途运行那一轮还不在表里（写入只发生在收尾），所以它不会出现在 ``turns`` 里；
+        刷新后能区分「还没回答」与「还在生成」的只有 ``active_run_id``。
     """
 
     try:
         owned = await threads.get_owned_thread(user_id=user.id, thread_id=thread_id)
+        # 当前选择在目录里的样子：停用的条目也要读得到名字，选择器才能说清「原来是 xxx」。
+        # 它不判可用性，也不改动任何选择（失效时不静默回落成默认模型）。
+        current_model = await models.describe_choice(owned.llm_model_id)
+        rows = await threads.read_thread_messages(thread_id=thread_id)
     except SQLAlchemyError as error:
         return _database_error(error)
 
-    snapshot = await runtime.graph.aget_state(
-        {"configurable": {"thread_id": str(thread_id)}}
-    )
-    messages = (snapshot.values or {}).get("messages") or []
-    turns, summarized, summary = build_replay_turns(messages)
+    turns, memory_boundary_run_id = build_replay_turns_from_rows(rows)
     return AgentThreadMessagesResponse(
         thread_id=thread_id,
-        # 在途运行的 id 从会话行上读，不从 checkpointer 推：正在跑的那一轮还没落库，
-        # 从消息里根本看不出来。它是前端刷新后能区分「还没回答」与「还在生成」的唯一依据。
+        # 在途运行的 id 从会话行上读，不从消息里推：正在跑的那一轮还没落表，
+        # 从历史行里根本看不出来。它是前端刷新后能区分「还没回答」与「还在生成」的唯一依据。
         active_run_id=owned.active_run_id,
         turns=turns,
         scope=KnowledgeBaseSelection.model_validate(owned.scope),
-        summarized=summarized,
-        summary=summary,
+        llm_model=(
+            None
+            if owned.llm_model_id is None
+            else AgentThreadModel(
+                id=owned.llm_model_id,
+                display_name=current_model.display_name if current_model is not None else None,
+            )
+        ),
+        memory_boundary_run_id=memory_boundary_run_id,
     )
+
+
+@router.patch(
+    "/{thread_id}/model",
+    response_model=AgentThreadModelSelection,
+    responses={404: {"model": AgentChatErrorResponse}, 503: {"model": AgentChatErrorResponse}},
+    summary="保存会话的模型选择，只影响后续提问",
+    description=(
+        "把用户选的模型记在会话上，后续提问默认用它（没选过就用目录里的默认模型）。"
+        "请求里临时带的模型也会写回这里。\n\n"
+        "**这一步不判这个模型当前可不可用**：可用性只在提问开始之前那道门上判，"
+        "所以存一个已经失效的选择照样成功，由界面如实提示重选。"
+    ),
+)
+async def update_agent_thread_model(
+    thread_id: UUID,
+    body: AgentThreadModelSelection,
+    user: Annotated[UserRecord, Depends(current_active_user)],
+    threads: Annotated[AgentThreadService, Depends(get_agent_thread_service)],
+) -> AgentThreadModelSelection | JSONResponse:
+    """归属检查通过后在短事务中保存模型选择。
+
+    与 ``PATCH /agent/threads/{thread_id}/scope`` 同一形状，区别只有一处：范围那一条会先调
+    ``resolve_scope`` 校验范围（指到一个不存在/已停用的知识库是拒的），而模型这一条**不校验
+    可用性**——理由见路由 description 与 ``AgentThreadService.update_llm_model``。
+
+    **不看在途运行、不碰 ``stop_requested_at``**：用户运行中改选照样保存，当前那一轮用的是它
+    开始时就冻结的那份，改选只影响下一次运行。
+    """
+
+    try:
+        await threads.get_owned_thread(user_id=user.id, thread_id=thread_id)
+        await threads.update_llm_model(
+            user_id=user.id, thread_id=thread_id, llm_model_id=body.llm_model_id
+        )
+    except SQLAlchemyError as error:
+        return _database_error(error)
+    return body
 
 
 @router.patch("/{thread_id}/scope", response_model=KnowledgeBaseSelection, summary="保存会话知识库选择，只影响后续提问")
@@ -237,14 +298,15 @@ async def delete_agent_thread(
         1. 停在途运行（如果有）——它正在往这个会话的历史里写，不等它停就清历史，它会在我们清空之后
            继续写回来，留下一条查不到也删不掉的孤儿会话；
         2. 清 checkpointer 里的历史；
-        3. 删业务库里的归属记录。
+        3. 删业务库里的会话行（同一个事务里先删 ``agent_thread_messages`` 的那一批行、再删归属行，
+           库里没有外键约束，这一连带走的是 ``delete_thread_record``）。
 
-        2 与 3 的顺序也不能换。历史在 checkpointer（原生 psycopg 池），归属记录在业务库
+        2 与 3 的顺序也不能换。历史在 checkpointer（原生 psycopg 池），业务行在业务库
         （SQLAlchemy 池），跨两个池不可能一个事务，所以必须选「中途失败留下什么」：
 
-        - 现在这个顺序失败后留下「历史已删、归属还在」——用户看到一个点进去是空的会话，
+        - 现在这个顺序失败后留下「历史已删、业务行还在」——用户看到一个点进去是空的会话，
           再点一次删除就干净了，可自愈。
-        - 反过来留下「归属已删、历史还在」——那条历史查不到也删不掉，只能等
+        - 反过来留下「业务行已删、历史还在」——那条历史查不到也删不掉，只能等
           ``prune-orphan-threads`` 来收。
 
         用 checkpointer 自己的 ``adelete_thread``（公开 API）而不是手写 DELETE：那四张表的结构归
@@ -267,7 +329,7 @@ async def delete_agent_thread(
     if runtime.checkpointer is not None:
         await runtime.checkpointer.adelete_thread(str(thread_id))
 
-    # 3、历史清干净了才删归属记录。
+    # 3、历史清干净了才删业务行：会话历史表的行与会话行在同一个事务里删（见 delete_thread_record）。
     try:
         await threads.delete_thread_record(user_id=user.id, thread_id=thread_id)
     except SQLAlchemyError as error:

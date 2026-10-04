@@ -3,6 +3,7 @@ import { ApiError, requestJson } from './client'
 import { hasText, isNonNegativeInteger, isRecord, isUuid } from './json-guards'
 import { isResolvedScope, isSelection, type KnowledgeBaseSelection } from './knowledge-scope'
 import { isCitationList, isInvalidCitationList } from './agent-evidence'
+import { isResolvedLlmModel } from './llm-models'
 
 export type AgentThreadSummaryDto = components['schemas']['AgentThreadSummary']
 export type AgentThreadListDto = components['schemas']['AgentThreadListResponse']
@@ -10,6 +11,7 @@ export type AgentThreadMessagesDto = components['schemas']['AgentThreadMessagesR
 export type AgentReplayTurnDto = components['schemas']['AgentReplayTurn']
 export type AgentReplayTraceDto = components['schemas']['AgentReplayTrace']
 export type AgentThreadDeletionDto = components['schemas']['AgentThreadDeletionResponse']
+export type AgentThreadModelDto = components['schemas']['AgentThreadModel']
 
 export interface ListAgentThreadsOptions {
   limit?: number
@@ -69,7 +71,9 @@ export async function getAgentThreadMessages(
     !isSelection(response.scope) ||
     !Array.isArray(response.turns) ||
     !response.turns.every(isReplayTurn) ||
-    typeof response.summarized !== 'boolean' ||
+    // 会话当前的选择：可能是 null（没选过，提问时用默认模型），但不接受别的类型的值。
+    // 展示名允许为 null：目录里已经查不到那一条时服务端只回得出 id。
+    (response.llm_model != null && !isThreadModel(response.llm_model)) ||
     // 在途运行的 id：可能是 null（没有在跑），但不接受别的类型的值。
     (response.active_run_id != null && !isUuid(response.active_run_id))
   ) {
@@ -88,6 +92,24 @@ export async function updateAgentThreadScope(
   })
   if (!isSelection(value))
     throw invalidThreadResponse('会话知识库选择保存结果无法确认，请重新打开会话核对。')
+}
+
+/**
+ * 保存会话的模型选择。
+ *
+ * **服务端不判这个模型当前可不可用**（可用性只在提问开始之前那道门上判），所以一个已经失效的
+ * 选择在这里同样返回成功；界面据此如实显示失效态，而不是静默换一个模型。
+ */
+export async function updateAgentThreadModel(
+  threadId: string,
+  llmModelId: string,
+): Promise<void> {
+  const value = await requestJson<unknown>(
+    `/agent/threads/${encodeURIComponent(threadId)}/model`,
+    { method: 'PATCH', body: JSON.stringify({ llm_model_id: llmModelId }) },
+  )
+  if (!isRecord(value) || !isUuid(value.llm_model_id))
+    throw invalidThreadResponse('会话模型选择保存结果无法确认，请重新打开会话核对。')
 }
 
 /** 删除一个会话及其历史。删除不可撤销，调用方负责先向用户确认。 */
@@ -120,12 +142,19 @@ function isReplayTurn(value: unknown): value is AgentReplayTurnDto {
     typeof value.answer === 'string' &&
     (value.status === 'completed' || value.status === 'incomplete') &&
     (value.scope == null || isResolvedScope(value.scope)) &&
+    // 这一轮实际用的模型：旧轮次可能没有这一项（改动之前建立的会话），有就必须完整。
+    (value.llm_model == null || isResolvedLlmModel(value.llm_model)) &&
     (value.run_id == null || isUuid(value.run_id)) &&
     (value.citations === undefined || isCitationList(value.citations)) &&
     (value.invalid_citations === undefined || isInvalidCitationList(value.invalid_citations)) &&
     (value.traces === undefined ||
       (Array.isArray(value.traces) && value.traces.every(isReplayTrace)))
   )
+}
+
+/** 会话当前保存的模型选择：id 必须有，展示名可以是 null（目录里查不到那一条）。 */
+function isThreadModel(value: unknown): value is AgentThreadModelDto {
+  return isRecord(value) && isUuid(value.id) && (value.display_name == null || hasText(value.display_name))
 }
 
 function isReplayTrace(value: unknown): value is AgentReplayTraceDto {

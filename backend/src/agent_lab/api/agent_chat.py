@@ -33,6 +33,7 @@ from agent_lab.api.dependencies import (
     get_agent_run_registry,
     get_agent_runtime,
     get_agent_thread_service,
+    get_llm_model_selection_service,
     get_vector_search_service,
 )
 from agent_lab.api.error_contract import build_agent_chat_error_response
@@ -40,6 +41,7 @@ from agent_lab.auth.dependencies import current_active_user
 from agent_lab.config.llm import LangSmithSettings, get_langsmith_settings
 from agent_lab.models.user import UserRecord
 from agent_lab.services.agent_thread_service import AgentThreadService
+from agent_lab.services.llm_model_selection_service import LlmModelSelectionService
 from agent_lab.services.vector_search_service import VectorSearchService
 from agent_lab.knowledge.scope import KnowledgeBaseSelection
 from agent_lab.schemas.agent_chat import (
@@ -192,6 +194,7 @@ async def agent_chat(
     threads: Annotated[AgentThreadService, Depends(get_agent_thread_service)],
     runs: Annotated[AgentRunRegistry, Depends(get_agent_run_registry)],
     search: Annotated[VectorSearchService, Depends(get_vector_search_service)],
+    models: Annotated[LlmModelSelectionService, Depends(get_llm_model_selection_service)],
 ) -> ServerSentEventResponse:
     """启动一次 Agent 运行并以 SSE 返回全过程。
 
@@ -205,13 +208,18 @@ async def agent_chat(
     系统提示词不再由请求体携带：它取自会话（新建时由 ``ensure_thread`` 从该账号个人偏好拍快照，
     续聊时沿用会话里那份），因此同一会话内前后一致，且用户在设置页改提示词只影响新开的会话。
 
+    **当轮用哪个模型在开始运行之前定下**：请求里携带的那一份优先，没携带才用会话行上存的。
+    两者都不存在就用目录里标着默认的那个。解析结果（含它的上下文窗口）进 ``AgentContext``，
+    也冻结进提问消息，供回放与替部署接手的那一轮读回来。
+
     Args:
-        chat_request: 提问、可选会话 id 与可选会话知识库选择。
+        chat_request: 提问、可选会话 id、可选会话知识库选择与可选模型 id。
         runtime: 进程级 Agent Runtime，由 lifespan 装配。
         langsmith_settings: 追踪配置，进程级缓存。
         user: 当前登录账号，用于会话归属。
         threads: 会话归属与列表 Service。
         runs: 进程级运行注册表；运行由它驱动，本接口只是它的一次订阅。
+        models: 「解析当轮模型」的 Service（读目录表，与后台管理那份分开）。
 
     Returns:
         ``text/event-stream`` 流式响应。返回它时运行已经开始了——本接口在返回响应之前就把
@@ -223,6 +231,11 @@ async def agent_chat(
             **它必须在运行开始之前抛出**，那时候还改得动 HTTP 状态码。
         AgentRunInProgressError: 这个会话已经有一次运行在跑；映射成 409 ``agent_run_in_progress``。
             同一个会话同时只允许一次运行（见 ADR 0037），占位与这个判断是同一次条件写入。
+        LlmModelNotFoundError: 当轮生效的模型 id 在目录里不存在；映射成 404。
+        LlmModelUnavailableError: 那一条已停用（含所属渠道停用）；映射成 409。
+        NoAvailableLlmModelsError: 会话没选模型、而目录里一个可用模型都没有；映射成 409。
+            三条都由应用级 handler 翻成 HTTP 响应，同样**在开始运行之前**，所以模型一次都不会
+            被调用。
 
     Notes:
         本接口会执行模型 HTTP 调用、Qdrant 查询、PostgreSQL 读取和会话历史读写。业务数据方面
@@ -238,20 +251,32 @@ async def agent_chat(
     #    事务、提交后立刻归还连接，所以长对话不会占着业务连接池不放（见 ADR 0010）。占位失败
     #    时（同一个会话已经有运行在跑）拿到的是 409，不是「先查后写」的竞态。
     selection = chat_request.scope
+    # 会话行上存着的那份模型选择（续聊才读得到）。它是当轮的**退路**：请求里没带模型时才用它。
+    saved_model_id = None
     if chat_request.thread_id is not None:
         owned = await threads.get_owned_thread(user_id=user.id, thread_id=chat_request.thread_id)
         if selection is None:
             selection = KnowledgeBaseSelection.model_validate(owned.scope)
+        saved_model_id = owned.llm_model_id
     selection = selection or KnowledgeBaseSelection(mode="all")
     resolved_scope = await search.resolve_scope(selection)
+    # 4、解析这一轮实际生效的模型，只校验生效的那一份：请求里给了就用请求的，没给才用会话
+    #    里存的。它与上面那一步同处一条路——失败走 HTTP 状态码（不是流里的事件），而且发生在
+    #    **开始运行之前**，所以那一次模型调用一次都不会发出。可用性直接读目录表，不经过客户端
+    #    缓存，刚停用的模型立刻就不能被选中。
+    effective_model_id = chat_request.llm_model_id or saved_model_id
+    resolved_model = await models.resolve_for_run(effective_model_id)
     # 提示词取自**会话**而不是请求体：新建的会话刚用账号偏好拍下快照，续聊的用会话里那份。
     # 值仍在 ensure_thread 一处取，调用方不再自己读偏好表，免得出现第二个取值点。
+    # 请求里带的那份模型**写回会话行**（与范围同一条规则：改了就是记住，没有「只对这一次」
+    # 的单次覆盖）；没带就不碰它，会话行上存的是什么就继续是什么。
     thread_id, session_prompt = await threads.ensure_thread(
         user_id=user.id,
         thread_id=chat_request.thread_id,
         first_message=chat_request.message,
         run_id=run_id,
         scope=selection,
+        llm_model_id=chat_request.llm_model_id,
     )
     # 2、把会话提示词装进本次运行的上下文；为 None 时中间件会用默认那份。
     #    账号与会话标识一起带上：用量采集点从当前运行的上下文读这两个值，三条查询接口都按
@@ -261,6 +286,7 @@ async def agent_chat(
         run_id=run_id,
         system_prompt=session_prompt,
         scope=resolved_scope,
+        llm_model=resolved_model,
         user_id=user.id,
         thread_id=thread_id,
     )

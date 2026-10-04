@@ -40,6 +40,38 @@ const CONFIGURATION_COPY: AgentErrorCopy = {
   retryable: false,
 }
 
+// 「上游说没有这个模型」与「上游认证失败」以前共用上面那句「服务端的模型配置需要维护」，
+// 用户看完不知道该干什么。两条现在各说各的，但都给同一个下一步：找管理员，或者**换一个模型
+// 试试**——换一个模型这两个故障都可能绕过去，那是用户自己就能做的事。分开写而不是共用一句：
+// 认证失败是凭据问题（换 Key），模型不存在是配置写错，排查方向不同。
+const AUTHENTICATION_FAILED_COPY: AgentErrorCopy = {
+  title: '模型服务认证失败',
+  description: '上游没有接受当前凭据，请联系管理员，或换一个模型试试。',
+  retryable: false,
+}
+
+const MODEL_NOT_FOUND_COPY: AgentErrorCopy = {
+  title: '上游没有这个模型',
+  description: '使用的模型在上游不存在，请联系管理员，或换一个模型试试。',
+  retryable: false,
+}
+
+// 这一轮生效的那个模型不可用：会话里选的那个已停用/所属渠道已停用（409），或它指向的 id
+// 在目录里根本不存在（404）。两个状态码共用这一句——用户要做的是同一件事：换一个模型。
+const SELECTED_MODEL_UNAVAILABLE_COPY: AgentErrorCopy = {
+  title: '当前模型不可用',
+  description: '你选的模型已不可用，请换一个模型再提问。',
+  retryable: false,
+}
+
+// 目录为空或全部停用：用户自己没法自救（他连可选的东西都没有），只能找管理员配置。
+// 与上一条分开是因为「能做什么」不同，混成一句会让用户去换一个并不存在的模型。
+const NO_AVAILABLE_MODELS_COPY: AgentErrorCopy = {
+  title: '没有可用的模型',
+  description: '当前没有可用的模型，请联系管理员配置。',
+  retryable: false,
+}
+
 // 和 CONFIGURATION_COPY 的区别：那个是服务端还没配好，重试无用；这个是会话记忆的连接在
 // 中途断了，重发同一个问题通常就成功。所以不写 retryable，沿用后端给的 true。
 const MEMORY_CONNECTION_LOST_COPY: AgentErrorCopy = {
@@ -125,8 +157,14 @@ const COPY_BY_CODE: Readonly<Partial<Record<string, AgentErrorCopy>>> = {
 
   agent_runtime_unavailable: CONFIGURATION_COPY,
   agent_checkpointer_unavailable: CONFIGURATION_COPY,
-  llm_authentication_failed: CONFIGURATION_COPY,
-  llm_model_not_found: CONFIGURATION_COPY,
+  llm_authentication_failed: AUTHENTICATION_FAILED_COPY,
+  llm_model_not_found: MODEL_NOT_FOUND_COPY,
+
+  // 当轮选中的模型不可用（自身/渠道停用 → 409；目录里没有这个 id → 404）：文案只有一条。
+  llm_model_unavailable: SELECTED_MODEL_UNAVAILABLE_COPY,
+  llm_model_entry_not_found: SELECTED_MODEL_UNAVAILABLE_COPY,
+  // 目录为空或全部停用：另一句话，指向管理员。
+  no_available_llm_models: NO_AVAILABLE_MODELS_COPY,
 
   llm_request_rejected: REJECTED_COPY,
   llm_request_blocked: BLOCKED_COPY,

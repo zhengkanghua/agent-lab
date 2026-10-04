@@ -56,6 +56,15 @@ class AgentChatRequest(BaseModel):
 
     scope: KnowledgeBaseSelection | None = Field(default=None, description="本次提交的会话知识库选择；省略沿用已保存选择，新会话默认所有启用知识库。")
 
+    llm_model_id: UUID | None = Field(
+        default=None,
+        description=(
+            "这一轮要用的模型（取自选择列表的 id）；省略沿用会话里保存的选择，会话也没选过就用默认模型。"
+            "带上它就同时写回会话行（改了就是记住）。当轮生效的那一份会在开始运行之前解析："
+            "id 在目录里不存在返回 404；已停用（含所属渠道停用）返回 409，两种情况模型都不会被调用。"
+        ),
+    )
+
     @field_validator("scope")
     @classmethod
     def _validate_scope(cls, value: KnowledgeBaseSelection | None) -> KnowledgeBaseSelection:

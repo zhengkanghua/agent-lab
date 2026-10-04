@@ -9,8 +9,12 @@
 ``async with app.router.lifespan_context(app)`` 里发起运行、在流的中途退出生命周期，再读回放。
 
 **排空只会发生在还有待跑节点的时候**：图先判「没有任务了就是跑完」，再判「有没有人要求排空」。
-所以一轮只剩模型节点、排空请求打在它中途时，它会正常跑完（回放是完成）；只有后面还挂着工具
-节点时才会停在边界（回放是未完成）。两条都是正常收尾，不是失败。
+所以一轮只剩模型节点、排空请求打在它中途时，它会正常跑完（checkpoint 里是完整且完成的那一轮）；
+只有后面还挂着工具节点时才会停在边界（未完成）。两条都是正常收尾，不是失败。
+
+**排空那一刻还没落表，所以观察它要用 checkpointer 那条路径。** 会话历史的写入只发生在非排空的
+收尾里（排空交给接手方写，见工单 03），所以回放（读业务表）此时看不到这一轮；要断言「它停在
+哪儿、有没有被截断」只能读 checkpoint，用的还是终态事件与接手共用的 ``build_replay_turns``。
 """
 
 import asyncio
@@ -28,9 +32,13 @@ from langchain_core.outputs import ChatGenerationChunk
 from langgraph.checkpoint.memory import InMemorySaver
 
 from agent_lab.agent.limits import RUN_ZOMBIE_THRESHOLD_SECONDS
+from agent_lab.api.dependencies import get_llm_model_selection_service
+from agent_lab.agent.replay import build_replay_turns
 from tests.agent_helpers import FailingChatModel, StreamingChatModel, open_chat_stream, run
 from tests.app_helpers import (
     InMemoryAgentThreadService,
+    InMemoryLlmModelSelectionService,
+    OfflineCatalogModel,
     create_agent_app,
     offline_agent_run_registry_factory,
     seed_owned_thread,
@@ -90,11 +98,12 @@ async def _read_replay(
     threads: InMemoryAgentThreadService,
     thread_id: UUID,
 ) -> dict[str, Any]:
-    """用一个「不扫描接手标记」的实例共享 checkpointer 读会话回放。
+    """用一个「不扫描接手标记」的实例读会话回放（它读业务表里那些行）。
 
     刻意不复用被排空的那个应用：它的注册表带图，再进一次 lifespan 就会去接手（工单 03 的行为），
     那样读回放本身会改变被观察的状态。读回放只需要一个能调 `GET /agent/threads/{id}/messages`
-    的实例，所以注册表传 ``graph=None``。
+    的实例，所以注册表传 ``graph=None``。checkpointer 仍然要传：同一个应用里还有需要图的东西，
+    而且接手写下的行也要跟它对齐。
     """
 
     reader, _search = create_agent_app(
@@ -111,6 +120,26 @@ async def _read_replay(
             response = await client.get(f"/agent/threads/{thread_id}/messages")
             assert response.status_code == 200
             return response.json()
+
+
+async def _turns_from_checkpointer(
+    graph: Any,
+    thread_id: UUID,
+) -> tuple[Any, ...]:
+    """从 checkpointer 现算这一轮的轮次，用来观察「排空停在哪儿」。
+
+    排空那一刻会话历史表里还没有这一行（写入由接手方在最终收尾时做），所以那一段时间里
+    用户的界面上是「正在生成」，回放也是空的。要断言「已经推出的文字完整落库、图停在哪个
+    节点」就只能读 checkpoint——终态事件与接手读的也是同一处、同一套组装。
+
+    Args:
+        graph: 运行用的图；它身上挂着那个共享的 ``InMemorySaver``。调用方要在 lifespan
+            内取到它（退出后 ``app.state.agent_runtime`` 会被置空），图的读方法在退出后仍可用。
+    """
+
+    snapshot = await graph.aget_state({"configurable": {"thread_id": str(thread_id)}})
+    turns, _summarized, _summary = build_replay_turns((snapshot.values or {}).get("messages") or [])
+    return turns
 
 
 class SlowCompletingStreamModel(StreamingChatModel):
@@ -172,10 +201,10 @@ def test_draining_a_bare_model_node_lets_the_run_finish_instead_of_truncating_it
     model = SlowCompletingStreamModel(messages=iter([]))
     checkpointer = InMemorySaver()
     app, _search = create_agent_app(model, checkpointer=checkpointer)
-    threads = app.state.offline_threads
 
-    async def scenario() -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    async def scenario() -> tuple[list[dict[str, Any]], tuple[Any, ...]]:
         async with app.router.lifespan_context(app):
+            graph = app.state.agent_runtime.graph
             task, queue, first = await _open_and_wait_for_token(
                 app, payload={"message": "央行降息了吗"}
             )
@@ -183,17 +212,17 @@ def test_draining_a_bare_model_node_lets_the_run_finish_instead_of_truncating_it
             # 退出 lifespan：这里触发排空，当前模型节点跑完后图没有别的任务，正常收尾。
         rest = await _collect(queue)
         await task
-        return [*first, *rest], await _read_replay(checkpointer, threads, thread_id)
+        return [*first, *rest], await _turns_from_checkpointer(graph, thread_id)
 
-    events, replay = run(scenario())
+    events, turns = run(scenario())
 
     full_answer = "字" * model.chunks
     # 1、排空不会把这一轮砍掉：已经推出去的字全部落库，不多不少（补写会让它多出一截或只剩半截）。
     tokens = "".join(event["text"] for event in events if event["event"] == "token")
     assert tokens == full_answer
-    # 2、回放看到的与推出去的一致，并且已经完全落库（模型的完整回复，不是补写的那条）。
-    assert replay["turns"][-1]["answer"] == full_answer
-    assert replay["turns"][-1]["status"] == "completed"
+    # 2、持久化的内容与推出去的一致，而且已完成（模型的完整回复，不是补写的那条）。
+    assert turns[-1].answer == full_answer
+    assert turns[-1].status == "completed"
 
 
 def test_draining_two_in_flight_runs_stops_both_at_the_boundary(
@@ -201,8 +230,9 @@ def test_draining_two_in_flight_runs_stops_both_at_the_boundary(
 ) -> None:
     """手上同时有两个在途运行时，收尾对两者一起生效；各自停在可交接的边界，都不是被取消。
 
-    边界落点的证据是回放里的两样东西：第一个模型节点的文本原样落库（没有被截断或重复补写），
-    以及那次工具调用只有调用、没有结果——说明图停在了「模型节点已完成、工具节点还没跑」的位置。
+    边界落点的证据是两样东西：第一个模型节点的文本原样落库（没有被截断或重复补写），以及那次
+    工具调用只有调用、没有结果——说明图停在了「模型节点已完成、工具节点还没跑」的位置。它读
+    checkpoint：这两个被排空的运行还没落表，接手方最终收尾时才会写。
     """
 
     model = ToolBoundaryStreamModel(messages=iter([]))
@@ -213,8 +243,9 @@ def test_draining_two_in_flight_runs_stops_both_at_the_boundary(
     seed_owned_thread(app, first_thread)
     seed_owned_thread(app, second_thread)
 
-    async def scenario() -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any], UUID, UUID]:
+    async def scenario() -> tuple[list[dict[str, Any]], tuple[Any, ...], tuple[Any, ...], UUID, UUID]:
         async with app.router.lifespan_context(app):
+            graph = app.state.agent_runtime.graph
             first_task, first_queue = await open_chat_stream(
                 app, path="/agent/chat", payload={"message": "第一问", "thread_id": str(first_thread)}
             )
@@ -235,27 +266,27 @@ def test_draining_two_in_flight_runs_stops_both_at_the_boundary(
         second_events = await _collect(second_queue)
         await first_task
         await second_task
-        first_replay = await _read_replay(checkpointer, threads, first_thread)
-        second_replay = await _read_replay(checkpointer, threads, second_thread)
-        return first_events, first_replay, second_replay, first_thread, second_thread
+        first_turns = await _turns_from_checkpointer(graph, first_thread)
+        second_turns = await _turns_from_checkpointer(graph, second_thread)
+        return first_events, first_turns, second_turns, first_thread, second_thread
 
     with caplog.at_level(logging.INFO, logger="agent_lab.agent.runs"):
-        _first_events, first_replay, second_replay, first_thread, second_thread = run(
+        _first_events, first_turns, second_turns, first_thread, second_thread = run(
             asyncio.wait_for(scenario(), timeout=30.0)
         )
 
-    for replay in (first_replay, second_replay):
-        turn = replay["turns"][-1]
+    for turns in (first_turns, second_turns):
+        turn = turns[-1]
         # 1、第一个节点的文本完整落库：既不是空、也不是补写出来的重复一截。
-        assert turn["answer"] == "我查一下。"
+        assert turn.answer == "我查一下。"
         # 2、没有走到终态——它停在边界，等接手者续跑。
-        assert turn["status"] == "incomplete"
+        assert turn.status == "incomplete"
         # 3、工具调用只有调用、没有结果：图确实停在工具节点之前。
-        assert turn["traces"] and turn["traces"][0]["content"] is None
+        assert turn.traces and turn.traces[0].content is None
     # 4、两个被排空的运行各留下一条只含 id 的日志。
     drained = [each for each in caplog.messages if "已排空" in each]
     assert len(drained) == 2
-    assert all(str(replay["turns"][-1]["run_id"]) in " ".join(drained) for replay in (first_replay, second_replay))
+    assert all(str(turns[-1].run_id) in " ".join(drained) for turns in (first_turns, second_turns))
     # 5、两次运行的会话都被标记成「等接手」：在途运行 id 还在，排空时刻已写下。
     for thread_id in (first_thread, second_thread):
         record = app.state.offline_threads.threads[thread_id]
@@ -389,6 +420,13 @@ def test_a_run_that_misses_the_drain_deadline_is_abandoned_and_logged(
     # 3、放弃这件事在日志里看得见，而且只含 id。
     abandoned = [each for each in caplog.messages if "放弃" in each]
     assert len(abandoned) == 1
+    # 4、放弃也是一种收尾：这一轮照样落进会话历史表（完成态是未答完），而不是因为「不是正常
+    #    答完」就不写。它走的是与停止、上游失败同一支收尾代码。
+    recorded = app.state.offline_threads.recorded_run_messages
+    assert len(recorded) == 1
+    assert [group.run_id for group in recorded[0].runs] == [UUID(run_id)]
+    assert [row.role for row in recorded[0].runs[0].rows] == ["question", "answer"]
+    assert recorded[0].runs[0].rows[0].run_meta["completed"] is False
     assert str(run_id) in abandoned[0]
 
 
@@ -436,6 +474,8 @@ def test_a_new_instance_takes_over_the_drained_run_and_finishes_it() -> None:
         ToolBoundaryStreamModel(messages=iter([])), checkpointer=checkpointer, threads=threads
     )
     assert threads.threads[thread_id].drained_at is not None
+    # 排空到可交接边界的那一刻**不写**会话历史：那次运行还没结束，写由接手方在最终收尾时做。
+    assert threads.recorded_run_messages == []
 
     app, _search = create_agent_app(
         StreamingChatModel(messages=iter([AIMessage(content="完整答案。")])),
@@ -459,6 +499,105 @@ def test_a_new_instance_takes_over_the_drained_run_and_finishes_it() -> None:
     assert replay["turns"][-1]["answer"] == "我查一下。完整答案。"
     assert replay["turns"][-1]["question"] == "央行降息了吗"
     assert replay["active_run_id"] is None
+    # 接手方在最终收尾时才写，而且每次运行只写一次；写的是那一轮自己那一组。
+    assert len(threads.recorded_run_messages) == 1
+    recorded = threads.recorded_run_messages[0]
+    assert recorded.thread_id == thread_id
+    assert [group.run_id for group in recorded.runs] == [recorded.run_id]
+    assert [row.role for row in recorded.runs[0].rows] == [
+        "question",
+        "answer",
+        "tool_call",
+        "tool_result",
+        "answer",
+    ]
+
+
+class RecordingResolver:
+    """按 id 给出预置客户端的解析替身，并记下被问过哪些 id。"""
+
+    def __init__(self, clients: dict[UUID, Any]) -> None:
+        self._clients = clients
+        self.requested: list[UUID] = []
+
+    async def resolve_client(self, model_id: UUID) -> Any:
+        self.requested.append(model_id)
+        return self._clients[model_id]
+
+
+def test_a_taken_over_run_still_uses_the_model_frozen_in_its_question() -> None:
+    """接手那一轮解析的是提问消息里冻结的那个模型，不是会话当前的选择、也不是当时的默认。
+
+    这一轮的用户是带着那个模型开始的，接管是平台内部的事。所以用例把会话的选择换成另一个
+    模型、把那一个在目录里标成停用：接手路径不过「开始运行之前解析」那道 HTTP 门，它读的是
+    冻结快照——解析来源只被问过那一个 id，替身客户端也只答出那一个模型的文本。
+    """
+
+    checkpointer = InMemorySaver()
+    threads = InMemoryAgentThreadService()
+    frozen_id, other_id = uuid4(), uuid4()
+
+    draining_resolver = RecordingResolver(
+        {
+            frozen_id: ToolBoundaryStreamModel(messages=iter([])),
+            other_id: FailingChatModel(error=AssertionError("不该用别的模型")),
+        }
+    )
+    first_app, _search = create_agent_app(
+        None, model_resolver=draining_resolver, checkpointer=checkpointer, threads=threads
+    )
+    first_catalog = InMemoryLlmModelSelectionService(
+        [
+            OfflineCatalogModel(other_id, is_default=True),
+            OfflineCatalogModel(frozen_id),
+        ]
+    )
+    first_app.dependency_overrides[get_llm_model_selection_service] = lambda: first_catalog
+
+    async def drain_one() -> UUID:
+        async with first_app.router.lifespan_context(first_app):
+            task, queue, first = await _open_and_wait_for_token(
+                first_app,
+                payload={"message": "央行降息了吗", "llm_model_id": str(frozen_id)},
+            )
+            thread_id = UUID(first[0]["thread_id"])
+        await _collect(queue)
+        await task
+        return thread_id
+
+    thread_id = run(drain_one())
+    assert threads.threads[thread_id].drained_at is not None
+    # 排空之后这一轮已经不是会话当前的选择了，而且在新的目录里那条已被停用。
+    threads.threads[thread_id].llm_model_id = other_id
+
+    taking_resolver = RecordingResolver(
+        {
+            frozen_id: StreamingChatModel(messages=iter([AIMessage(content="完整答案。")])),
+            other_id: FailingChatModel(error=AssertionError("不该用别的模型")),
+        }
+    )
+    taking_app, _search2 = create_agent_app(
+        None, model_resolver=taking_resolver, checkpointer=checkpointer, threads=threads
+    )
+    taking_catalog = InMemoryLlmModelSelectionService(
+        [
+            OfflineCatalogModel(other_id, is_default=True),
+            OfflineCatalogModel(frozen_id, enabled=False),
+        ]
+    )
+    taking_app.dependency_overrides[get_llm_model_selection_service] = lambda: taking_catalog
+
+    async def take_over() -> None:
+        async with taking_app.router.lifespan_context(taking_app):
+            await _wait_until(lambda: threads.threads[thread_id].active_run_id is None)
+
+    run(asyncio.wait_for(take_over(), timeout=15.0))
+
+    assert set(taking_resolver.requested) == {frozen_id}, "接手只该解析快照里那个模型"
+    replay = run(_read_replay(checkpointer, threads, thread_id))
+    assert replay["turns"][-1]["status"] == "completed"
+    assert replay["turns"][-1]["answer"] == "我查一下。完整答案。"
+    assert replay["turns"][-1]["llm_model"]["id"] == str(frozen_id), "回放读的也是那一轮的快照"
 
 
 def test_two_instances_racing_for_one_marker_leave_exactly_one_takeover() -> None:

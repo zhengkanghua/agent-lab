@@ -25,6 +25,12 @@ const emit = defineEmits<{
 function isLast(index: number): boolean {
   return index === props.turns.length - 1
 }
+
+/* 分界线上那句话。它只说**模型那一侧**保留了什么：线以上只剩摘要；线以下的问答与工具轨迹完整，
+   但较早的工具原文可能已被清理成占位文字。清理是另一个机制（压缩之前先省空间），它在线以下也
+   生效，但回看读的是业务表，用户看到的原文始终完整——所以清理只由这句话的后半句提一句，不单独画线。 */
+const MEMORY_BOUNDARY_NOTE =
+  '此处之前的对话，模型只保留了摘要；此处之后的问答与工具轨迹完整保留，但较早的工具原文可能已被清理成占位文字。'
 </script>
 
 <template>
@@ -54,14 +60,19 @@ function isLast(index: number): boolean {
     </div>
 
     <TransitionGroup v-else name="list" tag="div" class="turn-list">
-      <AgentTurnCard
-        v-for="(turn, index) in turns"
-        :key="turn.id"
-        :turn="turn"
-        :can-retry="isLast(index) && !streaming"
-        @retry="emit('retry')"
-        @open-evidence="(evidence, trigger) => emit('open-evidence', evidence, trigger)"
-      />
+      <template v-for="(turn, index) in turns" :key="turn.id">
+        <AgentTurnCard
+          :turn="turn"
+          :can-retry="isLast(index) && !streaming"
+          @retry="emit('retry')"
+          @open-evidence="(evidence, trigger) => emit('open-evidence', evidence, trigger)"
+        />
+        <!-- 分界线画在带标记的那一轮**之后**，线跟那句话是同一个元素、同一个条件：有标记就两者
+             都有，没标记就两者都不出现（标记对不上任何一轮时也不标，见 turnsFromReplay）。 -->
+        <p v-if="turn.isMemoryBoundary" :key="`${turn.id}-boundary`" class="memory-boundary">
+          {{ MEMORY_BOUNDARY_NOTE }}
+        </p>
+      </template>
     </TransitionGroup>
   </section>
 </template>
@@ -72,6 +83,18 @@ function isLast(index: number): boolean {
 .turn-list {
   display: grid;
   gap: var(--space-8);
+}
+
+/* 线就是这段文字的上边框，所以线、文案只有一个元素、一个条件。
+   位置：上面那轮 32px 的轮间距被拉回一半，线就贴着它所归属的那一轮；下方留满 32px，
+   把「线以下」和「线以上」分开——线讲的是它上面这一轮（含）之前的模型上下文状态。 */
+.memory-boundary {
+  margin-top: calc(-1 * var(--space-4));
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  line-height: 1.7;
 }
 
 /* 空态不再是一张虚线卡片：单列布局里它就是这一列的全部内容，再画个框等于给

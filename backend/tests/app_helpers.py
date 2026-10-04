@@ -13,6 +13,7 @@ lifespan 就会拿真实的那个去连真实服务。这不是理论风险—�
 本模块不访问网络、不连 PostgreSQL、不碰 Qdrant，也不读 ``.env``。
 """
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -25,8 +26,10 @@ from langgraph.checkpoint.memory import InMemorySaver
 from agent_lab.agent.errors import AgentRunInProgressError, AgentThreadNotFoundError
 from agent_lab.agent.limits import RUN_ZOMBIE_THRESHOLD_SECONDS
 from agent_lab.agent.runs import AgentRunRegistry
+from agent_lab.agent.thread_messages import RunMessageRows
 from agent_lab.agent.runtime import AgentRuntime
-from agent_lab.config.llm import LlmProvider, LlmSettings
+from agent_lab.config.llm import LlmSettings
+from agent_lab.models.agent_thread_message import AgentThreadMessageRecord
 from agent_lab.services.agent_thread_service import DrainedRunClaim, derive_thread_title
 from agent_lab.usage.collector import NoopUsageCollector
 from agent_lab.knowledge.scope import KnowledgeBaseSelection, ResolvedKnowledgeBaseScope
@@ -41,15 +44,9 @@ from tests.auth_helpers import (
 )
 
 
-# 指向本机回环、模型名写死的假配置。provider 用 OLLAMA 是因为它不要求 API Key——
-# openai_compatible 在 key 为空时会抛 ``LlmConfigurationError``，而这些测试注入了假模型，
-# 根本不会发出请求，没必要为此编一个假密钥。
-OFFLINE_LLM_SETTINGS = LlmSettings(
-    provider=LlmProvider.OLLAMA,
-    base_url="http://127.0.0.1:11434",
-    model="offline-test-model",
-    fallback_model="offline-test-fallback",
-)
+# 进程级配置里只剩温度、超时、User-Agent 与连接池大小：模型本身来自模型目录，而本文件
+# 一律注入假模型，根本不会构造真实客户端，也不会发出请求。
+OFFLINE_LLM_SETTINGS = LlmSettings()
 
 
 class OfflineAgentRuntime:
@@ -181,6 +178,25 @@ def offline_usage_runtime_factory() -> OfflineUsageRuntime:
     return OfflineUsageRuntime()
 
 
+@dataclass(frozen=True)
+class RecordedRunMessages:
+    """一次「把某一轮写进会话历史表」调用的现场。
+
+    内存替身只能给出「什么时候、带着哪些组调了写入方」；行怎么落、重复收尾怎么保幂等、顺序号
+    怎么算都由真实 Service 在真实库上验证（``tests/test_agent_thread_messages.py``），替身不
+    复制那套语义，免得两份实现漂移。
+
+    Attributes:
+        thread_id: 写哪个会话。
+        run_id: 哪一次运行的收尾在写；Service 靠它认「本次运行那一组」。
+        runs: 快照里能组出来的全部组（已投影成行），整份交给 Service 自己去挑。
+    """
+
+    thread_id: UUID
+    run_id: UUID
+    runs: tuple[RunMessageRows, ...]
+
+
 class InMemoryAgentThreadService:
     """在内存字典里实现会话归属，语义与 ``AgentThreadService`` 对齐但不碰数据库。
 
@@ -199,12 +215,18 @@ class InMemoryAgentThreadService:
         deleted: 被 ``delete_thread_record`` 删掉的 id，按调用顺序。
         prompts: ``user_id`` 到该账号偏好提示词的映射；不在这里的账号视为没配过。
             真实实现去 ``user_preferences`` 表取，替身用这个字典模拟「取到 / 取不到」两支。
+        messages: 会话历史表的替身：``thread_id`` 到那一会话的消息行，回放读它。
     """
 
     def __init__(self) -> None:
         self.threads: dict[UUID, SimpleNamespace] = {}
         self.deleted: list[UUID] = []
         self.prompts: dict[UUID, str] = {}
+        # 每一次「写会话历史」都记一笔现场，用例靠它断言写入的时机与内容；行本身也放进
+        # ``messages``（回放读它），真库上的写法与顺序号由 ``tests/test_agent_thread_messages.py`` 验。
+        self.recorded_run_messages: list[RecordedRunMessages] = []
+        # 会话历史表的替身：``thread_id`` 到那一会话的行，按顺序号排。
+        self.messages: dict[UUID, list[AgentThreadMessageRecord]] = {}
 
     async def ensure_thread(
         self,
@@ -214,6 +236,7 @@ class InMemoryAgentThreadService:
         first_message: str,
         run_id: UUID,
         scope: KnowledgeBaseSelection | None = None,
+        llm_model_id: UUID | None = None,
     ) -> tuple[UUID, str | None]:
         """新建或续活一个会话并占下这次运行的位，与真实实现的语义对齐。
 
@@ -224,6 +247,9 @@ class InMemoryAgentThreadService:
         （进程崩了，没有任何清理动作会执行）时才能占；占下时顺手清掉陈旧的停止请求。
         真实实现把这三件事放在同一条 ``UPDATE`` 的 ``WHERE`` 里（见
         ``services/agent_thread_service.ensure_thread``），这里只能逐句照抄它的语义。
+
+        ``llm_model_id`` 与 ``scope`` 同一条规则：带了就写回会话行（改了就是记住），
+        没带就一字不动。
         """
 
         now = datetime.now(UTC)
@@ -235,6 +261,7 @@ class InMemoryAgentThreadService:
                 user_id=user_id,
                 title=derive_thread_title(first_message),
                 scope=(scope or KnowledgeBaseSelection(mode="all")).model_dump(mode="json"),
+                llm_model_id=llm_model_id,
                 system_prompt=system_prompt,
                 created_at=now,
                 last_active_at=now,
@@ -254,6 +281,8 @@ class InMemoryAgentThreadService:
         record.stop_requested_at = None
         if scope is not None:
             record.scope = scope.model_dump(mode="json")
+        if llm_model_id is not None:
+            record.llm_model_id = llm_model_id
         return thread_id, record.system_prompt
 
     async def finish_run(self, *, thread_id: UUID, run_id: UUID) -> None:
@@ -334,9 +363,68 @@ class InMemoryAgentThreadService:
             system_prompt=record.system_prompt,
         )
 
+    async def record_run_messages(
+        self, *, thread_id: UUID, run_id: UUID, runs: tuple[RunMessageRows, ...]
+    ) -> int:
+        """记下一次写入调用的现场，并把行放进内存里的那张表。
+
+        回放改读会话历史表之后，替身必须真的存下这些行，否则离线用例里的回放永远是空的。
+        它只做到「写进去就能读回来」：顺序号接着会话里已有的最大值加一，已经写过的组跳过
+        （写入侧会把快照里能组出来的组全交过来，不跳过就会把同一轮写两遍）。**真实实现那套
+        「按（会话，运行）整组替换 + 沿用第一次的顺序号」不在这里复制**：它是库上的语义
+        （唯一键、幂等、跨会话隔离），由 ``tests/test_agent_thread_messages.py`` 在真实
+        Service 与真实库上验。
+
+        Returns:
+            这次调用带着的那些组里的行数。真实实现返回的是「实际写入的行数」，替身不回填
+            一个假的数——消费方只在日志里用它。
+        """
+
+        self.recorded_run_messages.append(
+            RecordedRunMessages(thread_id=thread_id, run_id=run_id, runs=tuple(runs))
+        )
+        stored = self.messages.setdefault(thread_id, [])
+        next_seq = max((row.seq for row in stored), default=-1) + 1
+        written = 0
+        for group in runs:
+            if any(row.run_id == group.run_id for row in stored):
+                continue
+            for row in group.rows:
+                stored.append(
+                    AgentThreadMessageRecord(
+                        id=uuid4(),
+                        thread_id=thread_id,
+                        run_id=group.run_id,
+                        seq=next_seq,
+                        role=row.role,
+                        text=row.text,
+                        tool_name=row.tool_name,
+                        tool_arguments=row.tool_arguments,
+                        tool_call_id=row.tool_call_id,
+                        failed=row.failed,
+                        evidence=row.evidence,
+                        run_meta=row.run_meta,
+                        created_at=datetime.now(UTC),
+                    )
+                )
+                next_seq += 1
+                written += 1
+        return written
+
+    async def read_thread_messages(self, *, thread_id: UUID) -> list[AgentThreadMessageRecord]:
+        """按顺序号读出这个会话的行；与真实实现同义。"""
+
+        return sorted(self.messages.get(thread_id, []), key=lambda row: row.seq)
+
     async def update_scope(self, *, user_id, thread_id, scope):
         record = await self.get_owned_thread(user_id=user_id, thread_id=thread_id)
         record.scope = scope.model_dump(mode="json")
+
+    async def update_llm_model(self, *, user_id, thread_id, llm_model_id):
+        """保存会话的模型选择；与真实实现同义：不判可用性、不看在途运行。"""
+
+        record = await self.get_owned_thread(user_id=user_id, thread_id=thread_id)
+        record.llm_model_id = llm_model_id
 
     async def list_threads(
         self,
@@ -362,12 +450,14 @@ class InMemoryAgentThreadService:
         return record
 
     async def delete_thread_record(self, *, user_id: UUID, thread_id: UUID) -> None:
-        """删除归属记录，不存在或不属于该账号时抛异常。"""
+        """删除归属记录与会话历史表里这一会话的行，不存在或不属于该账号时抛异常。"""
 
         record = self.threads.get(thread_id)
         if record is None or record.user_id != user_id:
             raise AgentThreadNotFoundError
         del self.threads[thread_id]
+        # 与真实实现同义：会话行与历史行在同一个事务里删，库里没有外键约束，少删一边就是孤儿。
+        self.messages.pop(thread_id, None)
         self.deleted.append(thread_id)
 
     async def list_known_thread_ids(self) -> set[UUID]:
@@ -402,13 +492,19 @@ def create_offline_app(
         它是请求级依赖，不是启动时装配的组件，``create_app`` 的签名里没有它的位置。
     """
 
-    from agent_lab.api.dependencies import get_agent_thread_service
+    from agent_lab.api.dependencies import (
+        get_agent_thread_service,
+        get_llm_model_selection_service,
+    )
     from agent_lab.main import create_app
 
     # 0、会话归属 Service 换成内存替身。**必须在 create_app 之前建**：运行注册表在 lifespan
     #    里装配，它读的必须是同一个替身；晚一步建就只能让注册表拿真实的 session 工厂去连库，
     #    而那个失败不会让测试报错，只会变成一次超时。
     offline_threads = threads or InMemoryAgentThreadService()
+    # 0、目录替身同理：没有它，「解析当轮模型」那道门会拿真实的进程级 session 工厂去连库。
+    #    默认给一条可用的默认模型，否则既有用例会集体停在「没有可用的模型」那个 409 上。
+    offline_llm_models = InMemoryLlmModelSelectionService()
 
     # 1、先铺离线默认值，再让调用方的 overrides 覆盖，保证「漏写=安全」而不是「漏写=连真库」。
     defaults: dict[str, Any] = {
@@ -428,7 +524,107 @@ def create_offline_app(
     #    既能预置数据、又不用重复写一遍 override。
     app.state.offline_threads = offline_threads
     app.dependency_overrides[get_agent_thread_service] = lambda: offline_threads
+    app.state.offline_llm_models = offline_llm_models
+    app.dependency_overrides[get_llm_model_selection_service] = lambda: offline_llm_models
     return app
+
+
+# 离线替身里那条默认模型。任何请求 ``/agent/chat`` 的用例都会经过「解析当轮模型」那道门，
+# 而真实实现持的是绑定 ``.env`` 的进程级 session 工厂——没有替身就只能去连真 PostgreSQL。
+DEFAULT_OFFLINE_MODEL_ID = UUID("40000000-0000-4000-8000-0000000000f0")
+
+
+class OfflineCatalogModel:
+    """内存目录里的一条可用模型。
+
+    可用性拆成两个开关（自己启用 / 所属渠道启用），与库上那两列一一对应：替身也要能构造出
+    「模型自己开着、而渠道停了」这一种，那正是停用一条渠道会带走整批模型的形状。
+    """
+
+    def __init__(
+        self,
+        id: UUID,
+        *,
+        display_name: str | None = "演示模型",
+        upstream_model_name: str = "offline-test-model",
+        context_window: int = 32768,
+        enabled: bool = True,
+        provider_enabled: bool = True,
+        is_default: bool = False,
+    ) -> None:
+        self.id = id
+        self.display_name = display_name
+        self.upstream_model_name = upstream_model_name
+        self.context_window = context_window
+        self.enabled = enabled
+        self.provider_enabled = provider_enabled
+        self.is_default = is_default
+
+    @property
+    def available(self) -> bool:
+        """自己启用且所属渠道也启用——与仓库里那条 join 查询同一判据。"""
+
+        return self.enabled and self.provider_enabled
+
+
+class InMemoryLlmModelSelectionService:
+    """内存版的「解析当轮模型」，语义与 ``LlmModelSelectionService`` 对齐但不碰数据库。
+
+    为什么需要它：真实实现持进程级 session 工厂（绑 ``.env`` 的 ``DATABASE_URL``），
+    没有替身就只能去连真库。默认目录里有一条可用的默认模型——否则每个请求 ``/agent/chat``
+    的既有用例都会停在「没有可用的模型」那个 409 上。
+
+    ``resolved`` 记下每次解析请求里的 id（按调用顺序），用例靠它断言「解析确实发生了、而且
+    用的是哪一份」；真库上的查询语义由 ``tests/test_llm_model_selection_service.py`` 验。
+    """
+
+    def __init__(self, models: list[OfflineCatalogModel] | None = None) -> None:
+        self.models: list[OfflineCatalogModel] = (
+            models
+            if models is not None
+            else [OfflineCatalogModel(DEFAULT_OFFLINE_MODEL_ID, is_default=True)]
+        )
+        self.resolved: list[UUID | None] = []
+
+    def find(self, model_id: UUID) -> OfflineCatalogModel | None:
+        """按 id 取一条，不管它当前可不可用（读展示名要用这条）。"""
+
+        return next((item for item in self.models if item.id == model_id), None)
+
+    async def resolve_for_run(self, llm_model_id: UUID | None):
+        """翻成当轮快照；失败种类与真实实现一一对应。"""
+
+        from agent_lab.services.llm_model_errors import (
+            LlmModelNotFoundError,
+            LlmModelUnavailableError,
+            NoAvailableLlmModelsError,
+        )
+        from agent_lab.services.llm_model_selection_service import snapshot_of
+
+        self.resolved.append(llm_model_id)
+        if llm_model_id is None:
+            default = next(
+                (item for item in self.models if item.is_default and item.available), None
+            )
+            if default is None:
+                raise NoAvailableLlmModelsError
+            return snapshot_of(default)
+        record = self.find(llm_model_id)
+        if record is None:
+            raise LlmModelNotFoundError
+        if not record.available:
+            raise LlmModelUnavailableError
+        return snapshot_of(record)
+
+    async def describe_choice(self, llm_model_id: UUID | None):
+        """读一个已存的选择在目录里的样子；**不判可用性、不抛错**。"""
+
+        from agent_lab.services.llm_model_selection_service import snapshot_of
+
+        if llm_model_id is None:
+            return None
+        record = self.find(llm_model_id)
+        return None if record is None else snapshot_of(record)
 
 
 class FakeSearchService:
@@ -471,8 +667,9 @@ class FakeSearchRuntime:
 
 
 def create_agent_app(
-    model: Any,
+    model: Any = None,
     *,
+    model_resolver: Any = None,
     superuser: bool = True,
     anonymous: bool = False,
     agent_build_error: Exception | None = None,
@@ -490,7 +687,10 @@ def create_agent_app(
     和存储被换掉。需要请求 ``/agent/*`` 的测试都该用这个。
 
     Args:
-        model: 注入的假聊天模型。
+        model: 注入的假聊天模型；省略时必须给 ``model_resolver``，否则运行期按目录解析
+            （那时会去连数据库，离线用例拿不到）。
+        model_resolver: 模型解析来源的替身。给了它就走上生产的解析包装链（用量采集在外面、
+            解析在里面），只是目录读取换成预置的客户端。
         superuser: 为 ``False`` 时把当前账号换成普通账号（仍算已登录），用来测「普通账号能进」。
         anonymous: 为 ``True`` 时**不覆盖任何认证依赖**，请求表现为完全没带凭据，用来测 401。
             它与 ``superuser=False`` 是两件事：后者是「登录了但不是超管」，前者是「没登录」。
@@ -533,6 +733,7 @@ def create_agent_app(
             database_url="postgresql+psycopg://unused/unused",
             checkpointer=checkpointer if checkpointer is not None else InMemorySaver(),
             model=model,
+            model_resolver=model_resolver,
             usage_collector=usage_collector if usage_collector is not None else lifespan_collector,
             # 退避是真 sleep。这些用例断言的是 HTTP 契约，不需要等。
             retry_initial_delay=0.0,
@@ -595,6 +796,7 @@ def seed_owned_thread(
     active_run_id: UUID | None = None,
     stop_requested_at: datetime | None = None,
     drained_at: datetime | None = None,
+    llm_model_id: UUID | None = None,
 ) -> SimpleNamespace:
     """在内存会话表里预置一行归属记录。
 
@@ -610,6 +812,7 @@ def seed_owned_thread(
         active_run_id: 预置一个在途运行，用来构造「这个会话正在跑」。
         stop_requested_at: 预置一个陈旧的停止请求，用来验证新一次占位会把它清掉。
         drained_at: 预置一个「已排空、等接手」标记，用来验证它拒绝新提问、也不会被失活分支顶掉。
+        llm_model_id: 预置会话保存的模型选择；省略就是「没选过」，提问时用默认模型。
 
     Returns:
         刚写进去的那行记录，便于随后修改或断言。
@@ -621,6 +824,7 @@ def seed_owned_thread(
         user_id=user_id,
         title=title,
         scope={"mode": "all"},
+        llm_model_id=llm_model_id,
         system_prompt=system_prompt,
         created_at=now,
         last_active_at=last_active_at or now,
@@ -653,13 +857,17 @@ def is_claimable(record: SimpleNamespace, now: datetime) -> bool:
 
 __all__ = [
     "OFFLINE_LLM_SETTINGS",
+    "DEFAULT_OFFLINE_MODEL_ID",
     "OFFLINE_DRAIN_TIMEOUT_SECONDS",
     "OFFLINE_HANDOVER_SCAN_INTERVAL_SECONDS",
     "FakeSearchRuntime",
     "FakeSearchService",
     "InMemoryAgentThreadService",
+    "InMemoryLlmModelSelectionService",
     "OfflineAgentRuntime",
+    "OfflineCatalogModel",
     "OfflineUsageRuntime",
+    "RecordedRunMessages",
     "create_agent_app",
     "create_offline_app",
     "offline_agent_run_registry_factory",

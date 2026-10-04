@@ -192,10 +192,6 @@ describe('streamAgentChat', () => {
     { name: 'done 缺最终文本', payload: { ...agentDone(), answer: undefined } },
     { name: 'done 缺完成状态', payload: { ...agentDone(), status: undefined } },
     {
-      name: 'done 引用缺实际片段',
-      payload: { ...agentDone(), citations: [{ ...agentEvidence, excerpt: '' }] },
-    },
-    {
       name: '运行没有实际范围',
       payload: { ...agentStarted(), scope: { mode: 'all', knowledge_bases: [] } },
     },

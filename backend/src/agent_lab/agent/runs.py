@@ -37,13 +37,14 @@ from agent_lab.agent.limits import (
     RUN_LIVENESS_UPDATE_INTERVAL_SECONDS,
     RUN_STATE_POLL_INTERVAL_SECONDS,
 )
-from agent_lab.agent.replay import build_replay_turns
+from agent_lab.agent.replay import build_replay_turns, group_messages_by_run, summary_messages
 from agent_lab.agent.streaming import (
     MODEL_NODE,
     PersistedModelMessage,
     build_terminal_event,
     stream_agent_events,
 )
+from agent_lab.agent.thread_messages import project_run_messages
 from agent_lab.config.llm import LangSmithSettings, get_langsmith_settings
 from agent_lab.schemas.agent_chat import (
     AgentChatEvent,
@@ -148,7 +149,9 @@ class AgentRunRegistry:
 
     Attributes:
         _threads: 会话 Service；本注册表用它的三个方法读写 ``agent_threads``（释放占位、续活、读状态）。
-        _event_poll_interval: 驱动者等待下一个事件的时间片；留成参数只为让测试不必真的等一秒。
+        _event_poll_interval: 驱动者等待下一个事件的时间片，也是「停止请求最多被拖多久才被看见」
+            的上界（驱动者每个循环都看一次停止标志，等待超时只是它回到循环开头的间隔）；留成参数
+            只为让测试不必真的等一秒。
         _liveness_interval: 往库里续 ``last_active_at`` 的节奏；同样只为让测试传小值。
         _state_poll_interval: 批量读「停止请求」的节奏；同样只为让测试传小值。
         _drain_timeout: 进程收尾时等手上在途运行走到边界的总预算；只为让测试传小值。
@@ -183,8 +186,9 @@ class AgentRunRegistry:
             graph: 进程级共享的已编译 Agent 图。接手续跑只能用它（与对话入口同一张图），
                 拿不到就不认领标记。
             langsmith_settings: 接手续跑时的追踪配置；省略时按进程配置取。
-            event_poll_interval: 驱动者每等多久回来看一眼停止标志。生产不要传，默认值才是
-                安全的那个；测试传小值是为了不必为了看一次停止而真的等满一秒。
+            event_poll_interval: 驱动者等下一个事件的时间片。停止标志每个循环都看，所以这个值
+                决定的是「从停止请求到被驱动者响应」的延迟上界。生产不要传，默认值才是安全的
+                那个；测试传小值是为了不必为了看一次停止而真的等满一秒。
             liveness_interval: 续活节奏；测试传小值才能在毫秒级验证「活着的运行不会被判成僵尸」。
             state_poll_interval: 停止请求的轮询节奏；改大只会让停止变慢，不会让它失效。
             drain_timeout: 收尾时等排空的总预算；测试传小值才能验证「到点按放弃收尾」。
@@ -375,8 +379,13 @@ class AgentRunRegistry:
     async def _take_over(self, claim: "DrainedRunClaim") -> None:
         """重建运行上下文并接着跑那一次运行。
 
-        范围取自**上一轮冻结在 checkpoint 里的那一份**（不是会话行上的当前选择，否则续跑后的节点
-        会换一个范围作答）；提示词与账号从会话行取。拿不到范围就不接手，按放弃收尾。
+        范围与当轮模型都取自**上一轮冻结在 checkpoint 里的那一份**（不是会话行上的当前选择，
+        否则续跑后的节点会换一个范围作答、悄悄换一个模型回答）；提示词与账号从会话行取。
+        拿不到冻结元数据就不接手，按放弃收尾。
+
+        **这里不重新判模型的可用性**：接手不过「开始运行之前解析」那道 HTTP 门，而那一轮的
+        用户是带着那个模型开始的，接管是平台内部的事——快照里的模型在排空期间被停用时仍用它
+        跑完，不在中途给他换一个（要停就整个会话停，或让上游自己失败）。
 
         Notes:
             重建上下文失败（认领之后）与接手后运行中途抛错是两条不同的放弃时机，两者都只尝试一次
@@ -386,7 +395,7 @@ class AgentRunRegistry:
         graph = self._graph
         if graph is None:  # pragma: no cover - 调用方已经挡过，留作类型收窄
             return
-        found, scope = await self._read_frozen_scope(
+        found, scope, llm_model = await self._read_frozen_run_meta(
             graph, thread_id=claim.thread_id, run_id=claim.run_id
         )
         if not found:
@@ -396,6 +405,7 @@ class AgentRunRegistry:
             run_id=claim.run_id,
             system_prompt=claim.system_prompt,
             scope=scope,
+            llm_model=llm_model,
             user_id=claim.user_id,
             thread_id=claim.thread_id,
         )
@@ -410,31 +420,35 @@ class AgentRunRegistry:
         )
 
     @staticmethod
-    async def _read_frozen_scope(
+    async def _read_frozen_run_meta(
         graph: CompiledStateGraph,
         *,
         thread_id: UUID,
         run_id: UUID,
-    ) -> tuple[bool, Any]:
-        """从 checkpoint 里取「这次运行冻结的知识库范围」。
+    ) -> tuple[bool, Any, Any]:
+        """从 checkpoint 里取「这次运行冻结的知识库范围与当轮模型」。
 
-        取法是回放模块已有的解析（提问消息上的 ``agent_run.scope``），不另造一套。
+        取法是回放模块已有的解析（提问消息上的 ``agent_run.scope`` 与 ``agent_run.llm_model``），
+        不另造一套；回放接口读到的同一份值就是写入侧从这里投影进业务表的第一份，所以「回看到的
+        那一轮」与「接手跑完的那一轮」说的是同一个模型。
 
         Returns:
-            ``(找到了没有, 范围)``。第一个值为假表示**这一轮已经不在 checkpoint 里**——最典型是
-            历史压缩把那条提问消息抹掉了。此时不能接手（不能拿会话行的当前选择冒充当时范围）。
-            第一个值为真但范围是 ``None`` 是合法的：当初那次运行本来就没有范围。
+            ``(找到了没有, 范围, 当轮模型)``。第一个值为假表示**这一轮已经不在 checkpoint 里**
+            ——最典型是历史压缩把那条提问消息抹掉了。此时不能接手（不能拿会话行的当前选择冒充
+            当时范围/当时模型）。第一个值为真但后两项是 ``None`` 是合法的：当初那次运行本来就
+            没有范围，或那一轮的快照里没有模型（改动之前建立的会话）。
 
         Notes:
-            执行会话历史读取（checkpointer 的读 I/O），不写任何东西。
+            执行会话历史读取（checkpointer 的读 I/O），不写任何东西，也**不查目录表**：冻结的
+            快照就是那一轮的完整事实，接手不重新判可用性。
         """
 
         snapshot = await graph.aget_state({"configurable": {"thread_id": str(thread_id)}})
         turns, _, _ = build_replay_turns((snapshot.values or {}).get("messages") or [])
         turn = next((item for item in turns if item.run_id == run_id), None)
         if turn is None:
-            return False, None
-        return True, turn.scope
+            return False, None, None
+        return True, turn.scope, turn.llm_model
 
     async def _abandon_claim(self, claim: "DrainedRunClaim", *, reason: str) -> None:
         """接手失败时把这次运行收成未完成、释放会话位。
@@ -591,6 +605,20 @@ class AgentRunRegistry:
         drained = False
         try:
             while True:
+                # 停止标志**每个循环**都看一次。放在这里而不是「这一轮没等到新事件」那一支里：
+                # 模型正在逐字产出时事件源源不断，``asyncio.wait`` 几乎总是立刻返回，那一支
+                # 永远不成立，停止请求就没人看（只有等输出出现一个长于轮询节奏的停顿才生效）。
+                # 已经就绪的事件不在这里丢——它在上一轮已经处理完，``pending`` 要么是 None，
+                # 要么是还在飞的那次 ``__anext__``；所以「已就绪的事件先处理完，下一轮开头再
+                # 响应停止」这个顺序是自然成立的。
+                if run.stop_requested:
+                    # 协作式停止：取消的只是这一次模型调用，**运行单元本身不被取消**，所以下面
+                    # 的补写与收尾发生在完全正常的上下文里，没有任何取消在传播。
+                    if pending is not None:
+                        await self._cancel_pending(pending)
+                        pending = None
+                    stopped = True
+                    break
                 if pending is None:
                     pending = asyncio.ensure_future(iterator.__anext__())
                 # 用 wait 而不是 wait_for：wait 超时后**不取消**任务，所以下一轮还能接着等
@@ -598,13 +626,7 @@ class AgentRunRegistry:
                 done, _ = await asyncio.wait({pending}, timeout=self._event_poll_interval)
                 await self._touch_if_due(run)
                 if not done:
-                    if run.stop_requested:
-                        # 协作式停止：取消的只是这一次模型调用，**运行单元本身不被取消**，所以下面
-                        # 的补写与收尾发生在完全正常的上下文里，没有任何取消在传播。
-                        await self._cancel_pending(pending)
-                        pending = None
-                        stopped = True
-                        break
+                    # 没等到新事件就回循环开头：那里会看一眼停止标志。
                     continue
                 finished, pending = pending, None
                 try:
@@ -669,6 +691,10 @@ class AgentRunRegistry:
                     run.run_id,
                 )
             else:
+                # 写会话历史业务表**在释放会话位之前**（正常答完、停止、上游失败、放弃收尾都走
+                # 这一支；排空那一支不写，由接手方在最终收尾时写）。写入失败只记日志，不影响
+                # 下面的释放与终态事件。
+                await self._record_run_messages(run, graph=graph)
                 await self._release(run)
             if terminal is not None:
                 run.publish(terminal)
@@ -744,6 +770,56 @@ class AgentRunRegistry:
         except Exception as exc:
             logger.error(
                 "释放会话占位失败 thread_id=%s run_id=%s error_type=%s",
+                run.thread_id,
+                run.run_id,
+                type(exc).__name__,
+            )
+
+    async def _record_run_messages(self, run: AgentRun, *, graph: CompiledStateGraph) -> None:
+        """把这一轮的消息写进会话历史业务表（``agent_thread_messages``）。
+
+        它是用户能回看的会话历史第一次落进我们自己的表（见 ADR 0044）：提问、回答、每一个工具
+        调用、每一个工具结果各占一行，压缩发生过的那一次还多一行摘要（承载分界标记）。**写入点
+        只有这里**：运行确定不再继续的那一刻（正常答完、
+        用户停止、上游失败、放弃收尾、被别的进程接手后完成都算），排空到可交接边界的运行不写
+        ——它还没结束，由接手方在最终收尾时写（见 ADR 0040）。
+
+        Args:
+            run: 本次运行。
+            graph: 进程级共享的已编译 Agent 图，用来读会话历史快照。
+
+        Notes:
+            执行 checkpoint 读 I/O 与 PostgreSQL 写入。
+
+            读快照是因为「哪条消息属于哪一次运行」只有 checkpointer 里有，而分轮口径要与回放
+            完全一致（``agent/replay.py``），所以直接用在：同一套切分、同一份完成态判定。
+
+            **失败只记日志**，与既有的收尾写入一致：那一轮不会出现在回看里，但不该因此中断释放
+            会话位与发送终态事件。**不重试**：重试解决不了「同一个事务写不进去」，只会把收尾拖长，
+            而这条代价已经由「收尾写入只记日志」这个既有约定承担了。
+        """
+
+        try:
+            snapshot = await graph.aget_state(
+                {"configurable": {"thread_id": str(run.thread_id)}}
+            )
+            messages = (snapshot.values or {}).get("messages") or []
+            # 完成态不另判：用回放已经算好的那一份，否则终态事件与刷新后的回放会各说一套。
+            turns, _, _ = build_replay_turns(messages)
+            runs = project_run_messages(
+                group_messages_by_run(messages),
+                turns=turns,
+                summaries=summary_messages(messages),
+            )
+            await self._threads.record_run_messages(
+                thread_id=run.thread_id,
+                run_id=run.run_id,
+                runs=runs,
+            )
+        except Exception as exc:
+            # 只记类型：异常文本可能带连接串或正文。
+            logger.error(
+                "写入会话历史失败 thread_id=%s run_id=%s error_type=%s",
                 run.thread_id,
                 run.run_id,
                 type(exc).__name__,

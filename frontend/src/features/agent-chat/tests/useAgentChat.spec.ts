@@ -1,5 +1,6 @@
 import { defineComponent, h, nextTick } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
+import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentChatEvent, StreamAgentChatOptions } from '@/api/agent-chat'
 import { ApiError } from '@/api/client'
@@ -21,6 +22,12 @@ import {
 
 const THREAD_ID = '30000000-0000-4000-8000-000000000001'
 const OTHER_THREAD_ID = '30000000-0000-4000-8000-000000000002'
+
+/* 会话的模型选择挂在 vue-query 上（目录用 useQuery 拉，见 useChatModel），所以这个夹子必须
+   给一个 QueryClient，否则每个用例都会在「injection VUE_QUERY_CLIENT not found」上挂掉。
+   目录那条查询也打桩：不打的话挂载时会真的去 fetch，jsdom 里表现成一堆未处理的 rejection。
+   每次挂载用新的 client，用例之间不共享缓存。 */
+vi.mock('@/api/llm-models', () => ({ listAvailableLlmModels: vi.fn(async () => []) }))
 
 /** 仍然挂载组件而不是裸调 composable：onScopeDispose 的取消语义需要真实的 effect scope。 */
 function mountHarness(
@@ -44,7 +51,9 @@ function mountHarness(
       return () => h('div')
     },
   })
-  const wrapper = mount(Harness)
+  const wrapper = mount(Harness, {
+    global: { plugins: [[VueQueryPlugin, { queryClient: new QueryClient() }]] },
+  })
   if (!composable) throw new Error('Test harness did not initialize composable')
   return { wrapper, chat: composable }
 }
@@ -80,8 +89,6 @@ function replay(
     citations?: unknown[]
   }>,
   extra: {
-    summarized?: boolean
-    summary?: string | null
     scope?: KnowledgeBaseSelection
     activeRunId?: string | null
   } = {},
@@ -90,8 +97,6 @@ function replay(
     thread_id: THREAD_ID,
     turns: turns.map((turn) => ({ status: 'completed', ...turn })),
     scope: extra.scope ?? { mode: 'all' },
-    summarized: extra.summarized ?? false,
-    summary: extra.summary ?? null,
     active_run_id: extra.activeRunId ?? null,
   } as ReplayResult
 }
@@ -143,27 +148,22 @@ describe('useAgentChat', () => {
     wrapper.unmount()
   })
 
-  it('收尾同步压缩后的近期问答，背景摘要不创建引用', async () => {
+  it('收尾同步到最新一轮问答，没写引用标识的答案不创建引用', async () => {
     const loader = scriptedLoader(
       replay([
         { question: '较早提问', answer: '旧事实' },
         { question: '近期提问', answer: '近期答案' },
       ]),
-      replay(
-        [
-          { question: '近期提问', answer: '近期答案' },
-          { question: '当前提问', answer: '新答案' },
-        ],
-        { summarized: true, summary: '仅供回看的旧背景' },
-      ),
+      replay([
+        { question: '近期提问', answer: '近期答案' },
+        { question: '当前提问', answer: '新答案' },
+      ]),
     )
     const { wrapper, chat } = mountHarness(scriptedStream([agentDone('新答案')]), loader)
     await chat.loadThread(THREAD_ID)
     chat.draft.value = '当前提问'
     await chat.send()
     expect(chat.turns.value.map((turn) => turn.question)).toEqual(['近期提问', '当前提问'])
-    expect(chat.isHistoryTruncated.value).toBe(true)
-    expect(chat.historySummary.value).toBe('仅供回看的旧背景')
     expect(chat.turns.value.every((turn) => turn.citations?.length === 0)).toBe(true)
     expect(loader.calls).toEqual([THREAD_ID, THREAD_ID])
     wrapper.unmount()
@@ -867,21 +867,6 @@ describe('useAgentChat', () => {
       wrapper.unmount()
     })
 
-    it('历史被压缩过时把这件事标出来', async () => {
-      const loader = scriptedLoader(
-        replay([{ question: '问', answer: '答' }], {
-          summarized: true,
-          summary: 'Here is a summary…',
-        }),
-      )
-      const { wrapper, chat } = mountHarness(scriptedStream(), loader)
-
-      await chat.loadThread(THREAD_ID)
-
-      expect(chat.isHistoryTruncated.value).toBe(true)
-      wrapper.unmount()
-    })
-
     it('打不开时不设 threadId，用户下一轮是新会话而不是被拒', async () => {
       // 设上 threadId 的话，用户在一个打不开的会话里发问，后端按归属拒掉，
       // 界面上却像是模型出错——错误指向完全错误的方向。
@@ -1011,7 +996,7 @@ describe('useAgentChat', () => {
       wrapper.unmount()
     })
 
-    it('开新对话会清掉回放留下的错误与压缩标记', async () => {
+    it('开新对话会清掉回放留下的错误', async () => {
       const loader = scriptedLoader(
         new ApiError({ message: '没有', code: 'agent_thread_not_found', status: 404 }),
       )
@@ -1021,7 +1006,6 @@ describe('useAgentChat', () => {
       chat.startNewConversation()
 
       expect(chat.threadError.value).toBeNull()
-      expect(chat.isHistoryTruncated.value).toBe(false)
       wrapper.unmount()
     })
   })

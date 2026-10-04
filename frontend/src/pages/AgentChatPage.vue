@@ -1,17 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { History, LoaderCircle, ShieldCheck } from '@lucide/vue'
+import { LoaderCircle, ShieldCheck } from '@lucide/vue'
 import AppShell from '@/layouts/AppShell.vue'
 import { useLogout } from '@/features/auth'
 import { usePreferences } from '@/features/settings'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
-import BaseDisclosure from '@/shared/ui/BaseDisclosure.vue'
 import KnowledgeBaseScopePicker from '@/shared/ui/KnowledgeBaseScopePicker.vue'
 import { useKnowledgeBaseScope } from '@/shared/composables/useKnowledgeBaseScope'
 import {
   AgentComposer,
+  AgentModelPicker,
   AgentTranscript,
   ThreadSidebar,
   useAgentChat,
@@ -41,10 +41,8 @@ const chat = useAgentChat({
 })
 const scope = useKnowledgeBaseScope(chat.selection)
 const reader = useDocumentReader()
-const selectedEvidence = ref<DocumentEvidence | null>(null)
 
 function openEvidence(evidence: DocumentEvidence, trigger: HTMLElement): void {
-  selectedEvidence.value = evidence
   void reader.open(
     {
       documentId: evidence.document_id,
@@ -123,7 +121,6 @@ watch(
   routeThreadId,
   (id) => {
     void reader.close()
-    selectedEvidence.value = null
     if (id === null) {
       // 从某个会话回到 /agent（点「新对话」或后退）时清空，否则旧会话的历史留在界面上，
       // 而 threadId 已经没了，下一轮会开一个新会话。
@@ -247,26 +244,7 @@ async function chooseExample(value: string): Promise<void> {
             :description="chat.threadError.value.description"
           />
 
-          <!-- 历史被压缩过就如实说明。不说的话用户会以为看到的是全部记录，而模型实际上
-               只记得一段摘要——两边对不上时，他会以为模型在胡说。 -->
-          <BaseCallout
-            v-if="chat.isHistoryTruncated.value"
-            class="history-note"
-            tone="neutral"
-            description="较早消息已压缩，原始问答不再提供回看。近期保留的问答仍可查看。"
-          >
-            <template #icon><History :size="14" aria-hidden="true" /></template>
-          </BaseCallout>
-
-          <BaseDisclosure
-            v-if="chat.isHistoryTruncated.value && chat.historySummary.value"
-            class="summary-background"
-            summary="查看背景摘要"
-            tone="plain"
-          >
-            <p>摘要仅作背景，不是可核验的原文引用。</p>
-            <p class="summary-text">{{ chat.historySummary.value }}</p>
-          </BaseDisclosure>
+          <!-- 对账失败时说明情况并给一个重试入口：屏幕上那份可能已经不是服务端记的那份了。 -->
           <BaseCallout
             v-if="chat.historySyncError.value"
             tone="neutral"
@@ -334,6 +312,20 @@ async function chooseExample(value: string): Promise<void> {
             @submit="chat.send"
             @cancel="chat.cancel"
           >
+            <template #model>
+              <!-- 选择器打开时自己会重拉目录（`@open`），所以刚建好的模型立刻能选到；
+                   当前选择不在目录里时它显示失效态与重选入口，不静默回落到默认模型。 -->
+              <AgentModelPicker
+                :model-value="chat.modelChoice.value"
+                :models="chat.availableModels.value"
+                :loading="chat.catalogLoading.value"
+                :unavailable="chat.isModelChoiceUnavailable.value"
+                :error="chat.catalogError.value || chat.modelSaveError.value"
+                @update:model-value="chat.updateModelChoice"
+                @open="chat.refreshModelCatalog"
+                @refresh="chat.refreshModelCatalog"
+              />
+            </template>
             <template #scope>
               <KnowledgeBaseScopePicker
                 v-if="!chat.isLoadingThread.value"
@@ -367,7 +359,6 @@ async function chooseExample(value: string): Promise<void> {
     :loading="reader.isLoading.value"
     :error="reader.error.value"
     :hash-mismatch="reader.contentHashMismatch.value"
-    :evidence="selectedEvidence"
     @close="reader.close"
     @closed="reader.restoreFocus"
     @retry="reader.retry"
@@ -419,23 +410,6 @@ async function chooseExample(value: string): Promise<void> {
   margin-bottom: var(--space-3-5);
 }
 
-.summary-background {
-  margin: 0 0 var(--space-4);
-  color: var(--text-secondary);
-  font-size: var(--fs-sm);
-  line-height: 1.7;
-}
-/* 折叠键归 BaseDisclosure。用 tone-plain 而不是默认的 accent：这一行夹在会话标题和
-   回答之间，原文案与注释都要求它保持次要色（「只给悬停反馈」），默认档会让它常驻强调色、
-   在一段对话里格外扎眼。箭头仍是强调色，那也是它「可以点开」的提示。
-   段落之间只留 p + p 的间距：折叠体自己已经给了摘要与正文之间的那一段。 */
-.summary-background p + p {
-  margin-top: var(--space-2-5);
-}
-.summary-text {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
 .scope-note {
   display: inline-flex;
   align-items: center;

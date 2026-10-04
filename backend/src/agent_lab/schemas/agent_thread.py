@@ -15,6 +15,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 from agent_lab.agent.evidence import DocumentEvidence
 from agent_lab.knowledge.scope import KnowledgeBaseSelection, ResolvedKnowledgeBaseScope
+from agent_lab.schemas.llm_models import ResolvedLlmModel
 
 
 # 会话列表一页的条数上下限。上限 100 与 document_search 的 MAX_DOCUMENT_LIMIT 取同一个数量级，
@@ -26,8 +27,8 @@ MAX_THREAD_PAGE_SIZE = 100
 class AgentThreadSummary(BaseModel):
     """会话列表里的一行。
 
-    刻意不含消息内容、轮数和「最后一条回答」：那些要么是 checkpointer 里已有内容的副本
-    （会因历史压缩而与真实上下文不一致），要么需要额外维护一个容易飘的计数列。
+    刻意不含消息内容、轮数和「最后一条回答」：那些要么是会话历史表里已有内容的副本，
+    要么需要额外维护一个容易飘的计数列。
     列表只承担导航，认出「是哪个会话」够用。
     """
 
@@ -71,6 +72,43 @@ class AgentThreadDeletionResponse(BaseModel):
     """
 
     thread_id: UUID = Field(description="已删除的会话 id。")
+
+    model_config = ConfigDict(frozen=True)
+
+
+class AgentThreadModel(BaseModel):
+    """会话当前保存的模型选择：id 连它此刻在目录里的展示名。
+
+    为什么要带展示名：已停用（或不存）的那个条目**不在可选列表里**，选择器要把「原来是 xxx」
+    说清楚就只能从会话侧读回来。展示名为空只有一种情况——目录里已经查不到这个 id；
+    ``llm_models`` 没有删除入口，正常到不了这里。
+
+    它**不回答「这个选择现在能不能用」**：可用性是每次现算的（自身启用且所属渠道启用），
+    以选择器打开时重新拉的那份目录为准；把这个判断也存进响应里就成了第二个事实源，
+    而且它会随响应变陈。
+    """
+
+    id: UUID = Field(description="会话当前选择的可用模型 id。")
+    display_name: str | None = Field(
+        default=None,
+        description=(
+            "这个 id 此刻在目录里的展示名（条目填过就是它，没填就是上游模型名）；"
+            "目录里查不到这一条时为 null，界面只能给出通用提示。"
+        ),
+    )
+
+    model_config = ConfigDict(frozen=True)
+
+
+class AgentThreadModelSelection(BaseModel):
+    """保存会话模型选择的请求体与响应体，只有 id。
+
+    保存**不校验这个模型当前可不可用**：可用性只在「开始运行之前解析当轮模型」那道门上判，
+    否则同一个失效选择会从保存与提问两处各拿到一条不一样的提示。所以把当前已失效的 id 存进
+    来照样成功。
+    """
+
+    llm_model_id: UUID = Field(description="要记住的可用模型 id；它必须来自选择列表。")
 
     model_config = ConfigDict(frozen=True)
 
@@ -120,6 +158,14 @@ class AgentReplayTurn(BaseModel):
     question: str = Field(repr=False, description="用户这一轮的提问原文。")
     run_id: UUID | None = None
     scope: ResolvedKnowledgeBaseScope | None = None
+    llm_model: ResolvedLlmModel | None = Field(
+        default=None,
+        description=(
+            "这一轮实际使用的模型，取自那一轮运行元数据里的冻结快照：展示名与上下文窗口都是"
+            "**当时**的值，条目后来改名或停用不改写已经发生过的那几轮。为 null 表示这一轮没盖下"
+            "这个快照。"
+        ),
+    )
     status: Literal["completed", "incomplete"] = "incomplete"
     citations: tuple[DocumentEvidence, ...] = ()
     invalid_citations: tuple[str, ...] = ()
@@ -138,9 +184,11 @@ class AgentReplayTurn(BaseModel):
 class AgentThreadMessagesResponse(BaseModel):
     """``GET /agent/threads/{thread_id}/messages`` 的响应。
 
-    ``summarized`` 与 ``summary`` 一起表达「早期历史已经不在了」这件事，前端必须如实显示，
-    不能把回放当成完整历史：``SummarizationMiddleware`` 的压缩是破坏性的，被压掉的原始消息
-    真的不在 checkpointer 里了，模型看到的也只是那段摘要。
+    数据源是业务表 ``agent_thread_messages``（见 ADR 0044），不是 checkpointer：用户看到的记录
+    写完不再改，压缩策略怎么改都不影响它。
+
+    ``memory_boundary_run_id`` 是唯一的「早期历史已经不在模型上下文里」的线索：它指向
+    「模型只剩摘要」那一段的最后一轮，界面据此画那条分界线。**不回摘要正文**——界面不展示它。
     """
 
     thread_id: UUID = Field(description="本次回放所属的会话 id。")
@@ -149,23 +197,29 @@ class AgentThreadMessagesResponse(BaseModel):
         description=(
             "当前在途运行的 id；为空表示这个会话没有运行在跑。\n\n"
             "它只有一个用途：刷新页面后前端要知道「上一轮还在跑」——否则会出现自相矛盾的组合："
-            "界面显示「这一轮没有留下回答」，用户再发一条却被服务端以「还在生成中」拒绝。"
-            "它不是把运行状态暴露给用户看，也不代表运行会出现在 ``turns`` 里（在途运行的输出还没落库）。"
+            "界面显示「这一轮没有留下回答」（在途那一轮还没落表），用户再发一条却被服务端以"
+            "「还在生成中」拒绝。"
+            "它不是把运行状态暴露给用户看，也不代表运行会出现在 ``turns`` 里。"
         ),
     )
     scope: KnowledgeBaseSelection = Field(description="会话当前保存的选择，不改写历史轮次的实际范围。")
+    llm_model: AgentThreadModel | None = Field(
+        default=None,
+        description=(
+            "会话当前保存的模型选择；为 null 表示这个会话没选过模型，提问时用默认模型。"
+            "每个轮次实际用的是哪一个，看 `turns[].llm_model`。"
+        ),
+    )
     turns: tuple[AgentReplayTurn, ...] = Field(
         description="按时间顺序的历史轮次；不包含摘要那条伪提问。",
     )
-    summarized: bool = Field(
-        description="早期历史是否已被压缩成摘要；为真表示 turns 不是全部历史。",
-    )
-    summary: str | None = Field(
+    memory_boundary_run_id: UUID | None = Field(
         default=None,
-        repr=False,
         description=(
-            "压缩后的摘要正文，仅在 summarized 为真时存在。"
-            "原样透传，可能带有上游库加的英文前缀。"
+            "模型只保留了摘要的那一段的最后一轮运行 id：这一轮及其之前的轮次已不在模型上下文里"
+            "（界面据此画那条分界线）。为 null 表示历史没有被压缩过。\n\n"
+            "同一会话里每次压缩都留下一行摘要，但后来的压缩可能沿用更早那条的标记，所以这一项"
+            "取的是**最近**那一行的值。"
         ),
     )
 
@@ -180,5 +234,7 @@ __all__ = [
     "AgentThreadDeletionResponse",
     "AgentThreadListResponse",
     "AgentThreadMessagesResponse",
+    "AgentThreadModel",
+    "AgentThreadModelSelection",
     "AgentThreadSummary",
 ]

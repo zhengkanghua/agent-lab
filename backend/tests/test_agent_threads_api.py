@@ -24,6 +24,7 @@ import httpx
 from fastapi import FastAPI
 from langchain_core.messages import AIMessage
 
+from agent_lab.models.agent_thread_message import AgentThreadMessageRecord
 from tests.agent_helpers import ScriptedChatModel
 from tests.app_helpers import create_agent_app, seed_owned_thread, send
 from tests.auth_helpers import READER_ID
@@ -199,8 +200,9 @@ def test_page_size_beyond_the_maximum_is_rejected() -> None:
 def test_replay_returns_the_turns_that_were_actually_stored() -> None:
     """真聊两轮，再回放，拿回同样的两轮问答。
 
-    端到端走的是真实链路：真图、真中间件、真 checkpointer 读写、真回放翻译。只有模型和存储介质
-    是替身。这条用例是「点进历史会话能看到之前聊了什么」这个需求的直接验证。
+    端到端走的是真实链路：真图、真中间件、真收尾写入、真回放组装。只有模型和存储介质是替身。
+    这条用例是「点进历史会话能看到之前聊了什么」这个需求的直接验证；回放读的是**收尾写下的
+    历史表**，不是 checkpointer。
     """
 
     app, _search = create_agent_app(scripted("降了 25 个基点。", "上周四。"))
@@ -221,15 +223,107 @@ def test_replay_returns_the_turns_that_were_actually_stored() -> None:
         ("央行降息了吗", "降了 25 个基点。"),
         ("什么时候", "上周四。"),
     ]
-    assert body["summarized"] is False
-    assert body["summary"] is None
+    assert body["memory_boundary_run_id"] is None
+
+
+def test_replay_reads_the_history_table_not_the_checkpointer() -> None:
+    """checkpoint 里一条消息都没有、只有历史表里有行时，回放照样显示得出那一轮。
+
+    这是「回放确实换了数据源」的直接证据：第二个应用实例的 checkpointer 是全新的（同一会话
+    什么都没存档），拿得出来的那一轮只能来自会话历史表。拿「两边都有」的会话去测证明不了
+    这一点——那种情形下读哪个源都看得到内容。
+    """
+
+    app, _search = create_agent_app(scripted("降了 25 个基点。"))
+
+    async def chat_once(client: httpx.AsyncClient) -> UUID:
+        return await start_conversation(client, "央行降息了吗")
+
+    thread_id = run(within_lifespan(app, chat_once))
+    # 先确认第一轮真的写下了行；没写下的话这条用例证明不了任何事（回放本来就该是空的）。
+    assert app.state.offline_threads.messages[thread_id]
+
+    # 只共享会话数据、不共享 checkpointer 的第二个实例：它那边一条消息都没有。
+    reader, _reader_search = create_agent_app(
+        scripted("不该被读到的答案"), threads=app.state.offline_threads
+    )
+
+    async def read_after_restart(client: httpx.AsyncClient) -> tuple[Any, dict[str, Any]]:
+        snapshot = await reader.state.agent_runtime.graph.aget_state(
+            {"configurable": {"thread_id": str(thread_id)}}
+        )
+        response = await client.get(f"/agent/threads/{thread_id}/messages")
+        assert response.status_code == 200
+        return snapshot.values, response.json()
+
+    checkpoint_values, body = run(within_lifespan(reader, read_after_restart))
+
+    assert (checkpoint_values or {}).get("messages") in (None, []), (
+        "checkpoint 里有历史，这条用例证明不了数据源换了"
+    )
+    assert [(turn["question"], turn["answer"]) for turn in body["turns"]] == [
+        ("央行降息了吗", "降了 25 个基点。")
+    ]
+
+
+def test_the_boundary_marker_comes_from_the_newest_summary_row() -> None:
+    """压缩分界标记取会话里顺序号**最大**的那条摘要行，不取最旧一条。
+
+    摘要行一次压缩写一行、旧行不删，而分界标记在后来的压缩里可能沿用上一条的值（被折掉的那一段
+    里一条提问都没有时），所以只有最近那一行是「此刻模型只保留了什么」的边界；取最旧一条会把线
+    画得比实际早。两行摘要直接放进表里（写入侧今天还不写摘要行，那是另一条工单）。
+    """
+
+    app, _search = create_agent_app(scripted("答案"))
+    thread_id = uuid4()
+    seed_owned_thread(app, thread_id)
+    earlier_runs, latest_run = uuid4(), uuid4()
+    question_run = uuid4()
+    app.state.offline_threads.messages[thread_id] = [
+        summary_row(thread_id, seq=0, memory_boundary_run_id=earlier_runs),
+        AgentThreadMessageRecord(
+            id=uuid4(),
+            thread_id=thread_id,
+            run_id=question_run,
+            seq=1,
+            role="question",
+            text="央行降息了吗",
+            run_meta={"run_id": str(question_run), "completed": True},
+            created_at=datetime.now(UTC),
+        ),
+        summary_row(thread_id, seq=9, memory_boundary_run_id=latest_run),
+    ]
+
+    body = run(send(app, "GET", f"/agent/threads/{thread_id}/messages")).json()
+
+    assert body["memory_boundary_run_id"] == str(latest_run)
+    # 摘要那一行本身不进轮次：它是分界标记的载体，不是用户问过的话。
+    assert [turn["question"] for turn in body["turns"]] == ["央行降息了吗"]
+
+
+def summary_row(
+    thread_id: UUID, *, seq: int, memory_boundary_run_id: UUID
+) -> AgentThreadMessageRecord:
+    """一行摘要消息：只承载压缩分界标记，正文界面不展示。"""
+
+    return AgentThreadMessageRecord(
+        id=uuid4(),
+        thread_id=thread_id,
+        run_id=uuid4(),
+        seq=seq,
+        role="summary",
+        text="Here is a summary of the conversation to date: 旧背景",
+        memory_boundary_run_id=memory_boundary_run_id,
+        created_at=datetime.now(UTC),
+    )
 
 
 def test_replay_of_a_thread_with_no_stored_history_is_an_empty_turn_list() -> None:
-    """归属记录有、历史没有时回放空列表，而不是 404 或 500。
+    """归属记录有、历史表里没有行时回放空列表，而不是 404 或 500。
 
-    这种状态是真实存在的：会话行在流开始**前**就写好了，之后模型调用失败就不会留下任何消息。
-    此时会话确实属于当前账号，404 说不通；用户点进去看到空的、可以接着聊，才是对的。
+    这种状态是真实存在的：会话行在流开始**前**就写好了，之后模型调用失败就不会留下任何消息；
+    写入也只发生在收尾，所以正在跑的那个会话同样是空的。此时会话确实属于当前账号，404 说不通；
+    用户点进去看到空的、可以接着聊，才是对的。
     """
 
     app, _search = create_agent_app(scripted("答案"))
@@ -242,7 +336,7 @@ def test_replay_of_a_thread_with_no_stored_history_is_an_empty_turn_list() -> No
     body = response.json()
     assert body["turns"] == []
     assert body["thread_id"] == str(thread_id)
-    assert body["summarized"] is False
+    assert body["memory_boundary_run_id"] is None
 
 
 def test_replaying_someone_elses_thread_is_404_and_leaks_no_content() -> None:
@@ -297,11 +391,12 @@ def test_malformed_thread_id_in_the_path_is_422() -> None:
     assert run(send(app, "GET", "/agent/threads/not-a-uuid/messages")).status_code == 422
 
 
-def test_deleting_a_thread_clears_both_the_history_and_the_ownership_row() -> None:
-    """删除同时清掉 checkpointer 历史和归属记录，两边都要空。
+def test_deleting_a_thread_clears_the_history_the_history_table_and_the_ownership_row() -> None:
+    """删除同时清掉 checkpointer 历史、会话历史表里的行与归属记录，三处都要空。
 
     只断言归属记录没了是不够的：那样留下的历史查不到也删不掉，只能等 ``prune-orphan-threads``
-    来收，而在此之前它一直占着库。
+    来收，而在此之前它一直占着库。会话历史表那批行同理——它与归属行是两张表，库里没有外键约束，
+    漏掉它就是一批没有归属行、界面上也查不到的残余。
     """
 
     app, _search = create_agent_app(scripted("答案"))
@@ -311,6 +406,7 @@ def test_deleting_a_thread_clears_both_the_history_and_the_ownership_row() -> No
         checkpointer = app.state.agent_runtime.checkpointer
         config = {"configurable": {"thread_id": str(thread_id)}}
         assert await checkpointer.aget_tuple(config) is not None, "历史没写进去，用例失去意义"
+        assert app.state.offline_threads.messages[thread_id], "历史表里没有行，用例失去意义"
 
         response = await client.delete(f"/agent/threads/{thread_id}")
 
@@ -327,11 +423,12 @@ def test_deleting_a_thread_clears_both_the_history_and_the_ownership_row() -> No
     assert result["body"] == {"thread_id": str(result["thread_id"])}
     assert result["history_left"] is None
     assert result["thread_id"] not in app.state.offline_threads.threads
+    assert app.state.offline_threads.messages.get(result["thread_id"]) is None
     assert app.state.offline_threads.deleted == [result["thread_id"]]
 
 
 def test_deleting_someone_elses_thread_leaves_their_history_intact() -> None:
-    """别人的会话删不掉：404，而且**他的历史一条都没少**。
+    """别人的会话删不掉：404，而且**他的历史一条都没少**（checkpointer 与会话历史表都是）。
 
     这是本文件最重要的一条。只断言 404 挡不住「先调 ``adelete_thread`` 清历史、再校验归属」
     这种写法——那样返回的也是 404，但受害者的历史已经没了，而且不可恢复。归属校验必须在
@@ -343,6 +440,7 @@ def test_deleting_someone_elses_thread_leaves_their_history_intact() -> None:
     async def work(client: httpx.AsyncClient) -> dict[str, Any]:
         thread_id = await start_conversation(client, "别人的会话")
         app.state.offline_threads.threads[thread_id].user_id = uuid4()
+        rows_before = list(app.state.offline_threads.messages[thread_id])
 
         response = await client.delete(f"/agent/threads/{thread_id}")
 
@@ -355,6 +453,7 @@ def test_deleting_someone_elses_thread_leaves_their_history_intact() -> None:
             "code": response.json()["code"],
             "history_left": stored,
             "thread_id": thread_id,
+            "rows_before": rows_before,
         }
 
     result = run(within_lifespan(app, work))
@@ -362,8 +461,9 @@ def test_deleting_someone_elses_thread_leaves_their_history_intact() -> None:
     assert result["status"] == 404
     assert result["code"] == "agent_thread_not_found"
     assert result["history_left"] is not None
-    # 归属记录也还在——它是别人的，我们无权删。
+    # 归属记录也还在——它是别人的，我们无权删；历史表里的行同样一行不少。
     assert result["thread_id"] in app.state.offline_threads.threads
+    assert app.state.offline_threads.messages[result["thread_id"]] == result["rows_before"]
     assert app.state.offline_threads.deleted == []
 
 

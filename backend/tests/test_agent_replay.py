@@ -9,7 +9,8 @@ from uuid import uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from agent_lab.agent.replay import build_replay_turns
+from agent_lab.agent.middleware import bind_context_window, unbind_context_window
+from agent_lab.agent.replay import build_replay_turns, group_messages_by_run
 from tests.agent_helpers import (
     ScriptedChatModel,
     build_offline_graph,
@@ -36,6 +37,54 @@ def test_plain_conversation_becomes_question_answer_pairs() -> None:
     ]
     assert summarized is False
     assert summary is None
+
+
+def test_group_messages_by_run_gives_run_id_and_raw_messages_in_order() -> None:
+    """**分组口径的真源**：每组给出运行标识与该组按顺序的原始消息，提问消息本身在组内。
+
+    回放与后面把会话历史写进业务表的写入方共用这一份切分。写入方要拿每组的原始消息逐条落行
+    （role、顺序号、正文、证据都在原始对象上），所以提问那条必须留在组里——它是这一轮运行元数据
+    的唯一载体，漏了它这一组就组不起来。
+    """
+
+    first_run, second_run = uuid4(), uuid4()
+    summary = HumanMessage(
+        content="Here is a summary of the conversation to date: ...",
+        additional_kwargs={"lc_source": "summarization"},
+    )
+    messages = [
+        summary,
+        HumanMessage(content="第一次提问", additional_kwargs={"agent_run": {"run_id": str(first_run)}}),
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "search_documents", "args": {"query": "甲"}, "id": "call-1"}],
+        ),
+        ToolMessage(content="工具结果", tool_call_id="call-1", name="search_documents"),
+        AIMessage(content="第一次回答"),
+        HumanMessage(content="第二次提问", additional_kwargs={"agent_run": {"run_id": str(second_run)}}),
+        AIMessage(content="第二次回答"),
+    ]
+
+    groups = group_messages_by_run(messages)
+
+    assert len(groups) == 2
+    assert [group.run_id for group in groups] == [first_run, second_run]
+    # 逐条按**对象本身**比对：写入方要的是这些原始消息，不是重新拼出来的副本。
+    assert all(
+        message is expected
+        for message, expected in zip(groups[0].messages, messages[1:5], strict=True)
+    )
+    assert all(
+        message is expected
+        for message, expected in zip(groups[1].messages, messages[5:7], strict=True)
+    )
+    # 摘要不属于任何一组。
+    assert not any(message is summary for group in groups for message in group.messages)
+    # 回放用的是同一份分组：运行标识与提问正文逐个对得上。
+    turns, _summarized, _summary = build_replay_turns(messages)
+    assert [(turn.run_id, turn.question) for turn in turns] == [
+        (group.run_id, group.messages[0].content) for group in groups
+    ]
 
 
 def test_tool_call_and_result_are_paired_by_tool_call_id() -> None:
@@ -171,8 +220,10 @@ def test_summary_message_produced_by_real_middleware_is_recognised() -> None:
     ``Here is a summary of the conversation to date:``。
     """
 
-    # 1、装一个真实中间件流水线的图。压缩阈值是 40 条消息（agent/limits.py），所以要先攒够历史。
-    #    假模型每轮回一句，一轮产生 2 条消息（提问 + 回答），22 轮足够越过阈值。
+    # 1、装一个真实中间件流水线的图。压缩按当轮模型窗口的 80% 触发（agent/limits.py 的比例
+    #    常量），所以要先攒够历史。这条路径不经过 HTTP/流入口，没有 ``AgentContext.llm_model``
+    #    可跟，窗口由用例显式放进上下文变量。假模型每轮回一句，一轮产生 2 条消息（提问 + 回答），
+    #    22 轮足够越过窗口的 80%。
     model = ScriptedChatModel(
         responses=[AIMessage(content=f"第 {index} 轮回答") for index in range(1, 40)]
     )
@@ -180,11 +231,17 @@ def test_summary_message_produced_by_real_middleware_is_recognised() -> None:
     config = {"configurable": {"thread_id": str(uuid4())}}
 
     async def drive() -> list:
-        for index in range(1, 23):
-            await graph.ainvoke(
-                {"messages": [{"role": "user", "content": f"第 {index} 轮提问"}]},
-                config=config,
-            )
+        # 窗口小到最后几轮才触发，但触发后历史被折成「摘要 + 保留段」，保留段自然落在窗口以内，
+        # 不会每轮都再触发一次，假模型的脚本也就不至于被用光。
+        token = bind_context_window(200)
+        try:
+            for index in range(1, 23):
+                await graph.ainvoke(
+                    {"messages": [{"role": "user", "content": f"第 {index} 轮提问"}]},
+                    config=config,
+                )
+        finally:
+            unbind_context_window(token)
         snapshot = await graph.aget_state(config)
         return snapshot.values["messages"]
 
@@ -195,7 +252,7 @@ def test_summary_message_produced_by_real_middleware_is_recognised() -> None:
     assert any(
         getattr(message, "additional_kwargs", {}).get("lc_source") == "summarization"
         for message in messages
-    ), "历史没有被压缩，这条用例失去了意义——检查 SUMMARIZATION_TRIGGER_MESSAGES 或轮数"
+    ), "历史没有被压缩，这条用例失去了意义——检查窗口取值或轮数"
 
     turns, summarized, summary = build_replay_turns(messages)
 

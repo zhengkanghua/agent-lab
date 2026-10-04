@@ -406,7 +406,7 @@ async def _init_checkpointer(args: argparse.Namespace) -> CommandOutcome:
 
 
 async def _prune_orphan_threads(args: argparse.Namespace) -> CommandOutcome:
-    """清理 checkpointer 里没有归属记录的会话历史。
+    """清理没有归属记录的会话数据：checkpointer 里的历史与会话历史表里的行。
 
     Args:
         args: 用到 ``command`` 与 ``yes``；``yes`` 为假时只预演不删。
@@ -419,8 +419,14 @@ async def _prune_orphan_threads(args: argparse.Namespace) -> CommandOutcome:
             最外层只按异常类型报告。
 
     Notes:
-        「孤儿」的定义是：checkpointer 里存有历史，但 ``agent_threads`` 里查不到归属记录。
-        这类数据的来源有三种——归属功能上线之前产生的历史、迁移被回滚过、以及删除会话时
+        「孤儿」的定义是：**没有归属记录的 ``thread_id``**——候选集从两侧取并集，一侧是
+        checkpointer 里存有历史，另一侧是 ``agent_thread_messages`` 里有行。只看 checkpointer
+        会漏掉后者：删一个**正在运行**的会话时，等它停下的上限（10 秒）到了删除就继续，而那次
+        运行随后仍会把收尾内容写回会话历史表（收尾写表时不核对会话行是否还在，库上也没有外键
+        兜底），于是留下一批没有归属行、界面上查不到、也删不掉的行。这条路在升级之后会反复产生，
+        不是历史存量。
+
+        这类数据的来源还有三种——归属功能上线之前产生的历史、迁移被回滚过、以及删除会话时
         「清历史成功、删归属记录失败」留下的残余。它们在网页上既列不出来也删不掉。
 
         **默认只预演。** 加 ``--yes`` 才真删，且删除不可恢复。
@@ -435,7 +441,7 @@ async def _prune_orphan_threads(args: argparse.Namespace) -> CommandOutcome:
 
     database_url = str(get_settings().database_url)
 
-    # 1、先读业务表的归属记录，再读 checkpointer。顺序无所谓正确性，但先读业务表更快失败——
+    # 1、两个业务表都先读，再读 checkpointer。顺序无所谓正确性，但先读业务表更快失败——
     #    表不存在时立刻报错，而不是先花时间遍历完所有 checkpoint。
     threads = AgentThreadService(async_session_factory)
     owned = await threads.list_known_thread_ids()
@@ -443,8 +449,10 @@ async def _prune_orphan_threads(args: argparse.Namespace) -> CommandOutcome:
     # 塞进过非 UUID 的 thread_id，按字符串比会把它算成孤儿并清掉，这也正是想要的结果——
     # 若先 UUID() 解析，那种值会让整个命令抛异常。
     known = {str(thread_id) for thread_id in owned}
+    # 会话历史表里出现过的 id 也是候选：残余可能只有那张表里有行、checkpointer 那边什么都没有。
+    recorded = {str(thread_id) for thread_id in await threads.list_message_thread_ids()}
     stored = await list_checkpointer_thread_ids(database_url)
-    orphans = sorted(stored - known)
+    orphans = sorted((stored | recorded) - known)
 
     # 2、预演模式只报数，不动数据。
     if not args.yes:
@@ -460,6 +468,10 @@ async def _prune_orphan_threads(args: argparse.Namespace) -> CommandOutcome:
         )
 
     deleted = await delete_checkpointer_threads(database_url, orphans)
+
+    # 再删会话历史表里这些 id 的行：候选集里没有归属行，所以这一步删的就是残余本身。
+    await threads.delete_thread_messages(orphans)
+
     return CommandOutcome(
         payload={
             "command": args.command,

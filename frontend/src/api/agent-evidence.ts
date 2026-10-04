@@ -14,9 +14,7 @@ export function isDocumentEvidence(value: unknown): value is DocumentEvidence {
     hasText(value.knowledge_base_name) &&
     hasText(value.title) &&
     isSha256(value.content_hash) &&
-    hasText(value.excerpt) &&
     (value.kind === 'match' || value.kind === 'document') &&
-    (value.truncated === undefined || typeof value.truncated === 'boolean') &&
     ['source_name', 'upload_filename', 'url', 'published_at'].every(
       (key) => value[key] == null || typeof value[key] === 'string',
     )

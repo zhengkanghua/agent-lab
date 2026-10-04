@@ -295,6 +295,81 @@ def test_continuing_a_thread_never_writes_the_prompt_column() -> None:
     assert "RETURNING" in sql and "SYSTEM_PROMPT" in sql.split("RETURNING", 1)[1]
 
 
+def test_continuing_a_thread_writes_the_model_column_only_when_the_request_carried_one() -> None:
+    """模型那一列与 ``scope`` 同一条规则：请求里带了才写回，没带就一字不动。
+
+    「没带」意味着沿用会话行上已存的那份（新建时就是空 = 用默认模型）。把「当轮用默认」写成一条
+    记录是另一回事，会让会话平白从「没选过」变成「选了当时的默认」，默认后来换掉也不会跟着走。
+    """
+
+    session = FakeSession(rowcount=1, returning_row=(None,))
+    chosen = uuid4()
+
+    run(
+        service_with(session).ensure_thread(
+            user_id=uuid4(),
+            thread_id=uuid4(),
+            run_id=uuid4(),
+            first_message="继续",
+            llm_model_id=chosen,
+        )
+    )
+    with_model = compiled(session.statements[0])
+    assignments = with_model.upper().split(" SET ", 1)[1].split(" WHERE ", 1)[0]
+    assert "LLM_MODEL_ID" in assignments
+    assert str(chosen) in with_model
+
+    untouched = FakeSession(rowcount=1, returning_row=(None,))
+    run(
+        service_with(untouched).ensure_thread(
+            user_id=uuid4(), thread_id=uuid4(), run_id=uuid4(), first_message="继续"
+        )
+    )
+    without_model = compiled(untouched.statements[0])
+    assert "LLM_MODEL_ID" not in without_model.upper().split(" SET ", 1)[1].split(" WHERE ", 1)[0]
+
+
+def test_saving_a_model_choice_filters_by_owner_and_leaves_the_run_columns_alone() -> None:
+    """保存选择只改那一列、只改自己的会话——不看在途运行、也不碰停止请求。"""
+
+    session = FakeSession(rowcount=1)
+    user_id, thread_id, chosen = uuid4(), uuid4(), uuid4()
+
+    run(
+        service_with(session).update_llm_model(
+            user_id=user_id, thread_id=thread_id, llm_model_id=chosen
+        )
+    )
+
+    sql = compiled(session.statements[0]).upper()
+    assignments = sql.split(" SET ", 1)[1].split(" WHERE ", 1)[0]
+    conditions = sql.split(" WHERE ", 1)[1]
+    assert "LLM_MODEL_ID" in assignments
+    assert str(chosen).upper() in sql
+    # 归属判断：少了 ``user_id`` 条件，猜到 id 就能改到别人的会话。
+    assert str(user_id).upper() in conditions
+    assert str(thread_id).upper() in conditions
+    # 运行协调那两列一字不动：用户运行中改选照样保存，改选只影响下一次运行。
+    assert "ACTIVE_RUN_ID" not in assignments
+    assert "STOP_REQUESTED_AT" not in assignments
+    assert session.commits == 1
+
+
+def test_updating_someone_elses_model_choice_raises_not_found() -> None:
+    """rowcount 为 0（不存在或不是自己的）时抛 ``AgentThreadNotFoundError``。"""
+
+    session = FakeSession(rowcount=0)
+
+    with pytest.raises(AgentThreadNotFoundError):
+        run(
+            service_with(session).update_llm_model(
+                user_id=uuid4(), thread_id=uuid4(), llm_model_id=uuid4()
+            )
+        )
+
+    assert (session.commits, session.rollbacks) == (0, 0)
+
+
 def test_continuing_someone_elses_thread_rolls_back_and_raises() -> None:
     """rowcount 为 0 时抛 ``AgentThreadNotFoundError``，并且回滚而不是提交。
 
@@ -525,9 +600,11 @@ def test_reading_a_thread_that_is_not_yours_raises_not_found() -> None:
 
 
 def test_deleting_a_thread_record_filters_by_owner() -> None:
-    """``delete_thread_record`` 的 DELETE 带 ``user_id`` 条件。
+    """``delete_thread_record`` 先删会话历史表那一会话的行，再带头带 `user_id` 条件删归属行。
 
     删除路径漏掉归属条件比读取更严重：读到别人的会话是泄露，删掉别人的会话是不可逆的数据丢失。
+    孩子的删除只按 ``thread_id``，归属判断只在会话行那一处（同 ``get_owned_thread``）：
+    删不到会话行时整个事务回滚，孩子那一步也一并撤销。
     """
 
     session = FakeSession(rowcount=1)
@@ -540,15 +617,24 @@ def test_deleting_a_thread_record_filters_by_owner() -> None:
         )
     )
 
-    sql = compiled(session.statements[0])
-    assert sql.lstrip().upper().startswith("DELETE")
-    assert str(thread_id) in sql
-    assert str(user_id) in sql
+    assert len(session.statements) == 2
+    messages_sql = compiled(session.statements[0])
+    assert messages_sql.lstrip().upper().startswith("DELETE")
+    assert "DELETE FROM agent_thread_messages" in messages_sql
+    assert str(thread_id) in messages_sql
+    # 孩子那一步不带账号条件：归属判断只有会话行那一处。
+    assert str(user_id) not in messages_sql
+
+    row_sql = compiled(session.statements[1])
+    assert row_sql.lstrip().upper().startswith("DELETE")
+    assert "DELETE FROM agent_threads" in row_sql
+    assert str(thread_id) in row_sql
+    assert str(user_id) in row_sql
     assert (session.commits, session.rollbacks) == (1, 0)
 
 
 def test_deleting_someone_elses_thread_record_rolls_back_and_raises() -> None:
-    """删不到行时回滚并抛异常。"""
+    """删不到行时回滚并抛异常——回滚也撤销了先走的那一步会话历史删除。"""
 
     session = FakeSession(rowcount=0)
 
@@ -560,6 +646,63 @@ def test_deleting_someone_elses_thread_record_rolls_back_and_raises() -> None:
         )
 
     assert (session.commits, session.rollbacks) == (0, 1)
+
+
+def test_deleting_threads_removes_history_rows_before_the_ownership_rows() -> None:
+    """旧会话清理批量删：同一事务里先按 ``thread_id`` 删历史行，再删归属行。
+
+    顺序是仓库约定「先删依赖、再删主体」。库里没有外键约束，顺序反了或少一步都会留下一批没有
+    归属行的残余，而那种行在界面上查不到、也没人再删。
+    """
+
+    session = FakeSession(rowcount=2)
+    first, second = uuid4(), uuid4()
+
+    deleted = run(service_with(session).delete_threads([str(first), str(second)]))
+
+    assert deleted == 2
+    assert len(session.statements) == 2
+    messages_sql = compiled(session.statements[0])
+    assert "DELETE FROM agent_thread_messages" in messages_sql
+    assert str(first) in messages_sql and str(second) in messages_sql
+    rows_sql = compiled(session.statements[1])
+    assert "DELETE FROM agent_threads" in rows_sql
+    assert str(first) in rows_sql and str(second) in rows_sql
+    assert (session.commits, session.rollbacks) == (1, 0)
+
+
+def test_deleting_thread_messages_touches_only_the_history_table() -> None:
+    """孤儿清理按 ``thread_id`` 删历史行：不碰归属表，也不因脏 id 炸掉整个命令。
+
+    候选集有一侧来自 checkpointer，那边可能混进非 UUID 的值（手工写库或别的实验）；本表的
+    ``thread_id`` 列是 UUID 类型，那种值一行都不可能匹配，跳过它才是对的。
+    """
+
+    session = FakeSession(rowcount=3)
+    thread_id = uuid4()
+
+    deleted = run(
+        service_with(session).delete_thread_messages([str(thread_id), "手工塞进来的-id"])
+    )
+
+    assert deleted == 3
+    assert len(session.statements) == 1
+    sql = compiled(session.statements[0])
+    assert "DELETE FROM agent_thread_messages" in sql
+    assert "DELETE FROM agent_threads" not in sql
+    assert str(thread_id) in sql
+    assert "手工塞进来的-id" not in sql
+    assert (session.commits, session.rollbacks) == (1, 0)
+
+
+def test_deleting_thread_messages_with_no_candidate_does_not_query() -> None:
+    """候选集为空时不发查询：它是命令的最后一步，空集是常态。"""
+
+    session = FakeSession()
+
+    assert run(service_with(session).delete_thread_messages([])) == 0
+    assert session.statements == []
+    assert (session.commits, session.rollbacks) == (0, 0)
 
 
 def test_listing_threads_filters_by_owner_and_sorts_by_recent_activity() -> None:
@@ -617,6 +760,27 @@ def test_known_thread_ids_ignores_account_boundaries() -> None:
 
     assert known == set(ids)
     assert "user_id" not in compiled(session.statements[0]).lower()
+
+
+def test_message_thread_ids_reads_the_other_side_of_the_orphan_candidate_set() -> None:
+    """``list_message_thread_ids`` 读会话历史表里出现过的 id，不按账号过滤。
+
+    孤儿候选集是「没有归属记录的 ``thread_id``」，只看 checkpointer 会漏掉「只有历史表里有行」
+    的残余，这一侧就是为它们补的。去重交给 SQL（``DISTINCT``）：表里一个会话有很多行，
+    呼叫方只需要会话级的集合。
+    """
+
+    ids = [uuid4(), uuid4()]
+    session = FakeSession(scalars_result=ids)
+
+    recorded = run(service_with(session).list_message_thread_ids())
+
+    assert recorded == set(ids)
+    assert len(session.statements) == 1
+    sql = compiled(session.statements[0]).lower()
+    assert "agent_thread_messages" in sql
+    assert "distinct" in sql
+    assert "user_id" not in sql
 
 
 def test_title_keeps_a_short_question_verbatim() -> None:

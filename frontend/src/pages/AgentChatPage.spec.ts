@@ -32,6 +32,7 @@ const threadsApi = vi.hoisted(() => ({
   getAgentThreadMessages: vi.fn(),
   deleteAgentThread: vi.fn(),
   updateAgentThreadScope: vi.fn(),
+  updateAgentThreadModel: vi.fn(),
 }))
 
 vi.mock('../api/agent-threads', () => threadsApi)
@@ -452,7 +453,7 @@ describe('AgentChatPage', () => {
     wrapper.unmount()
   })
 
-  it('点击有效引用展示当时片段与当前正文，原文变化时明确提示', async () => {
+  it('点击有效引用展示当前文档与正文，原文变化时明确提示', async () => {
     const answer = `备份保留 7 天。[[${agentEvidence.citation_id}]]`
     scripted([
       agentStarted(),
@@ -488,9 +489,10 @@ describe('AgentChatPage', () => {
       expect.objectContaining({ documentId: agentEvidence.document_id }),
     )
     const dialog = document.body.querySelector('[role="dialog"]')
-    expect(dialog?.textContent).toContain('当时引用的片段')
-    expect(dialog?.textContent).toContain(agentEvidence.excerpt)
+    expect(dialog?.textContent).toContain('更新后的运行手册')
+    expect(dialog?.textContent).toContain('运行手册.md')
     expect(dialog?.textContent).toContain('原文已更新')
+    expect(dialog?.textContent).not.toContain('当时引用的片段')
     expect(dialog?.querySelector('article')?.textContent).toContain('备份保留 14 天。')
     expect(wrapper.get('.answer-body').text()).toContain('备份保留 7 天。')
     wrapper.unmount()
@@ -501,8 +503,6 @@ describe('AgentChatPage', () => {
       thread_id: THREAD_ID,
       turns: [{ question: '之前问过的', answer: '之前答过的', status: 'completed' }],
       scope: { mode: 'all' },
-      summarized: false,
-      summary: null,
     }
 
     /** 直接从一条会话深链进入，模拟刷新或点开分享链接。 */
@@ -711,18 +711,6 @@ describe('AgentChatPage', () => {
         wrapper.unmount()
       },
     )
-
-    it('历史被压缩过时页面上有说明', async () => {
-      threadsApi.getAgentThreadMessages.mockResolvedValue({
-        ...REPLAY,
-        summarized: true,
-        summary: 'Here is a summary…',
-      })
-      const { wrapper } = await mountThreadPage()
-
-      expect(wrapper.get('.history-note').text()).toContain('原始问答不再提供回看')
-      wrapper.unmount()
-    })
 
     it('删掉当前会话后清空界面并退回 /agent', async () => {
       threadsApi.getAgentThreadMessages.mockResolvedValue(REPLAY)

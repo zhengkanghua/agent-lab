@@ -5,6 +5,7 @@ import type { KnowledgeBaseSelection } from '@/api/knowledge-scope'
 import { presentAgentError, type AgentErrorPresentation } from '../model/agent-error'
 import { turnsFromReplay } from '../model/conversation'
 import { clearConversation, type ChatState } from './chat-state'
+import type { ChatModelChoice } from './useChatModel'
 
 /* 会话历史的读取、对账与「等那一轮跑完」。
  *
@@ -58,6 +59,9 @@ export interface UseThreadHistoryOptions {
   resetScope: () => void
   /** 打开会话成功后按回放里的范围落选择。 */
   adoptScope: (value: KnowledgeBaseSelection) => void
+  /** 与上面两条一一对应，服务模型选择那一个（同一个理由：回放里那份才是真的）。 */
+  resetModel: () => void
+  adoptModel: (value: ChatModelChoice | null) => void
   loadThreadMessages?: AgentThreadLoader
   runWatchIntervalMs?: number
   runRecoverAttempts?: number
@@ -69,6 +73,8 @@ export function useThreadHistory(state: ChatState, options: UseThreadHistoryOpti
     cancelRun,
     resetScope,
     adoptScope,
+    resetModel,
+    adoptModel,
     loadThreadMessages = getAgentThreadMessages,
     runWatchIntervalMs = RUN_WATCH_INTERVAL_MS,
     runRecoverAttempts = RUN_RECOVER_ATTEMPTS,
@@ -77,9 +83,6 @@ export function useThreadHistory(state: ChatState, options: UseThreadHistoryOpti
 
   const isLoadingThread = ref(false)
   const threadError = ref<AgentErrorPresentation | null>(null)
-  // 早期历史被压缩掉时为真。界面必须如实说明，不能让人以为看到的就是全部。
-  const isHistoryTruncated = ref(false)
-  const historySummary = ref<string | null>(null)
   const historySyncError = ref<string | null>(null)
   // 服务端报告的「这个会话有在途运行」。刷新或切回来时，它是唯一能区分「这一轮没有回答」与
   // 「这一轮还在生成」的渠道：在途那一轮还没落库，从消息里看不出来。
@@ -102,8 +105,6 @@ export function useThreadHistory(state: ChatState, options: UseThreadHistoryOpti
   function resetHistory(): void {
     watchSequence += 1
     threadError.value = null
-    isHistoryTruncated.value = false
-    historySummary.value = null
     historySyncError.value = null
     awaitingRunId.value = null
     isReconnecting.value = false
@@ -143,9 +144,11 @@ export function useThreadHistory(state: ChatState, options: UseThreadHistoryOpti
    * 接上轮询：漏了的话界面会停在「禁用发送」上而且没人去解开它。
    */
   function applyReplay(replay: AgentThreadMessagesDto, targetThreadId: string): void {
-    state.turns.value = turnsFromReplay(replay.turns ?? [], HISTORY_TRACE_NOTE)
-    isHistoryTruncated.value = replay.summarized
-    historySummary.value = replay.summary ?? null
+    state.turns.value = turnsFromReplay(
+      replay.turns ?? [],
+      HISTORY_TRACE_NOTE,
+      replay.memory_boundary_run_id ?? null,
+    )
     awaitingRunId.value = replay.active_run_id ?? null
     if (awaitingRunId.value !== null) void watchPendingRun(targetThreadId)
   }
@@ -172,9 +175,11 @@ export function useThreadHistory(state: ChatState, options: UseThreadHistoryOpti
         // 生成新的 id，transcript 以 turn.id 为 key，整段对话会被拆掉重建、滚动位置被反复重置
         // （表现是用户往下滚、下一次轮询又把他拉回去）。等它结束后一次性按回放渲染。
         if ((replay.active_run_id ?? null) !== null) continue
-        state.turns.value = turnsFromReplay(replay.turns ?? [], HISTORY_TRACE_NOTE)
-        isHistoryTruncated.value = replay.summarized
-        historySummary.value = replay.summary ?? null
+        state.turns.value = turnsFromReplay(
+          replay.turns ?? [],
+          HISTORY_TRACE_NOTE,
+          replay.memory_boundary_run_id ?? null,
+        )
         awaitingRunId.value = null
         return
       } catch {
@@ -253,6 +258,7 @@ export function useThreadHistory(state: ChatState, options: UseThreadHistoryOpti
     clearConversation(state)
     resetHistory()
     resetScope()
+    resetModel()
     isLoadingThread.value = true
 
     try {
@@ -262,6 +268,12 @@ export function useThreadHistory(state: ChatState, options: UseThreadHistoryOpti
       state.threadId.value = targetThreadId
       applyReplay(replay, targetThreadId)
       adoptScope(replay.scope)
+      // 会话当前的选择：只回 id 与它在目录里的名字，可不可用由选择器拿刚拉到的目录自己判。
+      adoptModel(
+        replay.llm_model
+          ? { id: replay.llm_model.id, displayName: replay.llm_model.display_name ?? null }
+          : null,
+      )
     } catch (error) {
       if (loadId !== loadSequence || isAbortError(error)) return
 
@@ -293,8 +305,6 @@ export function useThreadHistory(state: ChatState, options: UseThreadHistoryOpti
   return {
     isLoadingThread,
     threadError,
-    isHistoryTruncated,
-    historySummary,
     historySyncError,
     awaitingRunId,
     isAwaitingRun,

@@ -1,8 +1,9 @@
 import { onScopeDispose, watch } from 'vue'
 import { stopAgentRun, streamAgentChat } from '@/api/agent-chat'
-import { getAgentThreadMessages, updateAgentThreadScope } from '@/api/agent-threads'
+import { getAgentThreadMessages, updateAgentThreadModel, updateAgentThreadScope } from '@/api/agent-threads'
 import { validateMessage } from '../model/agent-validation'
 import { clearConversation, createChatState } from './chat-state'
+import { useChatModel } from './useChatModel'
 import { useChatScope } from './useChatScope'
 import { useChatStream, type AgentChatStream, type AgentRunStopper } from './useChatStream'
 import { useThreadHistory, type AgentThreadLoader } from './useThreadHistory'
@@ -21,6 +22,7 @@ export interface UseAgentChatOptions {
   runRecoverIntervalMs?: number
   getScopeError?: () => string | null
   saveScope?: typeof updateAgentThreadScope
+  saveModel?: typeof updateAgentThreadModel
   onThreadCreated?: (threadId: string) => void
 }
 
@@ -29,7 +31,8 @@ export interface UseAgentChatOptions {
  *
  *   - `useChatStream`：一次运行的生命周期（发起、读事件、停止、取消、重发）；
  *   - `useThreadHistory`：历史读取、跑完后的对账、等待在途运行、断流回退；
- *   - `useChatScope`：会话的知识库范围与逐次保存。
+ *   - `useChatScope`：会话的知识库范围与逐次保存；
+ *   - `useChatModel`：会话的模型选择、可选目录与它的失效态。
  *
  * 拆开的原因不是「文件太长」，而是原来那一个文件同时管着七件事，改任何一件都要在一个 635 行
  * 的文件里穿行。三者共享的只有 chat-state 里那五个 ref（草稿、轮次、状态、输入错误、会话 id），
@@ -49,6 +52,7 @@ export function useAgentChat({
   runRecoverIntervalMs,
   getScopeError = () => null,
   saveScope = updateAgentThreadScope,
+  saveModel = updateAgentThreadModel,
   onThreadCreated,
 }: UseAgentChatOptions = {}) {
   const state = createChatState()
@@ -58,19 +62,26 @@ export function useAgentChat({
     saveScope,
   })
 
+  const model = useChatModel({
+    getThreadId: () => state.threadId.value,
+    saveModel,
+  })
+
   const history = useThreadHistory(state, {
     // 切会话等于放弃在途的那一轮。用闭包取，因为两边本来就是一体的：
     // 历史要停掉流，流要读历史（对账、断流回退）。
     cancelRun: () => stream.cancelActiveRun(),
     resetScope: () => scope.reset(),
     adoptScope: scope.adopt,
+    resetModel: () => model.reset(),
+    adoptModel: model.adopt,
     loadThreadMessages,
     runWatchIntervalMs,
     runRecoverAttempts,
     runRecoverIntervalMs,
   })
 
-  const stream = useChatStream(state, scope, history, {
+  const stream = useChatStream(state, scope, model, history, {
     stream: streamImpl,
     stopRun,
     getScopeError,
@@ -96,6 +107,8 @@ export function useAgentChat({
     clearConversation(state)
     scope.reset()
     scope.adopt({ mode: 'all' })
+    model.reset()
+    model.adopt(null)
   }
 
   onScopeDispose(() => {
@@ -111,14 +124,21 @@ export function useAgentChat({
     threadId: state.threadId,
     isLoadingThread: history.isLoadingThread,
     threadError: history.threadError,
-    isHistoryTruncated: history.isHistoryTruncated,
-    historySummary: history.historySummary,
     historySyncError: history.historySyncError,
     synchronizeHistory: history.synchronizeHistory,
     selection: scope.selection,
     savingScope: scope.savingScope,
     scopeSaveError: scope.scopeSaveError,
     updateSelection: scope.updateSelection,
+    modelChoice: model.choice,
+    availableModels: model.availableModels,
+    catalogLoading: model.catalogLoading,
+    catalogError: model.catalogError,
+    isModelChoiceUnavailable: model.isChoiceUnavailable,
+    savingModel: model.savingModel,
+    modelSaveError: model.modelSaveError,
+    updateModelChoice: model.updateChoice,
+    refreshModelCatalog: model.refreshCatalog,
     remainingCharacters: stream.remainingCharacters,
     canSend: stream.canSend,
     canStop: stream.canStop,

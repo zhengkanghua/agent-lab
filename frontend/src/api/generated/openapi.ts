@@ -688,6 +688,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/llm-providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 列出上游渠道
+         * @description 返回全部渠道配置（含已停用的）；凭据只以「已配置 / 未配置」出现。
+         */
+        get: operations["list_providers_llm_providers_get"];
+        put?: never;
+        /**
+         * 新增上游渠道
+         * @description 新增一条渠道；凭据明文只出现在本次请求里，加密后落库。
+         */
+        post: operations["create_provider_llm_providers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/llm-providers/{provider_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 读取上游渠道
+         * @description 读取一条渠道；不返回凭据。
+         */
+        get: operations["get_provider_llm_providers__provider_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * 修改上游渠道
+         * @description 修改名称、接入类型、地址、启用位或凭据；凭据留空表示不改动。
+         */
+        patch: operations["update_provider_llm_providers__provider_id__patch"];
+        trace?: never;
+    };
+    "/llm-models/available": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 列出可选的模型
+         * @description 列出「自身启用且所属渠道也启用」的模型，供会话里的模型选择器使用。
+         *
+         *     任何已登录账号都能读（它是用户挑模型用的，不是管理动作）。停用一条渠道之后它下面的模型
+         *     自动从这里消失，再把渠道启用回来它们又自动回来——可用性是每次查询现算的。
+         */
+        get: operations["list_available_models_llm_models_available_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/llm-models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 列出可用模型
+         * @description 列出全部可用模型（含已停用的），带所属渠道的展示名与启用位。
+         *
+         *     含停用的与所属渠道的状态一起给，管理员才看得出「这条模型自己开着、却选不到」是渠道停了。
+         */
+        get: operations["list_models_llm_models_get"];
+        put?: never;
+        /**
+         * 新增可用模型
+         * @description 在一个上游渠道下面新增一条可用模型；目录里还没有默认时它可能自动成为默认。
+         */
+        post: operations["create_model_llm_models_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/llm-models/{model_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * 修改可用模型
+         * @description 修改上游模型名、展示名、上下文窗口、所属渠道、启用位或默认标记。
+         *
+         *     改挂渠道要求目标渠道处于启用状态；停用当前默认模型、把它所属的渠道停用、以及直接取消它的
+         *     默认标记都会被拒——不变量的七条规则见 ``LlmModelService`` 的模块说明。
+         */
+        patch: operations["update_model_llm_models__model_id__patch"];
+        trace?: never;
+    };
     "/scheduled-jobs/task-types": {
         parameters: {
             query?: never;
@@ -1067,9 +1187,11 @@ export interface paths {
         };
         /**
          * 读取一个会话的历史消息
-         * @description 回放某个会话已经存下的问答，供前端在续聊前把界面补齐。不分页：历史被压缩中间件封在有限条数内。
+         * @description 回放某个会话已经存下的问答，供前端在续聊前把界面补齐。不分页：一次会话的消息行本来就有限。
          *
-         *     `summarized` 为真表示早期历史已被压缩成摘要、原始消息已不存在，此时 `turns` 不是全部历史，界面必须如实说明。
+         *     读的是我们自己的会话历史表，不是 checkpointer：那份记录写完不再改，模型上下文怎么压缩都不影响它。
+         *
+         *     `memory_boundary_run_id` 是「模型只保留了摘要」那条边界的标记，为 null 表示历史没有被压缩过。
          */
         get: operations["get_agent_thread_messages_agent_threads__thread_id__messages_get"];
         put?: never;
@@ -1078,6 +1200,28 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/agent/threads/{thread_id}/model": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * 保存会话的模型选择，只影响后续提问
+         * @description 把用户选的模型记在会话上，后续提问默认用它（没选过就用目录里的默认模型）。请求里临时带的模型也会写回这里。
+         *
+         *     **这一步不判这个模型当前可不可用**：可用性只在提问开始之前那道门上判，所以存一个已经失效的选择照样成功，由界面如实提示重选。
+         */
+        patch: operations["update_agent_thread_model_agent_threads__thread_id__model_patch"];
         trace?: never;
     };
     "/agent/threads/{thread_id}/scope": {
@@ -1322,6 +1466,11 @@ export interface components {
             thread_id?: string | null;
             /** @description 本次提交的会话知识库选择；省略沿用已保存选择，新会话默认所有启用知识库。 */
             scope?: components["schemas"]["KnowledgeBaseSelection"] | null;
+            /**
+             * Llm Model Id
+             * @description 这一轮要用的模型（取自选择列表的 id）；省略沿用会话里保存的选择，会话也没选过就用默认模型。带上它就同时写回会话行（改了就是记住）。当轮生效的那一份会在开始运行之前解析：id 在目录里不存在返回 404；已停用（含所属渠道停用）返回 409，两种情况模型都不会被调用。
+             */
+            llm_model_id?: string | null;
         };
         /**
          * AgentDefaultPromptResponse
@@ -1472,6 +1621,8 @@ export interface components {
             /** Run Id */
             run_id?: string | null;
             scope?: components["schemas"]["ResolvedKnowledgeBaseScope"] | null;
+            /** @description 这一轮实际使用的模型，取自那一轮运行元数据里的冻结快照：展示名与上下文窗口都是**当时**的值，条目后来改名或停用不改写已经发生过的那几轮。为 null 表示这一轮没盖下这个快照。 */
+            llm_model?: components["schemas"]["ResolvedLlmModel"] | null;
             /**
              * Status
              * @default incomplete
@@ -1608,9 +1759,11 @@ export interface components {
          * AgentThreadMessagesResponse
          * @description ``GET /agent/threads/{thread_id}/messages`` 的响应。
          *
-         *     ``summarized`` 与 ``summary`` 一起表达「早期历史已经不在了」这件事，前端必须如实显示，
-         *     不能把回放当成完整历史：``SummarizationMiddleware`` 的压缩是破坏性的，被压掉的原始消息
-         *     真的不在 checkpointer 里了，模型看到的也只是那段摘要。
+         *     数据源是业务表 ``agent_thread_messages``（见 ADR 0044），不是 checkpointer：用户看到的记录
+         *     写完不再改，压缩策略怎么改都不影响它。
+         *
+         *     ``memory_boundary_run_id`` 是唯一的「早期历史已经不在模型上下文里」的线索：它指向
+         *     「模型只剩摘要」那一段的最后一轮，界面据此画那条分界线。**不回摘要正文**——界面不展示它。
          */
         AgentThreadMessagesResponse: {
             /**
@@ -1623,33 +1776,73 @@ export interface components {
              * Active Run Id
              * @description 当前在途运行的 id；为空表示这个会话没有运行在跑。
              *
-             *     它只有一个用途：刷新页面后前端要知道「上一轮还在跑」——否则会出现自相矛盾的组合：界面显示「这一轮没有留下回答」，用户再发一条却被服务端以「还在生成中」拒绝。它不是把运行状态暴露给用户看，也不代表运行会出现在 ``turns`` 里（在途运行的输出还没落库）。
+             *     它只有一个用途：刷新页面后前端要知道「上一轮还在跑」——否则会出现自相矛盾的组合：界面显示「这一轮没有留下回答」（在途那一轮还没落表），用户再发一条却被服务端以「还在生成中」拒绝。它不是把运行状态暴露给用户看，也不代表运行会出现在 ``turns`` 里。
              */
             active_run_id?: string | null;
             /** @description 会话当前保存的选择，不改写历史轮次的实际范围。 */
             scope: components["schemas"]["KnowledgeBaseSelection"];
+            /** @description 会话当前保存的模型选择；为 null 表示这个会话没选过模型，提问时用默认模型。每个轮次实际用的是哪一个，看 `turns[].llm_model`。 */
+            llm_model?: components["schemas"]["AgentThreadModel"] | null;
             /**
              * Turns
              * @description 按时间顺序的历史轮次；不包含摘要那条伪提问。
              */
             turns: components["schemas"]["AgentReplayTurn"][];
             /**
-             * Summarized
-             * @description 早期历史是否已被压缩成摘要；为真表示 turns 不是全部历史。
+             * Memory Boundary Run Id
+             * @description 模型只保留了摘要的那一段的最后一轮运行 id：这一轮及其之前的轮次已不在模型上下文里（界面据此画那条分界线）。为 null 表示历史没有被压缩过。
+             *
+             *     同一会话里每次压缩都留下一行摘要，但后来的压缩可能沿用更早那条的标记，所以这一项取的是**最近**那一行的值。
              */
-            summarized: boolean;
+            memory_boundary_run_id?: string | null;
+        };
+        /**
+         * AgentThreadModel
+         * @description 会话当前保存的模型选择：id 连它此刻在目录里的展示名。
+         *
+         *     为什么要带展示名：已停用（或不存）的那个条目**不在可选列表里**，选择器要把「原来是 xxx」
+         *     说清楚就只能从会话侧读回来。展示名为空只有一种情况——目录里已经查不到这个 id；
+         *     ``llm_models`` 没有删除入口，正常到不了这里。
+         *
+         *     它**不回答「这个选择现在能不能用」**：可用性是每次现算的（自身启用且所属渠道启用），
+         *     以选择器打开时重新拉的那份目录为准；把这个判断也存进响应里就成了第二个事实源，
+         *     而且它会随响应变陈。
+         */
+        AgentThreadModel: {
             /**
-             * Summary
-             * @description 压缩后的摘要正文，仅在 summarized 为真时存在。原样透传，可能带有上游库加的英文前缀。
+             * Id
+             * Format: uuid
+             * @description 会话当前选择的可用模型 id。
              */
-            summary?: string | null;
+            id: string;
+            /**
+             * Display Name
+             * @description 这个 id 此刻在目录里的展示名（条目填过就是它，没填就是上游模型名）；目录里查不到这一条时为 null，界面只能给出通用提示。
+             */
+            display_name?: string | null;
+        };
+        /**
+         * AgentThreadModelSelection
+         * @description 保存会话模型选择的请求体与响应体，只有 id。
+         *
+         *     保存**不校验这个模型当前可不可用**：可用性只在「开始运行之前解析当轮模型」那道门上判，
+         *     否则同一个失效选择会从保存与提问两处各拿到一条不一样的提示。所以把当前已失效的 id 存进
+         *     来照样成功。
+         */
+        AgentThreadModelSelection: {
+            /**
+             * Llm Model Id
+             * Format: uuid
+             * @description 要记住的可用模型 id；它必须来自选择列表。
+             */
+            llm_model_id: string;
         };
         /**
          * AgentThreadSummary
          * @description 会话列表里的一行。
          *
-         *     刻意不含消息内容、轮数和「最后一条回答」：那些要么是 checkpointer 里已有内容的副本
-         *     （会因历史压缩而与真实上下文不一致），要么需要额外维护一个容易飘的计数列。
+         *     刻意不含消息内容、轮数和「最后一条回答」：那些要么是会话历史表里已有内容的副本，
+         *     要么需要额外维护一个容易飘的计数列。
          *     列表只承担导航，认出「是哪个会话」够用。
          */
         AgentThreadSummary: {
@@ -1815,6 +2008,33 @@ export interface components {
              * @description 账号在 PostgreSQL 中首次写入的时间。
              */
             created_at: string;
+        };
+        /**
+         * AvailableLlmModelResponse
+         * @description 用户选择列表里的一条：只回选择器要用的字段，且只包含当前可用的模型。
+         */
+        AvailableLlmModelResponse: {
+            /**
+             * Id
+             * Format: uuid
+             * @description 可用模型 id；会话里存的就是它。
+             */
+            id: string;
+            /**
+             * Display Name
+             * @description 选择器上显示的名字：条目填过展示名就是它，没填就是上游模型名。
+             */
+            display_name: string;
+            /**
+             * Context Window
+             * @description 上游模型的上下文窗口 token 数。
+             */
+            context_window: number;
+            /**
+             * Provider Name
+             * @description 所属上游渠道的展示名称，用于在选择器里分组显示。
+             */
+            provider_name: string;
         };
         /** Body_auth_cookie_login_auth_login_post */
         Body_auth_cookie_login_auth_login_post: {
@@ -2058,8 +2278,6 @@ export interface components {
             title: string;
             /** Content Hash */
             content_hash: string;
-            /** Excerpt */
-            excerpt: string;
             /** Source Name */
             source_name: string | null;
             /** Upload Filename */
@@ -2073,11 +2291,6 @@ export interface components {
              * @enum {string}
              */
             kind: "match" | "document";
-            /**
-             * Truncated
-             * @default false
-             */
-            truncated: boolean;
         };
         /** DocumentPreview */
         DocumentPreview: {
@@ -2599,6 +2812,303 @@ export interface components {
              */
             is_active?: boolean | null;
         };
+        /**
+         * LlmModelCreateRequest
+         * @description 在一个上游渠道下面新增一条可用模型。
+         */
+        LlmModelCreateRequest: {
+            /**
+             * Provider Id
+             * Format: uuid
+             * @description 所属上游渠道 id。
+             */
+            provider_id: string;
+            /**
+             * Upstream Model Name
+             * @description 上游那一侧真实存在的模型名，直接交给模型客户端；同一渠道内不可重复。
+             */
+            upstream_model_name: string;
+            /**
+             * Display Name
+             * @description 展示名称；留空表示这条模型没有展示名，界面上回落到上游模型名。
+             */
+            display_name?: string | null;
+            /**
+             * Context Window
+             * @description 上游模型的上下文窗口 token 数，必填。填你确认过的最小值：压缩什么时候触发按它的比例算，一轮里单次工具输出能放多长也是按它的比例算的。填大了请求可能超过上游的真实窗口、整轮失败；填小了会提前压缩，并更早截断工具返回的内容。
+             */
+            context_window: number;
+            /**
+             * Is Default
+             * @description 是否设为默认（没选模型时用的那一条）。只能打在一个保存后就可用的模型上：自身启用且所属渠道也启用。
+             * @default false
+             */
+            is_default: boolean;
+            /**
+             * Enabled
+             * @description 创建后是否启用；停用的模型保留配置，只是不再出现在可选列表里。
+             * @default true
+             */
+            enabled: boolean;
+        };
+        /**
+         * LlmModelErrorResponse
+         * @description 可用模型管理 API 的稳定、脱敏错误结构。
+         */
+        LlmModelErrorResponse: {
+            /**
+             * Code
+             * @description 供前端稳定识别的错误代码。
+             */
+            code: string;
+            /**
+             * Detail
+             * @description 不含数据库异常文本的安全说明。
+             */
+            detail: string;
+            /**
+             * Retryable
+             * @description 相同请求稍后重试是否可能成功。
+             */
+            retryable: boolean;
+        };
+        /**
+         * LlmModelResponse
+         * @description 后台管理列表里的一条可用模型（含已停用的），带所属渠道的展示名与启用位。
+         */
+        LlmModelResponse: {
+            /**
+             * Id
+             * Format: uuid
+             * @description 可用模型 id。
+             */
+            id: string;
+            /**
+             * Provider Id
+             * Format: uuid
+             * @description 所属上游渠道 id。
+             */
+            provider_id: string;
+            /**
+             * Provider Name
+             * @description 所属上游渠道的展示名称。
+             */
+            provider_name: string;
+            /**
+             * Provider Enabled
+             * @description 所属渠道是否启用。它不在模型这一行上，是查渠道查出来的：用户能不能选到这条模型，由它与这里的 enabled 相与决定——停用渠道时不会去逐个改模型的启用位。
+             */
+            provider_enabled: boolean;
+            /**
+             * Upstream Model Name
+             * @description 上游那一侧真实存在的模型名。
+             */
+            upstream_model_name: string;
+            /**
+             * Display Name
+             * @description 展示名称；为空表示这条模型没有展示名，界面上回落到上游模型名。
+             */
+            display_name: string | null;
+            /**
+             * Context Window
+             * @description 上游模型的上下文窗口 token 数。
+             */
+            context_window: number;
+            /**
+             * Is Default
+             * @description 是否是没选模型时使用的默认条目；全目录最多一条为真。
+             */
+            is_default: boolean;
+            /**
+             * Enabled
+             * @description 这条模型自己是否启用；停用的保留配置。
+             */
+            enabled: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             * @description 创建时间，UTC。
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             * @description 最近一次实际修改时间，UTC。
+             */
+            updated_at: string;
+        };
+        /**
+         * LlmModelUpdateRequest
+         * @description 修改一条可用模型；未提供的字段保持不变。
+         */
+        LlmModelUpdateRequest: {
+            /**
+             * Provider Id
+             * @description 新的所属上游渠道 id；不传表示不修改。目标渠道必须是启用状态。
+             */
+            provider_id?: string | null;
+            /**
+             * Upstream Model Name
+             * @description 新的上游模型名；不传表示不修改。同一渠道内不可与其它条目重复。
+             */
+            upstream_model_name?: string | null;
+            /**
+             * Display Name
+             * @description 新的展示名称；传空字符串表示改成「没有展示名」（界面回落到上游模型名），不传表示不修改。
+             */
+            display_name?: string | null;
+            /**
+             * Context Window
+             * @description 上游模型的上下文窗口 token 数，必填。填你确认过的最小值：压缩什么时候触发按它的比例算，一轮里单次工具输出能放多长也是按它的比例算的。填大了请求可能超过上游的真实窗口、整轮失败；填小了会提前压缩，并更早截断工具返回的内容。
+             */
+            context_window?: number | null;
+            /**
+             * Is Default
+             * @description 是否设为默认；不传表示不修改。置真要求它保存后仍可用；置假只对本来就不是默认的条目有效——当前默认的标记不能在这里取消，要先把它换到别的条目上。
+             */
+            is_default?: boolean | null;
+            /**
+             * Enabled
+             * @description 是否启用；不传表示不修改。当前默认模型不能被停用。
+             */
+            enabled?: boolean | null;
+        };
+        /**
+         * LlmProvider
+         * @description 可选的生成式模型接入方式。
+         *
+         *     两个分支的差别只在「用哪个客户端类、认证怎么带」，对上层完全透明：模型目录里的一行
+         *     渠道存的就是它（``llm_providers.provider``），构造客户端的 ``agent.chat_model.build_chat_model``
+         *     按它分支；``schemas.llm_providers`` 与 ``api/llm_providers`` 只把它当取值读写，其余代码
+         *     只拿到 ``BaseChatModel``。新增第三种 provider 时只改构造那一个函数。
+         * @enum {string}
+         */
+        LlmProvider: "openai_compatible" | "ollama";
+        /**
+         * LlmProviderCreateRequest
+         * @description 新增一条上游渠道；凭据只以明文出现在这一次请求里。
+         */
+        LlmProviderCreateRequest: {
+            /**
+             * Name
+             * @description 渠道展示名称，只用于后台识别，不要求唯一。
+             */
+            name: string;
+            /** @description 接入类型，决定构造客户端走哪个分支：openai_compatible 必须配凭据，ollama 允许留空。 */
+            provider: components["schemas"]["LlmProvider"];
+            /**
+             * Base Url
+             * Format: uri
+             * @description 上游 HTTP API 根地址；OpenAI 兼容中转站通常需要带 /v1 后缀。
+             */
+            base_url: string;
+            /**
+             * Credential
+             * @description 接入凭据明文；后端加密后落库，此后任何读取接口都不再返回它。不需要凭据的接入类型可以留空。
+             */
+            credential?: string | null;
+            /**
+             * Enabled
+             * @description 创建后是否启用；停用的渠道保留配置，只是不参与选择。
+             * @default true
+             */
+            enabled: boolean;
+        };
+        /**
+         * LlmProviderErrorResponse
+         * @description 上游渠道管理 API 的稳定、脱敏错误结构。
+         */
+        LlmProviderErrorResponse: {
+            /**
+             * Code
+             * @description 供前端稳定识别的错误代码。
+             */
+            code: string;
+            /**
+             * Detail
+             * @description 不含凭据、密钥或数据库异常文本的安全说明。
+             */
+            detail: string;
+            /**
+             * Retryable
+             * @description 相同请求稍后重试是否可能成功。
+             */
+            retryable: boolean;
+        };
+        /**
+         * LlmProviderResponse
+         * @description 一条上游渠道的公开视图：没有任何凭据字段，只有「有没有存过」。
+         */
+        LlmProviderResponse: {
+            /**
+             * Id
+             * Format: uuid
+             * @description 上游渠道 id。
+             */
+            id: string;
+            /**
+             * Name
+             * @description 渠道展示名称。
+             */
+            name: string;
+            /** @description 接入类型：openai_compatible 或 ollama。 */
+            provider: components["schemas"]["LlmProvider"];
+            /**
+             * Base Url
+             * @description 上游 HTTP API 根地址。
+             */
+            base_url: string;
+            /**
+             * Enabled
+             * @description 是否启用；停用的渠道保留配置。
+             */
+            enabled: boolean;
+            /**
+             * Credential Configured
+             * @description 这条渠道是否存过凭据。它只表示「有没有存过」——返回的永远不是凭据本身，也不代表那份凭据仍然有效。
+             */
+            credential_configured: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             * @description 创建时间，UTC。
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             * @description 最近一次实际修改时间，UTC。
+             */
+            updated_at: string;
+        };
+        /**
+         * LlmProviderUpdateRequest
+         * @description 修改一条上游渠道；未提供的字段保持不变，凭据留空表示不改。
+         */
+        LlmProviderUpdateRequest: {
+            /**
+             * Name
+             * @description 新的展示名称；不传表示不修改。
+             */
+            name?: string | null;
+            /** @description 新的接入类型；不传表示不修改。改成 openai_compatible 时必须同时补上凭据，除非这条渠道已经存过凭据。 */
+            provider?: components["schemas"]["LlmProvider"] | null;
+            /**
+             * Base Url
+             * @description 新的上游地址；不传表示不修改。
+             */
+            base_url?: string | null;
+            /**
+             * Credential
+             * @description 新的接入凭据明文；留空（不传或空字符串）表示**不改动**已存凭据，不是清空凭据。
+             */
+            credential?: string | null;
+            /**
+             * Enabled
+             * @description 是否启用；不传表示不修改。
+             */
+            enabled?: boolean | null;
+        };
         /** ManagedDocument */
         ManagedDocument: {
             /**
@@ -2915,6 +3425,35 @@ export interface components {
             mode: "all" | "selected";
             /** Knowledge Bases */
             knowledge_bases: components["schemas"]["KnowledgeBaseSummary"][];
+        };
+        /**
+         * ResolvedLlmModel
+         * @description 当轮生效的模型条目：身份、展示名与上下文窗口。
+         *
+         *     它同时是**运行上下文里那一项**与**提问消息上那份冻结快照**的形状：解析一次、两边共用，
+         *     回放与接手续跑读的就是它。
+         *
+         *     展示名在这里已经落过回落（条目填过就用它，没填就是上游模型名），所以一定非空；快照必须
+         *     **自足**——条目后来改名或停用不改写已经发生过的那几轮，而接手那一轮也不许回查目录。
+         *     窗口跟着一起走是同样的理由：它自己必须是完整的，运行期拿它算压缩比例，不依赖任何回查。
+         */
+        ResolvedLlmModel: {
+            /**
+             * Id
+             * Format: uuid
+             * @description 可用模型 id。
+             */
+            id: string;
+            /**
+             * Display Name
+             * @description 当轮那个时刻的名字：条目填过展示名就是它，没填就是上游模型名。
+             */
+            display_name: string;
+            /**
+             * Context Window
+             * @description 当轮那个时刻的上下文窗口 token 数。冻结下来是因为运行期要按它算压缩比例，而接手续跑那一轮不许回查目录。
+             */
+            context_window: number;
         };
         /** ReviewDecision */
         ReviewDecision: {
@@ -6245,6 +6784,440 @@ export interface operations {
             };
         };
     };
+    list_providers_llm_providers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProviderResponse"][];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProviderErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProviderErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProviderErrorResponse"];
+                };
+            };
+        };
+    };
+    create_provider_llm_providers_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LlmProviderCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProviderResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProviderErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProviderErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProviderErrorResponse"];
+                };
+            };
+        };
+    };
+    get_provider_llm_providers__provider_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProviderResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProviderErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProviderErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProviderErrorResponse"];
+                };
+            };
+        };
+    };
+    update_provider_llm_providers__provider_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LlmProviderUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProviderResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProviderErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProviderErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProviderErrorResponse"];
+                };
+            };
+        };
+    };
+    list_available_models_llm_models_available_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AvailableLlmModelResponse"][];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmModelErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmModelErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmModelErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmModelErrorResponse"];
+                };
+            };
+        };
+    };
+    list_models_llm_models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmModelResponse"][];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmModelErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmModelErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmModelErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmModelErrorResponse"];
+                };
+            };
+        };
+    };
+    create_model_llm_models_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LlmModelCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmModelResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmModelErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmModelErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmModelErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmModelErrorResponse"];
+                };
+            };
+        };
+    };
+    update_model_llm_models__model_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LlmModelUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmModelResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmModelErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmModelErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmModelErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmModelErrorResponse"];
+                };
+            };
+        };
+    };
     task_types_scheduled_jobs_task_types_get: {
         parameters: {
             query?: never;
@@ -7415,6 +8388,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentThreadMessagesResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentChatErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentChatErrorResponse"];
+                };
+            };
+        };
+    };
+    update_agent_thread_model_agent_threads__thread_id__model_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentThreadModelSelection"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentThreadModelSelection"];
                 };
             };
             /** @description Not Found */

@@ -58,8 +58,6 @@ describe('agent threads API', () => {
           thread_id: THREAD_ID,
           turns: [{ question: '没答成的问题', answer: '', status: 'incomplete' }],
           scope: { mode: 'all' },
-          summarized: false,
-          summary: null,
         }),
       ),
     )
@@ -85,7 +83,6 @@ describe('agent threads API', () => {
             },
           ],
           scope: { mode: 'all' },
-          summarized: false,
         }),
       ),
     )
@@ -156,7 +153,6 @@ describe('agent threads API', () => {
           thread_id: THREAD_ID,
           scope: { mode: 'selected', knowledge_base_ids: [] },
           turns: [],
-          summarized: false,
         }),
       ),
     )
