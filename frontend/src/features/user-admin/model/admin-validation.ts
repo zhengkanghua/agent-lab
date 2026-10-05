@@ -1,11 +1,15 @@
 /**
  * 账号管理表单的本地校验。纯函数，不做任何网络请求。
  *
- * 密码长度常量统一定义在 `shared/model/password.ts`（账号自助改密与管理端镜像的是
- * 同一套后端 Field 约束），本文件只保留管理端表单自己的校验函数。
+ * 密码长度常量与那句长度提示统一定义在 `shared/model/password.ts`（账号自助改密与管理端
+ * 镜像的是同一套后端 Field 约束），本文件只保留管理端表单自己的校验函数。
  */
 
-import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/shared/model/password'
+import {
+  PASSWORD_LENGTH_MESSAGE,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+} from '@/shared/model/password'
 
 /** 目录的三种加载态。ready 之外的两种都不渲染表格。 */
 export type DirectoryLoadState = 'loading' | 'ready' | 'error'
@@ -26,7 +30,7 @@ export function validateCredentials(email: string, password: string): string {
 
 export function validatePassword(password: string): string {
   if (password.length < PASSWORD_MIN_LENGTH || password.length > PASSWORD_MAX_LENGTH) {
-    return `密码长度需要在 ${PASSWORD_MIN_LENGTH} 到 ${PASSWORD_MAX_LENGTH} 个字符之间。`
+    return PASSWORD_LENGTH_MESSAGE
   }
   return ''
 }

@@ -1,8 +1,10 @@
 import type { ApiError } from '@/api/client'
+import { PASSWORD_POLICY_MESSAGE } from '@/shared/model/password'
 
 const ACCOUNT_ERROR_COPY: Record<string, string> = {
   current_password_invalid: '当前密码不正确。',
-  invalid_password: '密码必须包含 12 到 128 个字符，且不能与登录邮箱完全相同。',
+  // 与账号管理端那份用同一句：同一条规则，两个入口不该有两种说法。
+  invalid_password: PASSWORD_POLICY_MESSAGE,
   environment_admin_protected: '环境托管超级用户必须通过服务端密钥修改。',
   user_admin_database_unavailable: '账号管理服务暂时不可用，请稍后重试。',
   // 「服务器内部错误」是给排查的人看的，不是给改密码的人看的：说清是哪一块出了状况，

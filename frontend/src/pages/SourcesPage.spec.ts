@@ -162,9 +162,11 @@ describe('SourcesPage', () => {
       }),
     )
     const page = await mountPage()
-    expect(page.get('[role="status"]').text()).toContain('正在读取来源')
+    expect(page.text()).toContain('正在读取来源')
     finishList([])
     await flushPromises()
-    expect(page.text()).toContain('暂无来源')
+    // 空态要说清「还没有」以及下一步在哪，不只报一句系统的行为。
+    expect(page.text()).toContain('还没有来源')
+    expect(page.text()).toContain('FreshRSS 同步')
   })
 })

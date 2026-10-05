@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { RefreshCw } from '@lucide/vue'
 import BaseSpinner from '@/shared/ui/BaseSpinner.vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import type { JobRunDto } from '@/api/scheduled-jobs'
 import { useJobRuns } from '../composables/useJobRuns'
 import {
@@ -75,9 +76,17 @@ function refresh(): void {
       <BaseSpinner :size="18" />
       正在读取执行历史
     </div>
-    <div v-else-if="query.isError.value" class="history-state history-state-error" role="alert">
-      执行历史读取失败，请稍后刷新重试。
-    </div>
+    <!-- 读失败给「重试」而不只是说一句：原先这里只有一行「请稍后刷新重试」，
+         而这个面板自己的标题栏就挂着刷新键——让用户去别处找入口不算入口。
+         换成全站统一的错误面板形态，与同页的任务目录一致。 -->
+    <BaseCallout v-else-if="query.isError.value" class="history-error" tone="danger">
+      <span>执行历史读取失败。</span>
+      <template #actions>
+        <BaseButton variant="outline" size="sm" :loading="query.isFetching.value" @click="refresh">
+          重试
+        </BaseButton>
+      </template>
+    </BaseCallout>
     <p v-else-if="runs.length === 0" class="history-state">这个任务还没有执行记录。</p>
 
     <ol v-else class="run-list">
@@ -134,8 +143,8 @@ function refresh(): void {
   font-size: var(--fs-xs);
 }
 
-.history-state-error {
-  color: var(--danger);
+.history-error {
+  margin-top: var(--space-3);
 }
 
 .run-list {

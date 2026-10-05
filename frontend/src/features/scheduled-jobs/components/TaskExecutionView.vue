@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import BaseButton from '@/shared/ui/BaseButton.vue'
+import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseField from '@/shared/ui/BaseField.vue'
 import BaseInput from '@/shared/ui/BaseInput.vue'
 import BaseSelect from '@/shared/ui/BaseSelect.vue'
@@ -84,9 +85,21 @@ defineProps<{
     <p v-if="executions.list.isPending.value" role="status">
       <BaseSpinner :size="18" />正在读取任务执行
     </p>
-    <p v-else-if="executions.listError.value" class="error" role="alert">
-      {{ executions.listError.value }}
-    </p>
+    <!-- 读失败给「重试」而不只是说一句：条目列表读不出来时，用户能做的最合理的一件事
+         就是再试一次，而不是自己去别处找刷新键。形态与同页的任务目录、执行历史一致。 -->
+    <BaseCallout v-else-if="executions.listError.value" class="list-error" tone="danger">
+      <span>{{ executions.listError.value }}</span>
+      <template #actions>
+        <BaseButton
+          variant="outline"
+          size="sm"
+          :loading="executions.list.isFetching.value"
+          @click="executions.refresh"
+        >
+          重试
+        </BaseButton>
+      </template>
+    </BaseCallout>
     <p v-else-if="!executions.list.data.value?.length" class="empty">
       当前没有符合条件的任务执行。
     </p>
@@ -189,6 +202,9 @@ defineProps<{
   color: var(--danger);
   margin-top: var(--space-3);
   overflow-wrap: anywhere;
+}
+.list-error {
+  margin-top: var(--space-3);
 }
 .empty {
   padding: var(--space-6) 0;

@@ -24,8 +24,21 @@ import { usePreferences } from '../composables/usePreferences'
  * **读成功之前保存键不可用。** 接口是整体覆盖，提交的是 `{...preferences}` 整份；读还没成功时
  * store 里装的是默认值，此时保存会把账号上的两个检索参数一起覆盖成默认。置灰不是保守，
  * 是防止一次「只改提示词」的操作顺手抹掉别的设置。
+ *
+ * **读到之前不亮状态徽章。** 徽章说的是「已启用自定义提示词 / 使用服务端默认提示词」，
+ * 而没读回来时 store 里是默认值，用户账号上很可能存着一段提示词——那时这句话是错的。
+ * 与其换一个「读取中」的说法，不如先不说：这是判断，不是信息。
+ *
+ * **读失败给「重试」。** 只靠刷新整个页面才能重来不合理：这次失败多半是一次网络抖动，
+ * 而用户已经站在这个分区里。重试成功后 `preferences` 变了，页面那份草稿会跟着同步过来。
  */
-const { preferences, loadState, canEdit, save: savePreferences } = usePreferences()
+const {
+  preferences,
+  loadState,
+  canEdit,
+  save: savePreferences,
+  load: loadPreferences,
+} = usePreferences()
 const { defaultPrompt, load: loadDefaultPrompt } = useDefaultAgentPrompt()
 
 // 草稿归设置页持有，分区切换不会丢失，也不会提前改变实际使用的提示词。
@@ -60,6 +73,21 @@ const statusLabel = computed(() =>
 )
 
 const remainingCharacters = computed(() => MAX_SYSTEM_PROMPT_CHARACTERS - draft.value.length)
+
+/* 重试期间单独记一个标志，而不是直接看 loadState：重试一开始 loadState 就变成 loading，
+   那条「读失败」的说明会连同重试键一起消失，用户点完反而看不到任何反馈。 */
+const retrying = ref(false)
+
+async function retryLoad(): Promise<void> {
+  retrying.value = true
+  try {
+    await loadPreferences()
+  } finally {
+    retrying.value = false
+  }
+}
+
+const showLoadFailure = computed(() => loadState.value === 'failed' || retrying.value)
 
 async function save(): Promise<void> {
   if (!canSave.value) return
@@ -109,16 +137,24 @@ async function clearPrompt(): Promise<void> {
 
     <!-- 读失败时说明原因：编辑框是灰的，不说一句用户会以为页面坏了。加载中不提示，
          那只是一瞬间。 -->
-    <BaseCallout
-      v-if="loadState === 'failed'"
-      class="load-error"
-      tone="danger"
-      description="读取账号偏好失败，暂时不能编辑。请刷新页面重试。"
-    />
+    <BaseCallout v-if="showLoadFailure" class="load-error" tone="danger">
+      <span>读取账号偏好失败，暂时不能编辑。</span>
+      <template #actions>
+        <BaseButton variant="outline" size="sm" :loading="retrying" @click="retryLoad">
+          重试
+        </BaseButton>
+      </template>
+    </BaseCallout>
 
     <div class="editor-card">
       <div class="status-row">
-        <span class="status-badge" :class="{ 'is-active': preferences.agentSystemPrompt }">
+        <!-- 读到之前不亮徽章：那时它说的一定是「使用服务端默认提示词」，而用户账号上
+             很可能存着一段提示词——那是一句假话。见文件上方说明。 -->
+        <span
+          v-if="canEdit"
+          class="status-badge"
+          :class="{ 'is-active': preferences.agentSystemPrompt }"
+        >
           <Bot :size="13" aria-hidden="true" />
           {{ statusLabel }}
         </span>

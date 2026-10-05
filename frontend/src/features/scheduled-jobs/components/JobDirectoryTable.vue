@@ -64,7 +64,7 @@ const emit = defineEmits<{
       role="alert"
     >
       <span>{{ loadError }}</span>
-      <BaseButton variant="ghost" size="xs" @click="emit('refresh')">重新加载</BaseButton>
+      <BaseButton variant="ghost" size="xs" @click="emit('refresh')">重试</BaseButton>
     </div>
 
     <div v-else-if="jobs.length === 0" class="directory-state">

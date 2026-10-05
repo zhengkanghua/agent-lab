@@ -85,6 +85,17 @@ async function retrySessionCheck(): Promise<void> {
         <h1 id="login-title" class="login-title">进入资料研究台</h1>
         <p class="login-intro">使用平台管理员为你创建的账号继续。</p>
 
+        <!-- 被 401 弹回来时说明原因。没有这一句，用户在整个流程里唯一的变化就是
+             「页面突然跳到了登录页」——他只会以为自己点错了什么，或者以为数据丢了。
+             这里承诺的「回到原来的页面」由下面的 safeRedirect 兑现。 -->
+        <BaseCallout
+          v-if="authSession.expiredMidSession.value"
+          class="login-expired"
+          tone="info"
+          title="登录已过期"
+          description="为了安全，需要重新登录后继续。你原来在的页面会在登录后自动打开。"
+        />
+
         <div v-if="sessionUnavailable" class="login-notice" role="status">
           <span>登录服务暂时不可用。</span>
           <BaseButton
@@ -255,6 +266,11 @@ async function retrySessionCheck(): Promise<void> {
    space-between 的行里默认可压缩，文字会被挤成两行。 */
 .notice-retry {
   flex: 0 0 auto;
+}
+
+/* 表单自己的 margin-top 负责与下面隔开，这条只管与上面那句说明的间距。 */
+.login-expired {
+  margin-top: var(--space-5);
 }
 
 .login-form {

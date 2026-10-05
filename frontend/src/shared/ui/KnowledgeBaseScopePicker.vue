@@ -30,14 +30,17 @@ const emit = defineEmits<{
 const open = ref(false)
 const group = useId()
 const ids = computed(() => props.modelValue.knowledge_base_ids ?? [])
-const label = computed(() =>
-  props.modelValue.mode === 'all'
+/* 加载中不报「所有知识库（0）」：那个 0 是「还没读到」，不是「一个都没有」。
+   胶囊是这一组控件里唯一常驻的文字，先把它说准，下面那条提示才不用替它圆场。 */
+const label = computed(() => {
+  if (props.loading) return '正在加载知识库…'
+  return props.modelValue.mode === 'all'
     ? `所有知识库（${props.knowledgeBases.length}）`
     : props.knowledgeBases
         .filter((item) => ids.value.includes(item.id))
         .map((item) => item.name)
-        .join('、') || '选择知识库',
-)
+        .join('、') || '选择知识库'
+})
 function selectMode(mode: 'all' | 'selected') {
   emit('update:modelValue', mode === 'all' ? { mode } : { mode, knowledge_base_ids: [] })
 }
@@ -102,7 +105,10 @@ function toggle(id: string, checked: boolean) {
     >
       <RefreshCw :size="14" />
     </button>
-    <p v-if="error" class="scope-error" :role="loading ? 'status' : 'alert'">{{ error }}</p>
+    <!-- 加载中不画这条。它和下面几种共用一份 `error`（那份 error 同时是两页的「不能提交」
+         判据，所以不改它的形状），但「正在加载」不是故障——原来它在这里是琥珀色告警，
+         读起来像出事了。加载期间改由胶囊自己说，见上面 label。 -->
+    <p v-if="error && !loading" class="scope-error" role="alert">{{ error }}</p>
   </div>
 </template>
 

@@ -1,4 +1,5 @@
 import { resolveErrorCopy } from '@/api/error-copy'
+import { PASSWORD_POLICY_MESSAGE } from '@/shared/model/password'
 
 /*
  * 账号管理的错误文案。
@@ -17,7 +18,8 @@ const MESSAGE_BY_CODE: Readonly<Partial<Record<string, string>>> = {
   // 已注销账号的邮箱仍然占用唯一索引，所以这句话要把这种可能说出来：管理员会遇到
   // 「列表里查不到这个人、建号却说邮箱被占用」，不说清就只能去猜。
   user_already_exists: '该邮箱已被使用（可能是已注销的账号），不能重复建号。',
-  invalid_password: '密码不符合安全要求：需要 12 到 128 个字符，且不能与账号邮箱相同。',
+  // 与设置中心自助改密那份用同一句：同一条规则，两个入口不该有两种说法。
+  invalid_password: PASSWORD_POLICY_MESSAGE,
   environment_admin_protected: '环境托管超级用户由部署 Secret 托管，不能在网页中停用、改密或注销。',
   last_superuser_protected: '不能停用或注销最后一个启用的超级用户。',
   account_already_deleted: '该账号已经注销，不能再停用、启用或重置密码。',

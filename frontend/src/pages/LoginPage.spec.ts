@@ -7,6 +7,9 @@ import { ApiError } from '@/api/client'
 const mocks = vi.hoisted(() => ({
   login: vi.fn(),
   initialize: vi.fn(),
+  /* 会话「用着用着失效」的标记，由全局 401 处理器置位。
+     用例都在挂载之前改它，所以这里用一个普通对象就够，不需要 ref 的响应性。 */
+  expiredMidSession: { value: false },
 }))
 
 vi.mock('../features/auth/auth-session', () => ({
@@ -14,6 +17,7 @@ vi.mock('../features/auth/auth-session', () => ({
     status: ref('anonymous'),
     user: ref(null),
     error: ref(null),
+    expiredMidSession: mocks.expiredMidSession,
     login: mocks.login,
     initialize: mocks.initialize,
   },
@@ -36,7 +40,33 @@ describe('LoginPage', () => {
   afterEach(() => {
     mocks.login.mockReset()
     mocks.initialize.mockReset()
+    mocks.expiredMidSession.value = false
     document.body.replaceChildren()
+  })
+
+  /* 被 401 弹回来时，用户在整个流程里唯一的变化就是「页面突然跳到了登录页」。
+     没有这一句，他只会以为自己点错了什么，或者以为数据丢了。 */
+  it('会话用着用着失效时，说明被弹回来的原因', async () => {
+    mocks.expiredMidSession.value = true
+    const router = testRouter()
+    await router.push('/login?redirect=/admin/users')
+    await router.isReady()
+    const wrapper = mount(LoginPage, { global: { plugins: [router] } })
+
+    expect(wrapper.text()).toContain('登录已过期')
+    expect(wrapper.text()).toContain('重新登录')
+    wrapper.unmount()
+  })
+
+  /* 陌生访客从没登录过，不该被通知「你的登录过期了」——那是在描述一个不存在的会话。 */
+  it('普通进入登录页时不提过期', async () => {
+    const router = testRouter()
+    await router.push('/login')
+    await router.isReady()
+    const wrapper = mount(LoginPage, { global: { plugins: [router] } })
+
+    expect(wrapper.text()).not.toContain('登录已过期')
+    wrapper.unmount()
   })
 
   it('logs in and returns to a safe in-app redirect', async () => {

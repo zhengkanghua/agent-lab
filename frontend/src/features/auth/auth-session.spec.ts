@@ -56,4 +56,44 @@ describe('auth session', () => {
     expect(session.status.value).toBe('authenticated')
     expect(session.user.value).toEqual(currentUser)
   })
+
+  /* 「登录已过期」这句话只在会话真的用着用着失效时才挂上，登录页据此说明被弹回来的原因。
+     下面三条钉住它的生命周期：陌生人打开页面不算、重新登录与主动退出都要清掉。 */
+  describe('会话过期标记', () => {
+    it('从没登录过的访客不带上过期标记', async () => {
+      vi.spyOn(authApi, 'fetchCurrentUser').mockRejectedValue(
+        new ApiError({ message: 'Unauthorized', status: 401, code: 'authentication_required' }),
+      )
+      const session = createAuthSession()
+
+      await session.initialize()
+
+      expect(session.expiredMidSession.value).toBe(false)
+    })
+
+    it('被全局 401 处理器置位后，重新登录成功就清掉', async () => {
+      vi.spyOn(authApi, 'loginWithPassword').mockResolvedValue()
+      vi.spyOn(authApi, 'fetchCurrentUser').mockResolvedValue(currentUser)
+      const session = createAuthSession()
+      session.markExpiredMidSession()
+      expect(session.expiredMidSession.value).toBe(true)
+
+      await session.login('reader@example.com', 'private-password')
+
+      expect(session.expiredMidSession.value).toBe(false)
+    })
+
+    it('主动退出不是过期，标记一并清掉', async () => {
+      vi.spyOn(authApi, 'fetchCurrentUser').mockResolvedValue(currentUser)
+      vi.spyOn(authApi, 'logoutCurrentUser').mockResolvedValue()
+      const session = createAuthSession()
+      await session.initialize()
+      session.markExpiredMidSession()
+
+      await session.logout()
+
+      expect(session.expiredMidSession.value).toBe(false)
+      expect(session.status.value).toBe('anonymous')
+    })
+  })
 })

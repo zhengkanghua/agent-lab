@@ -60,7 +60,11 @@ onMounted(() => {
       />
     </BaseDialog>
 
-    <UserDirectorySummary :stats="directory.stats.value" />
+    <!-- 目录没读回来之前不摆数字：这时 stats 还是三个 0，摆出来就是一句假话。 -->
+    <UserDirectorySummary
+      :stats="directory.stats.value"
+      :pending="directory.loadState.value !== 'ready'"
+    />
 
     <p v-if="directory.feedback.value" class="page-feedback" role="status">
       <Check :size="16" aria-hidden="true" />

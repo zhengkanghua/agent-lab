@@ -88,8 +88,11 @@ function formatCheckpoint(item: SourceDto): string {
     <div v-if="loading" class="directory-state" role="status">
       <BaseSpinner :size="20" />正在读取来源
     </div>
+    <!-- 与其余目录同一句式：先承认「还没有」，再指出下一步在哪。
+         原来只有「暂无来源，等待同步发现订阅」——它说的是系统的行为，不是用户能做的事；
+         而且「暂无」是全站唯一一处，其余都写「还没有」。 -->
     <div v-else-if="!loadError && items.length === 0" class="directory-state">
-      暂无来源，等待同步发现订阅
+      还没有来源。在「任务管理」里执行一次「FreshRSS 同步」，这里就会出现同步发现的订阅源。
     </div>
 
     <table v-if="items.length" class="source-table" :aria-busy="refreshing">

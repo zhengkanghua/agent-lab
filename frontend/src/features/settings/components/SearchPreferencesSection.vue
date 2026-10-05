@@ -24,10 +24,34 @@ import { usePreferences } from '../composables/usePreferences'
  * **读成功之前两个下拉都禁用。** 提交是整体覆盖，此时 store 里装的是默认值，改一下就会把
  * 账号上的真实配置（包括自定义提示词）一起覆盖成默认——用户只是调了个下拉，提示词却没了。
  * 加载中禁用是暂时的，读失败则要说明原因，否则用户会以为页面坏了。
+ *
+ * **加载中不另发一条「正在读取」的提示**（原来这里是这么写的，理由成立：那只是一瞬间，
+ * 闪一句比不说更烦）。但下拉里那几个数字得撤掉——它们此刻是契约默认值，摆在
+ * 「每次检索返回的文档数量」下面就是一句关于用户设置的假话。数字位改成一个破折号，
+ * 与用量页「上游没报这一项」同一个符号，控件本来就是灰的，不需要再解释一句。
+ *
+ * **读失败给「重试」。** 只有刷新整个页面才能重来是不合理的：这次失败多半是一次网络抖动，
+ * 而用户已经在这个分区里了。`load()` 在 failed 状态下会真的重发请求（ready 时才短路）。
  */
-const { preferences, loadState, canEdit, save } = usePreferences()
+const { preferences, loadState, canEdit, save, load } = usePreferences()
 
 const saveError = ref('')
+
+/* 重试期间单独记一个标志，而不是直接看 loadState：重试一开始 loadState 就变成 loading，
+   那条「读失败」的说明会连同重试键一起消失，用户点完反而看不到任何反馈。
+   只有这个键自己发起的加载才算「正在重试」。 */
+const retrying = ref(false)
+
+async function retryLoad(): Promise<void> {
+  retrying.value = true
+  try {
+    await load()
+  } finally {
+    retrying.value = false
+  }
+}
+
+const showLoadFailure = computed(() => loadState.value === 'failed' || retrying.value)
 
 /** 提交一份新值；失败则回滚并提示。 */
 async function commit(patch: Partial<{ documentLimit: number; matchesPerDocument: number }>) {
@@ -91,12 +115,14 @@ const hasCustomized = computed(
 
     <!-- 读失败时说明原因：控件是灰的，不说一句用户会以为页面坏了。加载中不提示，
          那只是一瞬间，闪一句「正在读取」比什么都不说更烦人。 -->
-    <BaseCallout
-      v-if="loadState === 'failed'"
-      class="load-error"
-      tone="danger"
-      description="读取账号偏好失败，暂时不能修改。请刷新页面重试。"
-    />
+    <BaseCallout v-if="showLoadFailure" class="load-error" tone="danger">
+      <span>读取账号偏好失败，暂时不能修改。</span>
+      <template #actions>
+        <BaseButton variant="outline" size="sm" :loading="retrying" @click="retryLoad">
+          重试
+        </BaseButton>
+      </template>
+    </BaseCallout>
 
     <div class="field-group">
       <BaseField
@@ -111,6 +137,9 @@ const hasCustomized = computed(
             :disabled="!canEdit"
             class="narrow-select"
           >
+            <!-- 读到之前不摆一个数字：此刻 store 里装的是契约默认值，摆出来就是一句
+                 关于用户设置的假话。破折号说的是「还没有」，不是「是 10」。 -->
+            <option v-if="!canEdit" :value="documentLimit">—</option>
             <option v-for="option in DOCUMENT_LIMIT_OPTIONS" :key="option" :value="option">
               {{ option }} 篇
             </option>
@@ -130,6 +159,7 @@ const hasCustomized = computed(
             :disabled="!canEdit"
             class="narrow-select"
           >
+            <option v-if="!canEdit" :value="matchesPerDocument">—</option>
             <option v-for="option in MATCHES_PER_DOCUMENT_OPTIONS" :key="option" :value="option">
               {{ option }} 条
             </option>

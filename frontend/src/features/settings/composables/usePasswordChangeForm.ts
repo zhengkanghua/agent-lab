@@ -1,7 +1,11 @@
 import { ref, computed } from 'vue'
 import { changeOwnPassword, type PasswordChangeRequest } from '@/api/account'
 import { getAccountErrorCopy } from '../model/account-error'
-import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/shared/model/password'
+import {
+  PASSWORD_LENGTH_MESSAGE,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+} from '@/shared/model/password'
 import type { ApiError } from '@/api/client'
 
 export interface PasswordChangeFormState {
@@ -45,7 +49,7 @@ export function usePasswordChangeForm() {
     ) {
       validationErrors.value.push({
         field: 'newPassword',
-        message: `密码长度需要在 ${PASSWORD_MIN_LENGTH} 到 ${PASSWORD_MAX_LENGTH} 个字符之间。`,
+        message: PASSWORD_LENGTH_MESSAGE,
       })
     }
 
