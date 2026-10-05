@@ -1,6 +1,7 @@
-# Signal Desk 前端
+# AgentLab 前端
 
-Signal Desk 是知识库语义检索工作台的 Vue 3 前端。检索页 `/` 走 `POST /document-search`：
+AgentLab 是知识库语义检索与 Agent 问答的 Vue 3 前端。默认入口是 Agent 对话（`/` 重定向到 `/agent`），
+检索页在 `/search`，走 `POST /document-search`：
 后端按 Document 分组返回相关片段（分组与排序规则在后端，见 `backend/docs/architecture.md`），
 前端把命中结果按“旧的在上、最新的贴在底部输入坞上方”的检索流（仿 Agent 会话体感）
 逐轮向下累积，多条历史记录可折叠回看，刷新即清空。该页不生成答案、不调用生成式 LLM，只返回检索到的
@@ -37,7 +38,7 @@ Agent 提示词草稿在设置分区之间切换时保留，只有保存后才�
 出口只有面板的关闭键与 Esc（模态语义与可点侧栏不能同时成立，2026-10 收敛到模态这一侧）；
 窄屏回退整页，保留相同路由与深链，离开时继续保护未保存草稿。
 
-前台的 `AppShell` 用左侧栏承载工作台导航、当前页主操作、Agent 会话列表和底部账号区；
+前台的 `AppShell` 用左侧栏承载主导航、当前页主操作、Agent 会话列表和底部账号区；
 手机通过导航抽屉访问同一组入口，支持焦点约束、Esc、滚动锁和焦点恢复。
 检索与 Agent 共用 `ComposerDock` 输入坞，外壳负责导航，页面负责检索流或会话内容。
 
@@ -75,14 +76,14 @@ Agent 提示词草稿在设置分区之间切换时保留，只有保存后才�
 ## 文件管理的数据边界
 
 `/admin/files` 上传 `.txt`、`.md` 后展示候选处理状态与正式版本是否可用；保存成功不等于已经
-可检索，首次采用前不能打开普通全文。列表对在途处理定时刷新，失败从“查看与审核”进入统一工作台。
+可检索，首次采用前不能打开普通全文。列表对在途处理定时刷新，失败从“查看与审核”进入统一审核区。
 替换选定明确 Document 并携带 `revision` 与 `management_revision`，新候选完成采用前旧版本继续可用。
 冲突后保留已选文件，刷新并由用户明确选择新记录再提交。同名新增互不覆盖。删除失败保留待办，
 再次确认可继续完整删除；上传超时先刷新核对结果，不自动重放。
 
 ## 文档审核的数据边界
 
-`/admin/documents` 以知识库、来源和处理状态筛选文档，`?document=<UUID>` 打开工作台。
+`/admin/documents` 以知识库、来源和处理状态筛选文档，`?document=<UUID>` 打开审核区。
 已采用版本、最新人工草稿和最新来源分别显示；原件经受权限保护的同域接口读取、按其原始文件名下载。
 原始 HTML 只显示文本；预览 Markdown 使用 `SafeMarkdown`，不会执行脚本或加载外链图片。
 
@@ -95,7 +96,7 @@ MD 和 FreshRSS 正文使用 Markdown 编辑，TXT 保持纯文本。保存使�
 换用来源须明确确认；拒绝停止整篇后续使用，完整删除才清除原件和历史。历史及审核结论分别分页。
 请求超时只核对结果，不自动重放；离开或刷新页面前提示尚未保存的编辑。
 
-请求集中在 `api/document-review.ts`，工作台状态由 `features/document-review/useDocumentReview.ts`
+请求集中在 `api/document-review.ts`，审核区状态由 `features/document-review/useDocumentReview.ts`
 维护，跨功能的状态显示函数位于 `shared/model/document-processing.ts`，文件管理与审核功能不互相导入。
 
 ## 任务管理的数据边界
@@ -192,7 +193,7 @@ npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated/o
   检索流组件（输入条 / 单条记录 / 结果卡）；
 - `src/features/agent-chat`：多轮对话状态、工具轨迹配对、错误文案表和对话组件；
 - `src/features/file-documents`：文件上传、列表、替换、索引重试与删除状态；
-- `src/features/document-review`：文档审核工作台、原件对照、预览与历史；
+- `src/features/document-review`：文档审核区、原件对照、预览与历史；
 - `src/features/knowledge-bases`、`src/features/sources`：知识库配置与来源绑定的目录页状态；
 - `src/features/user-admin`：账号目录、建号表单与账号操作；
 - `src/features/scheduled-jobs`：周期配置、任务执行、Pipeline 提交与策略面板；

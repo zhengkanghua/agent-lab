@@ -293,7 +293,7 @@ const details = new Map([
     },
   ],
 ])
-/* 文档审核：/admin/documents 的目录与工作台。字段与 src/api/document-review.ts 的
+/* 文档审核：/admin/documents 的目录与审核区。字段与 src/api/document-review.ts 的
  * isManagedDocument / isProcessing / isVersion / 决策校验逐项对齐——少一个字段，
  * 整页只会渲染成「请求失败」，这两页就一直没法用这套工具看。 */
 const REVIEW_PROCESSING_ID = '70000000-0000-4000-8000-000000000001'

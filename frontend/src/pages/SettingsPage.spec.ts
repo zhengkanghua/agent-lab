@@ -152,7 +152,8 @@ describe('SettingsPage', () => {
     expect(close.attributes('aria-label')).toBe('关闭设置')
     await close.trigger('click')
     await flushPromises()
-    expect(router.currentRoute.value.path).toBe('/')
+    // 无来路时回默认入口（Agent 对话）——与 `/` 的落点一致。
+    expect(router.currentRoute.value.path).toBe('/agent')
     wrapper.unmount()
   })
 
@@ -335,7 +336,8 @@ describe('SettingsPage', () => {
     // 挂在面板上会漏掉那些情况），所以这里派发到 document。
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await flushPromises()
-    expect(router.currentRoute.value.path).toBe('/')
+    // 无来路时回默认入口（Agent 对话）——与 `/` 的落点一致。
+    expect(router.currentRoute.value.path).toBe('/agent')
     wrapper.unmount()
   })
 
@@ -345,7 +347,8 @@ describe('SettingsPage', () => {
     const overlay = wrapper.get('.settings-overlay')
     await overlay.trigger('click')
     await flushPromises()
-    expect(router.currentRoute.value.path).toBe('/')
+    // 无来路时回默认入口（Agent 对话）——与 `/` 的落点一致。
+    expect(router.currentRoute.value.path).toBe('/agent')
     wrapper.unmount()
   })
 

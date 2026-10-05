@@ -46,12 +46,27 @@ describe('application router authentication guard', () => {
   it('redirects anonymous visitors to login and preserves the intended route', async () => {
     const router = await freshRouter()
 
-    await router.push('/')
+    await router.push('/search')
     await router.isReady()
 
     expect(auth.initialize).toHaveBeenCalled()
     expect(router.currentRoute.value.name).toBe('login')
-    expect(router.currentRoute.value.query.redirect).toBe('/')
+    expect(router.currentRoute.value.query.redirect).toBe('/search')
+  })
+
+  it('默认入口是 Agent 对话：根路径与未知路径都落到它', async () => {
+    /* 侧栏第一项也是 Agent 对话——「排在最上的那项」与「打开就落在哪」必须是同一个地方，
+       否则按位置记入口的人会撞上意外。未知路径走通配兜底，落点与根路径一致。 */
+    auth.status.value = 'authenticated'
+    auth.user.value = { is_superuser: false }
+
+    for (const path of ['/', '/no-such-page']) {
+      const router = await freshRouter()
+      await router.push(path)
+      await router.isReady()
+
+      expect(router.currentRoute.value.name, path).toBe('agent-chat')
+    }
   })
 
   it('keeps authenticated users out of the login page', async () => {
@@ -61,10 +76,11 @@ describe('application router authentication guard', () => {
     await router.push('/login')
     await router.isReady()
 
-    expect(router.currentRoute.value.name).toBe('search')
+    // 已登录还去登录页：回默认入口（Agent 对话），不是某个具体功能页。
+    expect(router.currentRoute.value.name).toBe('agent-chat')
   })
 
-  it('普通账号也能进 Agent 工作台，未登录仍然进不去', async () => {
+  it('普通账号也能进 Agent 对话，未登录仍然进不去', async () => {
     // 权限已对所有登录账号放开（ADR 0030），所以这里验的是「登录即可用」而不是「只有超管」。
     // 逐条验两个角色，因为一个「谁都放行」的实现也能通过普通账号那一半。
     for (const isSuperuser of [false, true]) {
@@ -141,7 +157,8 @@ describe('application router authentication guard', () => {
 
       await regularRouter.push('/admin/' + section)
       await regularRouter.isReady()
-      expect(regularRouter.currentRoute.value.name).toBe('search')
+      // 误入后台的普通账号被送回默认入口（Agent 对话），不是某个具体功能页。
+      expect(regularRouter.currentRoute.value.name).toBe('agent-chat')
 
       auth.user.value = { is_superuser: true }
       const superuserRouter = await freshRouter()

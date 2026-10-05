@@ -202,7 +202,7 @@ describe('AgentChatPage', () => {
 
     // Agent 对话已对所有登录账号开放（ADR 0030）。
     const navLabels = wrapper.findAll('.sidebar-nav .nav-item').map((item) => item.text())
-    expect(navLabels).toEqual(['语义检索', 'Agent 对话'])
+    expect(navLabels).toEqual(['Agent 对话', '语义检索'])
 
     // 放开 Agent 不等于放开后台。
     expect(wrapper.find('a[aria-label="后台管理"]').exists()).toBe(false)

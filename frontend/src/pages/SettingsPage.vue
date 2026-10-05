@@ -141,12 +141,12 @@ function updateViewport(): void {
 
 const panelRef = ref<HTMLElement | null>(null)
 
-/** 关闭浮层：有来路就回上一页（多半是从检索页的偏好入口进来的），否则回工作台。
+/** 关闭浮层：有来路就回上一页，否则回默认入口（Agent 对话）——与 `/` 的落点一致。
  *  离开确认不在这里做——onBeforeRouteLeave 守卫统一拦，Esc 和关闭键走同一条路。 */
 function closeSettings(): void {
   const historyState = router.options.history.state as { back?: string | null }
   if (historyState.back != null) router.back()
-  else void router.push({ name: 'search' })
+  else void router.push({ name: 'agent-chat' })
 }
 
 /** 桌面端浮层点击外部半透明遮罩关闭。 */

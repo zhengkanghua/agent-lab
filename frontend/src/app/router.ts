@@ -10,7 +10,23 @@ const router = createRouter({
       component: () => import('../pages/LoginPage.vue'),
     },
     {
+      /*
+       * 默认入口是 Agent 对话，不是检索。
+       *
+       * 用重定向而不是让 `/` 自己渲染 Agent 页：一个页面只留一个正式地址，`/agent`
+       * 是可分享、可收藏的那一个（会话深链 /agent/:threadId 也挂在它下面），
+       * 多一个等价地址只会让「用户贴出来的链接」有两种形状。
+       *
+       * 这条是产品决定：侧栏第一项也是 Agent 对话，两处指的是同一个地方——
+       * 「排在最上的那项」与「直接打开落在哪」必须一致，否则按位置记入口的人会撞上意外。
+       */
       path: '/',
+      redirect: { name: 'agent-chat' },
+    },
+    {
+      // 检索页自己的地址。原先是 `/`——默认入口换成 Agent 之后它必须让出来，
+      // 路由名仍是 search，所以 `{ name: 'search' }` 的那些跳转一处都不用改。
+      path: '/search',
       name: 'search',
       component: () => import('../pages/SearchPage.vue'),
       meta: { requiresAuth: true },
@@ -75,8 +91,9 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresSuperuser: true },
     },
     {
+      // 不存在的地址回默认入口，与 `/` 落点一致。
       path: '/:pathMatch(.*)*',
-      redirect: { name: 'search' },
+      redirect: { name: 'agent-chat' },
     },
   ],
   scrollBehavior: () => ({ top: 0 }),
@@ -93,11 +110,14 @@ router.beforeEach(async (to) => {
   }
 
   if (to.meta.requiresSuperuser && !authSession.user.value?.is_superuser) {
-    return { name: 'search' }
+    // 普通账号误入后台：送回默认入口，而不是某个具体功能页。
+    return { name: 'agent-chat' }
   }
 
   if (to.name === 'login' && authSession.status.value === 'authenticated') {
-    return { name: 'search' }
+    // 已登录还去登录页：同样回默认入口。登录页自己的 safeRedirect 会把「带了来路」
+    // 的那种送回原页面，这条只管「直接敲 /login」。
+    return { name: 'agent-chat' }
   }
 
   return true

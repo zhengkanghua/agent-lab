@@ -6,12 +6,12 @@ import {
   ClipboardCheck,
   Cpu,
   FileText,
+  FlaskConical,
   Library,
   LogOut,
   Menu,
   Rss,
   ServerCog,
-  ShieldCheck,
   UserRound,
   UsersRound,
   X,
@@ -26,7 +26,7 @@ import ThemeToggle from '@/shared/ui/ThemeToggle.vue'
  * 页面（AdminPage）像前台页面嵌 AppShell 一样把本外壳嵌进模板，正文经默认插槽进来。
  *
  * 与 AppShell 的区别是刻意的：两个都是侧栏外壳，但服务不同领域——AppShell 是前台
- * 工作台（品牌 + 主操作 + 会话列表），AdminShell 是管理控制台（分区菜单 + 分区标题
+ * 应用主体（品牌 + 主操作 + 会话列表），AdminShell 是管理控制台（分区菜单 + 分区标题
  * 顶栏），导航项、信息密度与读者都不同，二者不互相归并。
  *
  * 后台导航在这里集中定义（侧边栏对后台所有分区一致），新增后台分区时：
@@ -128,11 +128,10 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
     >
       <div class="sidebar-brand">
         <span class="sidebar-brand-mark" aria-hidden="true">
-          <ShieldCheck :size="20" stroke-width="2.2" />
+          <FlaskConical :size="20" stroke-width="2.2" />
         </span>
         <span class="sidebar-brand-copy">
-          <strong>Signal Desk</strong>
-          <small>管理控制台</small>
+          <strong>AgentLab</strong>
         </span>
         <!-- 桌面端不收抽屉，这枚键也就不该存在（同 AppShell：v-if 而不是 display:none）。 -->
         <BaseIconButton v-if="isMobile" ref="drawerClose" label="关闭导航" @click="closeDrawer">
@@ -141,9 +140,9 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
       </div>
 
       <nav class="sidebar-nav">
-        <RouterLink class="nav-item menu-back" :to="{ name: 'search' }" @click="closeDrawer">
+        <RouterLink class="nav-item menu-back" :to="{ name: 'agent-chat' }" @click="closeDrawer">
           <ArrowLeft :size="16" aria-hidden="true" />
-          <span>返回工作台</span>
+          <span>返回首页</span>
         </RouterLink>
 
         <p class="menu-group-label">后台管理</p>
@@ -237,7 +236,7 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
 
 /* 侧边栏固定贴左，全高。内容区用 margin-left 让位，宽度交给 flex。
    宽度与前台侧栏共用 tokens.css 的 --sidebar-width：原先这里写死 232px，
-   比前台窄 56px，品牌名「Signal Desk」被挤成两行（2026-10 统一）。 */
+   比前台窄 56px，品牌名连同副标被挤成两行（2026-10 统一）。 */
 .admin-sidebar {
   position: fixed;
   inset: 0 auto 0 0;
@@ -284,11 +283,6 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
   line-height: 1.2;
 }
 
-.sidebar-brand-copy small {
-  color: var(--text-secondary);
-  font-size: var(--fs-xs);
-}
-
 .sidebar-nav {
   display: flex;
   flex-direction: column;
@@ -299,10 +293,10 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
 
 /* 导航项皮肤归共享层 nav-item.css（与前台外壳、设置分区导航共用一份：
    排布、悬停、按下、当前页、图标不压缩）。这里只剩两件本页特有的。
-   menu-back / menu-item 是这一层的结构标记，不带样式：它把「返回工作台」
+   menu-back / menu-item 是这一层的结构标记，不带样式：它把「返回首页」
    这个动作和下面那组分区菜单分开，读的人与测试都靠它区分两者。 */
 
-/* 返回工作台：整个后台里最需要「清晰回到前台」的入口，放菜单最顶上，
+/* 返回首页：整个后台里最需要「清晰回到应用」的入口，放菜单最顶上，
    与下面的分区菜单之间留一道间隔。 */
 .menu-back {
   margin-bottom: 6px;

@@ -2,11 +2,11 @@
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
 import {
   Bot,
+  FlaskConical,
   LayoutDashboard,
   LogOut,
   Menu,
   Plus,
-  RadioTower,
   Search,
   Settings,
   UserRound,
@@ -27,12 +27,15 @@ import ThemeToggle from '@/shared/ui/ThemeToggle.vue'
  * 形态：左边一条可导航的侧栏，中间是安静的阅读列，输入区是唯一的主角。
  *
  * 侧栏自上而下四段，职责固定：
- *   1) 品牌区：全站唯一的品牌落点（各页不再各自拼品牌文案），点击回检索首页；
+ *   1) 品牌区：全站唯一的品牌落点（各页不再各自拼品牌文案），点击回首页——首页就是
+ *      默认入口 Agent 对话，与「导航第一项」指的是同一个地方；
  *   2) 主操作：每页一个（检索=新检索，Agent=新对话），由页面通过 primaryLabel 命名、
  *      监听 primary 事件执行；它是整页允许的最重的一枚按钮；
- *   3) 主导航 + #rail 插槽：导航是应用级事实（检索 / Agent 对话），不属于任何一页，
+ *   3) 主导航 + #rail 插槽：导航是应用级事实（Agent 对话 / 语义检索），不属于任何一页，
  *      所以写死在外壳里而不是由页面传入；Agent 页的会话列表经 #rail 插槽进来，
- *      外壳只提供滚动的容器，不管列表内容；
+ *      外壳只提供滚动的容器，不管列表内容。
+ *      Agent 对话排在第一项，与 `/` 落到它保持一致——「排在最上的那项」与「打开就是它」
+ *      必须是同一个，否则用户按位置记住的入口和实际首页对不上；
  *   4) 底栏：设置、后台入口（仅超管）、主题切换、账号与退出。后台入口是整个前台
  *      唯一的一处，漏掉就等于那个页面上的用户找不到后台。
  *
@@ -75,8 +78,8 @@ const emit = defineEmits<{ primary: []; logout: [] }>()
 const isSuperuser = computed(() => authSession.user.value?.is_superuser === true)
 
 const navItems = computed(() => [
-  { key: 'search', to: { name: 'search' }, label: '语义检索', icon: Search },
   { key: 'agent', to: { name: 'agent-chat' }, label: 'Agent 对话', icon: Bot },
+  { key: 'search', to: { name: 'search' }, label: '语义检索', icon: Search },
 ])
 
 /* 账号偏好在这里读一次，供三个页面共用。
@@ -144,21 +147,20 @@ function handlePrimary(): void {
       :aria-hidden="isMobile && !drawerOpen ? true : undefined"
       :role="isMobile ? 'dialog' : undefined"
       :aria-modal="drawerOpen ? true : undefined"
-      aria-label="工作台导航"
+      aria-label="主导航"
     >
       <div class="sidebar-brand">
         <RouterLink
           class="brand-lockup"
-          :to="{ name: 'search' }"
-          aria-label="Signal Desk 首页"
+          :to="{ name: 'agent-chat' }"
+          aria-label="AgentLab 首页"
           @click="closeDrawer"
         >
           <span class="shell-brand-mark" aria-hidden="true">
-            <RadioTower :size="18" stroke-width="2.2" />
+            <FlaskConical :size="18" stroke-width="2.2" />
           </span>
           <span class="brand-text">
-            <strong>Signal Desk</strong>
-            <small>知识库工作台</small>
+            <strong>AgentLab</strong>
           </span>
         </RouterLink>
         <!-- 桌面端不收抽屉，这枚键也就不该存在——用 v-if 而不是 display:none：
@@ -267,7 +269,7 @@ function handlePrimary(): void {
         >
           <Menu :size="19" aria-hidden="true" />
         </BaseIconButton>
-        <span class="mobile-brand">Signal Desk</span>
+        <span class="mobile-brand">AgentLab</span>
       </header>
 
       <slot />
@@ -354,11 +356,6 @@ function handlePrimary(): void {
   font-size: var(--fs-base);
   font-weight: var(--fw-bold);
   line-height: 1.2;
-}
-
-.brand-text small {
-  color: var(--text-secondary);
-  font-size: var(--fs-xs);
 }
 
 /* 主操作：整页唯一一枚填充强调色的大按钮（强调色纪律里「主按钮」那一处）。 */

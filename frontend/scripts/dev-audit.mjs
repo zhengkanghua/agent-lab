@@ -75,7 +75,7 @@ console.log(
 // 已登录态后的各页审计
 authed = true
 
-// 侧栏导航项的文字。工作台外壳是左侧栏（AppShell.vue 的 .shell-sidebar），
+// 侧栏导航项的文字。应用外壳是左侧栏（AppShell.vue 的 .shell-sidebar），
 // 顶栏那一版已经没有了；后台入口只对超管显示，且指向 /admin，不再有「账号管理」直达。
 const sidebarLabels = () =>
   page
@@ -83,7 +83,7 @@ const sidebarLabels = () =>
     .evaluateAll((els) => els.map((e) => (e.textContent || '').trim()))
 
 // 2) 检索页
-await audit('检索页·待输入', `${BASE}/`)
+await audit('检索页·待输入', `${BASE}/search`)
 const navLabels = await sidebarLabels()
 console.log(
   '  侧栏导航项:',
@@ -158,7 +158,7 @@ if (side && main) {
   )
 }
 console.log('  顶栏:', top ? `y=${Math.round(top.y)} h=${Math.round(top.height)}` : 'MISSING')
-console.log('  [返回工作台] href:', await page.locator('.menu-back').first().getAttribute('href'))
+console.log('  [返回首页] href:', await page.locator('.menu-back').first().getAttribute('href'))
 console.log(
   '  账号管理菜单项高亮:',
   await page

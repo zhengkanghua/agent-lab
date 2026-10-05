@@ -1,6 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="8" fill="#18211f"/>
-  <path d="M17 14h30v36H17z" fill="#fff"/>
-  <path d="M23 23h18M23 31h18M23 39h11" fill="none" stroke="#2f796e" stroke-width="3" stroke-linecap="round"/>
-  <path d="M17 14h6v36h-6z" fill="#d24b3b"/>
+  <!-- 与产品内三个品牌锁同一个图形：锥形瓶（AgentLab 的 Lab）。
+       配色取设计令牌的对应值：底 surface-inverse（#262622）、瓶身 text-on-inverse
+       （#fafaf7）、液体用深色模式的强调色（#8fb8ab）。favicon 是资源文件，
+       拿不到 CSS 变量，只能把值抄在这里。
+       注意：XML 注释里不能出现连续两个连字符，所以这里写令牌名时不带前缀。 -->
+  <rect width="64" height="64" rx="8" fill="#262622" />
+  <path
+    d="M26 13v12L15 49h34L38 25V13"
+    fill="none"
+    stroke="#fafaf7"
+    stroke-width="4"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path d="M22 13h20" fill="none" stroke="#fafaf7" stroke-width="4" stroke-linecap="round" />
+  <path d="M21.1 40 42.9 40 46.1 47 17.9 47Z" fill="#8fb8ab" />
 </svg>

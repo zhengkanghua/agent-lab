@@ -6,7 +6,7 @@
 
 ## 这套东西是干嘛的
 
-Signal Desk 的检索 / Agent / 后台页面都要登录，而登录依赖后端认证
+AgentLab 的检索 / Agent / 后台页面都要登录，而登录依赖后端认证
 （FastAPI + PostgreSQL 的 HttpOnly Cookie）。后端是一整串重装备（还要 Ollama、Qdrant），
 本地未必起得来。为了让「看样式、走页面流程」不依赖后端，我们用 **Playwright + route mock**
 在浏览器里把 `/api/**` 请求全部换成模拟数据，前端照常渲染，截图出来看。

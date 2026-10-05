@@ -116,7 +116,7 @@ function openDocument(result: ReadableResult, trigger: HTMLButtonElement | null)
   <AppShell
     active="search"
     main-id="search-workspace"
-    skip-label="跳到检索工作台"
+    skip-label="跳到检索区"
     primary-label="新检索"
     :logging-out="loggingOut"
     :logout-error="logoutError"

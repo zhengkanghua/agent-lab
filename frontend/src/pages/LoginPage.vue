@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { LogIn, RefreshCw, Search } from '@lucide/vue'
+import { FlaskConical, LogIn, RefreshCw } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
 import { resolveErrorCopy } from '@/api/error-copy'
 import { queryClient } from '@/app/query-client'
@@ -72,17 +72,19 @@ async function retrySessionCheck(): Promise<void> {
       <!-- 居中单列（2026-09 重设计 P5）：小品牌锁、28px 主标、一句说明、一张表单卡。
            原左右分栏的装饰图形与英文微大写撤掉了——「精心设计过的简陋感」的来源。 -->
       <section class="login-card" aria-labelledby="login-title">
-        <a class="login-brand" href="/" aria-label="Signal Desk 首页">
+        <!-- 品牌锁：主名与图标全站只有这一份（另两处在 AppShell 与 AdminShell，
+             三处与 favicon 用的是同一个图形）。这里不再有副标——产品只有一个名字，
+             门口不再给它第二个称呼。 -->
+        <a class="login-brand" href="/" aria-label="AgentLab 首页">
           <span class="brand-mark" aria-hidden="true">
-            <Search :size="19" stroke-width="2.2" />
+            <FlaskConical :size="19" stroke-width="2.2" />
           </span>
           <span class="brand-copy">
-            <strong>Signal Desk</strong>
-            <small>知识库语义研究台</small>
+            <strong>AgentLab</strong>
           </span>
         </a>
 
-        <h1 id="login-title" class="login-title">进入资料研究台</h1>
+        <h1 id="login-title" class="login-title">进入 AgentLab</h1>
         <p class="login-intro">使用平台管理员为你创建的账号继续。</p>
 
         <!-- 被 401 弹回来时说明原因。没有这一句，用户在整个流程里唯一的变化就是

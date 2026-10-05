@@ -194,7 +194,7 @@ async function chooseExample(value: string): Promise<void> {
   <AppShell
     active="agent"
     main-id="agent-workspace"
-    skip-label="跳到对话工作台"
+    skip-label="跳到对话区"
     primary-label="新对话"
     :logging-out="loggingOut"
     :logout-error="logoutError"

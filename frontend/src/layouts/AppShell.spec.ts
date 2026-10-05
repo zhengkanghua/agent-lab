@@ -44,7 +44,7 @@ function testRouter(): Router {
 const base: Props = {
   active: 'search',
   mainId: 'workspace',
-  skipLabel: '跳到工作台',
+  skipLabel: '跳到正文',
 }
 
 async function mountShell(props: Partial<Props> = {}, slots: Record<string, unknown> = {}) {
@@ -83,33 +83,36 @@ describe('AppShell', () => {
 
     const skip = wrapper.get('.skip-link')
     expect(skip.attributes('href')).toBe('#account-workspace')
-    expect(skip.text()).toBe('跳到工作台')
+    expect(skip.text()).toBe('跳到正文')
   })
 
-  it('品牌是全站唯一落点：链接回检索首页，文案与无障碍名分开', async () => {
+  it('品牌是全站唯一落点：链接回首页（默认入口 Agent 对话），文案与无障碍名分开', async () => {
     const { wrapper } = await mountShell()
 
     const brand = wrapper.get('.brand-lockup')
-    expect(brand.attributes('href')).toBe('/')
-    expect(brand.attributes('aria-label')).toBe('Signal Desk 首页')
-    expect(brand.get('.brand-text strong').text()).toBe('Signal Desk')
-    expect(brand.get('.brand-text small').text()).toBe('知识库工作台')
+    // 首页就是默认入口：品牌回的地方与 `/` 落的地方必须是同一个。
+    expect(brand.attributes('href')).toBe('/agent')
+    expect(brand.attributes('aria-label')).toBe('AgentLab 首页')
+    expect(brand.get('.brand-text strong').text()).toBe('AgentLab')
+    // 副标已撤：产品只有一个名字，品牌锁里不再挂第二个称呼。
+    expect(brand.find('.brand-text small').exists()).toBe(false)
   })
 
   it('主导航常驻：检索与 Agent 对话对所有登录账号可见', async () => {
     // 权限放开之后 Agent 入口不再按角色隐藏（ADR 0030）。普通账号那一半必须单独验：
     // 只验超管的话，一个「只给超管渲染」的实现也能通过。
     const { wrapper } = await mountShell()
+    // Agent 对话在前，与「`/` 落到 Agent 对话」保持一致。
     expect(wrapper.findAll('.sidebar-nav .nav-item').map((item) => item.text())).toEqual([
-      '语义检索',
       'Agent 对话',
+      '语义检索',
     ])
 
     session.user.value = { email: 'admin@example.com', is_superuser: true }
     const admin = await mountShell()
     expect(admin.wrapper.findAll('.sidebar-nav .nav-item').map((item) => item.text())).toEqual([
-      '语义检索',
       'Agent 对话',
+      '语义检索',
     ])
   })
 
@@ -129,9 +132,9 @@ describe('AppShell', () => {
     const { wrapper } = await mountShell({ active: 'agent' })
 
     const items = wrapper.findAll('.sidebar-nav .nav-item')
-    expect(items[0]?.attributes('aria-current')).toBeUndefined()
-    expect(items[1]?.attributes('aria-current')).toBe('page')
-    expect(items[1]?.classes()).toContain('is-active')
+    expect(items[0]?.attributes('aria-current')).toBe('page')
+    expect(items[0]?.classes()).toContain('is-active')
+    expect(items[1]?.attributes('aria-current')).toBeUndefined()
   })
 
   it('primaryLabel 渲染主操作，点击只发事件（做什么由页面决定）', async () => {

@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 /*
- * 纯前端可视化工具：不启动后端也能浏览 Signal Desk 的页面与样式。
+ * 纯前端可视化工具：不启动后端也能浏览 AgentLab 的页面与样式。
  *
  * 用法：
  *   1) 先起前端 dev server：cd frontend && npm run dev（默认 5173）
@@ -72,7 +72,7 @@ try {
 
   // 2) 检索页 · 待输入
   authed = true
-  await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' })
+  await page.goto(`${BASE}/search`, { waitUntil: 'domcontentloaded' })
   await shot(page, '02-search-idle', '.composer-dock')
 
   // 3) 检索页 · 结果
@@ -120,7 +120,7 @@ try {
   // 8) 检索页 · 移动端
   const mobileSearch = await context.newPage()
   await mobileSearch.setViewportSize({ width: 390, height: 844 })
-  await mobileSearch.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' })
+  await mobileSearch.goto(`${BASE}/search`, { waitUntil: 'domcontentloaded' })
   await shot(mobileSearch, '09-search-mobile', '.composer-dock')
 } finally {
   await browser.close()

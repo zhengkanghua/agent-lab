@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/client'
 import { draftId, reviewDetail, reviewDocumentId } from '@/api/document-review.fixture'
 
-/* 审核工作台的状态机（396 行、零直接测试之前）。这里只盯住几条「错了会静默毁数据或
+/* 审核区的状态机（396 行、零直接测试之前）。这里只盯住几条「错了会静默毁数据或
  * 静默卡住」的行为：
  *   - 后台轮询绝不能覆盖用户尚未保存的正文；
  *   - 服务端修订前进而本地有改动时必须显式标记冲突，不许静默采用任何一边；

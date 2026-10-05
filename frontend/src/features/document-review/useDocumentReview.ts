@@ -303,7 +303,7 @@ export function useDocumentReview(documentId: MaybeRefOrGetter<string>) {
   /**
    * 有未保存的正文修改时先问一句。返回「可以继续」。
    *
-   * 三条路径共用：切候选（页内动作）、离开工作台、路由参数变更。前两条都是页内行为，
+   * 三条路径共用：切候选（页内动作）、离开审核区、路由参数变更。前两条都是页内行为，
    * 用应用内的确认框；刷新与关标签页那条在 DocumentReviewWorkbench 里走 beforeunload，
    * 浏览器只接受原生弹窗，不是写法选择。守卫可以是异步的，所以调用方直接 await 这个结果。
    */

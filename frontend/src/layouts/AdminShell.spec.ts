@@ -27,6 +27,8 @@ function makeRouter(): Router {
     history: createMemoryHistory(),
     routes: [
       { path: '/', name: 'search', component: { template: '<div>search</div>' } },
+      // 「返回首页」指向默认入口 Agent 对话，路由表里得有这么一条才解析得出 href。
+      { path: '/agent', name: 'agent-chat', component: { template: '<div>agent</div>' } },
       {
         path: '/settings/:section?',
         name: 'settings',
@@ -64,12 +66,12 @@ afterEach(() => {
 })
 
 describe('AdminShell', () => {
-  it('侧边栏有返回工作台与后台菜单，菜单指向单一路由的分区参数', async () => {
+  it('侧边栏有返回首页与后台菜单，菜单指向单一路由的分区参数', async () => {
     const { wrapper } = await mountShell()
 
     const back = wrapper.get('.menu-back')
-    expect(back.attributes('href')).toBe('/')
-    expect(back.text()).toContain('返回工作台')
+    expect(back.attributes('href')).toBe('/agent')
+    expect(back.text()).toContain('返回首页')
 
     const menu = wrapper.get('.menu-item')
     expect(menu.attributes('href')).toBe('/admin/users')

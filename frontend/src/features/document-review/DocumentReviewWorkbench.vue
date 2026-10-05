@@ -155,7 +155,7 @@ watch(detail, async (value) => {
 </script>
 
 <template>
-  <section class="review-workbench" aria-label="文档审核工作台">
+  <section class="review-workbench" aria-label="文档审核">
     <div class="review-toolbar">
       <BaseButton variant="ghost" @click="emit('close')">返回文档列表</BaseButton>
       <BaseButton variant="outline" :disabled="busy || loading" @click="review.refresh()"

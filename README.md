@@ -4,12 +4,12 @@
 Document、Chunk 和同规格向量索引。MinIO/S3 保存原件，PostgreSQL 保存候选、已采用版本和审核记录，
 Qdrant 提供语义检索；MD 与 FreshRSS HTML 使用 Docling 解析并按结构生成 Chunk，TXT 保持纯文本语义。
 
-该工作区把知识库服务与浏览器工作台作为两个独立运行时维护：
+该工作区把知识库服务与浏览器前端作为两个独立运行时维护：
 
 ```text
 agent-lab/
 ├── backend/   # FastAPI、FreshRSS、Ollama Embedding、Qdrant
-├── frontend/  # Vue 3 + TypeScript + Vite 的 Signal Desk
+├── frontend/  # Vue 3 + TypeScript + Vite 的 AgentLab
 └── docs/      # 能力地图、跨模块链路、决策记录与部署手册
 ```
 
