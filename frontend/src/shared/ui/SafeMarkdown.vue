@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { VueMarkdown, type CustomAttrs } from '@crazydos/vue-markdown'
 import remarkGfm from 'remark-gfm'
+import { useFloatingPosition } from '@/shared/composables/useFloatingPosition'
 
 /* Agent 答案与上传 Markdown 文档共用的安全渲染。
  *
@@ -28,6 +29,11 @@ import remarkGfm from 'remark-gfm'
  * 异步组件的挂起态，代价比这里省下的解析时间大。
  */
 
+/* 本组件有两个根节点（渲染器 + 悬停卡的 Teleport），Vue 不会自动把父级传下来的
+   class 挂到哪一个上——AgentTurnCard 就传了 `class="answer-body"`，不管它就静默丢掉。
+   所以关掉自动继承，在渲染器那个根上显式 v-bind="$attrs"。 */
+defineOptions({ inheritAttrs: false })
+
 const props = defineProps<{
   markdown: string
   /** 流式中在末尾显示光标块。落定后撤掉。 */
@@ -42,6 +48,91 @@ const emit = defineEmits<{ citation: [id: string, trigger: HTMLElement] }>()
 const citationNumbers = computed(
   () => new Map((props.citationIds ?? []).map((id, index) => [id, index + 1])),
 )
+
+/* 引用悬停卡：一块跟着鼠标所在那枚小丸走的浮层。
+ *
+ * 它原来是纯 CSS 的 `::after`（`content: attr(data-summary)` + 绝对定位）。那个写法不用
+ * JS、流式期间也不用管状态，但有一个修不掉的毛病：绝对定位的祖先链里只要有 `overflow`，
+ * 它就会被裁。答案里恰恰有——`table` 是 `display: block; overflow-x: auto`（横竖都被裁），
+ * 而模型很爱用表格列来源，引用正好落在单元格里；`pre` 同理。表现就是悬停时卡片被切掉一半，
+ * 和输入坞那两块浮层是同一类问题。
+ *
+ * 现在改成一块 Teleport 到 body 的固定定位浮层，落点走与下拉面板同一套几何
+ * （useFloatingPosition）：朝上、以小丸为中线，放不下才翻到下方或夹进视口。
+ * 代价是有了 JS 状态，所以下面还有两处收尾：锚点离开文档要收卡片（流式期间
+ * 整棵正文树每来一个 token 就重渲染一次，被悬停的那枚小丸随时可能被换掉）。
+ *
+ * 悬停与聚焦的判定走**事件委托**，挂在渲染器根节点上，而不是逐个小丸挂监听：
+ *   1. 这个渲染器只把属性转发到元素上，事件属性并不保证转发——2026-10 实测，
+ *      同一次返回里 onClick 生效、onMouseEnter 收不到（它自己文档也只演示 onClick），
+ *      逐个小丸挂事件是在赌一个没有承诺的行为；
+ *   2. 流式期间整棵正文树每个 token 重渲染一次，委托只有一个监听，
+ *      不随小丸的增减而反复挂载。
+ * 委托读的是元素上的 data-summary（属性转发是可靠的，title / class 都落在上面）。
+ */
+const previewSummary = ref<string | null>(null)
+const previewAnchor = ref<HTMLElement | null>(null)
+const previewPanel = ref<HTMLElement | null>(null)
+
+const { position, positioned } = useFloatingPosition({
+  open: () => previewSummary.value !== null,
+  anchorRef: previewAnchor,
+  panelRef: previewPanel,
+  gap: 8,
+  prefer: 'above',
+  align: 'center',
+})
+
+/** 从事件目标找回承载摘要的那枚小丸；不在小丸上（或小丸没有摘要）就返回 null。 */
+function citationAnchor(target: EventTarget | null): HTMLElement | null {
+  if (!(target instanceof HTMLElement)) return null
+  const anchor = target.closest<HTMLElement>('.verified-citation')
+  return anchor?.dataset.summary ? anchor : null
+}
+
+function showPreview(anchor: HTMLElement): void {
+  previewSummary.value = anchor.dataset.summary ?? null
+  previewAnchor.value = anchor
+}
+
+function hidePreview(): void {
+  previewSummary.value = null
+  previewAnchor.value = null
+}
+
+function onPointerOver(event: MouseEvent): void {
+  const anchor = citationAnchor(event.target)
+  if (anchor) showPreview(anchor)
+}
+
+function onPointerOut(event: MouseEvent): void {
+  if (citationAnchor(event.target)) hidePreview()
+}
+
+/* focusin / focusout 而不是 focus / blur：后两个不冒泡，委托收不到。 */
+function onFocusIn(event: FocusEvent): void {
+  const anchor = citationAnchor(event.target)
+  if (anchor) showPreview(anchor)
+}
+
+function onFocusOut(event: FocusEvent): void {
+  if (citationAnchor(event.target)) hidePreview()
+}
+
+/* 流式期间正文整棵重渲染，被悬停的那枚小丸可能已经被换掉。元素被移除时浏览器
+   不一定会派发 mouseleave，卡片就会停在一个指向已消失元素的坐标上（那种元素的
+   rect 全是 0，夹取之后它就贴在视口角上）。所以每次正文变化都核对一次锚点。 */
+watch(
+  () => props.markdown,
+  () => {
+    if (previewAnchor.value && !previewAnchor.value.isConnected) hidePreview()
+  },
+)
+
+const previewStyle = computed(() => ({
+  top: `${position.value.top}px`,
+  left: `${position.value.left}px`,
+}))
 
 // 只转换 Markdown 解析后的文本节点，代码与已有链接保持原样；不自行解析 Markdown。
 interface MarkdownNode {
@@ -114,7 +205,8 @@ const linkAttrs: CustomAttrs = {
       return {
         class: 'verified-citation',
         title: `查看引用 ${number}`,
-        // 摘要经 data-* 落给 CSS 悬停卡；attr() 只吃纯文本，无注入面。
+        /* 摘要经 data-* 落给根的委托监听（见文件上方 onPointerOver 那段说明）；
+           attr() 只吃纯文本，无注入面。 */
         'data-summary': summary,
         onClick: (event: MouseEvent) => {
           event.preventDefault()
@@ -137,13 +229,34 @@ const linkAttrs: CustomAttrs = {
 
 <template>
   <VueMarkdown
+    v-bind="$attrs"
     class="markdown-answer"
     :class="{ 'is-streaming': streaming }"
     :markdown="markdown"
     sanitize
     :remark-plugins="remarkPlugins"
     :custom-attrs="linkAttrs"
+    @mouseover="onPointerOver"
+    @mouseout="onPointerOut"
+    @focusin="onFocusIn"
+    @focusout="onFocusOut"
   />
+
+  <!-- 悬停卡挂到 body：留在正文里会被 table / pre 的 overflow 裁掉，正是它要修的那个毛病。
+       aria-hidden：卡片内容与点击后打开的阅读层重复，而原来的 CSS 伪元素内容本来就读屏不可见，
+       屏开等于凭空多播一遍。 -->
+  <Teleport to="body">
+    <div
+      v-if="previewSummary"
+      ref="previewPanel"
+      class="citation-preview"
+      :class="{ 'is-positioned': positioned }"
+      :style="previewStyle"
+      aria-hidden="true"
+    >
+      {{ previewSummary }}
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -246,40 +359,8 @@ const linkAttrs: CustomAttrs = {
   white-space: nowrap;
 }
 
-/* 预览卡：纯 CSS 的 ::after 浮层（data-summary 提供纯文本，无注入面）。
-   悬停与键盘聚焦都给：这条是链接，键盘用户本来就到得了它，只给 :hover 会让「看一眼来源」
-   变成鼠标专属。触屏没有悬停也点不出聚焦态，那里点引用直接进全文阅读层——完整信息本来就在
-   那一步里，这条只是省一次跳转的预览。 */
-.markdown-answer :deep(.verified-citation)::after {
-  content: attr(data-summary);
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  z-index: var(--z-local);
-  width: max-content;
-  max-width: min(320px, 72vw);
-  padding: 7px 10px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-soft);
-  font-family: var(--body-font);
-  font-size: var(--fs-xs);
-  line-height: 1.5;
-  text-align: left;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  opacity: 0;
-  transform: translateX(-50%);
-  transition: opacity var(--duration-fast) var(--ease-out-smooth);
-  pointer-events: none;
-}
-
-.markdown-answer :deep(.verified-citation:hover)::after,
-.markdown-answer :deep(.verified-citation:focus-visible)::after {
-  opacity: 1;
-}
+/* 悬停预览卡的皮肤在共享层 popover.css（.citation-preview，与下拉面板同一族浮层表面）：
+   它由 Teleport 挂到 body，不在这棵组件树里。 */
 
 /* 行内码与代码块共用等宽字体，但底色不同：行内的要在正文流里可辨认又不打断阅读，
    块级的要像一个独立区域。 */

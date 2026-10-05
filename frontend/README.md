@@ -200,27 +200,39 @@ npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated/o
   store（读写 `/auth/me/preferences`）；
 - `src/shared/ui`：`Base*` 基础控件（含 `BaseSwitch` 开关）、`BaseDisclosure`（全站唯一的
   折叠区皮肤：箭头、开合、悬停/按下、触屏高度都在它一份里，各页不再自己写 `summary` 样式）、
+  `BasePopover`（全站唯一的浮层：安静胶囊触发键 + 点开才出现的面板；落点按可用空间算，
+  下方放不下就翻到上方，面板 Teleport 到 body，避免被贴底输入坞裁掉。知识库范围与
+  Agent 模型两个选择器共用，开合、点外关闭、Esc 关闭与焦点归还都在这一份里）、
   `ConfirmDialog`（全站破坏性
   操作的确认框，挂在 `App.vue` 上一次，由 `requestConfirm()` 驱动）、`ComposerDock` 输入坞、
   `ScrollToBottomButton`（输入坞上方的「回到最新」，检索页与 Agent 页共用）、
   `KnowledgeBaseScopePicker`、`ThemeToggle`，以及答案与 Markdown 文件共用的安全渲染器
-  `SafeMarkdown.vue`、检索 / Agent / 文件资料三处共用的全文阅读器 `DocumentReader.vue`；
+  `SafeMarkdown.vue`（引用小丸的悬停预览卡也在它里面：一块 Teleport 到 body 的浮层，
+  走与下拉面板同一套几何——留在正文里会被表格 / 代码块的 overflow 裁掉一半）、
+  检索 / Agent / 文件资料三处共用的全文阅读器 `DocumentReader.vue`；
 - `src/shared/composables/useKnowledgeBaseScope.ts`：启用知识库目录与选择有效性；
 - `src/shared/composables/useDocumentReader.ts`：全文 Query 与阅读层状态（三处入口共用）；
 - `src/shared/composables/useStickToBottom.ts`：贴底跟随与「回到最新」的判定（检索页与 Agent 页共用），
   暴露 `atBottom` / `scrollToBottom()`，由 `ScrollToBottomButton` 呈现；
+- `src/shared/composables/useFloatingPosition.ts`：浮层几何（量触发元素与面板、按可用空间翻转
+  与夹取、跟随滚动与面板长高）。落点算术独立在 `src/shared/model/popover-position.ts`，
+  可脱离 DOM 测；`prefer` / `align` 两个偏好分别服务下拉面板（朝下、左对齐）与
+  引用悬停卡（朝上、居中）；
+- `src/shared/composables/usePopoverPanel.ts`：在下拉面板那一套开合策略上包一层
+  ——点触发键开合、点外面或 Esc 关闭并归还焦点。几何归上面的 useFloatingPosition；
 - `src/shared/composables/confirm.ts`：确认请求的单槽队列（渲染方是 `ConfirmDialog`）。
   feature 里的 composable 借它把「弹个确认框」委托出去并拿回用户的选择，写法与 `window.confirm`
   一样是「等一个布尔值」，但弹的是应用自己的框；
 - `src/shared/model`：跨功能共用的纯函数与类型（文档处理状态显示、密码规则、
-  打开全文所需的文档身份 `ReadableResult` 与引用快照、固定东八区的时间格式化 `datetime.ts`）；
+  打开全文所需的文档身份 `ReadableResult` 与引用快照、固定东八区的时间格式化 `datetime.ts`、
+  浮层落点算术 `popover-position.ts`）；
 - `src/pages`：登录、检索、Agent 对话、设置中心与后台控制台（单路由
   `/admin/:section?`，AdminPage 按分区组合账号、知识库、来源、文件与任务管理）的路由级组合，
   不直接执行 `fetch`；
 - `src/styles`：设计令牌（`tokens.css`）与 `components/` 下的共享样式层——顶栏、动效、
   目录骨架（三态行 / 标题区 / 工具栏）、状态胶囊、窄屏抽屉遮罩、复选行、
   会话与检索流的左侧时间线、输入条字数胶囊、侧栏导航项、后台页头、
-  输入条底栏的强调胶囊链接、行内强调链接。全局 reset/base/components 分层写在
+  输入条底栏的强调胶囊链接、行内强调链接、浮层（胶囊触发键 + 面板 + 引用悬停卡）。全局 reset/base/components 分层写在
   `src/style.css`。共享层只放「多个组件长得必须一样」的规则，且只写进 `@layer components`
   ——分层规则恒定输给组件未分层的 scoped 样式，要压过某个组件（比如把 BaseIconButton
   藏起来）得在调用方自己的 scoped 块里写。

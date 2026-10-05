@@ -19,6 +19,7 @@ import './styles/components/badge-link.css'
 import './styles/components/nav-item.css'
 import './styles/components/admin-page.css'
 import './styles/components/text-link.css'
+import './styles/components/popover.css'
 import App from './App.vue'
 
 setUnauthorizedHandler(() => {

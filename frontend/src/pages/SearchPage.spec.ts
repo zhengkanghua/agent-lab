@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import SearchPage from '@/pages/SearchPage.vue'
 import { _resetRecordSequence } from '@/features/semantic-search'
@@ -50,6 +51,15 @@ function makeRouter() {
 }
 
 describe('SearchPage search stream', () => {
+  /* 浮层面板里的原生输入不在组件实例上，@vue/test-utils 的 setValue 够不着，
+     只能自己改 checked 再派发 change——组件的选择逻辑挂在 change 上。 */
+  async function check(input: Element): Promise<void> {
+    const el = input as HTMLInputElement
+    el.checked = true
+    el.dispatchEvent(new Event('change'))
+    await nextTick()
+  }
+
   beforeEach(() => {
     // jsdom 没有实现 window.scrollTo，而「提交后跟到最新一条」会调它。
     vi.stubGlobal('scrollTo', vi.fn())
@@ -263,16 +273,25 @@ describe('SearchPage search stream', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mount(SearchPage, {
+      attachTo: document.body,
       global: { plugins: [[VueQueryPlugin, { queryClient: makeQueryClient() }], makeRouter()] },
     })
     await flushPromises()
-    await wrapper.findAll('input[type="radio"]')[1]!.setValue(true)
+
+    /* 范围选择器是一枚胶囊 + 浮层：面板经 Teleport 挂到 document.body 上，
+       所以要先把胶囊点开、再从 body 里找面板——在 wrapper 里 findAll 是找不到的。
+       面板里的原生输入也不在组件实例上，setValue 用不了，只能自己改 checked 再派发 change。 */
+    await wrapper.get('.scope-picker .popover-trigger').trigger('click')
+    const panel = document.body.querySelector('.popover-panel')
+    expect(panel).not.toBeNull()
+
+    await check(panel!.querySelectorAll('input[type="radio"]')[1]!)
     await wrapper.get('textarea').setValue('资料')
     await wrapper.get('form').trigger('submit')
     expect(fetchMock.mock.calls.filter(([input]) => input === '/api/document-search')).toHaveLength(
       0,
     )
-    for (const checkbox of wrapper.findAll('input[type="checkbox"]')) await checkbox.setValue(true)
+    for (const checkbox of panel!.querySelectorAll('input[type="checkbox"]')) await check(checkbox)
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     const call = fetchMock.mock.calls.find(([input]) => input === '/api/document-search')

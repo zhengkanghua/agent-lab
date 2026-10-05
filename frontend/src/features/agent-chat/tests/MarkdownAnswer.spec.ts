@@ -1,5 +1,6 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import { nextTick } from 'vue'
 import MarkdownAnswer from '@/shared/ui/SafeMarkdown.vue'
 
 /* 这份 spec 的重点是「配置没被改掉」而不是「Markdown 能渲染」。
@@ -153,9 +154,92 @@ describe('MarkdownAnswer 结构渲染', () => {
   })
 })
 
+describe('MarkdownAnswer 引用悬停预览', () => {
+  const id = 'E0123456789ab'
+  const markdown = `备份保留 7 天 [[${id}]]`
+  const summaries = { [id]: '技术资料 · 运行手册' }
+
+  /* 卡片由 Teleport 挂到 body，不在组件的模板里，所以只能从 document 上找。
+     它原来是正文里的 CSS 伪元素，会被表格 / 代码块的 overflow 裁掉一半——
+     挂在 body 上正是为了那条。 */
+  function previewCard(): HTMLElement | null {
+    return document.body.querySelector('.citation-preview')
+  }
+
+  function mountWithSummary(props: Record<string, unknown> = {}) {
+    return mount(MarkdownAnswer, {
+      props: { markdown, citationIds: [id], citationSummaries: summaries, ...props },
+    })
+  }
+
+  /* 悬停与聚焦走根的委托，所以事件要从小丸上冒泡上去——直接在根上派发测不到
+     「找到是哪一枚小丸」。 */
+  async function fire(wrapper: ReturnType<typeof mountWithSummary>, type: string): Promise<void> {
+    wrapper.get('a.verified-citation').element.dispatchEvent(new Event(type, { bubbles: true }))
+    await nextTick()
+  }
+
+  afterEach(() => {
+    document.body.replaceChildren()
+  })
+
+  it('悬停引用小丸浮出摘要，移开就收起', async () => {
+    const wrapper = mountWithSummary()
+
+    expect(previewCard()).toBeNull()
+
+    await fire(wrapper, 'mouseover')
+    expect(previewCard()?.textContent?.trim()).toBe('技术资料 · 运行手册')
+
+    await fire(wrapper, 'mouseout')
+    expect(previewCard()).toBeNull()
+  })
+
+  it('键盘聚焦同样浮出，卡片挂在 body 上而不留在正文里', async () => {
+    const wrapper = mountWithSummary()
+
+    await fire(wrapper, 'focusin')
+    expect(previewCard()).not.toBeNull()
+    expect(previewCard()!.parentElement).toBe(document.body)
+    // 留在正文里就会被 table / pre 的 overflow 裁掉。
+    expect(wrapper.html()).not.toContain('citation-preview')
+
+    await fire(wrapper, 'focusout')
+    expect(previewCard()).toBeNull()
+  })
+
+  it('没有摘要时不浮出（普通文件阅读）', async () => {
+    const wrapper = mount(MarkdownAnswer, { props: { markdown, citationIds: [id] } })
+
+    await fire(wrapper, 'mouseover')
+
+    expect(previewCard()).toBeNull()
+  })
+
+  it('点击仍然走 citation 事件，不受预览影响', async () => {
+    const wrapper = mountWithSummary()
+
+    await wrapper.get('a.verified-citation').trigger('click')
+
+    expect(wrapper.emitted('citation')).toHaveLength(1)
+  })
+
+  it('父级传下来的 class 落在正文根节点上', () => {
+    // 组件有两个根节点（正文 + 悬停卡的 Teleport），不显式转发就会静默丢掉。
+    const wrapper = mount(MarkdownAnswer, {
+      props: { markdown: '一句话' },
+      attrs: { class: 'answer-body' },
+    })
+
+    expect(wrapper.get('.markdown-answer').classes()).toContain('answer-body')
+  })
+})
+
 describe('MarkdownAnswer 流式光标', () => {
+  /* 组件有两个根节点（正文 + 悬停卡的 Teleport），wrapper.classes() 取不到根上的类，
+     要从正文根节点上看。 */
   it('streaming 为真时挂上 is-streaming', () => {
-    expect(render('写到一半', true).classes()).toContain('is-streaming')
+    expect(render('写到一半', true).get('.markdown-answer').classes()).toContain('is-streaming')
   })
 
   it('落定后撤掉 is-streaming', async () => {
@@ -163,10 +247,10 @@ describe('MarkdownAnswer 流式光标', () => {
 
     await wrapper.setProps({ streaming: false })
 
-    expect(wrapper.classes()).not.toContain('is-streaming')
+    expect(wrapper.get('.markdown-answer').classes()).not.toContain('is-streaming')
   })
 
   it('默认不带 is-streaming', () => {
-    expect(render('已完成').classes()).not.toContain('is-streaming')
+    expect(render('已完成').get('.markdown-answer').classes()).not.toContain('is-streaming')
   })
 })

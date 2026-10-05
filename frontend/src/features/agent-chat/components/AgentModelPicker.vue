@@ -1,18 +1,20 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Bot, ChevronDown, RefreshCw } from '@lucide/vue'
+import { computed, ref } from 'vue'
+import { Bot, RefreshCw } from '@lucide/vue'
 import type { AvailableLlmModelDto } from '@/api/llm-models'
+import BasePopover from '@/shared/ui/BasePopover.vue'
 import type { ChatModelChoice } from '../composables/useChatModel'
 
 /*
- * 会话里选模型的选择器。形状与知识库范围选择器（shared/ui/KnowledgeBaseScopePicker.vue）同源：
- * 一枚安静胶囊 + 浮层面板。三处不同，都是本页特有的：
+ * 会话里选模型的选择器。与知识库范围选择器（shared/ui/KnowledgeBaseScopePicker.vue）
+ * 同源：都是 BasePopover 的一枚胶囊 + 一块面板，开合、定位、点外关闭、Esc 都在那边。
+ * 三处不同，都是本页特有的：
  *
- * 1. **每次打开都重新拉目录**（emit open，由调用方 refresh）。会话列表与目录加载后是有缓存的，
- *    不重拉的话用户会看到一个刚下线的模型、或者刚建的模型迟迟选不到。
+ * 1. **每次打开都重新拉目录**（BasePopover 的 open 事件，由调用方 refresh）。会话列表与
+ *    目录加载后是有缓存的，不重拉的话用户会看到一个刚下线的模型、或者刚建的模型迟迟选不到。
  * 2. **失效态**：当前选择不在可选目录里时，面板里如实说「原来是 xxx，该模型已不可用，请重新
  *    选择」，并把可选的那些摆在下面当重选入口。**不静默回落**成默认模型——那样用户以为自己
- *    还在用原来的模型，平台已经悄悄换了一个。
+ *    还在用原来的模型，平台已经悄悄换了一个。胶囊本身也换成提醒描边，不打开也看得出来。
  * 3. 单选：一条模型就是一个选项，没有「全部/指定」那种模式。
  */
 
@@ -33,6 +35,8 @@ const emit = defineEmits<{
   refresh: []
 }>()
 
+const open = ref(false)
+
 const label = computed(() =>
   props.modelValue === null ? '默认模型' : (props.modelValue.displayName ?? '原选中的模型'),
 )
@@ -46,91 +50,58 @@ const statusText = computed(() => {
       ? `原来是 ${name}，该模型已不可用，请重新选择。`
       : '原来是这个模型，它已不可用，请重新选择。'
   }
-  if (!props.loading && props.models.length === 0)
-    return '当前没有可用的模型，请联系管理员配置。'
+  if (!props.loading && props.models.length === 0) return '当前没有可用的模型，请联系管理员配置。'
   return ''
 })
 
-const detailsRef = ref<HTMLDetailsElement | null>(null)
-
-function close(): void {
-  if (detailsRef.value) detailsRef.value.open = false
-}
-
-/* 面板是浮层，原生 <details> 只会被自己的 summary 关掉，所以要补两条退路：点外面、按 Esc。
-   面板内的点击不关——否则选一条模型就把面板收走了。 */
-function onToggle(): void {
-  if (detailsRef.value?.open) emit('open')
-}
-
-function onDocumentPointerDown(event: PointerEvent): void {
-  const el = detailsRef.value
-  if (el?.open && !el.contains(event.target as Node)) close()
-}
-
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && detailsRef.value?.open) {
-    close()
-    // 焦点还给触发键：面板关了而焦点留在被移除的元素上，Tab 会从文档开头重来。
-    detailsRef.value.querySelector('summary')?.focus()
-  }
-}
-
 function choose(model: AvailableLlmModelDto): void {
   emit('update:modelValue', { id: model.id, displayName: model.display_name })
-  close()
+  // 单选：选完就收面板。范围选择器是多选，所以那边不关。
+  open.value = false
 }
-
-onMounted(() => {
-  // pointerdown 而不是 click：后者要等抬手，拖拽选择文本时也会误触发。
-  document.addEventListener('pointerdown', onDocumentPointerDown)
-  document.addEventListener('keydown', onKeydown)
-})
-
-onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onDocumentPointerDown)
-  document.removeEventListener('keydown', onKeydown)
-})
 </script>
 
 <template>
   <div class="model-picker">
-    <details ref="detailsRef" @toggle="onToggle">
-      <summary :class="{ 'is-unavailable': unavailable }" :title="label">
+    <BasePopover
+      v-model:open="open"
+      label="选择对话使用的模型"
+      :tone="unavailable ? 'warning' : 'default'"
+      @open="emit('open')"
+    >
+      <template #trigger>
         <Bot :size="15" aria-hidden="true" />
         <span class="model-label">{{ label }}</span>
         <span v-if="unavailable" class="model-warning" role="status">已不可用</span>
-        <ChevronDown class="model-chevron" :size="15" aria-hidden="true" />
-      </summary>
-      <fieldset>
-        <legend class="sr-only">选择对话使用的模型</legend>
-        <p v-if="statusText" class="model-status" :role="error ? 'alert' : 'status'">
-          {{ statusText }}
+      </template>
+
+      <p v-if="statusText" class="model-status" :role="error ? 'alert' : 'status'">
+        {{ statusText }}
+      </p>
+      <div class="model-choices">
+        <button
+          v-for="item in models"
+          :key="item.id"
+          type="button"
+          class="model-choice"
+          :class="{ 'is-selected': item.id === modelValue?.id }"
+          :aria-pressed="item.id === modelValue?.id"
+          @click="choose(item)"
+        >
+          <span class="model-name">{{ item.display_name }}</span>
+          <span class="model-meta">
+            {{ item.provider_name }} · 上下文窗口 {{ item.context_window }}
+          </span>
+        </button>
+        <p v-if="loading && models.length === 0" class="model-status" role="status">
+          正在加载模型目录…
         </p>
-        <div class="model-choices">
-          <button
-            v-for="item in models"
-            :key="item.id"
-            type="button"
-            class="model-choice"
-            :class="{ 'is-selected': item.id === modelValue?.id }"
-            :aria-pressed="item.id === modelValue?.id"
-            @click="choose(item)"
-          >
-            <span class="model-name">{{ item.display_name }}</span>
-            <span class="model-meta">
-              {{ item.provider_name }} · 上下文窗口 {{ item.context_window }}
-            </span>
-          </button>
-          <p v-if="loading && models.length === 0" class="model-status" role="status">
-            正在加载模型目录…
-          </p>
-        </div>
-        <p v-if="modelValue" class="model-note">
-          没选模型时会用目录里的默认模型；这里选过的会被这个会话记住，也能随时换。
-        </p>
-      </fieldset>
-    </details>
+      </div>
+      <p v-if="modelValue" class="model-note">
+        没选模型时会用目录里的默认模型；这里选过的会被这个会话记住，也能随时换。
+      </p>
+    </BasePopover>
+
     <button
       type="button"
       class="model-refresh"
@@ -157,55 +128,9 @@ onBeforeUnmount(() => {
   color: var(--text-secondary);
 }
 
-details {
-  position: relative;
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
-/* 安静胶囊：与同排的知识库范围胶囊、徽章胶囊同档尺寸（38px），把 accent 的 5% 面积纪律
-   留给发送键。 */
-summary {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  min-height: 38px;
-  padding: 4px 11px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
-  color: var(--text-secondary);
-  font-size: var(--fs-xs);
-  cursor: pointer;
-  transition:
-    border-color var(--duration-fast) var(--ease-out-smooth),
-    color var(--duration-fast) var(--ease-out-smooth),
-    background-color var(--duration-fast) var(--ease-out-smooth);
-}
-
-summary::-webkit-details-marker {
-  display: none;
-}
-
-summary:hover {
-  border-color: var(--border-strong);
-  color: var(--text-primary);
-  background: var(--surface-hover);
-}
-
-summary:active {
-  background: var(--surface-sunken-hover);
-}
-
-summary svg {
-  flex-shrink: 0;
-}
-
-/* 失效时那枚胶囊换个语气色：用户不打开面板也该看出「这个选择有问题」。 */
-summary.is-unavailable {
-  border-color: var(--warning);
-}
-
+/* 触发键的胶囊皮肤、失效描边、箭头旋转、触屏高度都归共享层 popover.css。
+   这里只剩胶囊里那两段内容：模型名要能截断（名字比知识库名长得多），
+   以及「已不可用」那枚小徽章。 */
 .model-label {
   max-width: 12em;
   overflow: hidden;
@@ -220,29 +145,6 @@ summary.is-unavailable {
   color: var(--warning);
   background: var(--surface-sunken);
   font-size: var(--fs-xs);
-}
-
-.model-chevron {
-  margin-left: auto;
-}
-
-details[open] .model-chevron {
-  transform: rotate(180deg);
-}
-
-fieldset {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: var(--z-popover);
-  min-width: 260px;
-  max-width: min(340px, 80vw);
-  margin: 0;
-  padding: 12px 14px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-soft);
 }
 
 .model-status {
@@ -357,10 +259,6 @@ fieldset {
 }
 
 @media (pointer: coarse) {
-  summary {
-    min-height: var(--tap-target);
-  }
-
   .model-choice {
     min-height: var(--tap-target);
   }

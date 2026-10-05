@@ -1,0 +1,142 @@
+/* 浮层（shared/ui/BasePopover.vue）的皮肤：一枚安静的胶囊触发键 + 一块浮起的面板。
+ *
+ * 触发键为什么是「安静」的：它坐在输入坞的底栏里，和徽章胶囊、圆形发送键同一排，
+ * 而强调色在这套设计里只留给主操作、当前导航态、引用徽标与链接悬停四处（面积纪律
+ * 见 tokens.css 顶部）。所以这里用弱一档的描边 + 次要字色，悬停也只加深描边、不沾强调色。
+ *
+ * 面板为什么必须 position: fixed 且挂在 body 上：见 usePopoverPanel.ts 顶部那段。
+ * 一句话版——它就是原来那两块「点开跑到屏幕外面」的面板，落点改成算出来的。
+ *
+ * 类名不带 scope：面板由 Teleport 送到 body，触发键由 BasePopover 而非调用方渲染，
+ * 两边都不在调用方的 scoped 作用域里。共用这一份，两个选择器不再各写一遍。
+ */
+
+/* 入场：淡入 + 极轻微的上浮。不做方向感（朝上/朝下各一套）——面板与触发键之间
+   只差 6px，方向感本来就看不出来，多一套关键帧只是多一处要同步的东西。
+   全局的 prefers-reduced-motion 分支在 style.css 里，会把时长压到 0.01ms。 */
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@layer components {
+  .popover-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    min-height: 38px;
+    padding: 4px 11px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-pill);
+    color: var(--text-secondary);
+    background: transparent;
+    font-family: inherit;
+    font-size: var(--fs-xs);
+    cursor: pointer;
+    transition:
+      border-color var(--duration-fast) var(--ease-out-smooth),
+      color var(--duration-fast) var(--ease-out-smooth),
+      background-color var(--duration-fast) var(--ease-out-smooth);
+  }
+
+  .popover-trigger:hover {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+    background: var(--surface-hover);
+  }
+
+  /* 悬停只换了描边与字色，两者都不是「按到了」，而这一枚点开的是浮层、
+     按下瞬间没有别的位移可看。收一档底是唯一的回执。 */
+  .popover-trigger:active {
+    background: var(--surface-sunken-hover);
+  }
+
+  /* 当前选择有问题时（模型已下线、绑定已失效），不打开面板也该看得出来。
+     只换描边色，不动字色：字色一变就和「不可用」混了，而这一枚仍然可以点开。 */
+  .popover-trigger.tone-warning {
+    border-color: var(--warning);
+  }
+
+  /* 触屏没有 hover，指针也不精确：撑到 44px 的可点高度。 */
+  @media (pointer: coarse) {
+    .popover-trigger {
+      min-height: var(--tap-target);
+    }
+  }
+
+  .popover-chevron {
+    flex-shrink: 0;
+    /* 推到自己那一侧的最右边：文案长短不一时，同一排的两枚胶囊箭头才对得齐。 */
+    margin-left: auto;
+    transition: transform var(--duration-fast) var(--ease-out-smooth);
+  }
+
+  .popover-trigger[aria-expanded='true'] .popover-chevron {
+    transform: rotate(180deg);
+  }
+
+  .popover-panel {
+    position: fixed;
+    z-index: var(--z-popover);
+    min-width: 260px;
+    max-width: min(340px, calc(100vw - 16px));
+    /* 兜底上限：面板比视口还高时，夹取只能保证它左上角在视口内，底下的内容仍然够不着。
+       有了这条最坏情况下也是「面板内部滚一下」，而不是「有一半永远看不见」。
+       常规档位由内容自己控高（选项列表各有 max-height），不会出现两条滚动条。 */
+    max-height: calc(100dvh - 16px);
+    overflow-y: auto;
+    padding: 12px 14px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    background: var(--surface-raised);
+    box-shadow: var(--shadow-soft);
+    font-size: var(--fs-sm);
+    animation: popover-in var(--duration-fast) var(--ease-out-smooth) both;
+  }
+
+  /* 落点量出来之前不要画：首帧的 top / left 是 (0,0)，不藏这一下会在左上角闪一帧。
+     位置在 nextTick 里算完（早于浏览器绘制），所以正常情况下这一帧不会被看到。 */
+  .popover-panel:not(.is-positioned) {
+    visibility: hidden;
+  }
+
+  /* 引用悬停卡（Agent 答案里那小丸的预览）。与下拉面板同族、同一套落点算法，
+     但形状不一样：它跟着正文里一枚几个字符宽的小丸，要贴着内容而不是撑成一块选择面板，
+     所以宽度随文字、圆角小一档、内边距更紧。
+
+     它曾经是正文里的 CSS 伪元素，被表格的 overflow 裁掉一半——现在由 SafeMarkdown
+     经 Teleport 挂到 body，这里是它唯一一份皮肤。 */
+  .citation-preview {
+    position: fixed;
+    z-index: var(--z-popover);
+    width: max-content;
+    max-width: min(320px, 72vw);
+    padding: 7px 10px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    background: var(--surface-raised);
+    box-shadow: var(--shadow-soft);
+    font-size: var(--fs-xs);
+    line-height: 1.5;
+    text-align: left;
+    overflow-wrap: anywhere;
+    animation: popover-in var(--duration-fast) var(--ease-out-smooth) both;
+    /* 卡片只是「看一眼」，指针穿过去：鼠标停在它上面时不该把它自己钉住，
+       也不该挡住正文里的链接。 */
+    pointer-events: none;
+  }
+
+  .citation-preview:not(.is-positioned) {
+    visibility: hidden;
+  }
+}
