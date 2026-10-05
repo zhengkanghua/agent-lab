@@ -16,4 +16,4 @@ status: accepted
 
 ## Consequences
 
-只推 `backend-latest` 一个 tag，回滚要把旧 commit 重新推一次或手动触发工作流，这是单人项目明确接受的取舍。History 模式的 `try_files` 回落只存在于 OpenResty 里，仓库中没有任何东西能保证它被配上、也没有测试能守住，只能靠部署文档写明。迁移由部署脚本显式执行而不写成 compose 服务，迁移失败时中止在后端那一步、前端仍是旧版本。
+只推 `backend-latest` 一个 tag；写下这句时的回滚办法是把旧 commit 重新推一次或手动触发工作流，**这条后来被换掉了**：部署把镜像摘要钉在服务定义里，回上一版是 `docker service update --rollback` 的一条命令（见 [0039](0039-swarm-start-first-deploys.md) 与[容器部署文档](../container_deployment.md)），本决策里「没有秒级回滚」那一项代价因此不再成立。History 模式的 `try_files` 回落只存在于 OpenResty 里，仓库中没有任何东西能保证它被配上、也没有测试能守住，只能靠部署文档写明。迁移由部署脚本显式执行而不写成 compose 服务，迁移失败时中止在后端那一步、前端仍是旧版本。
