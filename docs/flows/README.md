@@ -7,6 +7,7 @@
 | [新闻从 FreshRSS 到可被检索](news-to-searchable.md) | 改同步、切分、向量化、索引状态机 |
 | [文件接收、审核、采用与删除](file-document-lifecycle.md) | 改原件存储、后台处理、人工审核和版本切换 |
 | [Agent 运行范围与证据引用](agent-answer-evidence.md) | 改回答依据、引用和当前正文对照 |
+| [从会话选择模型到一次调用打到哪个上游](model-choice-to-client.md) | 改模型选择、冻结快照、客户端解析与缓存 |
 | [定时任务配置到任务执行](scheduled-job-execution.md) | 改配置刷新、触发、互斥、清理和执行恢复 |
 | [登录、会话与路由守卫](login-and-session.md) | 改登录、权限、401 处理 |
 | [一次检索](one-search.md) | 改检索接口、排序、结果展示 |
