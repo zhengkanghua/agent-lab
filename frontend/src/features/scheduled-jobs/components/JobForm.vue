@@ -161,7 +161,9 @@ const previewText = computed(() => {
   return ''
 })
 
-/** cron 没校验通过就不发出提交；具体原因已经在预览区里写明。 */
+/** cron 没校验通过、或清理范围里有找不到的库就不发出提交；两处原因都已经写在对应字段旁边。
+ *  这两条同时挂在提交键的 disabled 上：拦在这里而不置灰，用户点一下毫无反应，
+ *  只会以为界面坏了（而且键盘在输入框里按 Enter 也会走到这里，置灰挡不住它）。 */
 function onSubmit(): void {
   if (!previewCanSubmit.value || props.submitting || !selectedSpec.value) return
   if (props.taskType === 'prune_old_documents' && unresolvedScopeIds.value.length > 0) return
@@ -411,7 +413,7 @@ function onSubmit(): void {
           variant="primary"
           type="submit"
           :loading="submitting"
-          :disabled="!previewCanSubmit || !selectedSpec"
+          :disabled="!previewCanSubmit || !selectedSpec || unresolvedScopeIds.length > 0"
         >
           <template #icon><Check :size="17" aria-hidden="true" /></template>
           {{ submitting ? '正在保存' : isCreate ? '确认创建' : '确认修改' }}

@@ -100,8 +100,10 @@ defineProps<{
         </BaseButton>
       </template>
     </BaseCallout>
+    <!-- 与文档审核目录的空态同一句式：先说清「这是筛选的结果」，再给下一步。
+         只说「没有」会让用户以为是这台机器上根本没有执行过。 -->
     <p v-else-if="!executions.list.data.value?.length" class="empty">
-      当前没有符合条件的任务执行。
+      当前筛选下没有任务执行。放宽或重置筛选，或稍后再看。
     </p>
     <ol v-else class="execution-list">
       <li

@@ -49,7 +49,7 @@ describe('UserDirectoryTable', () => {
     expect(wrapper.get('button').attributes('disabled')).toBeDefined()
   })
 
-  it('加载失败显示 alert 并给出重新加载', async () => {
+  it('加载失败显示 alert 并给出重试', async () => {
     const wrapper = mountTable({ loadState: 'error', loadError: '账号服务暂时不可用。' })
 
     expect(wrapper.get('[role="alert"]').text()).toContain('账号服务暂时不可用。')
@@ -59,10 +59,11 @@ describe('UserDirectoryTable', () => {
     expect(wrapper.emitted('refresh')).toHaveLength(1)
   })
 
-  it('就绪但没有账号时给一句说明，而不是一张空表', () => {
+  it('就绪但没有账号时给一句说明加下一步，而不是一张空表', () => {
     const wrapper = mountTable({ users: [] })
 
-    expect(wrapper.text()).toContain('当前还没有可管理账号。')
+    expect(wrapper.text()).toContain('还没有账号')
+    expect(wrapper.text()).toContain('创建账号')
     expect(wrapper.find('[role="table"]').exists()).toBe(false)
   })
 

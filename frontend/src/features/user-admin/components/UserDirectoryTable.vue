@@ -109,9 +109,11 @@ const deletedCount = computed(() => props.users.filter((user) => user.deleted_at
       <BaseButton variant="ghost" size="xs" @click="emit('refresh')">重试</BaseButton>
     </div>
 
+    <!-- 空态要说清下一步，与知识库、文件资料、文档审核、定时任务四处同句式：
+         第一次进来看到这句话的人正是要建第一个账号的人，光说「没有」等于把他丢在原地。 -->
     <div v-else-if="users.length === 0" class="directory-state">
       <UsersRound :size="21" aria-hidden="true" />
-      当前还没有可管理账号。
+      还没有账号，用右上角的「创建账号」新建一个。
     </div>
 
     <TransitionGroup

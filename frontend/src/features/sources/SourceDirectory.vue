@@ -90,7 +90,7 @@ function formatCheckpoint(item: SourceDto): string {
     </div>
     <!-- 与其余目录同一句式：先承认「还没有」，再指出下一步在哪。
          原来只有「暂无来源，等待同步发现订阅」——它说的是系统的行为，不是用户能做的事；
-         而且「暂无」是全站唯一一处，其余都写「还没有」。 -->
+         而且「暂无」不是这套界面的说法，空态一律写「还没有」。 -->
     <div v-else-if="!loadError && items.length === 0" class="directory-state">
       还没有来源。在「任务管理」里执行一次「FreshRSS 同步」，这里就会出现同步发现的订阅源。
     </div>

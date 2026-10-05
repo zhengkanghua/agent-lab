@@ -86,12 +86,10 @@ watch([kind, () => props.documentId], () => {
     <p v-if="loading" role="status">正在加载历史…</p>
     <BaseCallout v-else-if="loadError" tone="danger" description="历史加载失败，当前编辑仍保留。">
       <template #actions
-        ><BaseButton variant="outline" @click="currentQuery.refetch()"
-          >重新加载</BaseButton
-        ></template
+        ><BaseButton variant="outline" @click="currentQuery.refetch()">重试</BaseButton></template
       >
     </BaseCallout>
-    <p v-else-if="empty" class="history-note">暂无这类记录。</p>
+    <p v-else-if="empty" class="history-note">还没有这类记录。</p>
     <ol v-else-if="kind === 'versions'" class="history-list">
       <li v-for="item in versions.data.value?.items" :key="item.version_id">
         <div>
