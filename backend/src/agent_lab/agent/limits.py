@@ -40,9 +40,8 @@ SUMMARIZATION_KEEP_FRACTION = 0.3
 SUMMARIZATION_PLACEHOLDER_WINDOW = 32768
 
 # 压缩前的旧工具正文清理：每条正文只留头与尾，中间换成占位文字。三个值是一套口径，改一个就
-# 改了清出多少量。头尾按工具输出上限的量级选，不是照搬外部默认值：检索一次好几段原文、工具
-# 输出的上限又按窗口算（见 ``tool_output_char_limit``），头尾留到几千字符就等于清不出量，
-# 「清够了就不调摘要模型」那一支永远不会发生。
+# 改了清出多少量。头尾取这个量级是为了**真的清出量**：比「头 + 尾」短的原样保留，比它长的把
+# 中段换掉，而工具正文动辄整篇文档，清一清能腾出很大一块。
 #
 # 占位文字会被用户看到（被清掉的轮次在界面上只剩它），所以它是对外文案，改动等于改用户看到
 # 的东西。
@@ -88,35 +87,6 @@ SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT = 2
 # 不限时间」——超过一年的窗口对排序几乎没有影响，却让模型有机会填出 99999 这种它自己也
 # 说不清的值。给个明确上限，模型填超了会被参数校验挡下并看到范围说明，比默默接受更好。
 SEARCH_TOOL_MAX_WITHIN_DAYS = 365
-
-# 一次工具调用交给模型的文本字符上限：按**当轮模型的上下文窗口**算，取窗口的 20%、封顶
-# 20000 字符、保底 2000 字符。为什么要按窗口成比例：本项目「一轮之内不压缩」，所以每轮只有
-# 「1 − 触发线 0.8」= **窗口的 20%** 留给「本轮工具结果 + 回答」；上限不与窗口成比例的话，
-# 窗口小的模型一次读取就能把这一轮顶出窗口。封顶与保底各管一头：封顶防大窗口的模型一次吃掉
-# 过多额度，保底保证窗口小的模型仍读得到有意义的长度。
-TOOL_OUTPUT_WINDOW_FRACTION = 0.2
-TOOL_OUTPUT_MAX_CHARS = 20000
-TOOL_OUTPUT_MIN_CHARS = 2000
-
-# 运行上下文里没有当轮模型时用的窗口兜底（离线测试直接调工具，或调用方没带模型）。取模型表单
-# 里预填的那个保守值，于是上限约 6553 字符，与它替换掉的 6000 定值同量级——**保底不为零比
-# 「没窗口就不限制」安全得多**。
-#
-# 与 SUMMARIZATION_PLACEHOLDER_WINDOW 数值相同，但两者**不是同一个东西**：那个只用来过上游摘要
-# 中间件的构造期校验、不参与任何计算，这个是真的会算进「一次工具调用能交给模型多少文本」。
-TOOL_OUTPUT_DEFAULT_CONTEXT_WINDOW = 32768
-
-
-def tool_output_char_limit(context_window: int | None) -> int:
-    """一次工具调用交给模型的文本字符上限。
-
-    输入是当轮模型的上下文窗口（token 数），输出是字符数上限；窗口为 ``None`` 表示这次运行的
-    上下文里没带模型，按 ``TOOL_OUTPUT_DEFAULT_CONTEXT_WINDOW`` 算。read_document 与
-    search_documents 共用这一份实现：两条路都把文本直接送进模型上下文，口径必须一致。
-    """
-
-    window = TOOL_OUTPUT_DEFAULT_CONTEXT_WINDOW if context_window is None else context_window
-    return max(TOOL_OUTPUT_MIN_CHARS, min(TOOL_OUTPUT_MAX_CHARS, int(window * TOOL_OUTPUT_WINDOW_FRACTION)))
 
 # 一次工具调用的时长上限。**必须存在**：一次不返回的工具调用会让这次运行卡住，而这次运行
 # 仍然算「活着」（最后活跃时刻照常续期，不会被判成僵尸），于是这个会话一直没法提交新提问——
@@ -215,10 +185,5 @@ __all__ = [
     "SUMMARIZATION_TRIGGER_FRACTION",
     "TOOL_CALL_RUN_LIMIT",
     "TOOL_CALL_TIMEOUT_SECONDS",
-    "TOOL_OUTPUT_DEFAULT_CONTEXT_WINDOW",
-    "TOOL_OUTPUT_MAX_CHARS",
-    "TOOL_OUTPUT_MIN_CHARS",
-    "TOOL_OUTPUT_WINDOW_FRACTION",
     "TOOL_RETRY_MAX",
-    "tool_output_char_limit",
 ]

@@ -17,7 +17,6 @@ from agent_lab.agent.limits import (
     SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT,
     SEARCH_TOOL_MAX_WITHIN_DAYS,
     TOOL_CALL_TIMEOUT_SECONDS,
-    tool_output_char_limit,
 )
 from agent_lab.knowledge.scope import ResolvedKnowledgeBaseScope
 from agent_lab.schemas.document_search import DocumentSearchRequest
@@ -101,17 +100,11 @@ def build_search_documents_tool(service: VectorSearchService) -> BaseTool:
                 )
         if not results:
             blocks.append("没有检索到相关文档。允许范围内可能没有这个主题，也可以换个说法再查；不要扩大范围补答案。")
-        # 「最多几篇几段」管的是检索请求，管不住输出长度：每段正文多长由文档自己决定，所以这里还要
-        # 按当轮窗口过一道总量上限（口径与 read_document 同一份实现）。超了就截断，**并且像读全文
-        # 那样把截断说出来**——不说的话模型会把「只有前几段」当成「一共只命中这些」，而去下
-        # 「没有提到 X」这类结论。说明本身也算在这次工具输出里，所以先从预算里扣掉它的长度。
+        # **不截断**：检索结果整份交给模型（老板在验收期定的：既然模型窗口可选，就不要拿一个固定
+        # 上限去卡它）。这里本来就只有「最多几篇 × 每篇几段」这一层间接约束，所以正常情况下不会
+        # 大；真遇上一段正文极长的文档而把请求顶出窗口时，上游报错、那一轮按失败收尾——
+        # 这是既有的、已接受的边界。
         text = "\n\n".join(blocks)
-        limit = tool_output_char_limit(
-            context.llm_model.context_window if context.llm_model is not None else None
-        )
-        if len(text) > limit:
-            marker = f"\n\n[检索结果超过 {limit} 字的读取上限，以上只是前半部分，后续命中片段未提供；需要完整内容请用 read_document 读取对应文档]"
-            text = text[: max(0, limit - len(marker))] + marker
         artifact = ToolEvidence(run_id=context.run_id, scope=scope, evidence=tuple(evidence))
         return ToolMessage(content=text, artifact=artifact.model_dump(mode="json"), tool_call_id=runtime.tool_call_id, name="search_documents")
 

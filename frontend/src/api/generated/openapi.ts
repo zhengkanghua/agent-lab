@@ -2835,7 +2835,7 @@ export interface components {
             display_name?: string | null;
             /**
              * Context Window
-             * @description 上游模型的上下文窗口 token 数，必填。填你确认过的最小值：压缩什么时候触发按它的比例算，一轮里单次工具输出能放多长也是按它的比例算的。填大了请求可能超过上游的真实窗口、整轮失败；填小了会提前压缩，并更早截断工具返回的内容。
+             * @description 上游模型的上下文窗口 token 数，必填。填你确认过的最小值：历史压缩什么时候触发按它的比例算。填大了请求可能超过上游的真实窗口、整轮失败；填小了会提前压缩，模型更早只剩下摘要。
              */
             context_window: number;
             /**
@@ -2959,7 +2959,7 @@ export interface components {
             display_name?: string | null;
             /**
              * Context Window
-             * @description 上游模型的上下文窗口 token 数，必填。填你确认过的最小值：压缩什么时候触发按它的比例算，一轮里单次工具输出能放多长也是按它的比例算的。填大了请求可能超过上游的真实窗口、整轮失败；填小了会提前压缩，并更早截断工具返回的内容。
+             * @description 上游模型的上下文窗口 token 数，必填。填你确认过的最小值：历史压缩什么时候触发按它的比例算。填大了请求可能超过上游的真实窗口、整轮失败；填小了会提前压缩，模型更早只剩下摘要。
              */
             context_window?: number | null;
             /**

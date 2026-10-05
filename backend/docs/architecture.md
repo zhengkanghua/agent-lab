@@ -421,9 +421,8 @@ Agent 装配失败**不致命**：lifespan 捕获、只记异常类型、``app.s
 ``MAX_USER_MESSAGE_CHARS`` 与 ``MAX_SYSTEM_PROMPT_CHARS`` 超过直接拒绝而不截断，截断会把提示词砍成
 半句、行为更难预期；
 ``SEARCH_TOOL_MAX_DOCUMENTS`` 与 ``SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT`` 管的是检索请求要几篇几段，
-不是输出长度；一次工具调用交给模型的文本上限由 ``tool_output_char_limit`` 按**当轮模型的上下文窗口**算
-（窗口的 20%、封顶 20000、保底 2000），两个工具共用，超了截断并把截断说出来——这里截断是对的，正文是数据
-不是指令；
+不是输出长度；**工具输出不截断**：正文不论多长都整份交给模型（没有按窗口比例的上限，也不再报截断）。
+代价是正文超过模型窗口时上游报错、那一轮按失败收尾——这是已接受的边界（与“一轮内不压缩”同一套前提）；
 ``SSE_HEARTBEAT_INTERVAL_SECONDS`` 是心跳间隔，前端的空闲超时按它的倍数留余量。
 ``RUN_DRAIN_TIMEOUT_SECONDS`` 是收尾排空的总预算（不是每个运行一份），``RUN_HANDOVER_SCAN_INTERVAL_SECONDS``
 是接手扫描的节奏；它们与容器停止宽限的关系见 ADR 0040 与 ``docker-compose.yml`` 的注释。

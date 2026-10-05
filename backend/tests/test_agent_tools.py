@@ -31,11 +31,7 @@ from agent_lab.agent.limits import (
     SEARCH_TOOL_MAX_DOCUMENTS,
     SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT,
     SEARCH_TOOL_MAX_WITHIN_DAYS,
-    TOOL_OUTPUT_DEFAULT_CONTEXT_WINDOW,
-    TOOL_OUTPUT_MAX_CHARS,
-    TOOL_OUTPUT_MIN_CHARS,
     TOOL_RETRY_MAX,
-    tool_output_char_limit,
 )
 from agent_lab.agent.streaming import stream_agent_events
 from agent_lab.agent.tools import build_agent_tools
@@ -281,53 +277,40 @@ def test_search_tool_rejects_a_document_limit_over_the_cap() -> None:
 # ---- 工具输出上限：按当轮窗口算，不是定值 ----
 
 
-def test_tool_output_char_limit_follows_the_window() -> None:
-    """上限随窗口算：窗口的 20%、封顶 20000、保底 2000；没窗口时按保守默认窗口。
+def test_tool_output_is_never_truncated_whatever_the_window() -> None:
+    """工具输出**完全不裁**：正文多长就交给模型多长（老板在验收期定的）。
 
-    两个端点各自有后果：窗口填小了同样会把这一轮顶出窗口，所以小窗口必须真的换到更短的工具
-    输出；而窗口大到一个量级之后不该再无止境放宽（封顶），窗口小到极限也不该趋零（保底）。
+    这条同时钉住「窗口不再参与工具输出长度」：同一份超长正文，在小窗口与大窗口下都必须
+    原样整份出现，也不能再出现任何截断说明。代价（正文超过模型窗口时上游报错、那一轮按
+    失败收尾）是既有的、已接受的边界，所以这里没有兼底。
     """
 
-    assert tool_output_char_limit(TOOL_OUTPUT_DEFAULT_CONTEXT_WINDOW) == 6553
-    # 没有当轮窗口时按默认窗口算，与旧的那个 6000 定值同量级。
-    assert tool_output_char_limit(None) == 6553
-    # 封顶从窗口 100k 开始生效，99_999 还差一个字符没到顶。
-    assert tool_output_char_limit(99_999) == 19_999
-    assert tool_output_char_limit(100_000) == TOOL_OUTPUT_MAX_CHARS
-    assert tool_output_char_limit(1_000_000) == TOOL_OUTPUT_MAX_CHARS
-    # 保底：窗口的 20% 不足 2000 时不再往下缩。
-    assert tool_output_char_limit(9_000) == TOOL_OUTPUT_MIN_CHARS
-    assert tool_output_char_limit(1) == TOOL_OUTPUT_MIN_CHARS
+    long_body = "正" * 30_000
 
+    def read_with(window: int) -> str:
+        factory = FakeSessionFactory(build_record(content_text=long_body))
+        read_tool = build_read_document_tool(factory)  # type: ignore[arg-type]
+        return run(invoke_tool(
+            read_tool, {"document_id": str(DOCUMENT_ID)}, context=context_with_window(window),
+        ))
 
-def test_search_tool_output_stays_within_the_window_limit() -> None:
-    """检索输出也受同一个上限管，超了要像读全文那样把截断说出来。
+    # 读全文：两个窗口下都是整份正文，"未读取" 那句截断说明不再出现。
+    for window in (16_384, 200_000):
+        output = read_with(window)
+        assert "正" * 30_000 in output
+        assert "未读取" not in output
 
-    「最多几篇几段」管不到长度：片段正文多长由文档自己决定，一次命中几段的正文就足够把这一轮
-    的余量吃光。不说明的话模型会把「只给了前面这几段」当成「一共只命中这些」。
-    """
-
+    # 检索那条同样不裁：一次命中很长的片段也整份交出去。
     chunk = DocumentSearchMatch(
         chunk_id=uuid4(), score=0.9, page_content="长" * 8000, chunk_index=0, chunk_count=1,
     )
     service = FakeSearchService([build_result().model_copy(update={"best_match": chunk})])
     news_tool = build_search_documents_tool(service)  # type: ignore[arg-type]
 
-    small_window = 32768
-    output = run(invoke_tool(news_tool, {"query": "央行降息"}, context=context_with_window(small_window)))
-
-    limit = tool_output_char_limit(small_window)
-    assert len(output) <= limit
-    assert "读取上限" in output
-    assert "后续命中片段未提供" in output
-    # 没截断的话整段正文都会在（8000 个「长」），上限生效时只交出一部分。
-    assert "长" * 8000 not in output
-
-    # 同一个片段在大窗口下放得下，就不该出现任何截断说明。
-    wide = run(invoke_tool(news_tool, {"query": "央行降息"}, context=context_with_window(200_000)))
-
-    assert "长" * 8000 in wide
-    assert "读取上限" not in wide
+    for window in (32768, 200_000):
+        out = run(invoke_tool(news_tool, {"query": "央行降息"}, context=context_with_window(window)))
+        assert "长" * 8000 in out
+        assert "读取上限" not in out
 
 
 # ---- within_days：模型能表达时间范围，但只能表达这一种 ----
@@ -467,56 +450,6 @@ def test_read_tool_returns_metadata_with_the_body() -> None:
     assert "示例财经" in output
     assert "2026-03-05 09:30" in output
     assert "降息幅度为 25 个基点。" in output
-
-
-def test_read_tool_truncates_an_overlong_body_with_a_visible_marker() -> None:
-    """超长正文要截断，并且必须显式标注截断了。
-
-    不标注的话模型会基于半篇文章下「文中没有提到 X」这类结论——而 X 可能就在后半篇。
-    这里没有当轮模型（离线直接调工具），所以上限按保守默认窗口算。
-    """
-
-    cap = tool_output_char_limit(None)
-    long_body = "正" * (cap + 500)
-    factory = FakeSessionFactory(build_record(content_text=long_body))
-    read_tool = build_read_document_tool(factory)  # type: ignore[arg-type]
-
-    output = run(invoke_tool(read_tool, {"document_id": str(DOCUMENT_ID)}))
-
-    assert "未读取" in output
-    assert "正" * cap in output
-    assert "正" * (cap + 1) not in output
-    assert f"正文超过 {cap} 字" in output
-
-
-def test_read_tool_body_limit_follows_the_window() -> None:
-    """窗口小就截得更短，窗口大就更长，而且说明里的数字跟着变。
-
-    按窗口算这件事只在「模型实际拿到多长正文」上才算落地：函数算出上限，工具必须真的用它
-    截断，并把实际用的那个数告诉模型——写死一个数字的话，窗口换掉之后这句话就是假的。
-    """
-
-    long_body = "正" * 30_000
-    small_cap = tool_output_char_limit(16_384)
-    large_cap = tool_output_char_limit(200_000)
-    assert small_cap < large_cap
-
-    def read_with(window: int) -> str:
-        factory = FakeSessionFactory(build_record(content_text=long_body))
-        read_tool = build_read_document_tool(factory)  # type: ignore[arg-type]
-        return run(invoke_tool(
-            read_tool, {"document_id": str(DOCUMENT_ID)}, context=context_with_window(window),
-        ))
-
-    small_output = read_with(16_384)
-    large_output = read_with(200_000)
-
-    assert "正" * small_cap in small_output
-    assert "正" * (small_cap + 1) not in small_output
-    assert "正" * large_cap in large_output
-    assert "正" * (large_cap + 1) not in large_output
-    assert f"正文超过 {small_cap} 字" in small_output
-    assert f"正文超过 {large_cap} 字" in large_output
 
 
 def test_read_tool_lets_database_errors_propagate() -> None:

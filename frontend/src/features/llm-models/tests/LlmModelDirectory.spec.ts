@@ -57,8 +57,8 @@ describe('LlmModelDirectory', () => {
     expect(windowField).toBeDefined()
     const text = windowField!.text()
     expect(text).toContain('填你确认过的最小值')
-    expect(text).toContain('压缩什么时候触发按它的比例算')
-    expect(text).toContain('单次工具输出能放多长也取它的比例')
+    expect(text).toContain('历史压缩什么时候触发按它的比例算')
+    expect(text).toContain('模型更早只剩下摘要')
   })
 
   it('没有展示名的那条显示上游模型名，有展示名的把上游名放在下面', async () => {

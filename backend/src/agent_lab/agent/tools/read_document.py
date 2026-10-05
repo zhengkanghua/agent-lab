@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_lab.agent.context import AgentContext
 from agent_lab.agent.evidence import DocumentEvidence, ToolEvidence
-from agent_lab.agent.limits import TOOL_CALL_TIMEOUT_SECONDS, tool_output_char_limit
+from agent_lab.agent.limits import TOOL_CALL_TIMEOUT_SECONDS
 from agent_lab.agent.tools.search_documents import scope_failure
 from agent_lab.repositories.document_repository import DocumentRepository
 
@@ -25,7 +25,7 @@ def build_read_document_tool(session_factory: SessionFactory) -> BaseTool:
     async def read_document(document_id: UUID, runtime: ToolRuntime[AgentContext]) -> ToolMessage:
         """按 document_id 读取本次允许知识库中的当前正文，片段不足时使用。
 
-        来源和发布时间可为空。正文过长会明确截断，未读取的部分不能当成不存在。
+        来源和发布时间可为空，正文是当前已采用的完整正文。
         当前正文可能已替换，必须使用本次读取给出的新 [[E...]] 标识引用当前内容，
         不沿用旧命中片段的引用。文档删除、知识库停用和范围外都会明确说明。
 
@@ -47,13 +47,10 @@ def build_read_document_tool(session_factory: SessionFactory) -> BaseTool:
             if not record.knowledge_base.is_active:
                 return scope_failure(runtime, "该文档所属知识库已停用，当前不能读取；这不表示文档已删除。")
             content = record.content_text.strip()
-            # 上限按当轮模型的窗口算（见 ``limits.tool_output_char_limit``），所以窗口小的模型读到的
-            # 正文更短、窗口大的更长。截断后的这一份就是交给模型的正文；证据里只留文档身份、来源与
-            # 正文版本，不再保存正文副本（正文在工具轨迹里本来就有，而且是完整的）。
-            cap = tool_output_char_limit(
-                context.llm_model.context_window if context.llm_model is not None else None
-            )
-            body_text = content[:cap]
+            # **不截断**：正文整份交给模型（老板在验收期定的：既然模型窗口可选，就不要拿一个固定
+            # 上限去卡它）。代价是正文超过模型窗口时上游报错、那一轮按失败收尾——这是既有的、
+            # 已接受的边界，所以这里没有兜底。证据里只留文档身份、来源与正文版本，不再保存正文
+            # 副本（正文在工具轨迹里本来就有，而且是完整的）。
             item = DocumentEvidence(
                 document_id=record.id, knowledge_base_id=record.knowledge_base_id,
                 knowledge_base_name=record.knowledge_base.name, title=record.title,
@@ -67,10 +64,8 @@ def build_read_document_tool(session_factory: SessionFactory) -> BaseTool:
                 f"document_id: {item.document_id}\n知识库: {item.knowledge_base_name}\n"
                 f"来源: {item.source_name or item.upload_filename or '无外部来源'} | 发布: {published}\n"
                 f"作者: {'、'.join(record.authors) if record.authors else '未署名'}\n"
-                f"原文地址: {record.url or '无外部地址'}\n\n当前正文:\n{body_text}"
+                f"原文地址: {record.url or '无外部地址'}\n\n当前正文:\n{content}"
             )
-            if len(content) > cap:
-                body += f"\n\n[正文超过 {cap} 字，以上是前半部分，后续内容未读取]"
             artifact = ToolEvidence(run_id=context.run_id, scope=context.scope, evidence=(item,))
             return ToolMessage(content=body, artifact=artifact.model_dump(mode="json"), tool_call_id=runtime.tool_call_id, name="read_document")
 

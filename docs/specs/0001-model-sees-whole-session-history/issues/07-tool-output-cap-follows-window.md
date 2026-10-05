@@ -4,7 +4,19 @@
 
 **被谁阻塞：** 03（要能拿到当轮窗口）
 
-**状态：** 已完成
+**状态：** 已完成（其中「按窗口截断」那条规则已在验收期被老板撤销，见下）
+
+## ⚠ 验收期的变更：工具输出不再截断（2026-10-04，老板决定）
+
+本工单原本交付的是「单次上限取窗口的 20%、封顶 20000、保底 2000 字符」。**老板在验收时把这条整条撤销**：理由是他要「让用户选的模型用满自己能力，不需要省钱」。
+
+改动：删掉 `TOOL_OUTPUT_WINDOW_FRACTION` / `TOOL_OUTPUT_MAX_CHARS` / `TOOL_OUTPUT_MIN_CHARS` / `TOOL_OUTPUT_DEFAULT_CONTEXT_WINDOW` 与 `tool_output_char_limit()`；`read_document` 与 `search_documents` 都不再截断、也不再给截断说明（那个截断说明是给模型看的，不再成立就必须一起删）；`schemas/llm_models.py` 的窗口说明与前端表单提示去掉「工具输出按它的比例算」那半句；`backend/docs/architecture.md` 同步。
+
+**这条推翻了 spec 0001「把给模型读的正文上限与窗口绑起来」那条实现决策**（spec 在本批次交付时删除，所以决策不往 spec 回写，记录落在这里与 `architecture.md`）。
+
+**明确接受的代价**：正文超过模型窗口时，请求会被上游拒绕、**那一轮按失败收尾**——这是 spec 原本就接受的边界，只是现在更容易碰到。老板同时把该模型的窗口改成 **1048576**（1M）。
+
+**被删掉的四条既有用例不是「用删测试换绿」**：`test_tool_output_char_limit_follows_the_window`、`test_search_tool_output_stays_within_the_window_limit`、`test_read_tool_truncates_an_overlong_body_with_a_visible_marker`、`test_read_tool_body_limit_follows_the_window`——它们钉的正是被撤销的那条规则；改用一条新用例 `test_tool_output_is_never_truncated_whatever_the_window` 钉住新行为（**两个大小不同的窗口下都整份返回、且没有任何截断说明**，读全文与检索两条都覆盖）。
 
 - [x] 上限取窗口的 20%、封顶 20000 字符、保底 2000 字符，作用在**一次工具调用交给模型的文本总长**上
 - [x] 窗口 32768 时约 6500 字符；窗口 100k 以上按封顶的 20000
