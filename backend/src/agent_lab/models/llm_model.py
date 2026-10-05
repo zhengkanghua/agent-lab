@@ -30,8 +30,8 @@ class LlmModelRecord(TimestampMixin, Base):
     """一行代表一个可用模型：上游模型名、展示名、上下文窗口、默认与启用状态。
 
     ``provider_id`` 是逻辑外键（库上无约束）；``display_name`` 可空，留空时界面回落到
-    ``upstream_model_name``；``context_window`` 必填、不允许留空——它同时是两件事的分母
-    （压缩什么时候触发按它的比例算，一轮里单次工具输出能放多长也取它的比例）。
+    ``upstream_model_name``；``context_window`` 必填、不允许留空——历史压缩什么时候触发按它的
+    比例算。**它不再是工具输出长度的分母**：工具输出整份交给模型、不设长度上限，见 ADR 0047。
     """
 
     __tablename__ = "llm_models"
@@ -69,8 +69,8 @@ class LlmModelRecord(TimestampMixin, Base):
     context_window: Mapped[int] = mapped_column(
         Integer, nullable=False,
         comment=(
-            "上游模型的上下文窗口 token 数，必填；压缩什么时候触发按它的比例算，"
-            "一轮里单次工具输出能放多长也取它的比例。填小了会提前压缩并截断工具输出。"
+            "上游模型的上下文窗口 token 数，必填；历史压缩什么时候触发按它的比例算。"
+            "填小了会提前压缩，模型更早只剩下摘要。"
         ),
     )
     is_default: Mapped[bool] = mapped_column(

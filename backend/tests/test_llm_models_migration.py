@@ -91,7 +91,11 @@ def test_upgrade_creates_the_table_with_the_orm_columns_and_comments(
 
     assert [column.name for column in columns] == [column.name for column in table.columns]
     for column in columns:
-        assert column.comment == table.c[column.name].comment, column.name
+        # ``context_window`` 的说明后来由 ``b7d4e1a9c3f2``（工具输出不再按窗口比例截断，
+        # 见 docs/adr/0047-tool-output-length-not-capped.md）刷新过：本文件记录的是建表当时那句，
+        # 「当前注解 = 最后一次写它的迁移」交给那条迁移自己的测试守。
+        if column.name != "context_window":
+            assert column.comment == table.c[column.name].comment, column.name
         assert column.nullable == table.c[column.name].nullable, column.name
         # 正面那一半：说明不为空。上面那条在「模型注解也是 None」时会空转成通过。
         assert column.comment, column.name

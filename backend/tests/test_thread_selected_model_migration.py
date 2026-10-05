@@ -2,7 +2,9 @@
 
 它证明三件事，都是「不跑真库也能确定对错」的那部分：
 
-1. 迁移接在上一个 head 上，并且就是当前 head——否则部署的 ``alembic upgrade head`` 不会跑到它。
+1. 迁移接在上一个 head 上、挂在迁移链里——否则部署的 ``alembic upgrade head`` 不会跑到它。
+   （「它就是当前 head」那半条随 ``b7d4e1a9c3f2``（同步 ``context_window`` 列说明）落地而移到了
+   那条迁移自己的测试里，与 ``test_llm_catalog_migration`` 当初的处理同一做法。）
 2. 升级只加一列、可空，且写入的说明与 ORM 上的注解**逐字一致**（两边分叉就是下一个要修的病，
    所以断言连着模型读，不在测试里再抄一遍字符串）。
 3. 回滚只删同一列。
@@ -20,13 +22,16 @@ from tests.migration_helpers import VERSIONS_DIR, load_migration, migration_chai
 MIGRATION_FILE = VERSIONS_DIR / "a3f7c2e9b5d4_会话选择模型_thread_selected_llm_model.py"
 
 
-def test_the_migration_is_wired_after_the_previous_head_and_is_the_head() -> None:
-    """它接在改动前的 head 上，而且是链尾——否则部署跑不到它。"""
+def test_the_migration_is_wired_after_the_previous_head() -> None:
+    """它接在改动前的 head 上，并且真的在迁移链里——否则部署时不会被跑到。
+
+    「它就是最新 head」那半条随 ``b7d4e1a9c3f2``（同步 ``context_window`` 列说明）落地而不再
+    成立，已按惯例移到那条迁移自己的测试里；这里仍守着 ``down_revision`` 与本迁移在链上。
+    """
 
     module = load_migration(MIGRATION_FILE)
 
     assert module.down_revision == "d2f5a8c31b76"
-    assert migration_chain()[0] == module.revision
     assert module.revision in migration_chain()
 
 

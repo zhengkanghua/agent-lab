@@ -75,7 +75,8 @@ MAX_SYSTEM_PROMPT_CHARS = 4000
 MAX_USER_MESSAGE_CHARS = 4000
 
 
-# ---- 工具输出上限：检索结果和正文都会进入模型上下文，必须有界 ----
+# ---- 工具调用的形状与时长：检索结果的篇数与段数有界、一次调用限时；
+#      交给模型的文本长度不设上限（见 ADR 0047）----
 
 # search_documents 一次最多返回几篇文档、每篇最多几个片段。刻意小于
 # schemas.document_search 的 MAX_DOCUMENT_LIMIT（100）：那是给人看的分页上限，
