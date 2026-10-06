@@ -133,25 +133,105 @@ const USAGE_RECORDS = [
   },
 ]
 
-/* 可用模型目录：字段与 src/api/llm-models.ts 的 isAvailableLlmModel 校验一致
- * （id / display_name / provider_name / context_window）。
- * 这条不能少：Agent 对话是默认入口页，缺了它输入条上的模型选择器会显示
- * 「模型目录加载失败」，于是每一张默认页的截图都挂着一条假报错，做视觉核验的人
- * 分不清那是真故障还是 mock 缺口。模型名与用量那条保持一致，两页对得上。 */
-const AVAILABLE_MODELS = [
+/* 上游渠道与模型目录：字段与 src/api/llm-providers.ts / llm-models.ts 的校验一致。
+ *
+ * 后台的「上游渠道」与「可用模型」两个板块在纯前端环境下必须有这份数据，否则整页停在
+ * 读取失败——而它们正是本轮新加的功能，做视觉核验时最先撞上。进程内可变：新建、编辑、
+ * 设默认都就地生效，刷新页面能看到刚改的那份（否则本地看什么都像没保存成功）。
+ *
+ * 三个 id 段各自独立（6/7/8 开头），与用量、账号那些数据不撞号。 */
+const LLM_PROVIDER_PRIMARY_ID = '70000000-0000-4000-8000-000000000001'
+const LLM_PROVIDER_SECONDARY_ID = '70000000-0000-4000-8000-000000000002'
+const LLM_PROVIDERS = [
   {
-    id: '60000000-0000-4000-8000-000000000001',
-    display_name: `${USAGE_MODEL}（默认）`,
-    provider_name: '内网 OpenAI 兼容',
-    context_window: 1048576,
+    id: LLM_PROVIDER_PRIMARY_ID,
+    name: '内网 OpenAI 兼容',
+    provider: 'openai_compatible',
+    base_url: 'https://llm.internal.example.com/v1',
+    enabled: true,
+    credential_configured: true,
+    created_at: timestamp,
+    updated_at: timestamp,
   },
   {
-    id: '60000000-0000-4000-8000-000000000002',
-    display_name: 'qwen-max',
-    provider_name: '内网 OpenAI 兼容',
-    context_window: 32768,
+    id: LLM_PROVIDER_SECONDARY_ID,
+    name: '本机 Ollama（已停用）',
+    provider: 'ollama',
+    base_url: 'http://127.0.0.1:11434',
+    enabled: false,
+    credential_configured: false,
+    created_at: timestamp,
+    updated_at: timestamp,
   },
 ]
+
+/* display_name 存的是「条目上填过的展示名」，没填就是 null——服务端的回落只在两条读路径上
+   发生，后台管理页要看到原始字段才分得清「空输入框」与「已填」。 */
+const LLM_MODELS = [
+  {
+    id: '80000000-0000-4000-8000-000000000001',
+    provider_id: LLM_PROVIDER_PRIMARY_ID,
+    upstream_model_name: 'gpt-x',
+    // 这一条不填展示名：后台列表要能看到「空输入框」，选择器要能看到回落到上游模型名。
+    display_name: null,
+    context_window: 1048576,
+    is_default: true,
+    enabled: true,
+    created_at: timestamp,
+    updated_at: timestamp,
+  },
+  {
+    id: '80000000-0000-4000-8000-000000000002',
+    provider_id: LLM_PROVIDER_PRIMARY_ID,
+    upstream_model_name: 'qwen-max',
+    // 这一条填了展示名：选择器上显示的是它，不是上游模型名。
+    display_name: '通义千问 Max',
+    context_window: 32768,
+    is_default: false,
+    enabled: true,
+    created_at: timestamp,
+    updated_at: timestamp,
+  },
+  {
+    /* 所属渠道是停用的，所以它不会出现在可用模型里——这条留着，是为了让
+       「渠道停用 → 该渠道下的模型不可选」这条规则在页面上看得见。 */
+    id: '80000000-0000-4000-8000-000000000003',
+    provider_id: LLM_PROVIDER_SECONDARY_ID,
+    upstream_model_name: 'llama3',
+    display_name: null,
+    context_window: 8192,
+    is_default: false,
+    enabled: true,
+    created_at: timestamp,
+    updated_at: timestamp,
+  },
+]
+
+function llmProviderOf(record) {
+  return LLM_PROVIDERS.find((item) => item.id === record.provider_id)
+}
+
+/** 后台模型目录那一份：渠道名与渠道启用状态是服务端算出来的，存在模型行上。 */
+function llmModelView(record) {
+  const provider = llmProviderOf(record)
+  return {
+    ...record,
+    provider_name: provider?.name ?? '渠道已不存在',
+    provider_enabled: provider?.enabled ?? false,
+  }
+}
+
+/** 可用模型那一份：自身启用 + 所属渠道启用，展示名落过回落到上游模型名。 */
+function availableModelViews() {
+  return LLM_MODELS.filter(
+    (record) => record.enabled && llmProviderOf(record)?.enabled === true,
+  ).map((record) => ({
+    id: record.id,
+    display_name: record.display_name ?? record.upstream_model_name,
+    provider_name: llmProviderOf(record).name,
+    context_window: record.context_window,
+  }))
+}
 
 /* model 与 [start, end) 真的参与过滤：日期不生效的话，页面上改范围看不到任何变化，
    会被当成筛选坏了（比缺数据更难查）。 */
@@ -477,8 +557,121 @@ export async function matchApi(url, authed, options = {}) {
   }
   if (!authed) return unauth
   // 可用模型目录：任何登录账号都能读（Agent 输入条的模型选择器）。放在 unauth 之后，
-  // 因为它不做角色区分；后台那套模型管理接口才是超管专属。
-  if (suffix === '/llm-models/available') return json(AVAILABLE_MODELS)
+  // 因为它不做角色区分；下面那套 /llm-providers、/llm-models 的管理接口才是超管专属。
+  if (suffix === '/llm-models/available') return json(availableModelViews())
+
+  /* 上游渠道与模型目录的后台管理接口。
+   *
+   * 只复现界面真的会撞上的规则（重名、默认标记的唯一性），不复现凭据加密密钥未配置
+   * 那类环境级错误——那些要求部署侧缺东西才会发生，本地 mock 里造出来只会误导。
+   * 写路径统一返回落定后的那一行，与后端一致：界面拿它当保存成功的回执。 */
+  if (suffix === '/llm-providers' && method === 'GET') return json(LLM_PROVIDERS)
+  if (suffix === '/llm-providers' && method === 'POST') {
+    const created = {
+      id: randomUUID(),
+      name: body?.name ?? '',
+      provider: body?.provider ?? 'openai_compatible',
+      base_url: body?.base_url ?? '',
+      enabled: body?.enabled !== false,
+      // 凭据只有入口没有出口：响应里永远只有这个布尔，不回明文。
+      credential_configured: Boolean(body?.credential),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+    LLM_PROVIDERS.push(created)
+    return json(created, 201)
+  }
+  const llmProviderId = /^\/llm-providers\/([^/]+)$/.exec(suffix)?.[1]
+  if (llmProviderId && method === 'PATCH') {
+    const index = LLM_PROVIDERS.findIndex((item) => item.id === llmProviderId)
+    if (index < 0)
+      return json({ code: 'provider_not_found', detail: '渠道不存在。', retryable: false }, 404)
+    const { credential, ...rest } = body ?? {}
+    LLM_PROVIDERS[index] = {
+      ...LLM_PROVIDERS[index],
+      ...rest,
+      // 带凭据才算配置过；不带就不动这一位（后端也不提供清空）。
+      credential_configured: credential ? true : LLM_PROVIDERS[index].credential_configured,
+      updated_at: new Date().toISOString(),
+    }
+    return json(LLM_PROVIDERS[index])
+  }
+  if (suffix === '/llm-models' && method === 'GET') return json(LLM_MODELS.map(llmModelView))
+  if (suffix === '/llm-models' && method === 'POST') {
+    const duplicated = LLM_MODELS.some(
+      (item) =>
+        item.provider_id === body?.provider_id &&
+        item.upstream_model_name === body?.upstream_model_name,
+    )
+    if (duplicated)
+      return json(
+        {
+          code: 'model_already_exists',
+          detail: '这条渠道下已经有同名的上游模型。',
+          retryable: false,
+        },
+        409,
+      )
+    const created = {
+      id: randomUUID(),
+      provider_id: body?.provider_id ?? '',
+      upstream_model_name: body?.upstream_model_name ?? '',
+      // 空字符串按契约存成 null：后台表单靠它区分「空输入框」与「已填」。
+      display_name:
+        typeof body?.display_name === 'string' && body.display_name.trim() !== ''
+          ? body.display_name
+          : null,
+      context_window: body?.context_window ?? 0,
+      is_default: body?.is_default === true,
+      enabled: body?.enabled !== false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+    // 默认只能有一条：新设的那条顶掉旧的。
+    if (created.is_default) for (const item of LLM_MODELS) item.is_default = false
+    LLM_MODELS.push(created)
+    return json(llmModelView(created), 201)
+  }
+  const llmModelId = /^\/llm-models\/([^/]+)$/.exec(suffix)?.[1]
+  if (llmModelId && method === 'PATCH') {
+    const index = LLM_MODELS.findIndex((item) => item.id === llmModelId)
+    if (index < 0)
+      return json({ code: 'model_not_found', detail: '模型不存在。', retryable: false }, 404)
+    // 后端只允许「把某条设为默认」，不提供直接取消：取消要让用户先指定另一条。
+    if (body?.is_default === false)
+      return json(
+        {
+          code: 'default_flag_cannot_be_cleared',
+          detail: '默认标记不能直接取消，请先把另一条模型设为默认。',
+          retryable: false,
+        },
+        422,
+      )
+    if (body?.is_default === true) {
+      const provider = llmProviderOf({
+        provider_id: body.provider_id ?? LLM_MODELS[index].provider_id,
+      })
+      const enabledAfter = body.enabled ?? LLM_MODELS[index].enabled
+      if (!enabledAfter || provider?.enabled !== true)
+        return json(
+          {
+            code: 'model_not_available',
+            detail: '不能把当前不可用的模型设为默认。',
+            retryable: false,
+          },
+          422,
+        )
+    }
+    const patch = { ...(body ?? {}) }
+    delete patch.credential
+    LLM_MODELS[index] = { ...LLM_MODELS[index], ...patch, updated_at: new Date().toISOString() }
+    if (patch.is_default === true) {
+      LLM_MODELS.forEach((item, i) => {
+        if (i !== index) item.is_default = false
+      })
+    }
+    return json(llmModelView(LLM_MODELS[index]))
+  }
   if (suffix === '/usage/models') return json([USAGE_MODEL])
   if (suffix === '/usage/summary') {
     const items = filterUsage(requestUrl.searchParams)

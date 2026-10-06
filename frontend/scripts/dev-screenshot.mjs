@@ -104,6 +104,15 @@ try {
   await page.goto(`${BASE}/admin/users`, { waitUntil: 'domcontentloaded' })
   await shot(page, '06-admin-users', '.admin-sidebar')
 
+  /* 6b) 后台 · 模型目录两个板块（上游渠道 / 可用模型）。
+     它们读 /llm-providers 与 /llm-models，mock 里必须备着这两份数据：缺了整页会停在
+     读取失败，截出来是一块错误面板，看图的人分不清那是真故障还是 mock 缺口。 */
+  await page.goto(`${BASE}/admin/llm-providers`, { waitUntil: 'domcontentloaded' })
+  await shot(page, '06b-admin-llm-providers', '.admin-content')
+
+  await page.goto(`${BASE}/admin/llm-models`, { waitUntil: 'domcontentloaded' })
+  await shot(page, '06c-admin-llm-models', '.admin-content')
+
   // 7) 后台 · 移动端抽屉
   const mobile = await context.newPage()
   await mobile.setViewportSize({ width: 390, height: 844 })

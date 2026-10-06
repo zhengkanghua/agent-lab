@@ -59,7 +59,7 @@ npm run dev:shots -- --out ../output/playwright
 都请在 `frontend/` 下执行，且 dev server 先跑着。
 
 ```powershell
-# 方式一：逐页截图到 .devshots/（登录、检索·待输入/结果、Agent、设置中心三分区、后台桌面/移动、检索移动）
+# 方式一：逐页截图到 .devshots/（登录、检索·待输入/结果、Agent、设置中心三分区、后台账号管理与模型目录两板块、后台移动、检索移动）
 npm run dev:shots
 
 # 方式二：程序化布局审计（无横向溢出、侧栏与内容不重叠、关键元素在、数据渲染、控制台报错）
