@@ -133,6 +133,26 @@ const USAGE_RECORDS = [
   },
 ]
 
+/* 可用模型目录：字段与 src/api/llm-models.ts 的 isAvailableLlmModel 校验一致
+ * （id / display_name / provider_name / context_window）。
+ * 这条不能少：Agent 对话是默认入口页，缺了它输入条上的模型选择器会显示
+ * 「模型目录加载失败」，于是每一张默认页的截图都挂着一条假报错，做视觉核验的人
+ * 分不清那是真故障还是 mock 缺口。模型名与用量那条保持一致，两页对得上。 */
+const AVAILABLE_MODELS = [
+  {
+    id: '60000000-0000-4000-8000-000000000001',
+    display_name: `${USAGE_MODEL}（默认）`,
+    provider_name: '内网 OpenAI 兼容',
+    context_window: 1048576,
+  },
+  {
+    id: '60000000-0000-4000-8000-000000000002',
+    display_name: 'qwen-max',
+    provider_name: '内网 OpenAI 兼容',
+    context_window: 32768,
+  },
+]
+
 /* model 与 [start, end) 真的参与过滤：日期不生效的话，页面上改范围看不到任何变化，
    会被当成筛选坏了（比缺数据更难查）。 */
 function filterUsage(params) {
@@ -456,6 +476,9 @@ export async function matchApi(url, authed, options = {}) {
     return json({ ...PREFERENCES })
   }
   if (!authed) return unauth
+  // 可用模型目录：任何登录账号都能读（Agent 输入条的模型选择器）。放在 unauth 之后，
+  // 因为它不做角色区分；后台那套模型管理接口才是超管专属。
+  if (suffix === '/llm-models/available') return json(AVAILABLE_MODELS)
   if (suffix === '/usage/models') return json([USAGE_MODEL])
   if (suffix === '/usage/summary') {
     const items = filterUsage(requestUrl.searchParams)

@@ -28,6 +28,9 @@ await context.route(
 
 const errors = []
 const page = await context.newPage()
+/* 采集全部控制台错误，不做过滤——过滤掉「已知的」等于把真故障一起放过。
+   报告里出现的那一条 401 是预期内的：下面第 61 行会把 authed 置 false 去渲染登录页，
+   未登录访客的 /auth/me 本来就是 401，与真实行为一致。 */
 page.on('console', (m) => {
   if (m.type() === 'error') errors.push(`console.error: ${m.text()}`)
 })
