@@ -6,6 +6,7 @@
    测试里：可用模型表建在它之后）。
 2. 升级只建 ``agent_thread_messages`` 一张表与它的两个索引，列名、类型、可空性、说明与表说明与 ORM
    **逐字一致**（两边分叉就是下一个要修的病，所以断言连着模型读，不在测试里再抄一遍字符串）。
+   建表之后才被删掉的列（``DROPPED_LATER``）不计在内：建表迁移记录的是当时那张表。
 3. 唯一键只建在（会话，顺序号）上，**不把运行 id 算进来**——顺序号是会话内递增的，读的时候只按它
    排序；把运行 id 加进去等于换了一套语义。
 4. 回滚只删同一张表与它的索引。
@@ -27,6 +28,12 @@ MIGRATION_FILE = (
 )
 
 TABLE_NAME = "agent_thread_messages"
+
+# 建表之后才被删掉的列。本文件记录的是**建表当时**那张表，所以与今天的模型比之前先把它们摘出去
+# ——这才是它们当时确实建了、后来又确实没了；「现在库里已经没有」由 ``c5d8e2a47f91`` 自己的迁移
+# 测试与 ``alembic check`` 守。``memory_boundary_run_id``：压缩分界标记列，随会话历史不再对齐模型
+# 记忆一起删掉（ADR 0049）。
+DROPPED_LATER = {"memory_boundary_run_id"}
 
 
 def test_the_migration_is_wired_after_the_previous_head() -> None:
@@ -69,8 +76,12 @@ def test_upgrade_creates_the_table_with_the_orm_columns_and_comments(
     columns = [item for item in items if isinstance(item, sa.Column)]
     table = AgentThreadMessageRecord.__table__
 
-    assert [column.name for column in columns] == [column.name for column in table.columns]
+    assert [column.name for column in columns if column.name not in DROPPED_LATER] == [
+        column.name for column in table.columns
+    ]
     for column in columns:
+        if column.name in DROPPED_LATER:
+            continue
         expected = table.c[column.name]
         assert str(column.type) == str(expected.type), column.name
         assert column.nullable == expected.nullable, column.name

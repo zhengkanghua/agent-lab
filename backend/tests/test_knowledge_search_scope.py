@@ -22,7 +22,6 @@ from agent_lab.knowledge.domain import (
     KnowledgeBaseStorageError,
 )
 from agent_lab.schemas.document_search import DocumentSearchRequest
-from agent_lab.schemas.vector_search import VectorSearchRequest
 from tests.app_helpers import create_offline_app
 from tests.auth_helpers import allow_reader
 from tests.test_knowledge_bases import MemoryStore
@@ -32,18 +31,21 @@ from agent_lab.knowledge.scope import KnowledgeBaseSelection
 from tests.agent_scope_helpers import invoke_tool
 
 
-@pytest.mark.parametrize("method,request_type", [("search", VectorSearchRequest), ("search_documents", DocumentSearchRequest)])
+# 契约收缩后只读检索只剩文档分组这一条 HTTP 路径。
+DOCUMENT_SEARCH_PATH = "/document-search"
+
+
 @pytest.mark.parametrize("failure", [None, KnowledgeBaseInactiveError, KnowledgeBaseNotFoundError, KnowledgeBaseStorageError])
-def test_scope_failure_precedes_embedding_and_vector_io(method, request_type, failure):
+def test_scope_failure_precedes_embedding_and_vector_io(failure):
     async def verify():
         embeddings = FakeEmbeddings([1.0, 0.0, 0.0])
         scope = SimpleNamespace(require_active=AsyncMock(side_effect=failure() if failure else None))
         service, _, _, _ = build_runtime_components(
             fake_embeddings=embeddings, client=SimpleNamespace(), knowledge_base_scope=scope,
         )
-        request = request_type(query="private query", knowledge_base_id=uuid4() if failure else None)
+        request = DocumentSearchRequest(query="private query", knowledge_base_id=uuid4() if failure else None)
         with pytest.raises(failure or ValueError):
-            await getattr(service, method)(request)
+            await service.search_documents(request)
         assert embeddings.query_calls == []
         assert scope.require_active.await_count == (1 if failure else 0)
 
@@ -76,10 +78,10 @@ async def prepare_shared_collection():
     return scope, news, other, client, embeddings, service
 
 
-@pytest.mark.parametrize("path", ["/vector-search", "/document-search"])
 @pytest.mark.parametrize("scope_input", ["default", "explicit", "nested"])
-def test_http_disabled_scope_keeps_points_but_rejects_queries(path, scope_input):
+def test_http_disabled_scope_keeps_points_but_rejects_queries(scope_input):
     async def verify():
+        path = DOCUMENT_SEARCH_PATH
         scope, news, other, client, embeddings, service = await prepare_shared_collection()
         app = create_offline_app()
         allow_reader(app)
@@ -139,9 +141,9 @@ def test_agent_uses_run_snapshot_and_rejects_disabled_scope_on_next_run(within_d
     asyncio.run(verify())
 
 
-@pytest.mark.parametrize("path", ["/vector-search", "/document-search"])
-def test_explicit_multi_scope_snapshots_and_rejects_invalid_targets(path):
+def test_explicit_multi_scope_snapshots_and_rejects_invalid_targets():
     async def verify():
+        path = DOCUMENT_SEARCH_PATH
         scope, news, other, client, embeddings, service = await prepare_shared_collection()
         disabled = await scope.create(KnowledgeBaseCreateRequest(key="disabled", name="停用资料", is_active=False))
         app = create_offline_app()

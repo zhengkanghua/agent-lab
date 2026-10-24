@@ -2,7 +2,7 @@
 
 它证明三件事，都是「不跑真库也能确定对错」的那部分：
 
-1. 迁移接在上一个 head 上，并且就是当前 head——否则部署的 ``alembic upgrade head`` 不会跑到它。
+1. 迁移接在上一个 head 上——否则部署的 ``alembic upgrade head`` 跑不到它。
 2. 升级只碰这一列，且写入的说明与 ORM 上的注解**逐字一致**——两边分叉正是这次要修的病，所以断言
    连着模型读，不在测试里再抄一遍字符串。
 3. 回滚只碰同一列，且改回建表当时的措辞。
@@ -23,13 +23,17 @@ MIGRATION_FILE = VERSIONS_DIR / "b7d4e1a9c3f2_同步上下文窗口列说明_syn
 TARGET = ("llm_models", "context_window")
 
 
-def test_the_migration_is_wired_after_the_previous_head_and_is_the_head() -> None:
-    """它接在改动前的 head 上，而且是链尾——否则部署跑不到它。"""
+def test_the_migration_is_wired_after_the_previous_head() -> None:
+    """它接在改动前的 head 上，且在迁移链里。
+
+    这条以前还包括「它就是链尾」。新增迁移（删压缩分界标记列）之后不再成立，所以那半条断言
+    移到了新迁移自己的测试里（与 ``test_thread_drain_migration`` 当初的处理同一做法）；这里只
+    守「挂在链上、down_revision 对」。
+    """
 
     module = load_migration(MIGRATION_FILE)
 
     assert module.down_revision == "a3f7c2e9b5d4"
-    assert migration_chain()[0] == module.revision
     assert module.revision in migration_chain()
 
 

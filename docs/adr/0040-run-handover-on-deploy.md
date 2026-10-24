@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0051
 ---
 
 # 部署时把在途运行排空并交给新进程续跑

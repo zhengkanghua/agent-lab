@@ -12,6 +12,7 @@ import {
   normalizeResultLimit,
   searchDocuments,
 } from '@/api/document-search'
+import { createStaleGuard } from '@/shared/model/stale-guard'
 import { toDocumentResults, type DocumentResult } from '../model/search-result'
 import { presentSearchError } from '../model/search-error'
 import { MAX_QUERY_CHARACTERS, validateQuery } from '../model/search-validation'
@@ -42,8 +43,9 @@ export interface UseSearchStreamOptions {
  *    由调用方注入 getter，本 composable 不持有偏好——它只管「这一轮发什么」。
  *
  * 一次只允许一条在途请求：提交新搜索会 abort 上一条。检索流直觉是「还没等到结果就再搜
- * 一条，应取消前一条」，不该并行堆积；这也让陈旧响应无法覆盖新结果。requestSequence 仍
- * 保留，兜住 abort 已 resolve、await 尚未恢复的那个窗口。
+ * 一条，应取消前一条」，不该并行堆积。
+ *
+ * 陈旧响应守卫见 `@/shared/model/stale-guard`。
  */
 export function useSearchStream({
   getDocumentLimit = () => DEFAULT_RESULT_LIMIT,
@@ -56,8 +58,7 @@ export function useSearchStream({
 
   const inputError = ref<string | null>(null)
 
-  let requestSequence = 0
-  let activeController: AbortController | null = null
+  const guard = createStaleGuard()
 
   const remainingCharacters = computed(() => MAX_QUERY_CHARACTERS - draft.value.length)
 
@@ -104,7 +105,7 @@ export function useSearchStream({
       return null
     }
 
-    abortActive()
+    const request = guard.begin()
 
     const limit = normalizeResultLimit(getDocumentLimit())
     const perDocument = normalizeMatchesPerDocument(getMatchesPerDocument())
@@ -122,9 +123,6 @@ export function useSearchStream({
     })
     records.value = [...records.value, pending]
 
-    const requestId = ++requestSequence
-    const controller = new AbortController()
-    activeController = controller
     inputError.value = null
 
     try {
@@ -133,10 +131,10 @@ export function useSearchStream({
         documentLimit: limit,
         matchesPerDocument: perDocument,
         scope: selection,
-        signal: controller.signal,
+        signal: request.signal,
       })
 
-      if (requestId !== requestSequence) return null
+      if (!request.isCurrent()) return null
 
       const names = new Map(response.scope.knowledge_bases.map((item) => [item.id, item.name]))
       const mapped = toDocumentResults(response.results).map((item) => ({
@@ -151,7 +149,7 @@ export function useSearchStream({
         response.scope,
       )
     } catch (caught) {
-      if (requestId !== requestSequence || isAbortError(caught)) return null
+      if (!request.isCurrent() || isAbortError(caught)) return null
 
       const error =
         caught instanceof ApiError
@@ -163,9 +161,7 @@ export function useSearchStream({
             })
       settleRecord(pending.id, 'error', [], error)
     } finally {
-      if (requestId === requestSequence) {
-        activeController = null
-      }
+      request.release()
     }
 
     // 请求结束只消费提交时的草稿，等待期间新写的内容留给下一次检索。
@@ -186,19 +182,13 @@ export function useSearchStream({
 
   /** 清空整个检索流与输入草稿（Q6：等价于刷新后从零开始）。 */
   function clear(): void {
-    abortActive()
+    guard.cancel()
     records.value = []
     inputError.value = null
     draft.value = ''
   }
 
-  function abortActive(): void {
-    requestSequence += 1
-    activeController?.abort()
-    activeController = null
-  }
-
-  onScopeDispose(abortActive)
+  onScopeDispose(() => guard.cancel())
 
   return {
     draft,

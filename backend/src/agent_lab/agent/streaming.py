@@ -313,7 +313,6 @@ async def stream_agent_events(
     context: AgentContext,
     langsmith_settings: LangSmithSettings,
     control: RunControl | None = None,
-    resume: bool = False,
 ) -> AsyncIterator[AgentChatEvent | PersistedModelMessage]:
     """跑一次 Agent，把过程翻译成事件流。
 
@@ -321,13 +320,9 @@ async def stream_agent_events(
     原因是响应头在第一个 token 发出时就已经送出，之后没法再改 HTTP 状态码，所以流一旦
     开始，失败只能作为事件送达。
 
-    ``resume`` 为真时以「无新输入」的方式续跑同一个会话：提问与轮次身份已经在 checkpoint
-    里，不再拼一条 HumanMessage，也不重发 ``run_started``（那次运行早就开始了）。这是部署时
-    接手别的进程排空下来的运行所用的路径（见 ADR 0040）。
-
     Args:
         graph: 进程级共享的已编译 Agent 图。
-        message: 用户这一轮的提问；``resume`` 为真时忽略。
+        message: 用户这一轮的提问。
         thread_id: 会话 id；checkpointer 按它读写历史。
         context: 本次运行的上下文。它同时是历史压缩那份比例的基准：当轮模型的上下文窗口在图
             跑起来之前从这里取出来，放进按协程隔离的上下文变量（见中间件的
@@ -335,15 +330,14 @@ async def stream_agent_events(
         langsmith_settings: 追踪开关与凭据。
         control: 本次运行的排空控制器；进程收尾时请求它排空，图会在当前 superstep 落盘后
             停下并抛 ``GraphDrained``。
-        resume: 是否以「无新输入」的方式接着跑 checkpoint 里尚未完成的节点。
 
     Yields:
         ``token`` / ``tool_call`` / ``tool_result`` 事件，最后是 ``done`` 或 ``error``；
         中间还可能夹着只给运行驱动者看的 ``PersistedModelMessage`` 落库信号。
 
     Raises:
-        GraphDrained: 有人请求排空且图走到了可交接的边界。**刻意不翻成 error 事件**：
-            它不是失败，调用方（运行驱动者）据此写下「等接手」标记。
+        GraphDrained: 有人请求排空且图走到了可排空的边界。**刻意不翻成 error 事件**：
+            它不是失败，调用方（运行驱动者）会把这次运行按未完成收尾。
 
     Notes:
         本函数执行模型 HTTP I/O、Qdrant 检索、PostgreSQL 读取和会话历史读写，但不写任何
@@ -361,10 +355,11 @@ async def stream_agent_events(
     # 烧掉的量——失控循环恰恰都是以失败收尾的，那时候的用量最值得看。
     usage_totals = {"input": 0, "output": 0, "total": 0}
     try:
-        # 接手续跑时没有新的 run_started 可发：那次运行在旧进程里就开始了，前端靠回放拿到
-        # 在途运行 id，不需要重新认领它。
-        if context.scope is not None and not resume:
-            yield AgentRunStartedEvent(thread_id=thread_id, run_id=context.run_id, scope=context.scope)
+        # 每次运行都有自己的一条 run_started：它带的是本次运行的范围快照，前端靠它认领等待态。
+        if context.scope is not None:
+            yield AgentRunStartedEvent(
+                thread_id=thread_id, run_id=context.run_id, scope=context.scope
+            )
         # 2、开一个「只管本次运行」的追踪范围。tracing_context 不写 os.environ，
         #    所以并发请求之间不会互相污染，也不需要在进程启动时就决定好。
         with tracing_context(
@@ -373,8 +368,7 @@ async def stream_agent_events(
             client=client,
         ):
             # 3、跑图，同时订阅两种流。这里只传用户这一条新消息——历史由 checkpointer
-            #    按 config 里的 thread_id 自己接在前面，不用我们拼。续跑时输入是 None：
-            #    图从 checkpoint 里尚未完成的节点接着跑，不新开一轮。
+            #    按 config 里的 thread_id 自己接在前面，不用我们拼。
             #
             #    当轮模型的窗口在跑图之前放进按协程隔离的上下文变量：历史压缩按它的占比
             #    触发与保留，而消费者是中间件，它只能从那里拿到窗口。上下文里没有模型时放
@@ -388,22 +382,21 @@ async def stream_agent_events(
             bind_context_window(
                 context.llm_model.context_window if context.llm_model is not None else None
             )
-            #    运行标识**无条件**带上：会话历史按提问行上的 ``run_id`` 切分、排空接手按它
-            #    找回这一轮（取不到就按「这一轮已经不在 checkpoint 里」放弃），缺了它整轮认不出
-            #    归属。范围是另一样东西——只有本次运行真有范围时才写进去，回放读取容忍它缺失。
-            #    当轮选定的模型同样只在真的有的时候写：它**连展示名与上下文窗口一起冻结**
-            #    （快照必须自足：条目后来改名或停用不改写已经发生过的那几轮，而接手那一轮
-            #    不许回查目录）。
+            #    运行标识**无条件**带上：会话历史按提问行上的 ``run_id`` 切分、回放与终态事件
+            #    都按它认这一轮，缺了它整轮认不出归属。范围是另一样东西——只有本次运行真有
+            #    范围时才写进去，回放读取容忍它缺失。当轮选定的模型同样只在真的有的时候写：
+            #    它**连展示名与上下文窗口一起冻结**（快照必须自足：条目后来改名或停用不改写
+            #    已经发生过的那几轮，回放也不许回查目录）。
             agent_run: dict[str, Any] = {"run_id": str(context.run_id)}
             if context.scope is not None:
                 agent_run["scope"] = context.scope.model_dump(mode="json")
             if context.llm_model is not None:
                 agent_run["llm_model"] = context.llm_model.model_dump(mode="json")
-            graph_input = (
-                None
-                if resume
-                else {"messages": [HumanMessage(content=message, additional_kwargs={"agent_run": agent_run})]}
-            )
+            graph_input = {
+                "messages": [
+                    HumanMessage(content=message, additional_kwargs={"agent_run": agent_run})
+                ]
+            }
             async for stream_mode, chunk in graph.astream(
                 graph_input,
                 config=config,
@@ -444,9 +437,9 @@ async def stream_agent_events(
                 scope=context.scope,
             )
     except GraphDrained:
-        # 排空不是失败，是正常的收尾路径。往上抛给运行驱动者：它据此写下「等接手」标记、
-        # 把这次运行交给别的进程（见 ADR 0040）。这里绝不能翻成 error 事件——那会让接手
-        # 看到一个本可续跑的运行被当成了失败。
+        # 排空不是失败，是正常的收尾路径。往上抛给运行驱动者：它会按未完成收尾（补写、写会话历史、
+        # 释放会话占位、发终态事件）。这里绝不能翻成 error 事件——那会让一次正常停在边界的运行
+        # 在用户那里报成失败。
         raise
     except Exception as exc:
         # 6、失败翻成一个 error 事件送出去，不往上抛。第一个 token 发走时响应头就定了，

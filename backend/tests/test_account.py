@@ -19,7 +19,6 @@ import pytest
 from fastapi_users.password import PasswordHelper
 from sqlalchemy.dialects import postgresql
 
-from agent_lab.agent.limits import MAX_SYSTEM_PROMPT_CHARS
 from agent_lab.api.account import get_account_service, get_user_preference_service
 from agent_lab.auth.dependencies import current_active_user, current_active_user_token
 from agent_lab.models.user import UserRecord
@@ -429,7 +428,6 @@ class FakePreferenceService:
         self.reads: list[UUID] = []
         self.writes: list[tuple[UUID, Any]] = []
         self.stored = {
-            "system_prompt": "只用一句话回答。",
             "document_limit": 20,
             "matches_per_document": 5,
         }
@@ -488,20 +486,12 @@ def test_preferences_round_trip_uses_the_logged_in_account() -> None:
             app,
             "PUT",
             "/auth/me/preferences",
-            json={
-                "system_prompt": "只用一句话回答。",
-                "document_limit": 20,
-                "matches_per_document": 5,
-            },
+            json={"document_limit": 20, "matches_per_document": 5},
         )
     )
 
     assert read.status_code == 200
-    assert read.json() == {
-        "system_prompt": "只用一句话回答。",
-        "document_limit": 20,
-        "matches_per_document": 5,
-    }
+    assert read.json() == {"document_limit": 20, "matches_per_document": 5}
     assert written.status_code == 200
     assert service.reads == [READER_ID]
     assert [user_id for user_id, _ in service.writes] == [READER_ID]
@@ -526,21 +516,26 @@ def test_preferences_validation_error_is_stable() -> None:
     assert service.writes == []
 
 
-def test_preferences_reject_an_overlong_system_prompt() -> None:
-    """提示词长度上限在新 schema 上生效。
+def test_preferences_reject_the_removed_system_prompt_field() -> None:
+    """契约里已经没有 ``system_prompt``：旧客户端继续发它会被 422 拒掉，不是被静默忽略。
 
-    这道约束原先挂在 ``AgentChatRequest.system_prompt`` 字段上，随本次改动删除了；不在这里
-    补回来服务端就没有真边界——前端会截断，但服务端才是边界。
+    静默忽略会让调用方以为自己改的提示词生效了——它其实哪儿都没去。``extra="forbid"`` 是
+    这条的落地方式，与「提示词只有内置那一份」同一个决策（见 ADR 0050）。
+
+    响应体里不会出现字段名：本项目的校验失败统一脱敏成固定 ``invalid_request`` 文案（请求体
+    可能带着明文密码或用户提问，不能回显原始输入）。所以「明确拒绝」只能从两处看——状态码，
+    以及 OpenAPI 里请求体 ``additionalProperties`` 为假、两个 schema 都没有这个键。
     """
 
     service = FakePreferenceService()
+    app = build_preference_app(service, authenticated=True)
     response = run(
         send(
-            build_preference_app(service, authenticated=True),
+            app,
             "PUT",
             "/auth/me/preferences",
             json={
-                "system_prompt": "x" * (MAX_SYSTEM_PROMPT_CHARS + 1),
+                "system_prompt": "只用一句话回答。",
                 "document_limit": 10,
                 "matches_per_document": 3,
             },
@@ -548,38 +543,21 @@ def test_preferences_reject_an_overlong_system_prompt() -> None:
     )
 
     assert response.status_code == 422
+    assert response.json()["code"] == "invalid_request"
     assert service.writes == []
 
-
-def test_blank_system_prompt_is_stored_as_unset() -> None:
-    """纯空白提示词被归一化成 ``None``（用默认），而不是存一份空提示词。
-
-    空串语义是「用默认的」：真存一份空提示词会让模型完全失去角色约束和引用要求。
-    """
-
-    service = FakePreferenceService()
-    run(
-        send(
-            build_preference_app(service, authenticated=True),
-            "PUT",
-            "/auth/me/preferences",
-            json={
-                "system_prompt": "   \n  ",
-                "document_limit": 10,
-                "matches_per_document": 3,
-            },
-        )
-    )
-
-    assert service.writes[0][1].system_prompt is None
+    schemas = app.openapi()["components"]["schemas"]
+    request_schema = schemas["UserPreferenceUpdateRequest"]
+    assert "system_prompt" not in request_schema["properties"]
+    assert request_schema["additionalProperties"] is False
+    assert "system_prompt" not in schemas["UserPreferenceResponse"]["properties"]
 
 
 class PreferenceSession:
-    """偏好 Service 用到的假 Session：只实现 ``get`` / ``scalar`` / ``execute`` / ``commit``。"""
+    """偏好 Service 用到的假 Session：只实现 ``get`` / ``execute`` / ``commit``。"""
 
-    def __init__(self, record: Any = None, *, scalar_result: Any = None) -> None:
+    def __init__(self, record: Any = None) -> None:
         self.record = record
-        self.scalar_result = scalar_result
         self.executed: list[Any] = []
         self.commit_count = 0
 
@@ -587,11 +565,6 @@ class PreferenceSession:
         """返回预置的偏好行（``None`` 表示该账号还没配过）。"""
 
         return self.record
-
-    async def scalar(self, _statement: Any) -> Any:
-        """返回预置的单列值，供 ``system_prompt_for`` 使用。"""
-
-        return self.scalar_result
 
     async def execute(self, statement: Any) -> Any:
         """记录写入语句。"""
@@ -608,14 +581,13 @@ class PreferenceSession:
 def test_service_returns_contract_defaults_when_the_account_has_no_row() -> None:
     """没有配置行不是错误，而是「还没配过」——返回契约默认值而不是 404。
 
-    调用方（设置页、建会话时取提示词）因此不必各自处理「查不到」这一支。
+    调用方（设置页）因此不必各自处理「查不到」这一支。
     """
 
     service = UserPreferenceService(PreferenceSession(None))  # type: ignore[arg-type]
 
     result = run(service.get(READER_ID))
 
-    assert result.system_prompt is None
     assert result.document_limit == DEFAULT_DOCUMENT_LIMIT
     assert result.matches_per_document == DEFAULT_MATCHES_PER_DOCUMENT
 
@@ -624,7 +596,6 @@ def test_service_reads_the_stored_row_when_present() -> None:
     """有配置行时返回库里的值。"""
 
     record = SimpleNamespace(
-        system_prompt="自定义提示词。",
         document_limit=20,
         matches_per_document=5,
     )
@@ -632,29 +603,13 @@ def test_service_reads_the_stored_row_when_present() -> None:
 
     result = run(service.get(READER_ID))
 
-    assert result.system_prompt == "自定义提示词。"
     assert (result.document_limit, result.matches_per_document) == (20, 5)
-
-
-def test_service_system_prompt_lookup_returns_what_the_account_configured() -> None:
-    """建会话时取的提示词：取到就返回，没配过就是 ``None``（调用方据此用内置默认）。"""
-
-    configured = UserPreferenceService(  # type: ignore[arg-type]
-        PreferenceSession(scalar_result="配好的提示词。")
-    )
-    unconfigured = UserPreferenceService(  # type: ignore[arg-type]
-        PreferenceSession(scalar_result=None)
-    )
-
-    assert run(configured.system_prompt_for(READER_ID)) == "配好的提示词。"
-    assert run(unconfigured.system_prompt_for(READER_ID)) is None
 
 
 def test_service_replace_upserts_and_returns_the_stored_value() -> None:
     """保存走 upsert 并回读落库结果，响应里就是库里那份。"""
 
     record = SimpleNamespace(
-        system_prompt="新提示词。",
         document_limit=20,
         matches_per_document=5,
     )
@@ -665,14 +620,13 @@ def test_service_replace_upserts_and_returns_the_stored_value() -> None:
         service.replace(
             READER_ID,
             UserPreferenceUpdateRequest(
-                system_prompt="新提示词。",
                 document_limit=20,
                 matches_per_document=5,
             ),
         )
     )
 
-    assert result.system_prompt == "新提示词。"
+    assert (result.document_limit, result.matches_per_document) == (20, 5)
     assert len(session.executed) == 1
     assert session.commit_count == 1
     # 一条语句完成插入或更新：ON CONFLICT 必须先存在才能生成，否则并发下会撞主键。

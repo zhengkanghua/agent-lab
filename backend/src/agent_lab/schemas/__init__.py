@@ -11,7 +11,6 @@ from agent_lab.schemas.document_search import (
 
 from agent_lab.schemas.vector_search import (
     VectorSearchFilters,
-    VectorSearchRequest,
     VectorSearchResult,
 )
 
@@ -31,7 +30,6 @@ __all__ = [
     "AuthUserCreate",
     "AuthUserResponse",
     "VectorSearchFilters",
-    "VectorSearchRequest",
     "VectorSearchResult",
     "PipelineRunOnceRequest",
     "DocumentDetailResponse",

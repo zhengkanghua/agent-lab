@@ -273,22 +273,6 @@ Invoke-WebRequest -Method Post `
 $login.password = $null
 ```
 
-Chunk 级检索：
-
-```powershell
-$body = @{
-  query = "央行近期是否调整利率？"
-  top_k = 10
-  filters = @{ labels = @("宏观", "利率") }
-} | ConvertTo-Json -Depth 4
-
-Invoke-RestMethod -Method Post `
-  -Uri http://127.0.0.1:8000/vector-search `
-  -WebSession $session `
-  -ContentType application/json `
-  -Body $body
-```
-
 文档分组检索与按需全文：
 
 ```powershell
@@ -512,8 +496,8 @@ try {
 自动检查范围与出处身份后，仍须逐题核对结论是否被原文支持、推断是否标注、冲突是否说明；
 报告中的人工语义核对状态初始为 pending，不能用引用 ID 校验通过代替。
 
-真实 PostgreSQL 的会话归属（验证归属过滤只匹配自己的行、建会话时快照账号提示词、注销后归属行
-仍在；需已跑过 ``alembic upgrade head``）：
+真实 PostgreSQL 的会话归属（验证归属过滤只匹配自己的行、注销后归属行与个人偏好仍在；需已跑过
+``alembic upgrade head``）：
 
 ```powershell
 $env:RUN_POSTGRES_AGENT_THREAD_INTEGRATION_TEST="1"
@@ -538,12 +522,11 @@ uv run pytest -q tests/test_usage_postgres_integration.py
 按主题挑选离线测试：
 
 ```powershell
-# 只读搜索编排、过滤与 Runtime 组装（fake Embeddings + 内存 Qdrant）
+# 只读搜索的过滤、响应契约与 Runtime 组装（fake Embeddings + 内存 Qdrant）
 uv run pytest -q tests/test_vector_search.py tests/test_qdrant_runtime.py
 
 # HTTP 接口契约与错误映射（fake Runtime + httpx ASGITransport）
-uv run pytest -q tests/test_vector_search_api.py tests/test_document_search.py `
-  tests/test_documents_api.py
+uv run pytest -q tests/test_document_search.py tests/test_documents_api.py
 
 # 错误码、HTTP 状态、重试提示、脱敏及跨表一致性（不起 app）
 uv run pytest -q tests/test_error_contract.py

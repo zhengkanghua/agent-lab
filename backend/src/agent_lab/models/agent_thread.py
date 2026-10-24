@@ -16,7 +16,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, Index, String, Text, Uuid, desc, text
+from sqlalchemy import DateTime, Index, String, Uuid, desc, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -37,9 +37,7 @@ class AgentThreadRecord(Base):
     在将来某次无关的字段更新后被悄悄改写。
 
     ``scope`` 与 ``llm_model_id`` 两列是「用户在这个会话里选的东西」，续聊时可改（改选只影响
-    下一次运行的快照）；``system_prompt`` 相反，建立时定下、续聊不重读偏好表。改动前先读
-    ``system_prompt`` 字段上的注释与 ADR 0029——把其中一处「修」成与另一处一致，
-    会分别破坏改选能力或提示词的恒定性。
+    下一次运行的快照）。提示词不在本表存：它只有内置那一份（见 ADR 0050），不随会话变化。
     """
 
     __tablename__ = "agent_threads"
@@ -85,14 +83,6 @@ class AgentThreadRecord(Base):
             "选择器读到它在目录里已不可用时如实提示重选。"
         ),
     )
-    # 与 scope 的写入语义**相反**，这不是疏漏：scope 续聊时可改（改选只影响下一次运行的
-    # 快照），system_prompt 建立时定下、续聊不重读偏好表。前者被拼在请求前面的位置，中途改
-    # 会改变前缀，且「整个会话同一套要求」正是这一列要提供的保证。见 ADR 0029。
-    system_prompt: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-        comment="会话建立时从该账号个人偏好拍下的系统提示词快照；为空表示用服务端内置默认提示词。",
-    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -124,19 +114,6 @@ class AgentThreadRecord(Base):
         comment=(
             "最近一次停止请求的时刻；为空表示无人要求停止。这是会话语义、不指向某次运行：写入端"
             "只在对得上 active_run_id 时才写，读取端靠下一次占位时一并清掉，见 ADR 0037。"
-        ),
-    )
-    # 第三列是「被排空、等接手」的标记（见 ADR 0040）。它与上面两列同处一地，但生命周期不同：
-    # 被排空的进程写下它，接手者在抢所有权的那次条件写入里把它消费掉（同一条语句里判非空、置空）。
-    # 它**不能**靠「下一次占位」兜底——带这个标记的会话本来就不接受新提问，因为旧的 checkpoint
-    # 停在半途、还有待跑的节点，新提问会顺着那份状态继续跑旧节点。
-    drained_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-        comment=(
-            "被排空的时刻；非空表示这个会话的在途运行已停在可交接的边界、等别的进程接手。业务层"
-            "维护的排空标记：被排空的进程写下，接手者在抢占所有权的那次条件写入里消费（置空）；"
-            "带标记的会话不接受新提问（占位路径的失活分支排除它），见 ADR 0040。"
         ),
     )
 

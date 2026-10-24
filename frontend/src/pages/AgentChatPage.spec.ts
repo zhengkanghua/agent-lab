@@ -9,9 +9,6 @@ import { newsKnowledgeBase, techKnowledgeBase } from '@/api/knowledge-bases.fixt
 const api = vi.hoisted(() => ({
   streamAgentChat: vi.fn(),
   stopAgentRun: vi.fn(async () => {}),
-  fetchAgentDefaultPrompt: vi.fn(),
-  // 设置中心从这一模块读提示词上界；mock 里补齐，避免 undefined 参与运算。
-  MAX_SYSTEM_PROMPT_CHARACTERS: 4000,
 }))
 
 vi.mock('../api/agent-chat', () => api)
@@ -141,8 +138,6 @@ async function mountPage() {
 describe('AgentChatPage', () => {
   beforeEach(() => {
     api.streamAgentChat.mockReset()
-    api.fetchAgentDefaultPrompt.mockReset()
-    api.fetchAgentDefaultPrompt.mockResolvedValue('你是新闻检索助手。')
     session.logout.mockReset()
     session.logout.mockResolvedValue(undefined)
     resetAuthUser()
@@ -152,7 +147,6 @@ describe('AgentChatPage', () => {
     usePreferences().resetForTests()
     preferencesApi.fetchPreferences.mockReset()
     preferencesApi.fetchPreferences.mockResolvedValue({
-      systemPrompt: '',
       documentLimit: 10,
       matchesPerDocument: 3,
     })
@@ -206,14 +200,6 @@ describe('AgentChatPage', () => {
 
     // 放开 Agent 不等于放开后台。
     expect(wrapper.find('a[aria-label="后台管理"]').exists()).toBe(false)
-    wrapper.unmount()
-  })
-
-  it('自定义提示词归设置中心后，本页不再拉取默认提示词', async () => {
-    const { wrapper } = await mountPage()
-    await flushPromises()
-
-    expect(api.fetchAgentDefaultPrompt).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -377,13 +363,10 @@ describe('AgentChatPage', () => {
     wrapper.unmount()
   })
 
-  it('自定义提示词不再逐轮随请求发出，输入条只亮徽章', async () => {
-    // 提示词改为会话级快照：由服务端在建会话时从账号偏好拍一份进那个会话，
-    // 请求体里不再带它（见 ADR 0029）。这条把「不再随轮发送」钉住。
+  it('消息里不带提示词，输入条上也没有提示词徽章', async () => {
+    // 提示词只留内置那一份：客户端每轮不发它，输入条也不再摆一枚链回设置页的徽章。
+    // 这条把「不再随轮发送」与「不再展示」两件事一起钉住。
     const { wrapper } = await mountPage()
-
-    const { preferences } = usePreferences()
-    preferences.agentSystemPrompt = '你是财经记者。'
 
     await wrapper.get('.message-input').setValue('问题')
     await wrapper.get('.agent-form').trigger('submit')
@@ -393,9 +376,7 @@ describe('AgentChatPage', () => {
     expect(payload).not.toHaveProperty('systemPrompt')
     expect(payload.message).toBe('问题')
 
-    // 账号配了提示词时输入条亮徽章，链回设置页。
-    const badge = wrapper.get('.badge-link')
-    expect(badge.attributes('href')).toBe('/settings/agent')
+    expect(wrapper.find('.agent-composer .badge-link').exists()).toBe(false)
     wrapper.unmount()
   })
 

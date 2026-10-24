@@ -286,11 +286,11 @@ def test_scope_switch_keeps_old_answers_tools_and_summary_in_model_input():
 
     async def verify():
         await graph.aupdate_state({"configurable": {"thread_id": str(thread_id)}}, {"messages": messages})
-        return await run_and_replay(graph, context=AgentContext(scope=FILE_SCOPE, system_prompt="自定义风格"), thread_id=thread_id)
+        return await run_and_replay(graph, context=AgentContext(scope=FILE_SCOPE), thread_id=thread_id)
 
     events, turns, _, _ = run(verify())
     received = "\n".join(message.text for message in model.received_messages[-1])
-    assert "第一问" in received and FILE_BASE.name in received and "自定义风格" in received
+    assert "第一问" in received and FILE_BASE.name in received
     assert all(text in received for text in ["摘要中的旧秘密", "旧工具秘密", "旧回答秘密"])
     assert events[-1].citations == turns[-1].citations == ()
     assert events[-1].invalid_citations == turns[-1].invalid_citations == ("Effffffffffff",)

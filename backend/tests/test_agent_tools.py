@@ -371,7 +371,7 @@ def test_within_days_outside_the_range_is_rejected(bad_value: int) -> None:
 def test_search_tool_exposes_only_the_three_intended_arguments() -> None:
     """模型可填的参数正好是那三个。
 
-    Service 那层还支持 score_threshold、labels、source_id 等等，它们刻意不暴露：模型拿不到
+    Service 那层还支持 score_threshold 与发布时间区间，它们刻意不暴露：模型拿不到
     这些字段的合法取值，填了就是猜，而猜错的表现是「明明有这条新闻却说没有」。日后有人顺手
     给工具函数加参数，这里会立刻失败，迫使他先想清楚模型有没有可能填对。
     """

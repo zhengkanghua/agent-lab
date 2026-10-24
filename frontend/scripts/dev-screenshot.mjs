@@ -96,10 +96,6 @@ try {
   await page.goto(`${BASE}/settings/search`, { waitUntil: 'domcontentloaded' })
   await shot(page, '05b-settings-search', '#search-prefs-heading')
 
-  // 5c) 设置中心 · Agent 偏好
-  await page.goto(`${BASE}/settings/agent`, { waitUntil: 'domcontentloaded' })
-  await shot(page, '05c-settings-agent', '#agent-prefs-heading')
-
   // 6) 后台 · 账号管理（桌面）
   await page.goto(`${BASE}/admin/users`, { waitUntil: 'domcontentloaded' })
   await shot(page, '06-admin-users', '.admin-sidebar')

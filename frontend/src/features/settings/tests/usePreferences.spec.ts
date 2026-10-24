@@ -14,7 +14,6 @@ import { usePreferences } from '../composables/usePreferences'
 /** 后端那一份的形状（字段名与前端不同）。 */
 function remote(overrides: Partial<Record<string, unknown>> = {}) {
   return {
-    systemPrompt: '',
     documentLimit: 20,
     matchesPerDocument: 5,
     ...overrides,
@@ -38,16 +37,13 @@ describe('usePreferences（应用级单例 + 后端读写）', () => {
   })
 
   it('加载把后端那份写进 store，并转成前端的字段名', async () => {
-    api.fetchPreferences.mockResolvedValue(
-      remote({ systemPrompt: '你是财经记者。', documentLimit: 20, matchesPerDocument: 5 }),
-    )
+    api.fetchPreferences.mockResolvedValue(remote({ documentLimit: 20, matchesPerDocument: 5 }))
     const { preferences, load, loadState } = usePreferences()
 
     await load()
 
     expect(preferences.documentLimit).toBe(20)
     expect(preferences.matchesPerDocument).toBe(5)
-    expect(preferences.agentSystemPrompt).toBe('你是财经记者。')
     expect(loadState.value).toBe('ready')
   })
 
@@ -75,13 +71,13 @@ describe('usePreferences（应用级单例 + 后端读写）', () => {
 
   it('读成功之前不允许编辑，也不允许保存', async () => {
     // 写入是整体覆盖，提交的是 `{...preferences}` 整份。读还没成功时 store 里是默认值，
-    // 此时放行一次保存，就会把账号上真实存着的那份（可能是自定义提示词）覆盖成默认——
-    // 用户只是想改个下拉，提示词却没了。
+    // 此时放行一次保存，就会把账号上真实存着的那两个数量参数覆盖成默认——
+    // 用户只是改了个下拉，另一个却被改回去了。
     const { canEdit, save, load } = usePreferences()
 
     expect(canEdit.value).toBe(false)
     await expect(
-      save({ documentLimit: 20, matchesPerDocument: 5, agentSystemPrompt: '你是记者。' }),
+      save({ documentLimit: 20, matchesPerDocument: 5 }),
     ).rejects.toBeInstanceOf(ApiError)
     // 被拒绝的那次不能真的发出去。
     expect(api.savePreferences).not.toHaveBeenCalled()
@@ -99,7 +95,7 @@ describe('usePreferences（应用级单例 + 后端读写）', () => {
 
     expect(canEdit.value).toBe(false)
     await expect(
-      save({ documentLimit: 10, matchesPerDocument: 3, agentSystemPrompt: '' }),
+      save({ documentLimit: 10, matchesPerDocument: 3 }),
     ).rejects.toBeInstanceOf(ApiError)
     expect(api.savePreferences).not.toHaveBeenCalled()
   })
@@ -109,15 +105,14 @@ describe('usePreferences（应用级单例 + 后端读写）', () => {
     const { load } = usePreferences()
     await load()
 
-    // 服务端会把空白提示词归一成「未配置」。界面要显示服务端那份，否则用户会看到
-    // 一个「保存了但显示的还是刚才那串空格」的假象。
-    api.savePreferences.mockResolvedValue(remote({ systemPrompt: '', documentLimit: 10 }))
+    // 界面上要显示服务端归一化过的那份，否则用户会看到「保存了但显示的还是刚才那个值」。
+    api.savePreferences.mockResolvedValue(remote({ documentLimit: 10 }))
     const { preferences, save } = usePreferences()
 
-    await save({ documentLimit: 10, matchesPerDocument: 3, agentSystemPrompt: '   ' })
+    await save({ documentLimit: 20, matchesPerDocument: 5 })
 
-    expect(preferences.agentSystemPrompt).toBe('')
     expect(preferences.documentLimit).toBe(10)
+    expect(preferences.matchesPerDocument).toBe(5)
   })
 
   it('保存失败时抛出，本地值不动', async () => {
@@ -129,7 +124,7 @@ describe('usePreferences（应用级单例 + 后端读写）', () => {
     preferences.documentLimit = 20
 
     await expect(
-      save({ documentLimit: 20, matchesPerDocument: 3, agentSystemPrompt: '' }),
+      save({ documentLimit: 20, matchesPerDocument: 3 }),
     ).rejects.toBeInstanceOf(ApiError)
 
     expect(preferences.documentLimit).toBe(20)
@@ -142,10 +137,10 @@ describe('usePreferences（应用级单例 + 后端读写）', () => {
 
     api.savePreferences.mockResolvedValue(remote())
 
-    await save({ documentLimit: 5, matchesPerDocument: 3, agentSystemPrompt: '你是记者。' })
+    await save({ documentLimit: 5, matchesPerDocument: 3 })
 
     expect(api.savePreferences).toHaveBeenCalledWith(
-      { systemPrompt: '你是记者。', documentLimit: 5, matchesPerDocument: 3 },
+      { documentLimit: 5, matchesPerDocument: 3 },
       { notifyUnauthorized: false },
     )
   })

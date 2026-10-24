@@ -67,7 +67,6 @@ beforeEach(() => {
   usePreferences().resetForTests()
   preferencesApi.fetchPreferences.mockReset()
   preferencesApi.fetchPreferences.mockResolvedValue({
-    systemPrompt: '',
     documentLimit: 10,
     matchesPerDocument: 3,
   })

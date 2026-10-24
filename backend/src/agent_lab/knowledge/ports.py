@@ -19,7 +19,7 @@ from agent_lab.domain.source_document import SourceDocument, SourceInfo
 from agent_lab.knowledge.processing.lifecycle import SourceReception
 if TYPE_CHECKING:
     from agent_lab.knowledge.processing.indexing import IndexTarget
-    from agent_lab.schemas.vector_search import VectorSearchFilters, VectorSearchResult
+    from agent_lab.schemas.vector_search import VectorSearchFilters
 
 
 class KnowledgeBaseRepository(Protocol):
@@ -113,7 +113,6 @@ class EmbeddingProvider(Protocol):
 class VectorSearch(Protocol):
     index_spec: IndexSpecification
 
-    async def search(self, vector: Sequence[float], *, top_k: int, score_threshold: float | None, filters: VectorSearchFilters) -> list[VectorSearchResult]: ...
     async def search_groups(self, vector: Sequence[float], *, document_limit: int, matches_per_document: int, score_threshold: float | None, filters: VectorSearchFilters) -> list[DocumentSearchGroup]: ...
 
 

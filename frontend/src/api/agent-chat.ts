@@ -32,14 +32,6 @@ export const AGENT_STREAM_IDLE_TIMEOUT_MS = 60_000
 /** 建立连接（拿到响应头）的超时。流开始之后就换成上面的空闲超时。 */
 export const AGENT_STREAM_CONNECT_TIMEOUT_MS = 30_000
 
-/**
- * 自定义系统提示词的字符上界，与后端 `agent/limits.py` 的 MAX_SYSTEM_PROMPT_CHARS 一致
- * （都是 4000）。放 api 层是因为它是请求契约：设置中心的「Agent 偏好」编辑器要用它做
- * maxlength，而 features/agent-chat 的提问上界（MAX_MESSAGE_CHARACTERS）留在那边——
- * 提示词与提问虽然都会整段进入模型上下文并按 token 计费，但用途不同，刻意不共用一个常量。
- */
-export const MAX_SYSTEM_PROMPT_CHARACTERS = 4000
-
 const SSE_FRAME_SEPARATOR = '\n\n'
 const SSE_DATA_FIELD = 'data:'
 
@@ -76,7 +68,7 @@ export async function* streamAgentChat({
   llmModelId,
   signal,
 }: StreamAgentChatOptions): AsyncGenerator<AgentChatEvent, void, void> {
-  // 提示词不再由这里携带：它取自会话（新建时由服务端从账号偏好拍快照），见 ADR 0029。
+  // 请求体里没有提示词：它只留后端内置的那一份，客户端没有注入点。
   const payload: AgentChatRequest = { message }
   if (threadId) payload.thread_id = threadId
   if (scope) payload.scope = scope
@@ -208,20 +200,6 @@ export async function stopAgentRun(threadId: string, runId: string): Promise<voi
       code: 'response_invalid',
     })
   }
-}
-
-/** 取默认系统提示词，用于把自定义提示词输入框预填成可编辑的起点。 */
-export async function fetchAgentDefaultPrompt(signal?: AbortSignal): Promise<string> {
-  const response = await requestJson<unknown>('/agent/default-prompt', { method: 'GET', signal })
-
-  if (!isRecord(response) || !hasText(response.system_prompt)) {
-    throw new ApiError({
-      message: 'Agent 服务返回了无法识别的默认提示词，请刷新后重试。',
-      code: 'response_invalid',
-    })
-  }
-
-  return response.system_prompt
 }
 
 /**

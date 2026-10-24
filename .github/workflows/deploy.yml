@@ -321,8 +321,22 @@ jobs:
             print("用量库配置自检通过")
             PY
 
-            # 业务库迁移。
-            docker run --rm --network agent-lab-net --env-file .env "$BACKEND_IMAGE" alembic upgrade head
+            # 业务库迁移分两段执行，边界由迁移文件里的 POST_DEPLOY 标记决定：
+            #   - 换容器之前只跑向后兼容的那些（加列、加表、加索引）：旧代码跑在新结构上照样正常。
+            #   - 破坏性变更（删列、改名、改语义、拆约束）带 POST_DEPLOY，推迟到新容器就绪、旧容器
+            #     完全退出之后，见下面「第二阶段迁移」。
+            # 这样安排是为了拿到部署失败时的退路：新容器起不来时，库还一个字没改，旧容器完好可用。
+            # 反过来说，删列要是先跑了，还在排空的旧容器读到不存在的列就会当场崩——那时候既没有
+            # 新版本接班，旧版本也被打死了。边界算不出来（迁移链有多个 head）时脚本直接失败，
+            # 不猜一个值出来。
+            PRE_DEPLOY_HEAD="$(docker run --rm --network agent-lab-net --env-file .env \
+              --entrypoint python "$BACKEND_IMAGE" -m agent_lab.scripts.alembic_pre_head)"
+            if [ -n "$PRE_DEPLOY_HEAD" ]; then
+              echo "第一阶段迁移：升到 $PRE_DEPLOY_HEAD（破坏性变更留到旧容器退出后）"
+              docker run --rm --network agent-lab-net --env-file .env "$BACKEND_IMAGE" alembic upgrade "$PRE_DEPLOY_HEAD"
+            else
+              echo "第一阶段迁移：整条链都排在旧容器退出之后，本次不提前改库"
+            fi
 
             # 用量数据在独立库 llmops 里（ADR 0032），它有自己的迁移链。库不存在时先建库：
             # 连接串来自 LLMOPS_DATABASE_URL，而建库只能连同一个实例的维护库 postgres 执行。
@@ -467,6 +481,45 @@ jobs:
               fi
               sleep 3
             done
+
+            # ---------- 等旧容器真正退出 ----------
+            # UpdateStatus 完成只说明旧任务被更新器判定为停止，**不等于进程已经退出**：
+            # stop_grace_period 是 180 秒，排空期间旧代码还在读库。破坏性迁移必须等它真的没了，
+            # 否则删掉的列会被那台还在跑排空的容器读到。
+            #
+            # 判据不能用「docker ps 里 Up 的个数降到副本数」：滚动更新是逐个替换的，中途可能出现
+            # 「一个旧容器已退、另一个还在排空」，而 Up 个数刚好等于副本数，那时候提前放行就会
+            # 删掉另一个旧容器正在读的列。要数的是「已经被要求停、但容器还在跑」的任务：
+            # desired-state=shutdown 而 CurrentState 仍是 Running，就是还在排空的那种。
+            drain_deadline=$((SECONDS + 240))
+            draining=""
+            while [ "$SECONDS" -lt "$drain_deadline" ]; do
+              draining=""
+              for service in backend task-beat task-worker; do
+                n="$(docker service ps "agent-lab_$service" --filter desired-state=shutdown \
+                  --format '{{.CurrentState}}' 2>/dev/null | grep -c 'Running' || true)"
+                draining="$draining $service=$n"
+              done
+              if echo "$draining" | grep -q '=[1-9]'; then
+                sleep 5
+              else
+                echo "旧任务已全部退出（$draining ）"
+                break
+              fi
+            done
+            if echo "$draining" | grep -q '=[1-9]'; then
+              echo "等待旧容器退出超时（240 秒）：$draining"
+              docker service ps agent-lab_backend --no-trunc 2>/dev/null | head -20 || true
+              echo "破坏性迁移不执行：旧容器还在读库，此时删列会把它打死。"
+              echo "新容器已经在服务，服务不受影响；下次部署会重试这一步。"
+              exit 1
+            fi
+
+            # ---------- 第二阶段迁移：破坏性变更 ----------
+            # 到这里新容器已经在服务、旧容器已经退出，库里只剩「读不到这些列」的代码在跑。
+            # 第一阶段什么都没跑时（整条链都带标记）这里会从头跑完，同样安全：那时没有旧容器。
+            # 第一阶段已经升到 head 时（没加标记）这里是一句空操作。
+            docker run --rm --network agent-lab-net --env-file .env "$BACKEND_IMAGE" alembic upgrade head
 
             # 顺手清掉本栈**已退出**的任务容器：任务被替换后旧容器会被停掉但留在节点上（实测：
             # 每次部署多留三个，`docker ps -a` 里是 Exited，占着日志与元数据）。只删本栈的

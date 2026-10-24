@@ -41,7 +41,6 @@ from agent_lab.api.error_contract import (
 )
 from agent_lab.api.pipeline import router as pipeline_router
 from agent_lab.api.scheduled_jobs import router as scheduled_jobs_router
-from agent_lab.api.vector_search import router as vector_search_router
 from agent_lab.api.user_admin import router as user_admin_router
 from agent_lab.api.usage import router as usage_router
 from agent_lab.auth.dependencies import current_active_user, current_superuser
@@ -72,8 +71,8 @@ from agent_lab.usage.contracts import UsageCollector
 
 # 与 CLI 同一套日志配置（见 cli.py）：根级别压到 WARNING，挡掉 httpx 等第三方的 INFO；
 # 只把本项目提到 INFO。API 进程此前没有配置，root 停在 Python 默认的 WARNING，项目自己的
-# ``logger.info``（对话开始/结束、部署时的排空/接手等）全被丢掉——部署时的三个时刻因此在
-# 生产日志里看不见（见 ADR 0040）。放在模块级：uvicorn 先配置自己的 logger、再导入本模块，
+# ``logger.info``（对话开始/结束、部署时排空与排空后的收尾等）全被丢掉——部署时排空的那几条日志因此在
+# 生产日志里看不见（见 ADR 0051）。放在模块级：uvicorn 先配置自己的 logger、再导入本模块，
 # 这里配的是 uvicorn 不管的 root 与 ``agent_lab``。
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s %(message)s")
 logging.getLogger("agent_lab").setLevel(logging.INFO)
@@ -99,12 +98,6 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "knowledge-bases",
         "description": "知识库配置列表与超级用户创建、编辑和启停管理。",
-    },
-    {
-        "name": "vector-search",
-        "description": (
-            "只读新闻 Chunk 语义搜索；执行 query Embedding 和 Qdrant current Alias 查询。"
-        ),
     },
     {
         "name": "document-search",
@@ -221,29 +214,22 @@ def build_agent_runtime(
     )
 
 
-def build_agent_run_registry(runtime: AgentRuntime | None) -> AgentRunRegistry:
+def build_agent_run_registry() -> AgentRunRegistry:
     """装配进程级运行注册表（只构造对象，不建任务、不连任何服务）。
 
     它只碰 ``agent_threads`` 一张表（占位、续活、释放、读停止请求），所以只依赖会话 Service；
     会话历史与模型调用都不经过它。``AgentThreadService`` 自己无状态（真正贵的是数据库连接，
     而连接归它内部按需开关），所以这里现造一个不会有额外开销。
 
-    Args:
-        runtime: lifespan 已经装好的 Agent Runtime；``None`` 表示 Agent 装配失败。
-
     Returns:
         尚未 ``start()`` 的注册表；启动与关闭都由 lifespan 负责。
 
     Notes:
-        不执行 I/O。接手的图就从 ``runtime.graph`` 取（见 ADR 0040）：Runtime 装配失败时图是
-        ``None``，注册表因此拿不到可用的图、不去认领「等接手」的标记，把那些运行留给能跑的
-        进程——否则一个坏副本会替健康副本把本可接手的运行收成未完成。
+        不执行 I/O，也不接受任何注入：运行用的图每次由 ``begin`` 直接传进来，注册表不需要自己
+        持有一张。
     """
 
-    return AgentRunRegistry(
-        threads=AgentThreadService(async_session_factory),
-        graph=runtime.graph if runtime is not None else None,
-    )
+    return AgentRunRegistry(threads=AgentThreadService(async_session_factory))
 
 
 def build_usage_runtime() -> UsageRuntime:
@@ -273,9 +259,7 @@ def create_app(
     agent_runtime_factory: Callable[[VectorSearchService, UsageCollector], AgentRuntime] = (
         build_agent_runtime
     ),
-    agent_run_registry_factory: Callable[[AgentRuntime | None], AgentRunRegistry] = (
-        build_agent_run_registry
-    ),
+    agent_run_registry_factory: Callable[[], AgentRunRegistry] = build_agent_run_registry,
     usage_runtime_factory: Callable[[], UsageRuntime] = build_usage_runtime,
     environment_admin_sync: Callable[
         [], Awaitable[EnvironmentAdminSyncResult]
@@ -317,18 +301,17 @@ def create_app(
                 agent_runtime = None
             else:
                 application.state.agent_runtime = agent_runtime
-            # 6、脱离连接的后台运行注册表。它排在 Agent Runtime 之后：运行要图才能跑，而它
-            #    自己只读写 agent_threads，所以装配失败的影响面比 Agent 装配失败小。传入刚刚
-            #    装好的 Runtime（可能为 ``None``）：接手续跑要用同一张进程级图（见 ADR 0040）。
-            run_registry = agent_run_registry_factory(agent_runtime)
+            # 6、脱离连接的后台运行注册表。它排在 Agent Runtime 之后：它自己只读写
+            #    agent_threads，不建任务以外的进程级资源。
+            run_registry = agent_run_registry_factory()
             await run_registry.start()
             application.state.agent_run_registry = run_registry
             # 7、yield 之后是「运行期」：ASGI Server 在这里处理并发 HTTP 请求。
             yield
         finally:
-            # 0、部署或重启的收尾：先把本进程手上的在途运行排空到可交接的边界（上限见
-            #    agent/limits.RUN_DRAIN_TIMEOUT_SECONDS），再关资源。排空的运行不在这里收尾，
-            #    它交给集群里下一个扫到标记的进程续跑（见 ADR 0040）。
+            # 0、部署或重启的收尾：先把本进程手上的在途运行排空到可排空的边界（上限见
+            #    agent/limits.RUN_DRAIN_TIMEOUT_SECONDS），再关资源。走到边界的运行在旧进程里
+            #    就自己收尾（补写、写会话历史、释放会话位），不等下一个进程（见 ADR 0051）。
             if run_registry is not None:
                 try:
                     await run_registry.drain()
@@ -533,10 +516,6 @@ def create_app(
     application.include_router(health_router)
     application.include_router(readiness_router)
     application.include_router(
-        vector_search_router,
-        dependencies=[Depends(current_active_user)],
-    )
-    application.include_router(
         document_search_router,
         dependencies=[Depends(current_active_user)],
     )
@@ -572,9 +551,10 @@ def create_app(
     application.include_router(task_policy_router, dependencies=[Depends(current_superuser)])
     # Agent 对所有登录账号开放，与检索页同级（见 docs/adr/0030-agent-open-to-all-accounts.md）。
     # 原来限超级用户的理由是「模型调用是真金白银」和「自定义提示词等于让调用方改模型行为」：
-    # 前者是成本不是访问控制，后者戴着护栏（中间件在选定提示词后无条件追加「自定义提示词不能
-    # 扩大」的资料边界段）。真正需要挡的「跨账号读对话」已由会话归属单独解决——它按 user_id
-    # 判断、与角色无关。代价如实记录在 ADR 0030：模型额度对全部登录账号共享，账单随账号数增长。
+    # 前者是成本不是访问控制；后者随自定义提示词一并撤掉（提示词现在只有内置那一份，见
+    # docs/adr/0050-prompt-only-built-in.md）。真正需要挡的「跨账号读对话」已由会话归属单独
+    # 解决——它按 user_id 判断、与角色无关。代价如实记录在 ADR 0030：模型额度对全部登录账号
+    # 共享，账单随账号数增长。
     application.include_router(
         agent_chat_router,
         dependencies=[Depends(current_active_user)],

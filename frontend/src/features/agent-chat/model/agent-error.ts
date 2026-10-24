@@ -74,14 +74,15 @@ const NO_AVAILABLE_MODELS_COPY: AgentErrorCopy = {
 
 // 和 CONFIGURATION_COPY 的区别：那个是服务端还没配好，重试无用；这个是会话记忆的连接在
 // 中途断了，重发同一个问题通常就成功。所以不写 retryable，沿用后端给的 true。
+// 标题与描述写用户能观察到的现象（提问没留下），不写 checkpointer 这个内部机制。
 const MEMORY_CONNECTION_LOST_COPY: AgentErrorCopy = {
-  title: '会话记忆连接中断',
-  description: '本轮提问没有存进会话历史，重新发送一次即可。',
+  title: '这一轮提问没有保存',
+  description: '刷新后可能看不到这次提问，重新发送即可。',
 }
 
 const REJECTED_COPY: AgentErrorCopy = {
   title: '模型拒绝了这次请求',
-  description: '可能是提问或自定义提示词触发了上游限制，换个说法再试。',
+  description: '可能是这条提问触发了上游限制，换个说法再试。',
   retryable: false,
 }
 

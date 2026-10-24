@@ -130,15 +130,6 @@ console.log(
   await page.locator('#search-prefs-heading ~ * select, .field-group select').count(),
 )
 
-await audit('设置中心·Agent 偏好', `${BASE}/settings/agent`)
-console.log(
-  '  提示词编辑器可见:',
-  await page
-    .locator('.prompt-editor')
-    .isVisible()
-    .catch(() => false),
-)
-
 // 6) 后台·桌面
 await audit('后台·账号管理(桌面)', `${BASE}/admin/users`)
 const side = await geo('.admin-sidebar')

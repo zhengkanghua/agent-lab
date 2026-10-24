@@ -3,12 +3,10 @@ withDefaults(
   defineProps<{
     modelValue: string
     rows?: number
-    /** 等宽字体档：给提示词、cron、JSON 参数这类「结构化文本」用。 */
-    mono?: boolean
     disabled?: boolean
     placeholder?: string
   }>(),
-  { rows: 4, mono: false, disabled: false, placeholder: undefined },
+  { rows: 4, disabled: false, placeholder: undefined },
 )
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
@@ -25,7 +23,6 @@ function onInput(event: Event): void {
 <template>
   <textarea
     class="base-textarea"
-    :class="{ 'is-mono': mono }"
     :rows="rows"
     :value="modelValue"
     :disabled="disabled"
@@ -53,12 +50,6 @@ function onInput(event: Event): void {
     border-color var(--duration-fast) var(--ease-out-smooth),
     box-shadow var(--duration-fast) var(--ease-out-smooth),
     opacity var(--duration-fast) var(--ease-out-smooth);
-}
-
-.base-textarea.is-mono {
-  font-family: var(--mono-font);
-  font-size: var(--fs-xs);
-  line-height: 1.6;
 }
 
 .base-textarea::placeholder {

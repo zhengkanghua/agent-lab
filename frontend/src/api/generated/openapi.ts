@@ -520,26 +520,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/vector-search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * 按语义相似度搜索新闻 Chunk
-         * @description 执行一次只读语义搜索，返回按相似度排序的新闻 Chunk。需要整篇正文时另行请求 GET /documents/{document_id}。
-         */
-        post: operations["vector_search_vector_search_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/document-search": {
         parameters: {
             query?: never;
@@ -1138,26 +1118,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/agent/default-prompt": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * 读取服务端内置的默认系统提示词
-         * @description 返回不传 system_prompt 时实际生效的那份提示词，供前端预填到编辑框里。它是常量，不随会话变化。
-         */
-        get: operations["agent_default_prompt_agent_default_prompt_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/agent/threads": {
         parameters: {
             query?: never;
@@ -1190,8 +1150,6 @@ export interface paths {
          * @description 回放某个会话已经存下的问答，供前端在续聊前把界面补齐。不分页：一次会话的消息行本来就有限。
          *
          *     读的是我们自己的会话历史表，不是 checkpointer：那份记录写完不再改，模型上下文怎么压缩都不影响它。
-         *
-         *     `memory_boundary_run_id` 是「模型只保留了摘要」那条边界的标记，为 null 表示历史没有被压缩过。
          */
         get: operations["get_agent_thread_messages_agent_threads__thread_id__messages_get"];
         put?: never;
@@ -1473,20 +1431,6 @@ export interface components {
             llm_model_id?: string | null;
         };
         /**
-         * AgentDefaultPromptResponse
-         * @description ``GET /agent/default-prompt`` 的响应。
-         *
-         *     包成对象而不是直接返回一个 JSON 字符串：裸字符串的响应体没有加字段的余地，以后想带上
-         *     「这份提示词的版本号」或「可用工具清单」就得改破坏性接口。
-         */
-        AgentDefaultPromptResponse: {
-            /**
-             * System Prompt
-             * @description 不传 system_prompt 时实际生效的默认系统提示词全文。
-             */
-            system_prompt: string;
-        };
-        /**
          * AgentDoneEvent
          * @description 一次运行收尾，流即将关闭；完成与否由 status 表达。
          *
@@ -1762,8 +1706,7 @@ export interface components {
          *     数据源是业务表 ``agent_thread_messages``（见 ADR 0044），不是 checkpointer：用户看到的记录
          *     写完不再改，压缩策略怎么改都不影响它。
          *
-         *     ``memory_boundary_run_id`` 是唯一的「早期历史已经不在模型上下文里」的线索：它指向
-         *     「模型只剩摘要」那一段的最后一轮，界面据此画那条分界线。**不回摘要正文**——界面不展示它。
+         *     **不回摘要正文**：界面从不展示历史摘要本身。
          */
         AgentThreadMessagesResponse: {
             /**
@@ -1788,13 +1731,6 @@ export interface components {
              * @description 按时间顺序的历史轮次；不包含摘要那条伪提问。
              */
             turns: components["schemas"]["AgentReplayTurn"][];
-            /**
-             * Memory Boundary Run Id
-             * @description 模型只保留了摘要的那一段的最后一轮运行 id：这一轮及其之前的轮次已不在模型上下文里（界面据此画那条分界线）。为 null 表示历史没有被压缩过。
-             *
-             *     同一会话里每次压缩都留下一行摘要，但后来的压缩可能沿用更早那条的标记，所以这一项取的是**最近**那一行的值。
-             */
-            memory_boundary_run_id?: string | null;
         };
         /**
          * AgentThreadModel
@@ -2369,7 +2305,7 @@ export interface components {
              * @description KnowledgeBase 范围；普通 HTTP 边界缺省时解析为 news。
              */
             knowledge_base_id?: string | null;
-            /** @description 复用 VectorSearchFilters 的来源、类型、标签和发布时间条件；条件在Qdrant 候选集内执行。 */
+            /** @description 复用 VectorSearchFilters 的知识库范围与发布时间条件；条件在 Qdrant 候选集内执行，其他维度一律不接受。 */
             filters?: components["schemas"]["VectorSearchFilters"];
         };
         /**
@@ -2461,12 +2397,6 @@ export interface components {
              */
             additional_matches?: components["schemas"]["DocumentSearchMatch"][];
         };
-        /**
-         * DocumentType
-         * @description 统一文档的业务类型。
-         * @enum {string}
-         */
-        DocumentType: "article" | "press_release" | "economic_release" | "filing" | "research_report" | "policy_document" | "other";
         /** ErrorModel */
         ErrorModel: {
             /** Detail */
@@ -3431,10 +3361,10 @@ export interface components {
          * @description 当轮生效的模型条目：身份、展示名与上下文窗口。
          *
          *     它同时是**运行上下文里那一项**与**提问消息上那份冻结快照**的形状：解析一次、两边共用，
-         *     回放与接手续跑读的就是它。
+         *     回放与这一轮运行期的每一次模型调用读的就是它。
          *
          *     展示名在这里已经落过回落（条目填过就用它，没填就是上游模型名），所以一定非空；快照必须
-         *     **自足**——条目后来改名或停用不改写已经发生过的那几轮，而接手那一轮也不许回查目录。
+         *     **自足**——条目后来改名或停用不改写已经发生过的那几轮，而同一轮的运行期取值也不许回查目录。
          *     窗口跟着一起走是同样的理由：它自己必须是完整的，运行期拿它算压缩比例，不依赖任何回查。
          */
         ResolvedLlmModel: {
@@ -3451,7 +3381,7 @@ export interface components {
             display_name: string;
             /**
              * Context Window
-             * @description 当轮那个时刻的上下文窗口 token 数。冻结下来是因为运行期要按它算压缩比例，而接手续跑那一轮不许回查目录。
+             * @description 当轮那个时刻的上下文窗口 token 数。冻结下来是因为运行期要按它算压缩比例，而同一轮的运行期取值也不许回查目录。
              */
             context_window: number;
         };
@@ -3703,15 +3633,6 @@ export interface components {
             scope: components["schemas"]["ResolvedKnowledgeBaseScope"];
             /** Results */
             results: components["schemas"]["DocumentSearchResult"][];
-        };
-        /**
-         * ScopedVectorSearchResponse
-         * @description 显式范围请求的结果与实际范围快照；旧请求仍返回数组。
-         */
-        ScopedVectorSearchResponse: {
-            scope: components["schemas"]["ResolvedKnowledgeBaseScope"];
-            /** Results */
-            results: components["schemas"]["VectorSearchResult"][];
         };
         /**
          * SourceErrorResponse
@@ -4132,16 +4053,8 @@ export interface components {
         /**
          * UserPreferenceResponse
          * @description 当前登录账号的个人偏好。
-         *
-         *     ``system_prompt`` 用 ``None`` 表达「未配置」而不是空串：「没配过」与「配了一份空的」
-         *     不是一回事，前者回落到服务端默认提示词，后者会让模型失去角色约束。
          */
         UserPreferenceResponse: {
-            /**
-             * System Prompt
-             * @description 自定义系统提示词；为 null 表示使用服务端内置默认提示词。
-             */
-            system_prompt: string | null;
             /**
              * Document Limit
              * @description 检索默认返回的文档数。
@@ -4162,11 +4075,6 @@ export interface components {
          *     各改一个字段互相覆盖的合并问题。
          */
         UserPreferenceUpdateRequest: {
-            /**
-             * System Prompt
-             * @description 自定义系统提示词；为 null 表示恢复使用服务端内置默认提示词。作为新会话的初始提示词，已开始的会话不受影响。
-             */
-            system_prompt?: string | null;
             /**
              * Document Limit
              * @description 检索默认返回的文档数。
@@ -4236,9 +4144,10 @@ export interface components {
          * @description 一组可选的检索过滤条件，交给 Qdrant 在向量排序之前先筛掉不匹配的 Point。
          *
          *     为什么过滤要在 Qdrant 里做而不是取回结果后用 Python 筛：向量库直接在候选集上
-         *     执行过滤，避免把大量数据拉回内存。多个条件之间是 AND（都要满足），labels
-         *     内部是 OR（命中任意一个标签即可）。空 labels 明确表示不过滤；时间范围是包含
-         *     端点的 gte/lte，缺 published_at 的 Point 一旦启用时间过滤就不命中。
+         *     执行过滤，避免把大量数据拉回内存。可用的维度只有知识库范围与发布时间区间两样，
+         *     多个条件之间是 AND（都要满足）。时间范围是包含端点的 gte/lte，缺 published_at
+         *     的 Point 一旦启用时间过滤就不命中。来源、文档类型与标签是命中载荷而不是过滤维度，
+         *     它们只用于展示。
          *
          *     实例只存在于一次搜索请求的内存中，字段来自调用方而不是 PostgreSQL 查询。
          */
@@ -4254,24 +4163,6 @@ export interface components {
              */
             knowledge_base_ids?: string[] | null;
             /**
-             * Source Id
-             * @description 可选来源过滤值，来自调用方；格式为 PostgreSQL sources.id UUID，Qdrant 按 Payload source_id 精确匹配，用于限定单一来源。
-             */
-            source_id?: string | null;
-            /**
-             * Source Provider
-             * @description 可选提供方过滤值，来自调用方；非空 keyword 字符串，Qdrant 按 Payload source_provider 精确匹配，例如 freshrss_main。
-             */
-            source_provider?: string | null;
-            /** @description 可选文档类型过滤值，来自调用方；必须是 DocumentType 合法字符串，Qdrant 按 Payload document_type 精确匹配。 */
-            document_type?: components["schemas"]["DocumentType"] | null;
-            /**
-             * Labels
-             * @description 可选标签 keyword 列表，来自调用方；空列表表示不过滤，非空时 Qdrant MatchAny 要求 Point labels 至少包含其中一个值，不要求包含全部值。
-             * @default []
-             */
-            labels: string[];
-            /**
              * Published From
              * @description 可选发布时间下界，来自调用方；必须是带时区 datetime，Qdrant 对 Payload published_at 执行包含端点的 gte 过滤。
              */
@@ -4281,183 +4172,6 @@ export interface components {
              * @description 可选发布时间上界，来自调用方；必须是带时区 datetime，Qdrant 对 Payload published_at 执行包含端点的 lte 过滤。
              */
             published_to?: string | null;
-        };
-        /**
-         * VectorSearchRequest
-         * @description 一次只读语义检索请求（不含生成式回答参数）。
-         *
-         *     请求对象由 API 边界为每次调用创建，校验完成后可安全传给并发共享的
-         *     ``VectorSearchService``。query 被设为不进 repr（不显示在调试输出里），避免
-         *     日志意外记录完整敏感文本；它只会交给 query Embedding，不会写入 PostgreSQL
-         *     或 Qdrant。
-         */
-        VectorSearchRequest: {
-            /** @description 新调用方显式选择全部启用库或非空列表；遗漏保留旧 news 契约。 */
-            scope?: components["schemas"]["KnowledgeBaseSelection"] | null;
-            /**
-             * Query
-             * @description 用户提交的检索文本，不可为空、纯空白或超过 4096 个 Unicode 字符；原文可能敏感，不写日志或异常，仅用于 Ollama query Embedding，不保存为 Payload。
-             */
-            query: string;
-            /**
-             * Top K
-             * @description 调用方请求的最大 Chunk 命中数；不可空，默认 10、范围 1..100，用于限制 Qdrant limit 和单次返回正文体积。
-             * @default 10
-             */
-            top_k: number;
-            /**
-             * Score Threshold
-             * @description 可选 Qdrant Cosine score 下限；为空时不设阈值，存在时必须是 [-1, 1] 有限数值。它不是概率，生产阈值需用真实新闻评测后决定。
-             */
-            score_threshold?: number | null;
-            /**
-             * Knowledge Base Id
-             * @description 可选 KnowledgeBase 范围；普通 HTTP 边界缺省时解析为固定的 news KnowledgeBase。
-             */
-            knowledge_base_id?: string | null;
-            /** @description 调用方提供的可选 Payload 过滤集合；不可空对象，各条件在 Qdrant 中执行，不会先取大量结果再由 Python 筛选。 */
-            filters?: components["schemas"]["VectorSearchFilters"];
-        };
-        /**
-         * VectorSearchResult
-         * @description 一条按 Qdrant score 排序的命中结果（一个新闻 Chunk）。
-         *
-         *     对象生命周期只覆盖搜索响应。chunk_id 是本次命中的 Chunk 身份，值就是 Qdrant
-         *     Point ID；document_id / source_id 关联 PostgreSQL 业务实体，但本对象本身不是 ORM
-         *     记录。page_content 来自 Qdrant Payload，它曾经作为 document Embedding 的输入；
-         *     其他 Payload 字段不进入 Embedding。
-         *
-         *     不含 point_id：它与 chunk_id 恒为同一个 UUID，两个名字表达的「存储层主键 / 切分层
-         *     主键」之别在 v1 契约里没有对应的实际差异，只会让调用方纠结该用哪个。也不含
-         *     index_schema_version：它由 QdrantVectorSearch 在映射时对着当前 VectorIndexSpec
-         *     校验，不匹配直接拒绝，所以调用方能拿到的值恒等于当前 spec 版本，是个常量。
-         */
-        VectorSearchResult: {
-            /**
-             * Chunk Id
-             * Format: uuid
-             * @description 来自 Qdrant ScoredPoint.id 的必需稳定 Chunk UUID；不可空，既是向量库 Point 主键，也是它在 LangChain Chunk 层的身份。
-             */
-            chunk_id: string;
-            /**
-             * Score
-             * @description 来自 Qdrant ScoredPoint.score 的必需有限数值；当前 Cosine Collection 中通常越高越相似，用于保持 Qdrant 原始排序，不是概率或百分比。
-             */
-            score: number;
-            /**
-             * Page Content
-             * @description 来自 Qdrant Point Payload.page_content 的必需非空 Chunk 正文；这是该 document embedding 的原始文本，用于展示命中内容。
-             */
-            page_content: string;
-            /**
-             * Document Id
-             * Format: uuid
-             * @description 来自 Qdrant Point Payload.document_id 的必需 UUID；不可空，关联 PostgreSQL documents.id，供回查完整新闻或后续显式聚合。
-             */
-            document_id: string;
-            /**
-             * Knowledge Base Id
-             * Format: uuid
-             * @description 来自 Qdrant Point Payload.knowledge_base_id 的必需 UUID；不可空，限定命中所属 KnowledgeBase，防止共享 Collection 发生跨库返回。
-             */
-            knowledge_base_id: string;
-            /**
-             * Content Hash
-             * @description 来自 Qdrant Point Payload.content_hash 的必需 64 位 SHA-256 十六进制；不可空，用于识别命中 Chunk 所属的正文版本。
-             */
-            content_hash: string;
-            /**
-             * Chunk Index
-             * @description 来自 Qdrant Point Payload.chunk_index 的必需非负整数；不可空，表示 Chunk 在父新闻中的从零开始顺序。
-             */
-            chunk_index: number;
-            /**
-             * Chunk Count
-             * @description 来自 Qdrant Point Payload.chunk_count 的必需正整数；不可空，表示该正文版本的 Chunk 总数，用于判断相邻关系和展示进度。
-             */
-            chunk_count: number;
-            /**
-             * Title
-             * @description 来自 Qdrant Point Payload.title 的必需非空新闻标题；不可空，只用于结果展示和回查，不参与当前 query Vector 比较。
-             */
-            title: string;
-            /**
-             * Url
-             * @description 来自 Qdrant Point Payload.url 的可空 HTTP(S) 原文地址；无外部地址时为 null，有地址时用于回到来源页面，不进入 Embedding。
-             */
-            url: string | null;
-            /**
-             * Published At
-             * @description 来自 Qdrant Point Payload.published_at 的可选带时区发布时间；Payload 缺失时为 None，用于展示和时间过滤，不会用抓取时间伪造。
-             */
-            published_at?: string | null;
-            /**
-             * Source Updated At
-             * @description 来自 Qdrant Point Payload.source_updated_at 的可选带时区来源更新时间；Payload 缺失时为 None，仅供版本审计或展示。
-             */
-            source_updated_at?: string | null;
-            /** @description 来自 Qdrant Point Payload.document_type 的必需业务枚举；不可空，用于展示命中文档类型并对应精确过滤值。 */
-            document_type: components["schemas"]["DocumentType"];
-            /**
-             * Mime Type
-             * @description 文档内容的 MIME 格式，与 document_type 业务类型独立。
-             */
-            mime_type: string;
-            /**
-             * Upload Filename
-             * @description 上传资料的原文件名；外部来源文档为空。
-             */
-            upload_filename?: string | null;
-            /**
-             * Source Id
-             * @description 来自 Qdrant Point Payload.source_id 的可空 UUID；有 Source 时关联 PostgreSQL sources.id 并对应来源过滤条件，无 Source 时为 null。
-             */
-            source_id: string | null;
-            /**
-             * Source Provider
-             * @description 来自 Qdrant Point Payload.source_provider 的可空 keyword；有 Source 时标识接入提供方并对应精确过滤条件。
-             */
-            source_provider: string | null;
-            /**
-             * Source Name
-             * @description 来自 Qdrant Point Payload.source_name 的可空展示名称；有 Source 时用于向调用方说明文档来源。
-             */
-            source_name: string | null;
-            /**
-             * Source External Id
-             * @description 来自 Qdrant Point Payload.source_external_id 的可空外部来源标识；存在时用于审计接入系统中的来源身份。
-             */
-            source_external_id: string | null;
-            /**
-             * Document External Id
-             * @description 来自 Qdrant Point Payload.document_external_id 的可空外部文档标识；存在时用于审计来源系统中的文档身份。
-             */
-            document_external_id: string | null;
-            /**
-             * Authors
-             * @description 来自 Qdrant Point Payload.authors 的必需字符串列表；不可为 null、允许空列表，用于结果展示，不进入当前 Embedding。
-             */
-            authors: string[];
-            /**
-             * Labels
-             * @description 来自 Qdrant Point Payload.labels 的必需 keyword 字符串列表；不可为 null、允许空列表，用于展示并支持 MatchAny 标签过滤。
-             */
-            labels: string[];
-            /**
-             * Previous Chunk Id
-             * @description 来自 Qdrant Point Payload.previous_chunk_id 的可选稳定 Chunk UUID；首个 Chunk 缺失时为 None，用于显式读取相邻上下文，本阶段不会自动扩展。
-             */
-            previous_chunk_id?: string | null;
-            /**
-             * Next Chunk Id
-             * @description 来自 Qdrant Point Payload.next_chunk_id 的可选稳定 Chunk UUID；末个 Chunk 缺失时为 None，用于显式读取相邻上下文，本阶段不会自动扩展。
-             */
-            next_chunk_id?: string | null;
-            /**
-             * Embedding Model
-             * @description 来自 Qdrant Point Payload.embedding_model 的必需非空模型名；不可空，用于确认命中 Vector 与 query embedding 位于同一模型空间。
-             */
-            embedding_model: string;
         };
         /** VersionDetail */
         VersionDetail: {
@@ -6205,84 +5919,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
-                };
-            };
-        };
-    };
-    vector_search_vector_search_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VectorSearchRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["VectorSearchResult"][] | components["schemas"]["ScopedVectorSearchResponse"];
-                };
-            };
-            /** @description 知识库不存在。 */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["VectorSearchErrorResponse"];
-                };
-            };
-            /** @description 知识库已停用。 */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["VectorSearchErrorResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description Embedding 或 Qdrant 上游响应失败。 */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["VectorSearchErrorResponse"];
-                };
-            };
-            /** @description 搜索上游连接、目标或配置暂不可用。 */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["VectorSearchErrorResponse"];
-                };
-            };
-            /** @description Embedding 或 Qdrant 上游请求超时。 */
-            504: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["VectorSearchErrorResponse"];
                 };
             };
         };
@@ -8303,26 +7939,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentChatErrorResponse"];
-                };
-            };
-        };
-    };
-    agent_default_prompt_agent_default_prompt_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentDefaultPromptResponse"];
                 };
             };
         };

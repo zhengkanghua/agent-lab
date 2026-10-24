@@ -7,12 +7,12 @@
 2. **写入语义**（真实 ORM 与事务跑在内存 SQLite 上，照 ``tests/task_helpers`` 的做法）：整组替换、
    重复收尾只留一份且沿用第一次的顺序号、只写表里还缺的那些组（缺的那些就是被强杀那一轮留下的：
    补进去的内容照快照写，快照里已成占位文字的正文也照实落表）、顺序号接着会话里已有的最大值、写
-   一个会话不动另一个会话的行，以及**摘要行**（压缩留下的那一行）跟着「产生它的那一次运行」那一组
-   走、同一会话里只有一行。
+   一个会话不动另一个会话的行，以及**历史摘要不落表**（压缩留下的伪提问不进任何一组，无论后面
+   又跑了几次运行，表里都没有 ``role="summary"`` 的行）。
 3. **应用层收尾真的会写**（离线图 + 内存 checkpointer + 真实会话 Service 跑在内存 SQLite 上）：
    正常答完、用户停止、上游失败各写出一轮；写表失败只记日志、释放会话位与终态事件照旧。
-   排空那一支**不写**、接手方收尾时才写，那条断言在 ``tests/test_agent_handover.py`` 里
-   （那两条用例本来就在跑排空与接手）。
+   排空停在边界的那一支也写（运行按未完成收尾，会话随之解锁），那条断言在
+   ``tests/test_agent_drain.py`` 里（那两条用例本来就在跑排空）。
 4. **删会话连带删这张表**（同样跑在真实 ORM 与事务上）：用户删会话、旧会话清理那条批量删、
    以及孤儿残余按 ``thread_id`` 删，都走 Service 里那三个方法；跨会话隔离与归属不匹配时的回滚
    同在这一节。（三条命令各自的入口与参数解析在 ``tests/test_cli.py``。）
@@ -48,7 +48,7 @@ from agent_lab.agent.context import AgentContext
 from agent_lab.agent.errors import AgentThreadNotFoundError
 from agent_lab.agent.evidence import DocumentEvidence, ToolEvidence
 from agent_lab.agent.limits import PRUNED_TOOL_RESULT_PLACEHOLDER
-from agent_lab.agent.replay import build_replay_turns, group_messages_by_run, summary_messages
+from agent_lab.agent.replay import build_replay_turns, group_messages_by_run
 from agent_lab.agent.streaming import stream_agent_events
 from agent_lab.agent.thread_messages import RunMessageRows, project_run_messages
 from agent_lab.agent.tools.search_documents import build_search_documents_tool
@@ -133,37 +133,28 @@ def citation(**changes: Any) -> DocumentEvidence:
 def project(messages: list[Any]) -> tuple[RunMessageRows, ...]:
     """走生产同一条链路：按运行分组 → 投影（完成态取回放算好的那一份）。
 
-    输入是快照里的原始消息（含摘要消息）：生产那边也是把 ``summary_messages`` 的结果与分组
-    一起交给投影，摘要行才不会漏写。
+    输入是快照里的原始消息：生产那边也是把分组结果交给投影。快照里可能带着摘要消息（压缩留下的
+    伪提问），它不属于任何一组，因此不会变成表里的一行。
     """
 
     turns, _, _ = build_replay_turns(messages)
-    return project_run_messages(
-        group_messages_by_run(messages), turns=turns, summaries=summary_messages(messages)
-    )
+    return project_run_messages(group_messages_by_run(messages), turns=turns)
 
 
-def summary(
-    text: str, *, produced_by: UUID, boundary: UUID | None
-) -> HumanMessage:
-    """一条压缩留下的摘要伪提问，形状照 ``agent/middleware._build_new_messages`` 写出来的那份。
+def summary_message(text: str) -> HumanMessage:
+    """一条压缩留下的摘要伪提问，形状照上游造出来的那份（英文前缀 + 摘要正文 + 来源标记）。
 
-    ``produced_by`` 是产生它的那一次运行（会话历史表按它判断这一行属于哪一组），``boundary``
-    是它记下的分界标记（被折掉那一段里最后一次提问的运行标识）。
+    写入端只认 ``lc_source`` 这个来源标记（分组时靠它跳过摘要），消息上不再带任何别的字段。
     """
 
     return HumanMessage(
         content=f"Here is a summary of the conversation to date: {text}",
-        additional_kwargs={
-            "lc_source": "summarization",
-            "produced_by_run_id": str(produced_by),
-            "memory_boundary_run_id": None if boundary is None else str(boundary),
-        },
+        additional_kwargs={"lc_source": "summarization"},
     )
 
 
 def summaries_of(rows: list[AgentThreadMessageRecord]) -> list[AgentThreadMessageRecord]:
-    """表里那些摘要行——「表里只有一行摘要」这条断言反复要取。"""
+    """表里那些摘要行——写入端停写之后它应当是空的，存量库里才有。"""
 
     return [row for row in rows if row.role == "summary"]
 
@@ -428,7 +419,7 @@ async def history_database(directory: Path):
         真的落了这些行」，替身或假 Session 给不了这个。
 
         落成**文件**而不是 ``:memory:``：内存库随它那条连接同生共死，而应用生命周期里有后台
-        协程在读会话行（停止轮询、排空扫描），收尾时会把它们取消掉；被取消的那一次一旦让连接
+        协程在读会话行（停止轮询），收尾时会把它们取消掉；被取消的那一次一旦让连接
         作废，整张内存库就没了，用例会随机变红（实测过）。文件库不吃这一套。
     """
 
@@ -539,7 +530,7 @@ def test_a_repeat_write_keeps_the_sequence_numbers_of_the_first_write(tmp_path: 
             )
             before = [(row.run_id, row.seq, row.text) for row in await read_rows(sessions, thread_id)]
 
-            # 第一次运行那一次收尾又被执行了一遍（接手后收尾、或收尾被重跑）。
+            # 同一次收尾被重跑：把第一次运行那一轮再写一遍（去重必须让它不新增行）。
             await service.record_run_messages(
                 thread_id=thread_id, run_id=first_run, runs=(*first, *second)
             )
@@ -766,7 +757,7 @@ def test_writing_one_session_leaves_another_session_alone(tmp_path: Path) -> Non
     run(verify())
 
 
-# ---- 摘要行（压缩留下的那一行）----
+# ---- 摘要行不再落业务表（历史摘要只活在上下文记录里）----
 
 
 # 真跑一次压缩用的那段历史：长到足以触发压缩（触发线是上下文窗口的比例），每条提问都带着
@@ -775,24 +766,21 @@ COMPRESSED_HISTORY_TEXT = "这一段旧对话要被折进摘要里。" * 8
 CURRENT_QUESTION_TEXT = "本次提问"
 
 
-def test_a_compression_leaves_exactly_one_summary_row_however_many_runs_follow(
-    tmp_path: Path,
-) -> None:
-    """摘要行只有一行：之后每一次运行都不会把它再写一遍。
+def test_a_summary_message_in_the_snapshot_never_becomes_a_row(tmp_path: Path) -> None:
+    """快照里有摘要消息也不写摘要行：连着跑三次运行，表里一行 ``role="summary"`` 都没有。
 
     摘要消息一次压缩之后就留在状态头部、不会自己消失，所以之后每一次运行的收尾都能在快照里
-    「找到」它。判据必须是「产生它的运行 == 这一组的运行」，不是「快照里有摘要」——照后者实现，
-    第二次运行起就会多写一行，同一会话里累积一串。这里跑第一次、第二次、第三次运行，每次都数
-    一遍表里 ``role="summary"`` 的行。
+    「找到」它。写入端只投影分组出来的消息，而摘要不进任何一组，于是它一行都不占——这条用例
+    同时挡住两种错法：每次收尾都写一遍（表里累计一串），以及写一次之后再也不动（那曾是靠分界
+    标记把摘要行归到产生它的那一组实现的）。
     """
 
     async def verify() -> None:
         async with history_database(tmp_path) as sessions:
             service = AgentThreadService(sessions)
             thread_id, first_run, second_run, third_run = uuid4(), uuid4(), uuid4(), uuid4()
-            boundary = uuid4()
             snapshot: list[Any] = [
-                summary("更早那段聊过的旧背景", produced_by=first_run, boundary=boundary),
+                summary_message("更早那段聊过的旧背景"),
                 question("第一问", run_id=first_run),
                 answered(first_run, "第一答。"),
             ]
@@ -809,67 +797,23 @@ def test_a_compression_leaves_exactly_one_summary_row_however_many_runs_follow(
                 )
 
                 rows = await read_rows(sessions, thread_id)
-                # 1、摘要行始终只有一行：它属于第一次运行那一组，后续运行既不重写它、也不给自己
-                #    再添一行；分界标记与它是哪次运行产生的都保持第一次写下的值。
-                assert len(summaries_of(rows)) == 1, "多写了一次摘要行"
-                stored = summaries_of(rows)[0]
-                assert (stored.run_id, stored.memory_boundary_run_id) == (first_run, boundary)
-                # 2、其余的行照旧按运行往后长：第一次 3 行（摘要 + 问 + 答），之后每次各 2 行。
-                assert len(rows) == 3 + 2 * index
+                # 1、摘要行已经被停写：历史摘要只活在上下文记录里，业务表一行都不留。
+                assert summaries_of(rows) == [], "摘要行已经不再写入，表里不该有它"
+                # 2、其余的行照旧按运行往后长：每次运行各 2 行（问 + 答）。
+                assert len(rows) == 2 * (index + 1)
                 assert [row.seq for row in rows] == list(range(len(rows)))
 
     run(verify())
 
 
-def test_a_summary_row_of_a_backfilled_group_is_written_with_it(tmp_path: Path) -> None:
-    """补写那一组也写它自己的摘要行：判据是「产生它的运行 == 该组运行」。
+def test_a_real_compression_leaves_no_summary_row_in_the_history_table(
+    tmp_path: Path,
+) -> None:
+    """真的压缩过一次之后：上下文记录里有摘要、业务表里一行摘要都没有。
 
-    场面：产生摘要的那次运行（A）收尾从未执行（被强杀），它的组与摘要行都不在表里；后来的运行
-    （B）收尾时把 A 的组补齐，摘要行因此跟着落进 A 那一组，并排在 A 的最前面——它属于 A，不
-    属于正在收尾的 B。
-    """
-
-    async def verify() -> None:
-        async with history_database(tmp_path) as sessions:
-            service = AgentThreadService(sessions)
-            thread_id, killed_run, current_run = uuid4(), uuid4(), uuid4()
-            boundary = uuid4()
-            snapshot = [
-                summary("被强杀那次压缩留下的摘要", produced_by=killed_run, boundary=boundary),
-                question("第二问", run_id=killed_run),
-                answered(killed_run, "第二答。"),
-                question("第三问", run_id=current_run),
-                answered(current_run, "第三答。"),
-            ]
-
-            written = await service.record_run_messages(
-                thread_id=thread_id, run_id=current_run, runs=project(snapshot)
-            )
-
-            rows = await read_rows(sessions, thread_id)
-            assert written == 5
-            # 摘要行排在 A 那一组的最前面（提问行之前），而不是当前运行那一组。
-            assert [(row.run_id, row.role, row.seq) for row in rows] == [
-                (killed_run, "summary", 0),
-                (killed_run, "question", 1),
-                (killed_run, "answer", 2),
-                (current_run, "question", 3),
-                (current_run, "answer", 4),
-            ]
-            stored = summaries_of(rows)[0]
-            assert stored.memory_boundary_run_id == boundary
-            assert stored.text == (
-                "Here is a summary of the conversation to date: 被强杀那次压缩留下的摘要"
-            )
-
-    run(verify())
-
-
-def test_a_real_compression_lands_one_summary_row_with_the_boundary(tmp_path: Path) -> None:
-    """真的压缩过一次之后：表里多出一行摘要，分界标记指向被折掉那一段里最后一次提问。
-
-    走真实的中间件流水线（离线图 + 内存 checkpointer）：摘要消息上的两个字段只在压缩那一刻
-    算得出来，手搭的消息只能证明「贴上去的字段被搬进了表」，证明不了「贴上去的是什么」。
+    走真实的中间件流水线（离线图 + 内存 checkpointer）：只有真跑一次才同时看得出两件事——压缩
+    确实由上游发生、摘要正文就是摘要模型的产出（手搭一条消息只能证明「投影不认它」），以及它
+    没有顺着收尾被转存进业务表。
     """
 
     async def verify() -> None:
@@ -915,68 +859,52 @@ def test_a_real_compression_lands_one_summary_row_with_the_boundary(tmp_path: Pa
                 pass
             messages = list((await graph.aget_state(config)).values["messages"])
 
-            # 前提：压缩真的发生，摘要落在状态头部。
+            # 1、压缩真的发生，摘要落在状态头部，正文就是摘要模型产出的那一段（含上游加的英文
+            #    前缀）。
             assert messages[0].additional_kwargs.get("lc_source") == "summarization"
-            current_index = next(
-                index
-                for index, message in enumerate(messages)
-                if getattr(message, "text", None) == CURRENT_QUESTION_TEXT
+            assert messages[0].content.startswith(
+                "Here is a summary of the conversation to date:"
             )
-            preserved = messages[1:current_index]
-            assert [message.text for message in preserved] == [
-                message.text for message in history[len(history) - len(preserved) :]
-            ], "保留段必须是历史的后缀，否则下面算不出被折掉的是哪一段"
-            dropped_questions = [
-                message
-                for message in history[: len(history) - len(preserved)]
-                if isinstance(message, HumanMessage)
-            ]
-            assert len(dropped_questions) >= 2, "段里要有多个提问，「取最后一次」与「取第一次」才分得开"
+            assert "折掉那一段的摘要。" in str(messages[0].content)
 
             await service.record_run_messages(
                 thread_id=thread_id, run_id=context.run_id, runs=project(messages)
             )
             rows = await read_rows(sessions, thread_id)
 
-            assert len(summaries_of(rows)) == 1
-            stored = summaries_of(rows)[0]
-            # 1、这一行属于产生它的那一次运行。
-            assert stored.run_id == context.run_id
-            # 2、分界标记取的是被折掉那一段里**最后一次**提问的运行标识，不是第一次、也不是本次。
-            assert str(stored.memory_boundary_run_id) == dropped_questions[-1].additional_kwargs[
-                "agent_run"
-            ]["run_id"]
-            assert str(stored.memory_boundary_run_id) != dropped_questions[0].additional_kwargs[
-                "agent_run"
-            ]["run_id"]
-            assert stored.memory_boundary_run_id != context.run_id
-            # 3、正文存摘要消息的原文（含上游加的英文前缀）。
-            assert stored.text == messages[0].content
-            assert "折掉那一段的摘要。" in (stored.text or "")
+            # 2、摘要没有被转存：表里的提问行就是保留下来的那些真提问，一条摘要正文都没进去。
+            assert summaries_of(rows) == []
+            assert [row.text for row in rows if row.role == "question"] == [
+                message.text
+                for message in messages
+                if isinstance(message, HumanMessage)
+                and message.additional_kwargs.get("lc_source") != "summarization"
+            ]
+            assert CURRENT_QUESTION_TEXT in [row.text for row in rows]
 
     run(verify())
 
 
-def test_a_second_compression_without_a_question_keeps_the_previous_boundary(
+def test_a_second_compression_keeps_exactly_one_summary_in_the_context_record(
     tmp_path: Path,
 ) -> None:
-    """第二次压缩且被折掉那一段里一条提问都没有：写进表的那一行沿用上一条摘要的分界标记。
+    """第二次压缩：被折掉的段里一条提问都没有也照常压缩，且压缩后头部仍只有一段历史摘要。
 
-    状态头部已经有一条更早的摘要（产生它的是更早的某一次运行），而保留段从摘要之后起——这次
-    被折掉的段里只有那条摘要、它后面取过的工具结果与回答，一条提问都没有。「没有提问就沿用
-    上一条」的判定在中间件里（见 ``tests/test_agent_middleware.py``），这条用例钉的是
-    **沿用下来的那个值真的经收尾进了表**：新摘要落在产生它的那一组，旧摘要不落（它的产生运行
-    不属于任何一组）。
+    状态头部已经有一条更早的摘要，而保留段从摘要之后起——这次被折掉的段里只剩那条旧摘要、它
+    后面取过的工具结果与回答。旧摘要因此被折进新摘要，上下文记录里的摘要从头到尾只有一段；
+    业务表里则一行摘要都没有（摘要行停写）。
+
+    「第二次仍按清理后的计量算切点」这条靠窗口取法体现：窗口压到触发线的一小部分，于是中间件
+    必然先清掉那条工具正文、再把清理之后的列表交给父类切分（清理与切点是同一条链，见
+    ``tests/test_agent_middleware.py`` 的
+    ``test_clearing_not_enough_still_summarizes_from_the_cleared_measurement``）。
     """
 
     async def verify() -> None:
         async with history_database(tmp_path) as sessions:
             service = AgentThreadService(sessions)
             thread_id = uuid4()
-            previous_boundary = uuid4()
-            previous_summary = summary(
-                "更早那段聊过的旧背景", produced_by=uuid4(), boundary=previous_boundary
-            )
+            previous_summary = summary_message("更早那段聊过的旧背景")
             seed = [
                 previous_summary,
                 parallel_tool_call_message(
@@ -1017,10 +945,22 @@ def test_a_second_compression_without_a_question_keeps_the_previous_boundary(
                 pass
             messages = list((await graph.aget_state(config)).values["messages"])
 
-            # 前提：这真的是一次新的压缩（新的摘要在头部，产生它的是本次运行）。
+            # 1、这真的是一次新的压缩：新的摘要在头部、正文是这次摘要模型的产出，旧摘要不在了。
             assert messages[0] is not previous_summary
-            assert messages[0].additional_kwargs.get("produced_by_run_id") == str(context.run_id)
-            # 前提：被折掉的那一段以旧摘要开头，而且段里一条提问都没有。
+            assert messages[0].content.startswith(
+                "Here is a summary of the conversation to date:"
+            )
+            assert "第二次压缩的摘要。" in str(messages[0].content)
+            assert all(message is not previous_summary for message in messages)
+            # 2、上下文记录里只有一段历史摘要：旧摘要被折进了新摘要，不是并列两条。
+            summaries = [
+                message
+                for message in messages
+                if getattr(message, "additional_kwargs", {}).get("lc_source") == "summarization"
+            ]
+            assert len(summaries) == 1
+            assert messages.index(summaries[0]) == 0
+            # 3、保留下来的提问只有本次那一条：被折掉的段整段并进了摘要。
             questions = [
                 message
                 for message in messages[1:]
@@ -1034,19 +974,9 @@ def test_a_second_compression_without_a_question_keeps_the_previous_boundary(
             )
             rows = await read_rows(sessions, thread_id)
 
-            # 1、表里只有新摘要那一行：沿用下来的旧摘要在头部，但它的产生运行不是本次，不落表。
-            assert len(summaries_of(rows)) == 1
-            stored = summaries_of(rows)[0]
-            assert (stored.run_id, stored.memory_boundary_run_id) == (
-                context.run_id,
-                previous_boundary,
-            )
-            assert stored.memory_boundary_run_id is not None, "沿用是必须的：记空等于白记"
-            assert stored.memory_boundary_run_id != context.run_id
-            # 2、正文是新摘要的原文，不是沿用下来的那一条。
-            assert stored.text == messages[0].content
-            assert "第二次压缩的摘要。" in (stored.text or "")
-            assert all(row.text != previous_summary.content for row in rows)
+            # 4、两次压缩、业务表里仍然一行摘要都没有。
+            assert summaries_of(rows) == []
+            assert [row.role for row in rows] == ["question", "answer"]
 
     run(verify())
 
@@ -1118,7 +1048,7 @@ def test_a_finished_run_lands_in_the_history_table(tmp_path: Path) -> None:
     assert rows[0].run_meta["scope"] == events[0]["scope"]
     assert rows[0].run_meta["completed"] is True
     frozen_model = rows[0].run_meta["llm_model"]
-    # 快照必须自足：展示名与上下文窗口都在里面，回看与接手都不回查目录。
+    # 快照必须自足：展示名与上下文窗口都在里面，回看与运行期的取值都不回查目录。
     assert frozen_model["display_name"] == "演示模型"
     assert frozen_model["context_window"] == 32768
     assert UUID(frozen_model["id"]) == DEFAULT_OFFLINE_MODEL_ID
@@ -1509,7 +1439,7 @@ async def seed_session_with_rows(
 
     service = AgentThreadService(sessions)
     run_id = uuid4()
-    thread_id, _prompt = await service.ensure_thread(
+    thread_id = await service.ensure_thread(
         user_id=user_id, thread_id=None, first_message=first_message, run_id=run_id
     )
     await service.record_run_messages(

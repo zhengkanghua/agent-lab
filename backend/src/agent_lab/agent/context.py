@@ -1,12 +1,12 @@
 """定义一次运行（run）的请求级上下文。
 
-本模块只声明一个不可变数据类，不读环境、不访问外部服务、不校验业务规则（长度上限由
-``schemas.agent_chat`` 的 Pydantic 层挡在更前面）。
+本模块只声明一个不可变数据类，不读环境、不访问外部服务、不校验业务规则（用户提问的长度上限在
+``schemas.agent_chat`` 的 Pydantic 层）。
 
 它存在的理由是让 Agent 能做成**进程级共享**的：编译好的 LangGraph agent 在启动时建一次，
-每个请求只通过 ``agent.ainvoke(..., context=AgentContext(...))`` 传入自己的差异部分，
-由 ``dynamic_prompt`` 中间件在模型调用前读出来。否则「每个用户用自己的系统提示词」就只能
-靠每请求重新编译一个 agent，那会把编译开销和内存占用乘上并发数。
+每个请求只通过 ``agent.ainvoke(..., context=AgentContext(...))`` 传入自己的差异部分（本次运行的
+知识库范围、当轮模型、账号与会话标识），由中间件在模型调用前读出来。否则这些按请求不同的值
+只能靠每请求重新编译一个 agent，那会把编译开销和内存占用乘上并发数。
 """
 
 from dataclasses import dataclass, field
@@ -21,16 +21,9 @@ class AgentContext:
     """一次运行的请求级参数，由 ``create_agent(context_schema=...)`` 声明并注入。
 
     做成 frozen 是刻意的：中间件在模型调用前读它，如果某个中间件能改它，后续中间件看到
-    的就是被改过的值，「这次运行用的是哪个提示词」会变得依赖中间件顺序。
+    的就是被改过的值，「这次运行用的是哪个范围、哪个模型」会变得依赖中间件顺序。
 
     Attributes:
-        system_prompt: **本次运行所属会话**的系统提示词，由 ``agent_threads.system_prompt``
-            给出（建立会话时从该账号个人偏好拍下的快照）；``None`` 表示该会话用
-            ``prompts.DEFAULT_SYSTEM_PROMPT``。非 ``None`` 时**整体替换**默认提示词，
-            不拼接，理由见 ``agent.prompts`` 的模块说明。
-
-            注意它的来源是会话而非请求体：同一次运行的多次模型调用拿到的是同一份值，
-            而会话内不同轮次之间也保持一致。
         user_id: 发起本次运行的账号；``None`` 表示归属未知。用量采集点从当前运行的上下文里
             读它，把每条用量记录归到账号上——查询接口按账号过滤，读不到就谁都查不到。
             有默认值是为了让离线测试与不关心归属的调用点不必构造它；填值由 Agent 对话入口
@@ -40,13 +33,12 @@ class AgentContext:
         llm_model: **当轮选定的模型**（id、展示名、上下文窗口），在开始运行之前由
             ``services.llm_model_selection_service`` 读目录表解析出来；``None`` 表示本次运行
             的上下文里没带上它（离线测试与不关心模型的调用点）。它的窗口是历史压缩那条路的
-            比例基准（见 spec 0001）；填值由 Agent 对话入口负责，接手一条在途运行时读的是
+            比例基准（见 spec 0001）；填值由 Agent 对话入口负责，而运行期的取值读的是
             提问消息里冻结的那一份，**不重查目录**（目录可能已经被改过）。
         run_id: 本次运行的标识，由本类在构造时生成。同一次运行的多次模型调用（含中间件内部
             的历史摘要压缩调用）拿到的是同一个值。
     """
 
-    system_prompt: str | None = None
     run_id: UUID = field(default_factory=uuid4)
     scope: ResolvedKnowledgeBaseScope | None = None
     llm_model: ResolvedLlmModel | None = None

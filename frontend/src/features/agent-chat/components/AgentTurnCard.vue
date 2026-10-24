@@ -5,8 +5,10 @@ import BaseButton from '@/shared/ui/BaseButton.vue'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import type { AgentTurn } from '../model/conversation'
 import type { DocumentEvidence } from '@/api/agent-evidence'
+import { excerptFor, type CitationExcerpt } from '../model/citation-excerpt'
 import { scopeLabel } from '@/api/knowledge-scope'
 import AgentToolTraceList from './AgentToolTraceList.vue'
+import AgentEvidencePanel from './AgentEvidencePanel.vue'
 import SafeMarkdown from '@/shared/ui/SafeMarkdown.vue'
 
 const props = defineProps<{ turn: AgentTurn; canRetry: boolean }>()
@@ -27,9 +29,94 @@ const citationSummaries = computed(() => {
   return map
 })
 
-function openCitation(id: string, trigger: HTMLElement): void {
-  const evidence = props.turn.citations?.find((item) => item.citation_id === id)
-  if (evidence) emit('open-evidence', evidence, trigger)
+/* 一度展开的面板。面板状态放在这一轮组件里而不是往上提：一轮之内只有一个，两轮之间互不
+   干扰（上一轮的引用在上一轮展开，不会挤进这一轮的列表）。 */
+interface ActivePanel {
+  citationId: string
+  evidence: DocumentEvidence
+  excerpt: CitationExcerpt
+}
+
+const activePanel = ref<ActivePanel | null>(null)
+/* 由正文内联小丸打开的那一条：只有它需要被滚进视口——列表里点的那条本来就在眼前。 */
+const scrollTargetId = ref<string | null>(null)
+/* 本轮卡片的根节点：用来判断一次点击是不是落在「这一轮里」。 */
+const rootEl = ref<HTMLElement | null>(null)
+/* Esc 收起后焦点还给触发元素；点面板外收起则不还，焦点跟着用户新的落点走。 */
+let lastTrigger: HTMLElement | null = null
+let listening = false
+
+/** 面板的 DOM id，同时写进触发按钮的 aria-controls。 */
+function panelId(citationId: string): string {
+  return `evidence-panel-${citationId}`
+}
+
+/* 引用列表条目与正文内联小丸走同一个入口。
+ *
+ * 切不出当初那段时**直接打开当前全文**，与面板落地前的行为一致：不展开一个空面板，
+ * 也不加任何解释文案——那种文案会把「这一轮没留下原文」说成界面故障。 */
+function openCitation(citationId: string, trigger: HTMLElement, fromAnswer = false): void {
+  const evidence = props.turn.citations?.find((item) => item.citation_id === citationId)
+  if (!evidence) return
+  if (activePanel.value?.citationId === citationId) {
+    closePanel()
+    return
+  }
+  const excerpt = excerptFor(citationId, props.turn.traces)
+  if (!excerpt) {
+    emit('open-evidence', evidence, trigger)
+    return
+  }
+  activePanel.value = { citationId, evidence, excerpt }
+  scrollTargetId.value = fromAnswer ? citationId : null
+  lastTrigger = trigger
+  attachDismissListeners()
+}
+
+/** 面板底部「查看当前全文」：沿用既有阅读链路，`DocumentReader` 那边一行不动。 */
+function openFulltext(trigger: HTMLElement): void {
+  if (activePanel.value) emit('open-evidence', activePanel.value.evidence, trigger)
+}
+
+function closePanel(restoreFocus = false): void {
+  if (!activePanel.value) return
+  activePanel.value = null
+  scrollTargetId.value = null
+  detachDismissListeners()
+  if (restoreFocus) lastTrigger?.focus()
+  lastTrigger = null
+}
+
+/* 收起的两条额外路径：按 Esc、点面板外。监听挂在 document 上而不是面板上——焦点与指针都
+   可能落在面板之外的任何地方；只在展开期间挂，收起就摘。 */
+function onDocumentKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Escape') return
+  closePanel(true)
+}
+
+function onDocumentClick(event: Event): void {
+  const target = event.target
+  if (!(target instanceof Element)) return
+  /* 本轮的引用列表（面板本身在列表条目里）与正文小丸，点击交给它们自己的处理：在这里先收起
+     再让点击重开，会让「再点同一条即收起」变成关不掉。
+     判断「本轮」必须是卡片根节点里的那一份：别的轮次的引用按钮与内联小丸确实在这个面板
+     之外，点它们就该收起——否则两轮各开一个面板，同时摆在对话流里。 */
+  if (rootEl.value?.contains(target) && target.closest('.citation-list, .verified-citation')) return
+  closePanel()
+}
+
+function attachDismissListeners(): void {
+  if (listening) return
+  listening = true
+  document.addEventListener('keydown', onDocumentKeydown)
+  document.addEventListener('click', onDocumentClick)
+}
+
+function detachDismissListeners(): void {
+  if (!listening) return
+  listening = false
+  document.removeEventListener('keydown', onDocumentKeydown)
+  document.removeEventListener('click', onDocumentClick)
 }
 
 const isStreaming = computed(() => props.turn.status === 'streaming')
@@ -66,7 +153,10 @@ async function copyAnswer(): Promise<void> {
   copiedTimer = setTimeout(() => (copied.value = false), 2000)
 }
 
-onBeforeUnmount(() => clearTimeout(copiedTimer))
+onBeforeUnmount(() => {
+  clearTimeout(copiedTimer)
+  detachDismissListeners()
+})
 </script>
 
 <template>
@@ -75,7 +165,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
        2026-10 补左侧时间线：没有气泡就没有「靠右对齐」那种一眼可辨的位置线索，
        一轮轮往上翻时找不到自己的提问。圆点 + 竖线把这条线索还回来（与检索流同一套，
        见 styles/components/stream.css），代价是下面那条间距规则要跟着改。 -->
-  <article class="turn stream-item" :class="`is-${turn.status}`">
+  <article ref="rootEl" class="turn stream-item" :class="`is-${turn.status}`">
     <span class="stream-mark" aria-hidden="true"></span>
     <!-- 用文本插值渲染，不用 v-html：这段是用户原文，注入 HTML 会直接变成 XSS。 -->
     <h3 class="question-text">{{ turn.question }}</h3>
@@ -96,22 +186,40 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
         :streaming="isStreaming"
         :citation-ids="citationIds"
         :citation-summaries="citationSummaries"
-        @citation="openCitation"
+        @citation="(id, trigger) => openCitation(id, trigger, true)"
       />
       <p v-else-if="isUnanswered" class="unanswered">
         {{ hasTracesOnly ? '模型未给出文字回答。' : '这一轮没有留下回答。' }}
         <span v-if="hasTracesOnly" class="trace-hint">已执行的检索结果见上方。</span>
       </p>
 
+      <!-- 面板插在被点中的那一条**下方**（li 之内、button 之后），不是整份列表之后，也不是
+           答案与列表之间：点哪条就在哪条下面展开，视线不跳，被点的元素自身也不移位。 -->
       <ol v-if="turn.citations?.length" class="citation-list" aria-label="回答引用">
         <li v-for="(citation, index) in turn.citations" :key="citation.citation_id">
+          <!-- aria-controls 只在展开时挂：面板用 v-if 控制存在，收起后那个 id 在页面上
+               并不存在，指着一个不存在的元素对读屏是空承诺。 -->
           <button
             type="button"
+            :aria-expanded="activePanel?.citationId === citation.citation_id"
+            :aria-controls="
+              activePanel?.citationId === citation.citation_id
+                ? panelId(citation.citation_id)
+                : undefined
+            "
             @click="openCitation(citation.citation_id, $event.currentTarget as HTMLElement)"
           >
             <span class="citation-number">[{{ index + 1 }}]</span>
             <span>{{ citation.knowledge_base_name }} · {{ citation.title }}</span>
           </button>
+          <AgentEvidencePanel
+            v-if="activePanel && activePanel.citationId === citation.citation_id"
+            :panel-id="panelId(citation.citation_id)"
+            :evidence="activePanel.evidence"
+            :body="activePanel.excerpt.body"
+            :scroll-into-view="scrollTargetId === citation.citation_id"
+            @open-fulltext="openFulltext"
+          />
         </li>
       </ol>
       <p v-if="turn.invalidCitations?.length" class="citation-warning" role="status">

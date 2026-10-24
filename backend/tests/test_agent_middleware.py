@@ -109,63 +109,6 @@ def test_failing_tool_is_retried_before_the_error_handler_sees_it() -> None:
     assert results[0].failed is True
 
 
-def test_an_unregistered_tool_call_ends_the_run_with_a_classified_error() -> None:
-    """模型请求没注册的工具时，必须以 ``llm_response_invalid`` 结束，而不是让模型自己纠正。
-
-    这条钉住的是 ``UnknownToolGuardMiddleware`` 存在的全部理由。**关键在于断言事件类型**：
-    守卫若被排到 ``ToolErrorMiddleware`` 的内层，异常会被兜底翻成安全文案变成一条
-    ``tool_result``，运行照常走到 ``done``——用户拿到的是「查了资料但不回答」，也就是它要
-    替换掉的那个症状。所以这里要求最后一个事件是 ``AgentErrorEvent``，且流里没有任何
-    ``tool_result``。
-
-    工具名取 ``Bash`` 不是随手编的：``LLM_MODEL=auto``（那项环境变量今天已退休）那次事故里
-    模型真的发出了
-    ``Bash(command, description)``，见 ``UnknownToolGuardMiddleware`` 的说明。
-    """
-
-    registered = CountingTool("search_documents")
-    model = ScriptedChatModel(
-        responses=[
-            tool_call_message("Bash", {"command": "ls", "description": "列目录"}),
-            AIMessage(content="不该走到这一步。"),
-        ]
-    )
-    graph = build_offline_graph(model, [registered.build()])
-
-    events = run(collect(graph))
-
-    assert isinstance(events[-1], AgentErrorEvent)
-    assert events[-1].code == "llm_response_invalid"
-    assert events[-1].retryable is False
-    # 未注册的工具不存在，自然没得执行；已注册的那个也不该被顺手调用。
-    assert registered.invocations == []
-    assert [event for event in events if isinstance(event, AgentToolResultEvent)] == []
-
-
-def test_a_registered_tool_call_passes_the_guard_untouched() -> None:
-    """已注册的工具照常执行——守卫只拦不认识的名字，不给正常路径加条件。
-
-    与上一条成对：只有上一条时，一个「什么都拦」的坏实现同样能通过。
-    """
-
-    registered = CountingTool("search_documents", result="检索结果")
-    model = ScriptedChatModel(
-        responses=[
-            tool_call_message("search_documents", {"text": "央行"}),
-            AIMessage(content="根据检索结果……"),
-        ]
-    )
-    graph = build_offline_graph(model, [registered.build()])
-
-    events = run(collect(graph))
-
-    assert len(registered.invocations) == 1
-    results = [event for event in events if isinstance(event, AgentToolResultEvent)]
-    assert len(results) == 1
-    assert results[0].failed is False
-    assert not [event for event in events if isinstance(event, AgentErrorEvent)]
-
-
 def test_tool_failure_never_leaks_exception_text() -> None:
     """工具异常文本不得出现在任何事件里。
 
@@ -288,9 +231,8 @@ def test_model_call_limit_ends_the_run() -> None:
 def test_every_run_stamps_its_identity_even_without_a_scope() -> None:
     """没有知识库范围时，提问行与助手行上同样要带运行标识。
 
-    会话历史按提问行上的 ``run_id`` 切分，排空接手也按它找回那一轮（``runs.py`` 的
-    ``_read_frozen_run_meta``：取不到 id 就当成「这一轮已经不在 checkpoint 里」放弃）。所以
-    「本次运行没有范围」不能成为不盖标记的理由：按范围短路会让这类运行整轮认不出归属。
+    会话历史按提问行上的 ``run_id`` 切分，回放与终态事件都按它认这一轮，所以「本次运行
+    没有范围」不能成为不盖标记的理由：按范围短路会让这类运行整轮认不出归属。
     范围是另一样东西，只有真有范围时才写进 ``agent_run``。
     """
 
@@ -325,8 +267,8 @@ def test_every_run_stamps_its_identity_even_without_a_scope() -> None:
 def test_the_frozen_run_metadata_carries_the_model_with_its_name_and_window() -> None:
     """当轮选定的模型连展示名与上下文窗口一起冻结进提问消息的运行元数据。
 
-    快照必须**自足**：条目后来改名或停用不改写已经发生过的那几轮，而接手续跑那一轮也不许
-    回查目录。所以这里钉的是完整的键名与键值——只有展示名或只有窗口都是不够的。
+    快照必须**自足**：条目后来改名或停用不改写已经发生过的那几轮，回放也不许回查目录。
+    所以这里钉的是完整的键名与键值——只有展示名或只有窗口都是不够的。
     """
 
     model = ResolvedLlmModel(
@@ -784,7 +726,7 @@ def pruned_body(mark: str) -> str:
     上只剩它），写死才能在常量被顺手改掉时变红；跟着常量算出来的期望值等于没断言。
     """
 
-    return mark * 512 + "[... tool result middle pruned ...]" + mark * 256
+    return mark * 512 + "（中间部分已省略）" + mark * 256
 
 
 def old_turn_with_tools(bodies: list[str]) -> list[Any]:
@@ -1029,224 +971,23 @@ def test_the_model_receives_the_cleared_body_and_the_citation_still_resolves() -
     assert next(turn for turn in turns if turn.question == "上一问").citations == (item,)
 
 
-# ---- 摘要消息记下的两样：分界标记与产生它的运行标识 ----
+# 系统提示词只有内置那一份（见 ADR 0050），所以这里没有「用哪份」的选择可测，剩下的是两条
+# 输入形状都要成立同一件事：基底永远是内置提示词，日期段紧跟其后。
 #
-# 两个字段都只能在压缩发生的那一刻记下，事后推不出来：``memory_boundary_run_id``（被折掉那
-# 一段里最后一次提问的运行标识）是界面上那条分界线的唯一来源，``produced_by_run_id``（产生
-# 这条摘要的那次运行）让会话历史表认得出「这一行是不是本次刚产生的」。所以它们的正确性只能
-# 靠断言发现。
-
-
-def question_with_run(text: str, run_id: UUID) -> HumanMessage:
-    """一条带上运行标识的提问——分界标记就是从这个字段取的。"""
-
-    return HumanMessage(content=text, additional_kwargs={"agent_run": {"run_id": str(run_id)}})
-
-
-def is_question(message: Any) -> bool:
-    """一条消息是不是用户提问（摘要那条伪提问也是 ``HumanMessage``，要排掉）。"""
-
-    return isinstance(message, HumanMessage) and message.additional_kwargs.get("lc_source") != "summarization"
-
-
-def history_with_runs(question_run_ids: list[UUID]) -> list[Any]:
-    """一问一答的旧历史，每条提问都带着自己的运行标识。"""
-
-    return [
-        message
-        for index, run_id in enumerate(question_run_ids)
-        for message in (
-            question_with_run(f"旧问{index}：{_OLD_TEXT}", run_id),
-            AIMessage(content=f"旧答{index}：{_OLD_TEXT}"),
-        )
-    ]
-
-
-def summary_of(result: Any) -> Any:
-    """从 ``abefore_model`` 的改写里取出摘要那条消息（上游的形状是「清空 + 摘要 + 保留段」）。"""
-
-    return result["messages"][1]
-
-
-def dropped_segment(messages: list[Any], result: Any) -> list[Any]:
-    """被折掉的那一段：交给中间件的消息去掉保留段（保留段是输入的后缀）。"""
-
-    preserved = len(result["messages"]) - 2
-    return messages[: len(messages) - preserved]
-
-
-def test_the_summary_records_the_last_question_of_the_dropped_segment() -> None:
-    """分界标记取的是被折掉那一段里**最后一次**提问的运行标识，不是第一次、也不是本次。
-
-    三种取法（取第一次、取最后一次、取本次运行）事后看都是一串像 run_id 的字符，分不开；
-    所以段里必须埋上多个提问，而且本次提问要另有一个标识——否则这条用例两边都会通过。
-    """
-
-    question_run_ids = [uuid4() for _ in range(8)]
-    history = history_with_runs(question_run_ids)
-    current_run_id = uuid4()
-    messages = [*history, question_with_run("本次提问", current_run_id)]
-    summarizer = ScriptedChatModel(responses=[AIMessage(content="摘要")])
-
-    result = summarize_with_window(
-        summarization_middleware(summarizer), messages, window_that_triggers(messages)
-    )
-
-    assert summarizer.call_count == 1, "这份历史必须真的触发压缩，否则没有摘要消息可断言"
-    dropped = dropped_segment(messages, result)
-    dropped_questions = [message for message in dropped if is_question(message)]
-    assert len(dropped_questions) >= 2, "段里要有多个提问，「取最后一个」与「取第一个」才分得开"
-
-    boundary = summary_of(result).additional_kwargs["memory_boundary_run_id"]
-
-    assert boundary == dropped_questions[-1].additional_kwargs["agent_run"]["run_id"]
-    assert boundary != dropped_questions[0].additional_kwargs["agent_run"]["run_id"], "不能取段里第一个提问"
-    assert boundary != str(current_run_id), "不能取本次运行的标识"
-
-
-def test_a_second_compression_without_a_question_inherits_the_previous_boundary() -> None:
-    """第二次压缩时被折掉那一段里一条提问都没有：沿用上一条摘要记的分界，不记空。
-
-    保留段刚好从「摘要之后的第一条提问」起时就是这个形状：段里只剩上一条摘要、它的回答和
-    取过的工具结果。这条痕迹事后推不出来，所以三样要同时断言：等于上一条摘要的值、不为空、
-    也不是本次运行的标识。窗口刻意取得远低于触发线，让保留段连上一条消息都装不下。
-    """
-
-    previous_boundary = uuid4()
-    previous_summary = HumanMessage(
-        content="Here is a summary of the conversation to date: 更早那段聊过的旧背景",
-        additional_kwargs={
-            "lc_source": "summarization",
-            "memory_boundary_run_id": str(previous_boundary),
-            "produced_by_run_id": str(uuid4()),
-        },
-    )
-    messages = [
-        previous_summary,
-        parallel_tool_call_message([("call-old", "search_documents", {"text": "旧查询"})]),
-        ToolMessage(content="上一轮取到的资料", tool_call_id="call-old", name="search_documents"),
-        AIMessage(content=f"上一答：{_OLD_TEXT}"),
-        question_with_run("本次提问", uuid4()),
-    ]
-    summarizer = ScriptedChatModel(responses=[AIMessage(content="摘要")])
-
-    result = summarize_with_window(
-        summarization_middleware(summarizer), messages, window_that_triggers(messages) // 8
-    )
-
-    assert summarizer.call_count == 1, "这份历史必须真的触发压缩，否则没有摘要消息可断言"
-    dropped = dropped_segment(messages, result)
-    assert previous_summary in dropped, "前提：上一条摘要在被折掉的那一段里"
-    assert not [message for message in dropped if is_question(message)], "前提：这一段里一条提问都没有"
-
-    kwargs = summary_of(result).additional_kwargs
-
-    assert kwargs["memory_boundary_run_id"] == str(previous_boundary), "没有提问时必须沿用上一条摘要的分界，不能记空"
-    assert kwargs["memory_boundary_run_id"] != kwargs["produced_by_run_id"], "不能把本次运行的标识当成沿用下来的分界"
-
-
-def test_the_summary_records_the_run_that_produced_it() -> None:
-    """``produced_by_run_id`` 是发起这次运行的那一次运行，经真实流水线一路取到运行上下文。
-
-    走一遍「建图 → 图节点执行」而不是直接调中间件：这个字段只能从 ``runtime.context`` 来，
-    接线断掉时直接调的写法照样能过。同时钉住它与分界标记是两个不同的值——把两者写成同一个
-    来源（本次运行）在两边的断言里都会红。
-    """
-
-    question_run_ids = [uuid4() for _ in range(10)]
-    history = history_with_runs(question_run_ids)
-    question_text = "本次提问"
-    window = window_that_triggers([*history, HumanMessage(content=question_text)]) // 2
-    context = AgentContext(
-        llm_model=ResolvedLlmModel(
-            id=UUID("40000000-0000-4000-8000-0000000000a3"),
-            display_name="演示模型",
-            context_window=window,
-        )
-    )
-    model = ScriptedChatModel(responses=[AIMessage(content=f"第 {index} 条") for index in range(1, 6)])
-    graph = build_offline_graph(model)
-
-    async def verify() -> list[Any]:
-        thread_id = uuid4()
-        config = {"configurable": {"thread_id": str(thread_id)}}
-        await graph.aupdate_state(config, {"messages": history})
-        async for _ in stream_agent_events(
-            graph,
-            message=question_text,
-            thread_id=thread_id,
-            context=context,
-            langsmith_settings=OFFLINE_LANGSMITH_SETTINGS,
-        ):
-            pass
-        snapshot = await graph.aget_state(config)
-        return list(snapshot.values["messages"])
-
-    messages = run(verify())
-
-    # 1、压缩真的发生了，摘要就在状态头部（它一次压缩之后就一直留在那里）。
-    assert messages[0].additional_kwargs.get("lc_source") == "summarization"
-    # 2、产生它的就是本次运行。
-    assert messages[0].additional_kwargs.get("produced_by_run_id") == str(context.run_id)
-    # 3、分界取的是历史里那次提问的运行标识，与本次运行是两个不同的值。
-    current_index = next(
-        index for index, message in enumerate(messages) if getattr(message, "text", None) == question_text
-    )
-    preserved = messages[1:current_index]
-    assert [message.text for message in preserved] == [
-        message.text for message in history[len(history) - len(preserved):]
-    ], "保留段必须是历史的后缀，否则下面算不出被折掉的是哪一段"
-    dropped_questions = [
-        message
-        for message in history[: len(history) - len(preserved)]
-        if is_question(message)
-    ]
-    assert len(dropped_questions) >= 2, "段里要有多个提问，「取最后一个」与「取第一个」才分得开"
-    assert messages[0].additional_kwargs.get("memory_boundary_run_id") == (
-        dropped_questions[-1].additional_kwargs["agent_run"]["run_id"]
-    )
-    assert messages[0].additional_kwargs.get("memory_boundary_run_id") != str(context.run_id)
-
-
-# 提示词选择的全部输入形状。合成一条是因为它们都是「喂一个 context、断言选出哪份提示词」
-# 的纯函数调用，逐个写成独立函数只是重复同一行断言。
-#
-# 各条的意义：
-# - ``AgentContext()``：没给自定义值时回落到默认提示词。
-# - 给了自定义值：按它走。这条是「进程级共享一个图」能成立的前提——提示词是每次运行读的，
-#   不是编译期定死的，否则换提示词就得重新编译。
-# - 空白值（空串、空格、换行制表符）：等同于「没给」。真用一份空提示词会让模型失去角色
-#   约束和「必须引用 document_id」的要求，比回落到默认值糟得多。请求层已经把空白规整成
-#   ``None``，这里是第二道防线。
+# - ``AgentContext()``：正常路径。
 # - ``None``：完全没有 context 也不能抛异常。``create_agent`` 允许不传 context 调用，那时
 #   ``runtime.context`` 就是 ``None``。这条路径 HTTP 层走不到，但图是公共对象，CLI 或测试
 #   可能直接调它。
-#
-# ``expected`` 是选出来的**基底**提示词，日期段由断言统一补上：日期对每条都一样，写进
-# 参数表只是把同一段话抄六遍。日期本身怎么追加由下面几条单独测。
-@pytest.mark.parametrize(
-    ("context", "expected"),
-    [
-        (AgentContext(), DEFAULT_SYSTEM_PROMPT),
-        (AgentContext(system_prompt="你只说是或不是。"), "你只说是或不是。"),
-        (AgentContext(system_prompt=""), DEFAULT_SYSTEM_PROMPT),
-        (AgentContext(system_prompt="   "), DEFAULT_SYSTEM_PROMPT),
-        (AgentContext(system_prompt="\n\t"), DEFAULT_SYSTEM_PROMPT),
-        (None, DEFAULT_SYSTEM_PROMPT),
-    ],
-)
-def test_prompt_selection_covers_every_context_shape(
-    context: AgentContext | None,
-    expected: str,
-) -> None:
-    """按上下文选出正确的那份系统提示词。"""
+@pytest.mark.parametrize("context", [AgentContext(), None])
+def test_the_built_in_prompt_is_always_the_base(context: AgentContext | None) -> None:
+    """内置提示词是唯一基底，日期段紧跟其后。"""
 
     today = date(2026, 3, 17)
 
-    # 用 startswith 而不是相等：末尾还跟着一段无条件注入的证据规则（哪种上下文形状都拿到
-    # 同一段，由下面那条单独钉），日期段则必须紧跟基底提示词。
+    # 用 startswith 而不是相等：末尾还跟着一段无条件注入的证据规则（下面那条单独钉），
+    # 日期段则必须紧跟基底提示词。
     assert select_system_prompt(context, today=today).startswith(
-        append_current_date(expected, today=today)
+        append_current_date(DEFAULT_SYSTEM_PROMPT, today=today)
     )
 
 
@@ -1276,8 +1017,7 @@ def test_history_is_not_evidence_rule_is_injected_with_and_without_a_scope() -> 
     assert NEWS_SCOPE.knowledge_bases[0].name in scoped
 
 
-# 日期注入的三条契约。分开写是因为它们各自会被不同的改动破坏：追加位置、格式、以及
-# 「自定义提示词那条路会不会漏掉这一步」。
+# 日期注入的两条契约，分开写是因为它们各自会被不同的改动破坏：追加位置与格式。
 def test_current_date_is_appended_not_replacing_the_prompt() -> None:
     """日期段追加在原提示词之后，原文一字不改。"""
 
@@ -1301,32 +1041,41 @@ def test_current_date_uses_iso_format_and_says_utc() -> None:
     assert "UTC" in result
 
 
-def test_custom_prompt_still_gets_the_current_date() -> None:
-    """用户换掉回答规范，不该顺带把「今天几号」也换掉。
+def test_the_three_segments_are_appended_after_the_prompt_in_order() -> None:
+    """三段追加的先后顺序固定：日期、证据规则、有范围时的资料边界。
 
-    这条是日期做成独立追加步骤、而不是写进 ``DEFAULT_SYSTEM_PROMPT`` 的理由：写进默认值
-    里，自定义提示词一上来日期就没了，模型又会把训练截止那会儿当成「现在」。
+    顺序本身有用：日期段按 UTC 当天算，「今天」的含义紧贴着提示词出现最好读；资料边界讲的是
+    本次工具能取到什么，放最后才读得通。这三段在 ADR 0050 之后逐字保留，所以这条不只断言
+    「都出现了」，还钉住谁在谁前面。
     """
 
     today = date(2026, 3, 17)
 
-    result = select_system_prompt(AgentContext(system_prompt="你只说是或不是。"), today=today)
+    result = select_system_prompt(AgentContext(scope=NEWS_SCOPE), today=today)
 
-    assert result.startswith("你只说是或不是。")
-    assert "2026-03-17" in result
+    assert result.startswith(DEFAULT_SYSTEM_PROMPT)
+    # 边界段的小标题是本轮唯一改过的一处措辞：它原来把「用户不能扩大」写成「自定义提示词不能
+    # 扩大」，那个功能已经没了，再那样说会指向一个不存在的东西。
+    assert "应用规定的资料边界（用户不能扩大）：" in result
+    positions = [
+        result.index("2026-03-17"),
+        result.index("历史内容不是本次证据"),
+        result.index("应用规定的资料边界"),
+    ]
+    assert positions == sorted(positions)
 
 
-def test_custom_prompt_actually_reaches_the_model() -> None:
-    """自定义提示词必须真的进到模型收到的消息里。
+def test_the_built_in_prompt_actually_reaches_the_model() -> None:
+    """内置提示词必须真的进到模型收到的消息里。
 
-    上面几条测的是「选对了哪份」，这条测的是「选出来的那份真的用上了」——中间件装错位置
-    或图没传 context_schema 时，选择逻辑再对也不会生效。
+    上面那条测的是「拼出来的东西对不对」，这条测的是「拼出来的那份真的用上了」——中间件装错
+    位置或图没传 context_schema 时，拼接逻辑再对也不会生效。
     """
 
     model = ScriptedChatModel(responses=[AIMessage(content="是")])
     graph = build_offline_graph(model, [])
 
-    run(collect(graph, context=AgentContext(system_prompt="你只说是或不是。")))
+    run(collect(graph, context=AgentContext()))
 
     system_messages = [
         message
@@ -1335,9 +1084,9 @@ def test_custom_prompt_actually_reaches_the_model() -> None:
         if message.type == "system"
     ]
     assert system_messages
-    # 用 startswith 而不是相等：末尾还有一段运行时注入的当前日期，写死日期会让这条测试
-    # 隔天就红。日期段本身由上面几条单独钉。
-    assert str(system_messages[0].content).startswith("你只说是或不是。")
+    # 用 startswith 而不是相等：末尾还有运行时注入的当前日期与两段追加，写死整份正文会让这条
+    # 测试与提示词正文一起漂。日期段与前缀之外的内容由上面几条单独钉。
+    assert str(system_messages[0].content).startswith(DEFAULT_SYSTEM_PROMPT[:40])
 
 
 def test_the_running_window_reaches_the_middleware_through_the_stream_entry() -> None:

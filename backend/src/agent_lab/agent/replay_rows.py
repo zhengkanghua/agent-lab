@@ -6,9 +6,8 @@
 
 **为什么回放读这张表**：checkpointer 里的消息会被压缩破坏性重写，用户能看到什么不该由压缩策略
 决定（见 ADR 0043 与 ADR 0044）；这张表写完不再改，压缩也不动它。代价是同一段对话有两份数据，
-所以终态事件（``agent/streaming.py`` 的 ``build_terminal_event``）与接手重建上下文
-（``agent/runs.py`` 的 ``_read_frozen_run_meta``）仍读 checkpointer——它们发生在收尾前后，那时
-这一轮可能还没落表。
+所以终态事件（``agent/streaming.py`` 的 ``build_terminal_event``）仍读 checkpointer——它发生在收尾
+前后，那时这一轮可能还没落表。
 
 **两条路径的口径必须一致**，否则会出现「Done 说答完了，刷新后那一轮变成没答完」。所以这里不复刻
 任何判定规则，全部沿用写入侧与回放侧已有的纯函数：
@@ -23,7 +22,7 @@
 **一条消息一行，轮次不是数据**：同一 ``run_id`` 的行拼成一轮，提问行是那一轮的运行元数据载体
 （范围快照、完成态、当轮模型都在它身上）；``answer`` 行按顺序拼成回答正文；``tool_call`` 与
 ``tool_result`` 行按 ``tool_call_id`` 配对，不靠顺序——并发工具调用的返回顺序不保证。``summary``
-行不属于任何一轮，它只承载压缩分界标记。
+行不属于任何一轮，读侧跳过它（历史库里仍有写入端不再产生它的存量行）。
 """
 
 import logging
@@ -56,25 +55,21 @@ SUMMARY_ROLE = "summary"
 
 def build_replay_turns_from_rows(
     rows: Sequence[AgentThreadMessageRecord],
-) -> tuple[tuple[AgentReplayTurn, ...], UUID | None]:
-    """把一张会话的消息行组装成按时间排列的轮次，并给出压缩分界标记。
+) -> tuple[AgentReplayTurn, ...]:
+    """把一张会话的消息行组装成按时间排列的轮次。
 
     Args:
         rows: 该会话的全部消息行，**按 ``seq`` 升序**（那是这张表唯一承诺的顺序）。
 
     Returns:
-        ``(轮次, 模型只剩摘要的那一段的最后一轮运行 id)``。会话里没有行时是 ``((), None)``，
-        没有任何摘要行时后一项也是 ``None``。
+        按时间排列的轮次；会话里没有行时是空元组。
 
     Notes:
         纯内存转换，不执行任何 I/O。
 
-        分界标记取**顺序号最大的那一条摘要行**的 ``memory_boundary_run_id``：摘要行一次压缩写一
-        行、旧行不删，而分界标记在后来的压缩里可能沿用上一条的值（被折掉的那一段里一条提问都没有
-        时），所以只有最近那一条是「此刻模型只保留了摘要」的真实边界；取最旧一条会把线画得比实际早。
+        摘要行不属于任何一次对话，读侧跳过它（历史库里仍有存量行，写入端已不再产生）。
 
-        回放**不再给出摘要正文**：界面不展示它，分界线靠那个标记就够了（见 spec 0003 的「读取
-        路径彻底离开 checkpointer」）。
+        回放**不再给出摘要正文**：界面不展示它（见 spec 0003 的「读取路径彻底离开 checkpointer」）。
     """
 
     turns: list[AgentReplayTurn] = []
@@ -82,7 +77,7 @@ def build_replay_turns_from_rows(
         turn = _build_turn(run_id, group)
         if turn is not None:
             turns.append(turn)
-    return tuple(turns), _memory_boundary_run_id(rows)
+    return tuple(turns)
 
 
 def _rows_by_run(
@@ -91,7 +86,7 @@ def _rows_by_run(
     """把行按运行分组，组与组之间保持行出现的先后。
 
     Notes:
-        纯内存转换。摘要行不进任何一组：它不属于某一次对话，只是分界标记的载体。
+        纯内存转换。摘要行不进任何一组：它不属于某一次对话（历史库里仍有存量行）。
     """
 
     groups: dict[UUID, list[AgentThreadMessageRecord]] = {}
@@ -100,17 +95,6 @@ def _rows_by_run(
             continue
         groups.setdefault(row.run_id, []).append(row)
     return groups
-
-
-def _memory_boundary_run_id(rows: Sequence[AgentThreadMessageRecord]) -> UUID | None:
-    """取顺序号最大的那条摘要行上的分界标记。"""
-
-    latest = max(
-        (row for row in rows if row.role == SUMMARY_ROLE),
-        key=lambda row: row.seq,
-        default=None,
-    )
-    return None if latest is None else latest.memory_boundary_run_id
 
 
 def _build_turn(

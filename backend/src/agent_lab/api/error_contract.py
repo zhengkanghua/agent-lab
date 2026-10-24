@@ -245,7 +245,7 @@ _OLLAMA_UPSTREAM_RULES: tuple[ErrorContractRule, ...] = (
     ),
 )
 
-# 只读搜索链路（POST /vector-search、POST /document-search）的完整错误表。
+# 只读搜索链路（POST /document-search）的完整错误表。
 # 顺序要点：Runtime 缺失在最前（与上游无关）；四条 Ollama 具体失败先于
 # EmbeddingResponseError 与 OllamaEmbeddingError 基类；Qdrant 具体失败先于
 # QdrantVectorSearchError 基类。表覆盖了两个 endpoint 声明捕获的全部异常基类，
@@ -761,7 +761,7 @@ AGENT_CHAT_ERROR_RULES: tuple[ErrorContractRule, ...] = (
     # 本表自带的兜底行。这是对「全项目只有 UNCLASSIFIED_ERROR_RULE 一条兜底」的一处
     # 有意例外，理由是这条链路的异常集合是开放的：搜索链路能不写兜底，是因为 endpoint
     # 显式声明了 catch 哪几个基类、表覆盖了它们；而模型调用发生在 LangGraph 内部，中间
-    # 还夹着工具、checkpointer 和用户自定义提示词，能冒出什么异常我们无法穷举。
+    # 还夹着工具与 checkpointer，能冒出什么异常我们无法穷举。
     # 不写这一行的话未知异常会落到 pipeline_internal_error——那是「手动流水线」的契约
     # code，出现在 Agent 的 SSE 流里会让前端按错误的语义去查文案表。
     ErrorContractRule(

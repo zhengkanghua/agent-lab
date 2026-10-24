@@ -26,11 +26,7 @@ from agent_lab.schemas.document_search import (
     DocumentSearchRequest,
     DocumentSearchResult,
 )
-from agent_lab.schemas.vector_search import (
-    VectorSearchFilters,
-    VectorSearchRequest,
-    VectorSearchResult,
-)
+from agent_lab.schemas.vector_search import VectorSearchFilters
 
 
 class QueryVectorValidationError(ValueError):
@@ -41,7 +37,7 @@ class VectorSearchService:
     """把「query 向量化」和「Qdrant 查询」两件事按正确顺序串起来的用例层。
 
     为什么需要这一层：直接把 Provider 和 Qdrant 组件暴露给 API 层，调用方就要自己
-    记住「先 embed_query 再 search」「向量必须 1024 维」「模型必须一致」这些规则。
+    记住「先 embed_query 再查 Qdrant」「向量必须 1024 维」「模型必须一致」这些规则。
     本类把这些规则固化在代码里，API 层只需传一个请求对象。实例与应用进程同生命
     周期、由多个并发请求共享；它不保存 query 或结果状态（无状态，天然并发安全）。
     Ollama Provider 只负责文本到向量，Qdrant 组件只负责过滤/查询，本类只负责编排。
@@ -89,58 +85,6 @@ class VectorSearchService:
         self._spec = spec
         self._knowledge_base_scope = knowledge_base_scope
 
-    async def search(
-        self,
-        request: VectorSearchRequest,
-        *,
-        resolved_scope: ResolvedKnowledgeBaseScope | None = None,
-    ) -> list[VectorSearchResult]:
-        """把 query 变成向量，再返回 Qdrant 按相似度排好序的 Chunk 命中。
-
-        执行顺序（两步都成功才算一次完整搜索）：
-        1. embed_query(query)：调 Ollama 把问题文本变成 1024 维向量（网络 I/O）；
-        2. _validate_query_vector：检查向量维度、数值合法性，拦下坏数据；
-        3. vector_search.search(...)：拿向量查 Qdrant current Alias，返回按 score
-           排序的命中。
-
-        为什么先校验再查：把「上游返回了垃圾向量」这类问题拦在 Qdrant 调用之前，
-        错误信息更明确，也不会浪费一次向量库查询。
-
-        Args:
-            request: 已由 Pydantic 校验的 query、Top-K、可选 threshold 和 Payload filters。
-
-        Returns:
-            与 Qdrant score 顺序一致的 ``VectorSearchResult`` 列表；同一新闻的多个 Chunk
-            可以分别出现，本阶段不聚合、不按时间重排或加权。
-
-        Raises:
-            QueryVectorValidationError: query Embedding 不符合当前索引规格。
-            OllamaEmbeddingError: query Embedding 认证、连接、超时、模型或响应失败。
-            QdrantVectorSearchError: Qdrant 认证、连接、超时、目标、配置或响应失败。
-
-        Notes:
-            先经范围端口读取 KnowledgeBase 的启用状态，再执行一次 Embedding 网络 I/O，
-            成功校验后再执行一次 Qdrant current Alias 只读 I/O；不执行任何写操作，
-            不自动创建 Collection、不切换 Alias、不修改 processing_status。
-        """
-
-        filters = await self._filters_with_request_scope(
-            request.filters,
-            request.knowledge_base_id,
-            request.scope,
-            resolved_scope,
-        )
-        # 范围确认后才访问上游，停用库不产生 Embedding 或 Qdrant 请求。
-        validated_vector = await self._embed_and_validate_query(request.query)
-        # 2、拿向量去 Qdrant current Alias 查 Chunk，保持 Qdrant 的 score 顺序返回，
-        #    不聚合、不重排——那是 search_documents 的活。
-        return await self._vector_search.search(
-            validated_vector,
-            top_k=request.top_k,
-            score_threshold=request.score_threshold,
-            filters=filters,
-        )
-
     async def search_documents(
         self,
         request: DocumentSearchRequest,
@@ -149,7 +93,7 @@ class VectorSearchService:
     ) -> list[DocumentSearchResult]:
         """把 query 向量化后按新闻文档分组返回相关片段。
 
-        执行顺序与 ``search`` 相同，但第二步调用 Qdrant 正式 grouped query：
+        执行顺序同样是两步：先 embed_query，再调 Qdrant 正式 grouped query；
         ``document_limit`` 控制不同文档数量，``matches_per_document`` 控制每组相关
         Chunk 数。仅经范围端口读取知识库配置，不读取逐篇正文，没有全文查询的 N+1 开销。
 
@@ -225,8 +169,7 @@ class VectorSearchService:
     async def _embed_and_validate_query(self, query: str) -> list[float]:
         """把 query 文本变成一个可以直接交给 Qdrant 的合法向量。
 
-        两个搜索用例（``search`` 和 ``search_documents``）的第一步完全一样，抽在这里是
-        为了让「先 embed 再校验」这个顺序只存在一份，不会哪天在一个用例里漏掉校验。
+        检索用例的第一步：先 embed 再校验，顺序只存在一份。
 
         Args:
             query: 用户输入的原始问题文本。

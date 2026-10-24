@@ -138,7 +138,7 @@ describe('application router authentication guard', () => {
     auth.status.value = 'authenticated'
     auth.user.value = { is_superuser: false }
 
-    for (const section of ['account', 'search', 'agent']) {
+    for (const section of ['account', 'search', 'usage']) {
       const router = await freshRouter()
       await router.push(`/settings/${section}`)
       await router.isReady()

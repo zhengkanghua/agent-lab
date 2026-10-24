@@ -88,8 +88,8 @@ class DocumentSearchRequest(BaseModel):
     filters: VectorSearchFilters = Field(
         default_factory=VectorSearchFilters,
         description=(
-            "复用 VectorSearchFilters 的来源、类型、标签和发布时间条件；条件在"
-            "Qdrant 候选集内执行。"
+            "复用 VectorSearchFilters 的知识库范围与发布时间条件；条件在 Qdrant "
+            "候选集内执行，其他维度一律不接受。"
         ),
     )
 
@@ -99,7 +99,7 @@ class DocumentSearchRequest(BaseModel):
         hide_input_in_errors=True,
     )
 
-    # 与 VectorSearchRequest 共用同一份实现和同一份错误文案，见 _query_validators。
+    # 与 Agent 对话请求共用同一份实现和同一份错误文案，见 _query_validators。
     _validate_query = field_validator("query")(require_non_whitespace_query)
     _validate_threshold = field_validator("score_threshold", mode="before")(
         require_numeric_threshold

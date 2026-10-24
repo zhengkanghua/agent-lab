@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0049
 ---
 
 # 会话历史落业务表，checkpointer 只管上下文记录

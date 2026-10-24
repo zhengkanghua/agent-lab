@@ -319,15 +319,13 @@ def test_payload_mapper_rejects_missing_or_invalid_fields(
 
 
 def test_payload_index_plan_contains_news_time() -> None:
+    """新代次只建分组键、知识库范围与发布时间三样；其余维度不是过滤维度。"""
+
     assert PAYLOAD_INDEX_SCHEMAS == {
         "document_id": models.PayloadSchemaType.KEYWORD,
         "index_instance_id": models.PayloadSchemaType.KEYWORD,
         "knowledge_base_id": models.PayloadSchemaType.UUID,
-        "source_id": models.PayloadSchemaType.UUID,
-        "source_provider": models.PayloadSchemaType.KEYWORD,
-        "document_type": models.PayloadSchemaType.KEYWORD,
         "published_at": models.PayloadSchemaType.DATETIME,
-        "labels": models.PayloadSchemaType.KEYWORD,
     }
 
 

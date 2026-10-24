@@ -4,8 +4,8 @@
 把模型客户端、工具、中间件和 checkpointer 装成一个工具箱，交给 FastAPI lifespan 管理。
 
 **为什么图可以进程级共享**：图本身无状态——会话历史存在 checkpointer 里、按 ``thread_id``
-取；系统提示词由 ``resolve_system_prompt`` 每次从 ``AgentContext`` 读。所以「换提示词」
-和「换会话」都不需要重新编译，这也是 ``dynamic_prompt`` 存在的意义。
+取；系统提示词由 ``resolve_system_prompt`` 每次现拼（内置那唯一一份加三段追加）。所以
+「换会话」不需要重新编译，这也是 ``dynamic_prompt`` 存在的意义。
 
 本模块只读本地配置、构造对象和连接池，``build`` 不执行数据库或模型 I/O；连接池的实际
 建连与 checkpointer 建表分别由 ``open`` 和运维步骤（见 ADR 0004）负责。
@@ -183,16 +183,13 @@ class AgentRuntime:
             checkpointer = AsyncPostgresSaver(pool)
 
         # 4、编译图。context_schema 让 runtime.context 拿到有类型的 AgentContext。
-        #    不传 system_prompt——提示词由 resolve_system_prompt 每次动态给出，
-        #    这里再传一份会造成「两个提示词来源」的歧义。
+        #    提示词不在这里给——它由中间件每轮调模型前现拼（内置那唯一一份加三段追加），
+        #    装配期再塞一份就会造出「两个提示词来源」的歧义。
         graph = create_agent(
             primary_model,
             tools=tools,
             middleware=build_agent_middleware(
                 summarization_model=primary_model,
-                # 工具名从刚建好的工具列表算，不写常量：写死会出现「加了工具忘了加名字」，
-                # 而那个错误的表现是新工具一调就被守卫拦下，看起来像新工具本身坏了。
-                tool_names=frozenset(each.name for each in tools),
                 retry_initial_delay=retry_initial_delay,
             ),
             context_schema=AgentContext,

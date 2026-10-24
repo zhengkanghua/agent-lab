@@ -1,11 +1,11 @@
-"""把 Agent 对话暴露为 ``POST /agent/chat``（SSE）和 ``GET /agent/default-prompt``。
+"""把 Agent 对话暴露为 ``POST /agent/chat``（SSE）。
 
 本模块位于 FastAPI 边界层，只做四件事：取依赖、生成 ``thread_id``、把事件序列化成 SSE
 行格式、在模型沉默期间发心跳。它不调用模型、不决定事件顺序、不分类异常——那些在
 ``agent/streaming.py``；也不判断错误文案，那在 ``api/error_contract.py``。
 
 **为什么是 POST 而不是 GET**：浏览器原生的 ``EventSource`` 只能发 GET、不能带请求体，
-而提问和自定义提示词都可能超过 URL 长度限制，也不该出现在访问日志的 URL 里。所以前端
+而提问可能超过 URL 长度限制，也不该出现在访问日志的 URL 里。所以前端
 改用 ``fetch`` + ``ReadableStream`` 自己解析，见 ``frontend/src/api/agent-chat.ts``。
 
 **为什么 SSE 而不是 WebSocket**：这条链路是单向的（服务端推、客户端只在开头说一句话），
@@ -26,7 +26,6 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agent_lab.agent.context import AgentContext
 from agent_lab.agent.limits import SSE_HEARTBEAT_INTERVAL_SECONDS
-from agent_lab.agent.prompts import DEFAULT_SYSTEM_PROMPT
 from agent_lab.agent.runs import AgentRun, AgentRunRegistry
 from agent_lab.agent.runtime import AgentRuntime
 from agent_lab.api.dependencies import (
@@ -49,7 +48,6 @@ from agent_lab.schemas.agent_chat import (
     AgentChatEvent,
     AgentChatEventEnvelope,
     AgentChatRequest,
-    AgentDefaultPromptResponse,
     AgentDoneEvent,
     AgentErrorEvent,
     AgentRunStopRequest,
@@ -205,12 +203,9 @@ async def agent_chat(
     权限门在 ``main.py`` 的 ``include_router`` 上已经挂了一道，这里再声明一次 ``current_active_user``
     不是重复：那道只做「拦住没登录的人」，这里要的是**当前账号对象**本身，用来判定会话归属。
 
-    系统提示词不再由请求体携带：它取自会话（新建时由 ``ensure_thread`` 从该账号个人偏好拍快照，
-    续聊时沿用会话里那份），因此同一会话内前后一致，且用户在设置页改提示词只影响新开的会话。
-
     **当轮用哪个模型在开始运行之前定下**：请求里携带的那一份优先，没携带才用会话行上存的。
     两者都不存在就用目录里标着默认的那个。解析结果（含它的上下文窗口）进 ``AgentContext``，
-    也冻结进提问消息，供回放与替部署接手的那一轮读回来。
+    也冻结进提问消息，供回放与这一轮运行期的每一次模型调用读回来。
 
     Args:
         chat_request: 提问、可选会话 id、可选会话知识库选择与可选模型 id。
@@ -266,11 +261,9 @@ async def agent_chat(
     #    缓存，刚停用的模型立刻就不能被选中。
     effective_model_id = chat_request.llm_model_id or saved_model_id
     resolved_model = await models.resolve_for_run(effective_model_id)
-    # 提示词取自**会话**而不是请求体：新建的会话刚用账号偏好拍下快照，续聊的用会话里那份。
-    # 值仍在 ensure_thread 一处取，调用方不再自己读偏好表，免得出现第二个取值点。
     # 请求里带的那份模型**写回会话行**（与范围同一条规则：改了就是记住，没有「只对这一次」
     # 的单次覆盖）；没带就不碰它，会话行上存的是什么就继续是什么。
-    thread_id, session_prompt = await threads.ensure_thread(
+    thread_id = await threads.ensure_thread(
         user_id=user.id,
         thread_id=chat_request.thread_id,
         first_message=chat_request.message,
@@ -278,25 +271,19 @@ async def agent_chat(
         scope=selection,
         llm_model_id=chat_request.llm_model_id,
     )
-    # 2、把会话提示词装进本次运行的上下文；为 None 时中间件会用默认那份。
+    # 2、把本次运行的差异部分装进上下文。
     #    账号与会话标识一起带上：用量采集点从当前运行的上下文读这两个值，三条查询接口都按
     #    账号过滤，读不到就谁都查不到这笔消耗。运行标识在这里显式传入，同一次运行里的多次
     #    模型调用（含中间件内部的历史摘要压缩调用）拿到的是同一个。
     context = AgentContext(
         run_id=run_id,
-        system_prompt=session_prompt,
         scope=resolved_scope,
         llm_model=resolved_model,
         user_id=user.id,
         thread_id=thread_id,
     )
-    # 4、只记 id 和「有没有自定义提示词」，不记提问原文——日志里不该有用户输入。
-    logger.info(
-        "Agent 对话开始 thread_id=%s run_id=%s custom_prompt=%s",
-        thread_id,
-        run_id,
-        session_prompt is not None,
-    )
+    # 4、只记 id，不记提问原文——日志里不该有用户输入。
+    logger.info("Agent 对话开始 thread_id=%s run_id=%s", thread_id, run_id)
     # 5、把运行交给注册表，然后在后台开始驱动；本接口拿到的是它的订阅入口。
     #    顺序很重要：运行先启动，HTTP 响应只是后来的订阅者，所以即使下面这行响应还没被消费
     #    （甚至浏览器根本没能连上），这次运行也会跑完并把结果写进会话。
@@ -385,33 +372,6 @@ async def agent_stop_run(
         thread_id=stop_request.thread_id,
         run_id=stop_request.run_id,
     )
-
-
-@router.get(
-    "/default-prompt",
-    response_model=AgentDefaultPromptResponse,
-    status_code=status.HTTP_200_OK,
-    summary="读取服务端内置的默认系统提示词",
-    description=(
-        "返回不传 system_prompt 时实际生效的那份提示词，供前端预填到编辑框里。"
-        "它是常量，不随会话变化。"
-    ),
-)
-async def agent_default_prompt() -> AgentDefaultPromptResponse:
-    """返回默认系统提示词。
-
-    为什么要有这个接口：自定义提示词的输入框如果一开始是空的，用户只能从零写一份，
-    大概率写出比默认版更差的（漏掉引用要求、漏掉「不知道就说不知道」）。预填默认值让
-    「微调」成为默认动作，「重写」成为主动选择。
-
-    Returns:
-        含默认提示词全文的响应。
-
-    Notes:
-        返回进程内常量，不执行任何 I/O，也不读取会话状态。
-    """
-
-    return AgentDefaultPromptResponse(system_prompt=DEFAULT_SYSTEM_PROMPT)
 
 
 __all__ = ["router"]

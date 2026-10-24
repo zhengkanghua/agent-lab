@@ -2,7 +2,7 @@
 
 测试只使用 fake Embedding 与 fake Qdrant grouped response，不访问项目环境变量、
 Ollama、PostgreSQL 或远程 Qdrant。重点验证分组参数在基础设施层执行，而不是在
-有限的前端 top_k 结果上去重。
+有限的前端条数上去重。
 """
 
 import asyncio
@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from pydantic import SecretStr, ValidationError
 from qdrant_client.http import models
 
-from agent_lab.api.vector_search import VectorSearchErrorResponse
+from agent_lab.api.error_contract import VectorSearchErrorResponse
 from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.config.ollama_embedding import OllamaEmbeddingSettings
 from agent_lab.config.qdrant import QdrantSettings
@@ -27,6 +27,9 @@ from agent_lab.qdrant.search import (
     QdrantVectorSearch,
 )
 from agent_lab.schemas.document_search import (
+    DEFAULT_DOCUMENT_LIMIT,
+    MAX_DOCUMENT_LIMIT,
+    MAX_MATCHES_PER_DOCUMENT,
     DocumentSearchRequest,
     DocumentSearchResult,
 )
@@ -206,7 +209,9 @@ def test_document_search_groups_and_sorts_documents_and_matches() -> None:
                 document_limit=2,
                 matches_per_document=2,
                 score_threshold=0.6,
-                filters=VectorSearchFilters(labels=["宏观"]),
+                filters=VectorSearchFilters(
+                    published_from=datetime(2026, 8, 1, tzinfo=UTC)
+                ),
             )
         )
     )
@@ -215,6 +220,10 @@ def test_document_search_groups_and_sorts_documents_and_matches() -> None:
     assert [result.best_score for result in results] == [0.91, 0.74]
     assert [match.score for match in results[0].additional_matches] == [0.86]
     assert results[0].best_match.chunk_index == 0
+    # 来源、标签与 MIME 类型是命中载荷而不是过滤维度：它们仍需从 Payload 搬到结果里。
+    assert results[0].source_name == "测试来源"
+    assert results[0].labels == ["宏观"]
+    assert results[0].mime_type == "text/plain"
     assert provider.queries == ["利率变化"]
     assert len(client.calls) == 1
     call = client.calls[0]
@@ -228,7 +237,10 @@ def test_document_search_groups_and_sorts_documents_and_matches() -> None:
             key="knowledge_base_id",
             match=models.MatchValue(value=str(DEFAULT_NEWS_KNOWLEDGE_BASE_ID)),
         ),
-        "labels": models.FieldCondition(key="labels", match=models.MatchAny(any=["宏观"])),
+        "published_at": models.FieldCondition(
+            key="published_at",
+            range=models.DatetimeRange(gte=datetime(2026, 8, 1, tzinfo=UTC)),
+        ),
     }
 
 
@@ -372,6 +384,51 @@ def test_document_search_request_rejects_sensitive_invalid_query_without_echo() 
     assert sensitive not in str(exc_info.value)
 
 
+def test_document_search_request_defaults_and_safe_repr() -> None:
+    request = DocumentSearchRequest(query="包含敏感内容的检索词")
+
+    assert request.document_limit == DEFAULT_DOCUMENT_LIMIT
+    assert request.score_threshold is None
+    assert request.filters.published_from is None
+    assert request.filters.published_to is None
+    assert "包含敏感内容" not in repr(request)
+
+
+@pytest.mark.parametrize("value", ["", " \n\t "])
+def test_document_search_request_rejects_empty_query(value: str) -> None:
+    with pytest.raises(ValidationError, match="空白字符") as exc_info:
+        DocumentSearchRequest(query=value)
+
+    if value:
+        assert value not in str(exc_info.value)
+
+
+# 数量上限与 score_threshold 的非法取值。两个数量字段合成一条：断言完全相同（构造即抛
+# ValidationError），分开写只是重复同一个 with 块。
+# score_threshold 那几个值各有针对：±1.1 越界；nan/inf 非有限；True 是 bool（Python 里
+# bool 是 int 的子类，不挡住的话 True 会被当成 1 收下）；"0.8" 是字符串，不能靠隐式转换。
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("document_limit", 0),
+        ("document_limit", MAX_DOCUMENT_LIMIT + 1),
+        ("matches_per_document", 0),
+        ("matches_per_document", MAX_MATCHES_PER_DOCUMENT + 1),
+        ("score_threshold", -1.1),
+        ("score_threshold", 1.1),
+        ("score_threshold", float("nan")),
+        ("score_threshold", float("inf")),
+        ("score_threshold", True),
+        ("score_threshold", "0.8"),
+    ],
+)
+def test_document_search_request_rejects_invalid_numeric_fields(
+    field: str, value: object
+) -> None:
+    with pytest.raises(ValidationError):
+        DocumentSearchRequest(query="查询", **{field: value})  # type: ignore[arg-type]
+
+
 class FakeDocumentSearchService:
     """HTTP 层 fake，验证路由只转发已校验 DTO。"""
 
@@ -416,7 +473,7 @@ def test_document_search_http_forwards_limits_and_empty_success() -> None:
                 "query": "央行利率",
                 "document_limit": 7,
                 "matches_per_document": 4,
-                "filters": {"labels": ["宏观"]},
+                "filters": {"published_from": "2026-08-01T00:00:00+00:00"},
             },
         )
     )
@@ -427,6 +484,33 @@ def test_document_search_http_forwards_limits_and_empty_success() -> None:
     assert service.requests[0].matches_per_document == 4
     assert service.requests[0].knowledge_base_id == DEFAULT_NEWS_KNOWLEDGE_BASE_ID
     assert service.requests[0].filters.knowledge_base_id == DEFAULT_NEWS_KNOWLEDGE_BASE_ID
+
+
+# 过滤维度只剩知识库范围与发布时间；四个没人填过的维度已从契约里删掉。因为
+# VectorSearchFilters 是 extra="forbid"，带它们不再是静默忽略而是明确的 422。
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("source_id", str(uuid4())),
+        ("source_provider", "freshrss_main"),
+        ("document_type", "article"),
+        ("labels", ["宏观"]),
+    ],
+)
+def test_document_search_http_rejects_removed_filter_dimensions(
+    field: str, value: object
+) -> None:
+    service = FakeDocumentSearchService()
+    app = allow_reader(create_offline_app(runtime_factory=lambda: FakeRuntime(service)))
+
+    response = run(
+        http_request(app, json={"query": "旧维度", "filters": {field: value}})
+    )
+
+    assert response.status_code == 422
+    locations = [error["loc"] for error in response.json()["detail"]]
+    assert ["body", "filters", field] in locations
+    assert service.requests == []
 
 
 def test_document_search_http_preserves_explicit_knowledge_base_scope() -> None:
@@ -469,3 +553,67 @@ def test_document_search_http_preserves_known_upstream_error_mapping() -> None:
     parsed = VectorSearchErrorResponse.model_validate(response.json())
     assert parsed.code == "qdrant_timeout"
     assert "sensitive" not in response.text
+
+
+async def request_without_lifespan(
+    app: FastAPI, path: str = "/document-search", **kwargs: Any
+) -> httpx.Response:
+    """不进入 lifespan 直接发送 ASGI 请求。"""
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        return await client.post(path, **kwargs)
+
+
+def test_missing_lifespan_runtime_is_a_stable_503() -> None:
+    """Runtime 缺失时依赖在进入路由前投错，由应用级 handler 映射成同一份 503。
+
+    不进入 lifespan，模拟进程启动失败或依赖被错误调用的边界；ASGITransport 本身不会
+    自动管理 lifespan，因此这里不会构造 Runtime 或访问任一外部服务。
+    """
+
+    service = FakeDocumentSearchService()
+    app = allow_reader(create_offline_app(runtime_factory=lambda: FakeRuntime(service)))
+
+    response = run(request_without_lifespan(app, json={"query": "安全测试"}))
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "code": "search_runtime_unavailable",
+        "detail": "向量检索运行时不可用。",
+        "retryable": False,
+    }
+    assert service.requests == []
+
+
+def test_contract_only_exposes_document_search() -> None:
+    """对外契约只剩文档分组检索：旧 Chunk 级路由连同它的请求模型一起消失。"""
+
+    service = FakeDocumentSearchService()
+    app = allow_reader(create_offline_app(runtime_factory=lambda: FakeRuntime(service)))
+    schema = app.openapi()
+
+    operation = schema["paths"]["/document-search"]["post"]
+    assert operation["requestBody"]["content"]["application/json"]["schema"]
+    assert operation["responses"]["200"]
+    for status_code in ("502", "503", "504"):
+        assert status_code in operation["responses"]
+
+    assert "/vector-search" not in schema["paths"]
+    assert "VectorSearchRequest" not in schema["components"]["schemas"]
+    assert "ScopedVectorSearchResponse" not in schema["components"]["schemas"]
+
+    # 过滤器只剩知识库范围与发布时间两个维度，四个空转维度的字段在契约里不存在。
+    filter_properties = schema["components"]["schemas"]["VectorSearchFilters"]["properties"]
+    assert set(filter_properties) == {
+        "knowledge_base_id",
+        "knowledge_base_ids",
+        "published_from",
+        "published_to",
+    }
+
+    # 路由不存在时就是普通 404：没有隐藏的内部别名。
+    removed = run(
+        request_without_lifespan(app, path="/vector-search", json={"query": "旧的按片段检索"})
+    )
+    assert removed.status_code == 404

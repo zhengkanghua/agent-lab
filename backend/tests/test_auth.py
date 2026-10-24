@@ -174,7 +174,7 @@ def test_anonymous_search_is_rejected_before_runtime_service_call() -> None:
                 base_url="https://testserver",
             ) as client:
                 response = await client.post(
-                    "/vector-search",
+                    "/document-search",
                     json={"query": "不应执行的匿名查询"},
                 )
                 assert response.status_code == 401
@@ -191,7 +191,7 @@ def test_openapi_exposes_cookie_security_without_public_registration() -> None:
     assert schema["components"]["securitySchemes"] == {
         "APIKeyCookie": {"type": "apiKey", "in": "cookie", "name": "news_auth"}
     }
-    assert schema["paths"]["/vector-search"]["post"]["security"] == [
+    assert schema["paths"]["/document-search"]["post"]["security"] == [
         {"APIKeyCookie": []}
     ]
     assert schema["paths"]["/pipeline/run-once"]["post"]["security"] == [

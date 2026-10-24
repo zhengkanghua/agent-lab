@@ -778,9 +778,9 @@ describe('useAgentChat', () => {
     wrapper.unmount()
   })
 
-  it('不再向流传系统提示词——它由服务端从会话取', async () => {
-    // 提示词改为会话级快照（ADR 0029）：客户端每轮不再携带它，取值点收在服务端。
-    // 这条挡住「有人把注入点加回来」，那会让客户端重新获得改模型行为的能力。
+  it('不再向流传系统提示词——提示词只留内置那一份', async () => {
+    // 客户端从来没有提交提示词的地方，这条挡住「有人把注入点加回来」，那会让客户端重新
+    // 获得改模型行为的能力。
     const stream = scriptedStream([agentDone()])
     const { wrapper, chat } = mountHarness(stream)
     chat.draft.value = '问题'
@@ -991,7 +991,7 @@ describe('useAgentChat', () => {
       await chat.loadThread(THREAD_ID)
 
       const trace = chat.turns.value[0]?.traces[0]
-      expect(trace?.content).toBe('这次工具调用没有结果记录，当时的对话中断了。')
+      expect(trace?.content).toBe('这次调用没有留下结果记录。')
       expect(trace?.failed).toBe(true)
       wrapper.unmount()
     })

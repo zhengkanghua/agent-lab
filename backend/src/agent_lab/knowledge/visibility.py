@@ -35,25 +35,21 @@ class AdoptedVectorSearch:
         self._search, self._visibility = search, visibility
         self.index_spec = search.index_spec
 
-    async def _query(self, vector, *, filters, grouped, **parameters):
+    async def search_groups(self, vector, *, document_limit, matches_per_document, score_threshold, filters):
         scope = filters.knowledge_base_ids or ((filters.knowledge_base_id,) if filters.knowledge_base_id else ())
         if not scope:
             raise ValueError("版本核验必须明确知识库范围。")
-        query = self._search.search_groups if grouped else self._search.search
         for _ in range(3):
             snapshot = await self._visibility.snapshot(tuple(scope))
-            results = await query(vector, filters=filters, excluded_index_instances=snapshot.excluded_index_instances, **parameters)
-            hits = [hit for group in results for hit in group.matches] if grouped else results
+            results = await self._search.search_groups(
+                vector, filters=filters, excluded_index_instances=snapshot.excluded_index_instances,
+                document_limit=document_limit, matches_per_document=matches_per_document,
+                score_threshold=score_threshold,
+            )
+            hits = [hit for group in results for hit in group.matches]
             if await self._visibility.validate(snapshot, hits):
                 # 底层按实例分组；经过当前指向核验后，同 Document 应恰好剩一组。
-                if grouped and len({group.document_id for group in results}) != len(results):
+                if len({group.document_id for group in results}) != len(results):
                     raise SearchVisibilityError()
                 return results
         raise SearchVisibilityError()
-
-    async def search(self, vector, *, top_k, score_threshold, filters):
-        return await self._query(vector, top_k=top_k, score_threshold=score_threshold, filters=filters, grouped=False)
-
-    async def search_groups(self, vector, *, document_limit, matches_per_document, score_threshold, filters):
-        return await self._query(vector, document_limit=document_limit, matches_per_document=matches_per_document,
-                                 score_threshold=score_threshold, filters=filters, grouped=True)

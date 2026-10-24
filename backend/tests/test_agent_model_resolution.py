@@ -440,8 +440,8 @@ def _resolver_for(cipher: CredentialCipher, row: Any, *, credential: str) -> Cat
 def test_the_resolver_does_not_look_at_the_enabled_flags() -> None:
     """解析不重判可用性：停用的渠道与模型照样解析得到客户端。
 
-    接手一条在途运行时用的就是这条路径——那一轮的模型可能在排空期间被停用，而接手不过
-    「开始运行之前解析」那道 HTTP 门；中途换一个模型比让上游自己失败更糟。
+    一次运行只在受理时解析一次模型，之后每一次调用都走这条路径——那一轮的模型可能在运行期间
+    被停用，而解析不再走「开始运行之前解析」那道 HTTP 门；中途换一个模型比让上游自己失败更糟。
     """
 
     cipher = CredentialCipher(Fernet.generate_key().decode())
@@ -755,10 +755,10 @@ def test_a_removed_row_evicts_the_cached_client() -> None:
 
 
 def test_disabling_the_row_keeps_the_cached_client() -> None:
-    """只是被停用不算「内容变了」：接手一条在途运行还要用同一个客户端跑完。
+    """只是被停用不算「内容变了」：一次正在跑的运行还要用同一个客户端跑完。
 
     过期后重新校验那一行时，模型自己的与所属渠道的启用位都不参与比较：停用之后不会再被新的
-    选择解析到（那道 HTTP 门先拦住），而已经选过它的在途运行不能被换掉客户端。
+    选择解析到（那道 HTTP 门先拦住），而已经开始的那一轮不能被换掉客户端。
     """
 
     cipher = CredentialCipher(Fernet.generate_key().decode())
@@ -803,7 +803,7 @@ def test_the_availability_gate_rejects_a_just_disabled_model_though_it_is_cached
     """可用性判定不走这个缓存：缓存里还留着这一条的客户端，那道门照样立刻拒。
 
     两个方向一起看才说明问题：同一时刻、同一份目录行，开始运行之前那道门（真实
-    ``LlmModelSelectionService``）已经拒了，而解析包装仍能把缓存里的客户端交给接手的那一轮。
+    ``LlmModelSelectionService``）已经拒了，而解析包装仍能把缓存里的客户端交给已经开始的那一轮。
     """
 
     cipher = CredentialCipher(Fernet.generate_key().decode())

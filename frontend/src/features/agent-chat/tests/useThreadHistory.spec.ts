@@ -109,27 +109,6 @@ describe('useThreadHistory', () => {
     expect(state.threadId.value).toBe('thread-second')
   })
 
-  it('打开会话时把分界标记落到对应那一轮上（界面据此画那条线）', async () => {
-    api.getAgentThreadMessages.mockResolvedValue(
-      replay({
-        turns: [
-          { question: '第一问', answer: '答', run_id: 'run-1', status: 'completed' },
-          { question: '第二问', answer: '答', run_id: 'run-2', status: 'completed' },
-        ] as never,
-        memory_boundary_run_id: 'run-1',
-      }),
-    )
-    const { state, history } = build()
-
-    await history.loadThread('thread-1')
-
-    // 不读这个字段的话，界面上就永远不会出现那条分界线（后端已经给了，前端没人消费）。
-    expect(state.turns.value.map((turn) => [turn.runId, turn.isMemoryBoundary])).toEqual([
-      ['run-1', true],
-      ['run-2', false],
-    ])
-  })
-
   it('服务端报在途运行时轮询等它结束，且轮询期间不动 turns', async () => {
     api.getAgentThreadMessages.mockResolvedValue(replay({ active_run_id: 'run-9' }))
     const { state, history } = build()
@@ -153,13 +132,12 @@ describe('useThreadHistory', () => {
         turns: [
           { question: '第一问', answer: '答', run_id: 'run-1', status: 'completed' },
         ] as never,
-        memory_boundary_run_id: 'run-1',
       }),
     )
     await vi.advanceTimersByTimeAsync(3000)
     expect(state.turns.value).not.toBe(before)
-    // 轮询结束也是走回放渲染，分界标记同样要吃到。
-    expect(state.turns.value[0]?.isMemoryBoundary).toBe(true)
+    // 换成的是回放里的内容（不是别的什么空列表）。
+    expect(state.turns.value[0]?.question).toBe('第一问')
     expect(history.isAwaitingRun.value).toBe(false)
 
     history.dispose()

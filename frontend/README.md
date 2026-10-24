@@ -29,14 +29,13 @@ Session Storage 保存密码和 Token。退出调用 `POST /auth/logout` 撤销�
 访问该路由会被前端送回搜索页，而真正的安全边界仍是后端 `current_superuser` 依赖。
 
 `/settings` 是设置中心（`/settings/:section?`，旧 `/account` 重定向并入）：账号安全
-（登录信息 + 改自己密码）、检索偏好（数量参数，改动即生效）与 Agent 偏好（自定义系统
-提示词）。三个分区对所有登录账号开放。偏好归属于账号、存在后端 `user_preferences` 表，
+（登录信息 + 改自己密码）、检索偏好（数量参数，改动即生效）与用量（自己的模型调用记录）。
+三个分区对所有登录账号开放。偏好归属于账号、存在后端 `user_preferences` 表，
 换浏览器或换设备登录都一致；前端不保存任何凭据（见
 `docs/adr/0027-user-level-preferences-in-database.md`）。
-Agent 提示词草稿在设置分区之间切换时保留，只有保存后才影响提问；有未保存修改时，
-离开设置中心或刷新页面会提示确认。桌面设置中心为居中浮层，遮罩盖满整页、含侧栏，
+桌面设置中心为居中浮层，遮罩盖满整页、含侧栏，
 出口只有面板的关闭键与 Esc（模态语义与可点侧栏不能同时成立，2026-10 收敛到模态这一侧）；
-窄屏回退整页，保留相同路由与深链，离开时继续保护未保存草稿。
+窄屏回退整页，保留相同路由与深链。
 
 前台的 `AppShell` 用左侧栏承载主导航、当前页主操作、Agent 会话列表和底部账号区；
 手机通过导航抽屉访问同一组入口，支持焦点约束、Esc、滚动锁和焦点恢复。
@@ -59,7 +58,7 @@ Agent 提示词草稿在设置分区之间切换时保留，只有保存后才�
 
 ## Agent 对话页的数据边界
 
-`/agent` 对所有登录账号开放，与检索页同级：路由只要求 `meta.requiresAuth`，真正的安全边界是后端 `/agent/*` 上的 `current_active_user` 依赖和按 `user_id` 判定的会话归属（见 [`docs/adr/0030-agent-open-to-all-accounts.md`](../docs/adr/0030-agent-open-to-all-accounts.md)）。系统提示词不再由前端逐轮发送，请求体里只有提问、会话 id 和范围。
+`/agent` 对所有登录账号开放，与检索页同级：路由只要求 `meta.requiresAuth`，真正的安全边界是后端 `/agent/*` 上的 `current_active_user` 依赖和按 `user_id` 判定的会话归属（见 [`docs/adr/0030-agent-open-to-all-accounts.md`](../docs/adr/0030-agent-open-to-all-accounts.md)）。系统提示词不由前端发送，请求体里只有提问、会话 id、范围与模型选择。
 
 流式接口用 `fetch` 加 `response.body.getReader()`，不用 `EventSource`：后者只能发 GET、不能带请求体，提问就得进 query string，会被网关日志和浏览器历史记下来。超时分连接与空闲两道，常量在 `api/agent-chat.ts`，空闲那一道按后端心跳间隔留了四倍余量；不复用 `client.ts` 里整个请求的总时长上限，一次 Agent 运行可能要几分钟，用它会在模型还在写的时候掐断。调用方提前 `break` 时会 `reader.cancel()` 关掉连接，否则后端那次运行会继续跑、继续计费。取消一轮对话靠两道闸，`AbortController` 之外还有一个自增序号：事件已经拿在手里、`await` 还没恢复的那个窗口里 abort 拦不住任何东西，只有比对序号能阻止一次已取消的运行往界面写字，取消后到达的 `done` 因此也不会写回会话 id。
 
@@ -70,8 +69,6 @@ Agent 提示词草稿在设置分区之间切换时保留，只有保存后才�
 临时 token 只供流式预览，`done.answer` 校正最终文字并给出完成状态和引用，缺少 Done 的流不能当成完成。结束后同步最新 checkpoint，压缩后只展示保留的近期问答，同步失败可以重试。工具调用和结果优先按本轮 `tool_call_id` 配对，缺 ID 的旧记录保留按名字配对，不会跨问答配对；缺失的结果明确呈现，工具进一步缩小范围时展示实际范围。
 
 回答用共享的 `SafeMarkdown` 渲染，显式 sanitize、不解析原始 HTML、不加载外链图片；用户提问、工具参数和工具返回继续按文本展示。只有服务端核验过的本次引用能变成阅读入口：点击行内引用或引用列表，在阅读器里对照当时取得的片段和当前原文，原文更新、删除、知识库停用和服务失败分别提示；旧回答保持原样，不把当前正文当成历史版本，也不强行高亮不可靠的位置。
-
-自定义系统提示词在设置中心的「Agent 偏好」分区编辑，保存在账号上，作为新会话的初始提示词：会话建立时由服务端拍一份快照进那个会话，已开始的会话不受影响（`docs/adr/0029-session-scoped-system-prompt.md`），清空即回到服务端默认。账号配了提示词时输入条亮一枚链回设置的徽章，不在对话页编辑。
 
 ## 文件管理的数据边界
 
@@ -131,8 +128,8 @@ npm run dev
 
 后端新增或修改路由后，先重启 Uvicorn，再确认运行中的
 `http://127.0.0.1:8000/openapi.json` 已包含 `/auth/login`、`/auth/logout`、`/auth/me`、
-`/admin/users`、`/document-search`、`/vector-search`、`/documents/{document_id}`、
-`/agent/chat` 和 `/agent/default-prompt`，然后进行真实联调。
+`/admin/users`、`/document-search`、`/documents/{document_id}`、
+`/agent/chat`，然后进行真实联调。
 
 SSE 只能在真实联调里验收：Vite 开发代理、生产 Nginx 和 CDN 都可能缓冲响应，把逐 token
 到达变成「一次性出现一整段」。界面上出字不等于流式生效，要看首个 token 与提交之间的间隔。
@@ -186,8 +183,7 @@ npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated/o
 - `src/app`：路由表（`router.ts`，权限 `meta` 的唯一声明处）与 Vue Query 客户端；
 - `src/layouts`：`AppShell`（前台侧栏外壳）与 `AdminShell`（后台外壳）；
 - `src/api`：Cookie 登录、账号管理、HTTP 客户端、文档搜索/详情、Agent SSE 流、错误归一化
-  和生成类型；数量参数与提示词上界的契约常量也在这里（`document-search.ts`、
-  `agent-chat.ts`），它们是请求契约的一部分；
+  和生成类型；数量参数的契约常量也在这里（`document-search.ts`），它们是请求契约的一部分；
 - `src/features/auth`：当前用户会话恢复、登录、退出和过期状态；
 - `src/features/semantic-search`：文档搜索状态（多轮检索流）、展示模型和
   检索流组件（输入条 / 单条记录 / 结果卡）；
@@ -197,7 +193,7 @@ npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated/o
 - `src/features/knowledge-bases`、`src/features/sources`：知识库配置与来源绑定的目录页状态；
 - `src/features/user-admin`：账号目录、建号表单与账号操作；
 - `src/features/scheduled-jobs`：周期配置、任务执行、Pipeline 提交与策略面板；
-- `src/features/settings`：设置中心（账号安全 / 检索偏好 / Agent 偏好）与账号偏好
+- `src/features/settings`：设置中心（账号安全 / 检索偏好 / 用量）与账号偏好
   store（读写 `/auth/me/preferences`）；
 - `src/shared/ui`：`Base*` 基础控件（含 `BaseSwitch` 开关）、`BaseDisclosure`（全站唯一的
   折叠区皮肤：箭头、开合、悬停/按下、触屏高度都在它一份里，各页不再自己写 `summary` 样式）、

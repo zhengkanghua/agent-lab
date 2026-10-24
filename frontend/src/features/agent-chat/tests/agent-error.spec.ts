@@ -34,7 +34,9 @@ describe('presentAgentError', () => {
     // 说成「等管理员」，用户于是不会去点重试。
     const lost = presentAgentError(apiError('agent_checkpointer_connection_lost', 503, true))
 
-    expect(lost.title).toBe('会话记忆连接中断')
+    // 文案说用户能观察到的现象（提问没留下、刷新后可能看不到），不说 checkpointer 这个机制。
+    expect(lost.title).toBe('这一轮提问没有保存')
+    expect(lost.description).toBe('刷新后可能看不到这次提问，重新发送即可。')
     expect(lost.retryable).toBe(true)
     expect(presentAgentError(apiError('agent_checkpointer_unavailable', 503, true)).retryable).toBe(
       false,

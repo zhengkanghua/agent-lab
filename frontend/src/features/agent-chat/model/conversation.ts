@@ -54,13 +54,6 @@ export interface AgentTurn {
   llmModel?: ResolvedLlmModelDto | null
   citations?: DocumentEvidence[]
   invalidCitations?: string[]
-  /**
-   * 这一轮是「模型只剩摘要」那条分界线的落点，线画在它**后面**（含这一轮）。
-   *
-   * 只有回放能给出它——响应里的 `memory_boundary_run_id` 对上这一轮的 run id 时才是 true。
-   * 流式进行中的那一轮永远没有它，也没有任何本地判断去猜一个出来。
-   */
-  isMemoryBoundary?: boolean
 }
 
 let sequence = 0
@@ -151,16 +144,10 @@ export function settlePendingTraces(turn: AgentTurn, note: string): void {
  *
  * 只有调用没有结果的工具轨迹（那一轮在工具返回前就断了）用 `pendingNote` 收尾，否则
  * `AgentToolTraceList` 会按 content 为 null 一直转圈，让人以为现在还在查。
- *
- * `memoryBoundaryRunId` 是回放给的那条分界标记，只用来标出「线画在哪一轮之后」。**只有 run id
- * 精确对上才标**：对不上就不标（界面于是不画线、也不出现那句话），可能是这个会话没压缩过，
- * 也可能是标记指向的那一轮根本没落进表里——那一轮被强杀或被清空时，它的提问行就不在表里。
- * 宁可不画，也不能把线画在一个猜出来的位置上：那会让用户以为线以上模型还记得，而事实未知。
  */
 export function turnsFromReplay(
   replayTurns: readonly ReplayTurnInput[],
   pendingNote: string,
-  memoryBoundaryRunId: string | null = null,
 ): AgentTurn[] {
   return replayTurns.map((replayTurn) => {
     const turn: AgentTurn = {
@@ -184,7 +171,6 @@ export function turnsFromReplay(
       llmModel: replayTurn.llm_model ?? null,
       citations: replayTurn.citations ?? [],
       invalidCitations: replayTurn.invalid_citations ?? [],
-      isMemoryBoundary: memoryBoundaryRunId !== null && replayTurn.run_id === memoryBoundaryRunId,
     }
     settlePendingTraces(turn, pendingNote)
     return turn

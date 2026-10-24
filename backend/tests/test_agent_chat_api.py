@@ -1,4 +1,4 @@
-"""``POST /agent/chat`` 与 ``GET /agent/default-prompt`` 的完全离线测试。
+"""``POST /agent/chat`` 的完全离线测试。
 
 替身只做在两个边界上：``AgentRuntime`` 用真实实现（注入 fake 模型和 ``InMemorySaver``），
 认证依赖用 ``auth_helpers`` 覆盖。也就是说「图怎么编译、事件怎么排序、错误怎么分类」仍由
@@ -242,36 +242,11 @@ def test_new_conversation_records_ownership_for_the_current_account() -> None:
     assert record.title == "央行降息了吗"
 
 
-def test_account_preference_prompt_reaches_the_model_on_a_new_thread() -> None:
-    """账号在偏好里配了提示词 → 新建会话时该会话存下这份，且本轮就生效。
+def test_the_built_in_prompt_reaches_the_model() -> None:
+    """本轮的系统提示词就是内置那一份——运行上下文里没有第二个提示词来源。
 
-    提示词不再从请求体来（那个字段已删除），所以这条改从偏好构造前提。
-
-    **覆盖边界要写清楚**：会话归属依赖在本层换成了 ``InMemoryAgentThreadService``，所以
-    「从 ``user_preferences`` 表取值」这一环是替身模拟的，没有被这条走过。它真正穿过的是
-    「会话快照的写入」与「运行上下文的组装」。真实那一环由两层守着：
-    ``tests/test_agent_thread_service.py``（语句层）与
-    ``tests/test_agent_thread_ownership_integration.py`` 里门控的真库用例。
-    """
-
-    model = scripted("答案")
-    app, _search = app_for(model)
-    account_id = SUPERUSER_ID
-    app.state.offline_threads.prompts[account_id] = "只用一句话回答。"
-
-    run(chat(app, message="问题"))
-
-    system = model.received_messages[0][0]
-    # startswith 而非相等：末尾有一段运行时注入的当前日期（见 middleware.append_current_date），
-    # 日期怎么追加由 test_agent_middleware.py 钉，这里只关心自定义那份有没有走通到模型。
-    assert str(system.content).startswith("只用一句话回答。")
-
-
-def test_account_without_a_preference_uses_the_default_prompt() -> None:
-    """账号没配过提示词 → 会话存空值，本轮使用服务端内置默认提示词。
-
-    「没配过」与「配了一份空提示词」不是一回事：前者回落到默认，后者会让模型失去角色约束。
-    这里构造的是前者——偏好字典里没有这个账号。
+    这里穿过的是「路由 → ``AgentContext`` → 中间件 → 模型」这段路；提示词怎么拼（内置正文
+    加三段追加）由 ``tests/test_agent_middleware.py`` 钉，这里只关心它有没有走到模型手里。
     """
 
     model = scripted("答案")
@@ -280,47 +255,9 @@ def test_account_without_a_preference_uses_the_default_prompt() -> None:
     run(chat(app, message="问题"))
 
     system = model.received_messages[0][0]
+    # startswith 而非相等：末尾有一段运行时注入的当前日期与两段追加（见
+    # ``middleware.append_current_date``），那几段各自由中间件那组用例钉。
     assert str(system.content).startswith(DEFAULT_SYSTEM_PROMPT)
-
-
-def test_changing_the_preference_does_not_affect_an_existing_thread() -> None:
-    """会话建立后账号改了偏好 → 已开始的会话续聊时仍用会话里那份。
-
-    这是「会话级快照」的核心保证：会话内的约束不中途变化，前后回答才可比。反过来说，
-    如果续聊时回读偏好表，用户在设置页改一次提示词就会把正在进行的会话换掉。
-    """
-
-    model = scripted("第一轮回答", "第二轮回答")
-    app, _search = app_for(model)
-    app.state.offline_threads.prompts[SUPERUSER_ID] = "第一版提示词。"
-
-    _, frames = run(chat(app, message="第一轮"))
-    thread_id = _thread_id_from_frames(frames)
-
-    # 会话开完再改偏好：只该影响新开的会话。
-    app.state.offline_threads.prompts[SUPERUSER_ID] = "第二版提示词。"
-    run(chat(app, message="第二轮", thread_id=thread_id))
-
-    # 一次 run 一次模型调用，所以第二轮的系统消息在第 2 条记录里。
-    # 它取自会话快照，仍是第一版。
-    assert len(model.received_messages) == 2
-    assert str(model.received_messages[1][0].content).startswith("第一版提示词。")
-
-
-def test_a_new_thread_after_the_change_uses_the_new_preference() -> None:
-    """改过偏好之后新开的会话用新值——与上一条合起来构成完整的「只影响新会话」语义。"""
-
-    model = scripted("第一轮回答", "新会话回答")
-    app, _search = app_for(model)
-    app.state.offline_threads.prompts[SUPERUSER_ID] = "第一版提示词。"
-
-    run(chat(app, message="第一轮"))
-    app.state.offline_threads.prompts[SUPERUSER_ID] = "第二版提示词。"
-    run(chat(app, message="新会话"))
-
-    # 新会话从头开始，用的是改过之后的偏好。
-    assert len(model.received_messages) == 2
-    assert str(model.received_messages[1][0].content).startswith("第二版提示词。")
 
 
 def _thread_id_from_frames(frames: list[str]) -> str:
@@ -333,11 +270,11 @@ def _thread_id_from_frames(frames: list[str]) -> str:
     raise AssertionError("流里没有 done 事件，拿不到会话 id")
 
 
-def test_default_prompt_endpoint_returns_the_same_constant() -> None:
-    """端点返回的是不含日期的那份原始常量。
+def test_the_default_prompt_endpoint_is_gone() -> None:
+    """取默认提示词那条端点已删除：请求它是 404，契约里也没有它。
 
-    这份是给前端编辑框当模板用的：用户看到的应该是可以改的回答规范，不该出现「当前日期：
-    2026-03-17」这种他一改就会过期的运行时事实。日期在每次运行时由服务端追加。
+    它当初只给设置页的提示词编辑框预填起点，前端不再调它之后这条契约面可以单独收掉；
+    内置提示词本体仍在 ``agent/prompts.py``，仍是运行时唯一的提示词来源。
     """
 
     model = scripted("答案")
@@ -345,8 +282,10 @@ def test_default_prompt_endpoint_returns_the_same_constant() -> None:
 
     response = run(send(app, "GET", "/agent/default-prompt"))
 
-    assert response.status_code == 200
-    assert response.json() == {"system_prompt": DEFAULT_SYSTEM_PROMPT}
+    assert response.status_code == 404
+    spec = app.openapi()
+    assert "/agent/default-prompt" not in spec["paths"]
+    assert "AgentDefaultPromptResponse" not in spec["components"]["schemas"]
 
 
 def test_request_without_credentials_is_rejected_before_calling_the_model() -> None:
@@ -429,7 +368,7 @@ def test_agent_routes_are_guarded_by_active_user_not_superuser() -> None:
 def test_agent_build_failure_yields_503_without_breaking_search() -> None:
     """Agent 装配失败只影响 /agent/*，只读检索照常。
 
-    这是失败半径的断言：一个缺失的模型凭据不该让整个只读系统下线。用 ``/vector-search``
+    这是失败半径的断言：一个缺失的模型凭据不该让整个只读系统下线。用 ``/document-search``
     当探针而不是 ``/health``——后者真的会连 PostgreSQL，离线环境下它本来就是 503，
     证明不了任何事。
     """
@@ -441,7 +380,7 @@ def test_agent_build_failure_yields_503_without_breaking_search() -> None:
 
     chat_response = run(send(app, "POST", "/agent/chat", json={"message": "问题"}))
     search_response = run(
-        send(app, "POST", "/vector-search", json={"query": "央行利率"})
+        send(app, "POST", "/document-search", json={"query": "央行利率"})
     )
 
     assert chat_response.status_code == 503

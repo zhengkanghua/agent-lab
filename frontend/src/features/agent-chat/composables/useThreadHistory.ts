@@ -35,8 +35,9 @@ export const RUN_RECOVER_ATTEMPTS = 5
 /** 两次读回放之间的间隔（约 5 次 × 6 秒 ≈ 30 秒）。见 `RUN_RECOVER_ATTEMPTS`。 */
 export const RUN_RECOVER_INTERVAL_MS = 6000
 
-// 回放专用：历史里那次调用没有结果，是当时就断了，不是现在还在查。
-const HISTORY_TRACE_NOTE = '这次工具调用没有结果记录，当时的对话中断了。'
+// 回放专用：历史里那次调用没有结果。这里不承诺动作（中间轮次没有重发入口，与
+// `useChatStream` 的 `FAILED_TRACE_NOTE` 口径不同是刻意的）。
+const HISTORY_TRACE_NOTE = '这次调用没有留下结果记录。'
 
 /** 一次同步请求的上下文。 */
 export interface SyncOptions {
@@ -144,11 +145,7 @@ export function useThreadHistory(state: ChatState, options: UseThreadHistoryOpti
    * 接上轮询：漏了的话界面会停在「禁用发送」上而且没人去解开它。
    */
   function applyReplay(replay: AgentThreadMessagesDto, targetThreadId: string): void {
-    state.turns.value = turnsFromReplay(
-      replay.turns ?? [],
-      HISTORY_TRACE_NOTE,
-      replay.memory_boundary_run_id ?? null,
-    )
+    state.turns.value = turnsFromReplay(replay.turns ?? [], HISTORY_TRACE_NOTE)
     awaitingRunId.value = replay.active_run_id ?? null
     if (awaitingRunId.value !== null) void watchPendingRun(targetThreadId)
   }
@@ -175,11 +172,7 @@ export function useThreadHistory(state: ChatState, options: UseThreadHistoryOpti
         // 生成新的 id，transcript 以 turn.id 为 key，整段对话会被拆掉重建、滚动位置被反复重置
         // （表现是用户往下滚、下一次轮询又把他拉回去）。等它结束后一次性按回放渲染。
         if ((replay.active_run_id ?? null) !== null) continue
-        state.turns.value = turnsFromReplay(
-          replay.turns ?? [],
-          HISTORY_TRACE_NOTE,
-          replay.memory_boundary_run_id ?? null,
-        )
+        state.turns.value = turnsFromReplay(replay.turns ?? [], HISTORY_TRACE_NOTE)
         awaitingRunId.value = null
         return
       } catch {

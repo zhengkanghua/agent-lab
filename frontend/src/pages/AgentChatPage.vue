@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { LoaderCircle, ShieldCheck } from '@lucide/vue'
 import AppShell from '@/layouts/AppShell.vue'
 import { useLogout } from '@/features/auth'
-import { usePreferences } from '@/features/settings'
 import BaseCallout from '@/shared/ui/BaseCallout.vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import KnowledgeBaseScopePicker from '@/shared/ui/KnowledgeBaseScopePicker.vue'
@@ -27,10 +26,6 @@ import DocumentReader from '@/shared/ui/DocumentReader.vue'
 
 const route = useRoute()
 const router = useRouter()
-
-// 自定义系统提示词是设置中心的账号偏好，不再由本页逐轮发送：服务端在建会话时从偏好
-// 拍一份快照进那个会话。本页只读偏好来判断要不要亮输入条上的徽章。
-const { preferences } = usePreferences()
 
 const chat = useAgentChat({
   getScopeError: () => scope.error.value,
@@ -189,7 +184,7 @@ async function chooseExample(value: string): Promise<void> {
 
 <template>
   <!-- 「模型生成、只读检索」的语义不再由顶栏 mode-note 承担：输入区下方的 dock-note
-       （回答由模型生成，可能有误；点击引用核对）说的就是这件事，一处就够。
+       （回答由模型生成，可能有误；点击引用可回看当初那段原文）说的就是这件事，一处就够。
        会话列表从正文里挪进外壳侧栏的 #rail——那是导航，不是内容。 -->
   <AppShell
     active="agent"
@@ -303,7 +298,6 @@ async function chooseExample(value: string): Promise<void> {
           <AgentComposer
             ref="composerRef"
             v-model="chat.draft.value"
-            :custom-prompt-active="preferences.agentSystemPrompt.trim().length > 0"
             :input-error="chat.inputError.value"
             :remaining-characters="chat.remainingCharacters.value"
             :streaming="chat.isStreaming.value"
@@ -346,7 +340,7 @@ async function chooseExample(value: string): Promise<void> {
           </AgentComposer>
           <p class="dock-note">
             <ShieldCheck :size="14" aria-hidden="true" />
-            回答由模型生成，可能有误；点击引用核对资料与当前原文。
+            回答由模型生成，可能有误；点击引用可回看当初那段原文。
           </p>
         </div>
       </div>

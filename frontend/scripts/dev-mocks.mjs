@@ -57,7 +57,6 @@ const ACCOUNTS = [ENV_ADMIN, REGULAR_USER].map((user) => ({ ...user }))
 /* 当前账号的个人偏好。字段名与后端一致（下划线），与账号目录同一个理由：
    保存后要能读回来，否则本地看起来像「保存没生效」。 */
 const PREFERENCES = {
-  system_prompt: null,
   document_limit: 10,
   matches_per_document: 3,
 }
@@ -267,33 +266,6 @@ const DOCUMENT_RESULT = {
   best_score: BEST_MATCH.score,
   best_match: BEST_MATCH,
   additional_matches: [],
-}
-
-const CHUNK_RESULT = {
-  chunk_id: BEST_MATCH.chunk_id,
-  score: 0.82,
-  page_content: BEST_MATCH.page_content,
-  document_id: DOCUMENT_RESULT.document_id,
-  knowledge_base_id: NEWS_ID,
-  mime_type: 'text/plain',
-  content_hash: DOCUMENT_RESULT.content_hash,
-  chunk_index: 0,
-  chunk_count: 2,
-  title: DOCUMENT_RESULT.title,
-  url: DOCUMENT_RESULT.url,
-  published_at: DOCUMENT_RESULT.published_at,
-  source_updated_at: null,
-  document_type: 'article',
-  source_id: '30000000-0000-4000-8000-000000000001',
-  source_provider: 'test',
-  source_name: DOCUMENT_RESULT.source_name,
-  source_external_id: 'feed/1',
-  document_external_id: 'article/1',
-  authors: DOCUMENT_RESULT.authors,
-  labels: DOCUMENT_RESULT.labels,
-  previous_chunk_id: null,
-  next_chunk_id: null,
-  embedding_model: 'bge-m3:567m',
 }
 
 /* 会话列表样例：14 条，刻意跨「今天 / 昨天 / 本周 / 更早」四个分组，
@@ -804,7 +776,6 @@ export async function matchApi(url, authed, options = {}) {
     item.processing_status = 'pending'
     return json(item)
   }
-  if (suffix === '/vector-search') return json([CHUNK_RESULT])
   if (suffix === '/document-management' && method === 'GET') {
     const offset = Number(requestUrl.searchParams.get('offset') ?? 0)
     const sourceKind = requestUrl.searchParams.get('source_kind') ?? ''
@@ -876,8 +847,6 @@ export async function matchApi(url, authed, options = {}) {
       draft: null,
     })
   }
-  if (suffix === '/agent/default-prompt')
-    return json({ system_prompt: '你是知识库检索助手，请基于本次取得的原文作答并引用。' })
   if (suffix.startsWith('/agent/threads') && suffix !== '/agent/threads') {
     const threadId = suffix.split('/')[3]
     if (suffix.endsWith('/scope')) {

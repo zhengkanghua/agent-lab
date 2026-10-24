@@ -32,8 +32,8 @@ class AgentThreadMessageRecord(Base):
     **不把 ``run_id`` 算进来**——把运行 id 放进唯一键就等于把「一组内唯一」当成表的语义，而
     真正的语义是整个会话一条时间线。
 
-    大部分列只有特定角色会用到（``tool_name`` 只有工具调用行、``run_meta`` 只有提问行、
-    ``memory_boundary_run_id`` 只有摘要行），所以它们可空，而不是按角色拆成几张表。
+    大部分列只有特定角色会用到（``tool_name`` 只有工具调用行、``run_meta`` 只有提问行），所以
+    它们可空，而不是按角色拆成几张表。
     """
 
     __tablename__ = "agent_thread_messages"
@@ -115,13 +115,6 @@ class AgentThreadMessageRecord(Base):
         JSONB, nullable=True,
         comment=(
             "只有该运行的提问行有：当时的范围快照、是否完整作答、当时用的模型快照。"
-        ),
-    )
-    memory_boundary_run_id: Mapped[UUID | None] = mapped_column(
-        Uuid, nullable=True,
-        comment=(
-            "压缩边界标记：只有摘要行有，记的是被折掉那一段里最后一次提问的运行 id"
-            "（「这一轮及其之前的轮次，模型只剩摘要」）。"
         ),
     )
     created_at: Mapped[datetime] = mapped_column(

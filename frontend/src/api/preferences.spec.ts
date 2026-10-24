@@ -11,16 +11,13 @@ function jsonResponse(body: unknown, status = 200): Response {
 describe('preferences API', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('读取走账号自助前缀，并把 null 提示词转成空串', async () => {
+  it('读取走账号自助前缀，返回两个数量参数', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(
-        jsonResponse({ system_prompt: null, document_limit: 20, matches_per_document: 5 }),
-      )
+      .mockResolvedValue(jsonResponse({ document_limit: 20, matches_per_document: 5 }))
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(fetchPreferences()).resolves.toEqual({
-      systemPrompt: '',
       documentLimit: 20,
       matchesPerDocument: 5,
     })
@@ -30,44 +27,20 @@ describe('preferences API', () => {
     )
   })
 
-  it('保存把空白提示词发成 null，其余字段原样', async () => {
+  it('保存的请求体里只有两个数量参数，没有提示词字段', async () => {
+    // 反向断言：偏好里从来没有过第三个字段，也不该再被加回来。
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(
-        jsonResponse({ system_prompt: null, document_limit: 5, matches_per_document: 3 }),
-      )
+      .mockResolvedValue(jsonResponse({ document_limit: 5, matches_per_document: 3 }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await savePreferences({ systemPrompt: '   ', documentLimit: 5, matchesPerDocument: 3 })
+    await savePreferences({ documentLimit: 5, matchesPerDocument: 3 })
 
     expect(JSON.parse(fetchMock.mock.calls[0]![1].body as string)).toEqual({
-      system_prompt: null,
       document_limit: 5,
       matches_per_document: 3,
     })
     expect((fetchMock.mock.calls[0]![1] as RequestInit).method).toBe('PUT')
-  })
-
-  it('非空提示词原样提交，不做 trim', async () => {
-    // 提示词里的换行和缩进是内容的一部分，trim 掉会改变模型看到的东西。
-    const fetchMock = vi.fn().mockResolvedValue(
-      jsonResponse({
-        system_prompt: '第一行\n第二行',
-        document_limit: 10,
-        matches_per_document: 3,
-      }),
-    )
-    vi.stubGlobal('fetch', fetchMock)
-
-    await savePreferences({
-      systemPrompt: '第一行\n第二行',
-      documentLimit: 10,
-      matchesPerDocument: 3,
-    })
-
-    expect(JSON.parse(fetchMock.mock.calls[0]![1].body as string).system_prompt).toBe(
-      '第一行\n第二行',
-    )
   })
 
   it('越界的数量参数按契约边界归一', async () => {
@@ -75,13 +48,10 @@ describe('preferences API', () => {
     // 选不中任何一项，界面显示成空白。
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(
-        jsonResponse({ system_prompt: null, document_limit: 9999, matches_per_document: 0 }),
-      )
+      .mockResolvedValue(jsonResponse({ document_limit: 9999, matches_per_document: 0 }))
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(fetchPreferences()).resolves.toEqual({
-      systemPrompt: '',
       documentLimit: 100,
       matchesPerDocument: 1,
     })
@@ -90,9 +60,7 @@ describe('preferences API', () => {
   it('形状不对时抛 response_invalid，而不是把半个结构交给界面', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(
-        jsonResponse({ system_prompt: 42, document_limit: '很多', matches_per_document: 3 }),
-      )
+      .mockResolvedValue(jsonResponse({ document_limit: '很多', matches_per_document: 3 }))
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(fetchPreferences()).rejects.toMatchObject({ code: 'response_invalid' })

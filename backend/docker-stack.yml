@@ -51,8 +51,10 @@ services:
   backend:
     <<: *backend
     # API 的停止宽限 180 秒 = uvicorn 关停超时 30 秒（entrypoint.sh）＋ 排空上限 120 秒
-    # （agent/limits.RUN_DRAIN_TIMEOUT_SECONDS）＋ 收尾写入的余量。它不再跟着「一次运行最坏能
-    # 跑多久」走，也不再与另外两个服务共用一个数：三者的活不同，见 ADR 0039 与 0040。
+    # （agent/limits.RUN_DRAIN_TIMEOUT_SECONDS）＋ 收尾写入的余量。排空到边界的这一轮由旧
+    # 进程自己收成未完成再退出（写会话历史、释放会话位、发终态事件），那段余量因此必然用上。
+    # 它不再跟着「一次运行最坏能跑多久」走，也不再与另外两个服务共用一个数：三者的活不同，
+    # 见 ADR 0039 与 ADR 0051。
     # 它是**单个容器**的预算，2 个副本不影响它：下面 update_config 是 parallelism: 1，一次只
     # 换一个任务，两个容器的排空不重叠。代价是部署总时长最坏变成两次「启动 + 排空」。
     stop_grace_period: 180s

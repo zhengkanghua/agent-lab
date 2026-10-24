@@ -1,4 +1,3 @@
-import { MAX_SYSTEM_PROMPT_CHARACTERS } from '@/api/agent-chat'
 import {
   DEFAULT_MATCHES_PER_DOCUMENT,
   DEFAULT_RESULT_LIMIT,
@@ -24,26 +23,15 @@ export interface UserPreferences {
   documentLimit: number
   /** 每篇文档保留的相关片段数。 */
   matchesPerDocument: number
-  /** 自定义系统提示词。空串表示使用服务端默认的那份。 */
-  agentSystemPrompt: string
 }
 
 export const DEFAULT_PREFERENCES: UserPreferences = {
   documentLimit: DEFAULT_RESULT_LIMIT,
   matchesPerDocument: DEFAULT_MATCHES_PER_DOCUMENT,
-  agentSystemPrompt: '',
-}
-
-export function validateAgentSystemPrompt(prompt: string): string | null {
-  if (prompt.length > MAX_SYSTEM_PROMPT_CHARACTERS) {
-    return `系统提示词不能超过 ${MAX_SYSTEM_PROMPT_CHARACTERS} 个字符。`
-  }
-  return null
 }
 
 /**
- * 把任意来源清洗成安全值：缺失/非法字段落回默认，数量参数按契约边界归一，
- * 提示词超长截断到上界。
+ * 把任意来源清洗成安全值：缺失/非法字段落回默认，数量参数按契约边界归一。
  *
  * 接口返回值和「读接口失败时的兜底」两条路径都走它——任何异常输入都不能让设置页打不开，
  * 偏好是体验数据，不是事实数据。
@@ -62,12 +50,8 @@ export function sanitizePreferences(input: unknown): UserPreferences {
     typeof raw.matchesPerDocument === 'number'
       ? normalizeMatchesPerDocument(raw.matchesPerDocument)
       : DEFAULT_PREFERENCES.matchesPerDocument
-  const agentSystemPrompt =
-    typeof raw.agentSystemPrompt === 'string'
-      ? raw.agentSystemPrompt.slice(0, MAX_SYSTEM_PROMPT_CHARACTERS)
-      : DEFAULT_PREFERENCES.agentSystemPrompt
 
-  return { documentLimit, matchesPerDocument, agentSystemPrompt }
+  return { documentLimit, matchesPerDocument }
 }
 
 /** 把接口返回的那份（字段名与前端不同）转成前端偏好。 */
@@ -75,15 +59,12 @@ export function fromRemotePreferences(remote: RemotePreferences): UserPreference
   return sanitizePreferences({
     documentLimit: remote.documentLimit,
     matchesPerDocument: remote.matchesPerDocument,
-    // 后端的 null 表示「未配置」，在界面上就是空串。
-    agentSystemPrompt: remote.systemPrompt,
   })
 }
 
 /** 把前端偏好转成接口要提交的形状。 */
 export function toRemotePreferences(preferences: UserPreferences): RemotePreferences {
   return {
-    systemPrompt: preferences.agentSystemPrompt,
     documentLimit: preferences.documentLimit,
     matchesPerDocument: preferences.matchesPerDocument,
   }

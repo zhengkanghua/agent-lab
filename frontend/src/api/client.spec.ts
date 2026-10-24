@@ -23,7 +23,7 @@ describe('requestJson', () => {
       ),
     )
 
-    const promise = requestJson('/vector-search', {
+    const promise = requestJson('/document-search', {
       method: 'POST',
       body: JSON.stringify({ query: 'private query' }),
     })
@@ -38,7 +38,7 @@ describe('requestJson', () => {
   it('marks network failures as retryable', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('offline')))
 
-    await expect(requestJson('/vector-search', { method: 'POST' })).rejects.toEqual(
+    await expect(requestJson('/document-search', { method: 'POST' })).rejects.toEqual(
       expect.objectContaining({
         code: 'network_error',
         retryable: true,
@@ -58,7 +58,7 @@ describe('requestJson', () => {
       ),
     )
 
-    await expect(requestJson('/vector-search', { method: 'POST' })).resolves.toEqual([])
+    await expect(requestJson('/document-search', { method: 'POST' })).resolves.toEqual([])
   })
 
   it('turns a hanging request into a retryable timeout', async () => {
@@ -78,7 +78,7 @@ describe('requestJson', () => {
     )
 
     const assertion = expect(
-      requestJson('/vector-search', { method: 'POST' }),
+      requestJson('/document-search', { method: 'POST' }),
     ).rejects.toMatchObject({
       code: 'request_timeout',
       retryable: true,

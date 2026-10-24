@@ -22,6 +22,7 @@ import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from agent_lab.agent.context import AgentContext
+from agent_lab.agent.prompts import DEFAULT_SYSTEM_PROMPT
 from agent_lab.agent.streaming import PersistedModelMessage, _add_usage, stream_agent_events
 from agent_lab.config.llm import LangSmithSettings
 from agent_lab.schemas.agent_chat import (
@@ -618,24 +619,23 @@ def test_usage_does_not_leak_into_the_event_stream() -> None:
 def test_the_system_prompt_stays_out_of_messages_and_event_definitions() -> None:
     """提示词不进消息历史，也不进 SSE 事件定义——这是把 ``replay.py`` 的既有设计钉住。
 
-    提示词是**会话级属性**，由 ``resolve_system_prompt`` 每次模型调用前动态注入，本来就不该
-    出现在 checkpointer 的消息里（那里存的是用户提问与模型回答）。同时它也不该被塞进 SSE
-    事件：事件流是对外契约，加一个字段就要动 OpenAPI 和前端生成的类型，而前端根本不需要它
-    ——它判断「这个会话的提示词已固定」只需要 ``done`` 事件带回的 ``thread_id``。
+    提示词由 ``resolve_system_prompt`` 每次模型调用前现拼，本来就不该出现在 checkpointer 的
+    消息里（那里存的是用户提问与模型回答）。同时它也不该被塞进 SSE 事件：事件流是对外契约，
+    加一个字段就要动 OpenAPI 和前端生成的类型，而前端根本不需要它。提示词现在只剩内置那一份
+    （见 ADR 0050），这两处更没有任何理由带着它。
 
-    这条是**反向**断言：下面两半都验证「没有发生」，用来挡住后来人顺手把提示词放进这两处
-    中的任何一处。会话级快照存 ``agent_threads.system_prompt``（见 ADR 0029）。
+    它第 1 段先证实提示词**确实用上了**，后两段才是反向断言——两处都验证「没有发生」，用来
+    挡住后来人顺手把提示词放进这两处中的任何一处。少了第 1 段，后两段在提示词根本没生效时
+    也会绿。
     """
 
     model = ScriptedChatModel(responses=[AIMessage(content="降息了。")])
-    prompt = "这段文字只该出现在模型请求里。"
 
-    events = collect(
-        build_offline_graph(model),
-        context=AgentContext(system_prompt=prompt),
-    )
+    events = collect(build_offline_graph(model), context=AgentContext())
 
-    # 1、模型确实收到了这段提示词——否则下面的「没出现在别处」只是因为它压根没用上。
+    # 1、模型确实收到了内置提示词——否则下面的「没出现在别处」只是因为它压根没用上。
+    #    取内置提示词的开头一段当标记，也不把整份正文抄进测试。
+    prompt = DEFAULT_SYSTEM_PROMPT[:40]
     assert str(model.received_messages[0][0].content).startswith(prompt)
 
     # 2、SSE 事件里没有任何地方带着它。

@@ -5,8 +5,8 @@
 向量搜索 = 拿 query 向量（已经是数字了）去向量库里找「最相似」的新闻 Chunk Point。
 本模块位于 Qdrant 基础设施层，职责有五：
 1. 首次检索前核对 current Alias 指向的集合是否就是本进程规格对应的索引（读侧自证）；
-2. 把应用层的过滤条件（来源/类型/标签/时间）翻译成 Qdrant 的 Filter 结构；
-3. 调 AsyncQdrantClient.query_points 发起一次只读查询；
+2. 把应用层的过滤条件（知识库范围/发布时间区间）翻译成 Qdrant 的 Filter 结构；
+3. 调 AsyncQdrantClient.query_points_groups 发起一次只读分组查询；
 4. 把远程错误分类成稳定异常（认证/连接/超时/目标缺失/配置/响应契约）；
 5. 校验返回的每个 Point/Payload 是否符合 v1 契约，转成强类型结果。
 
@@ -82,7 +82,8 @@ class QdrantVectorSearch:
     """只通过 current Alias 查询新闻 Chunk，并返回强类型结果。
 
     实例与应用进程同生命周期，持有可并发复用的异步 Qdrant client 引用，不保存每次
-    请求的向量/过滤条件/结果（无状态）。一次 search 只发一个 query_points 只读请求。
+    请求的向量/过滤条件/结果（无状态）。一次 search_groups 只发一个 query_points_groups
+    只读请求。
 
     三个「区别」帮你定位它的职责边界：
     - 和 Ollama Provider 的区别：它只收「已经生成好的」query 向量，不管文本；
@@ -191,75 +192,6 @@ class QdrantVectorSearch:
             ) from None
         self._index_spec_verified = True
 
-    async def search(
-        self,
-        query_vector: Sequence[Real],
-        *,
-        top_k: int,
-        score_threshold: float | None,
-        filters: VectorSearchFilters,
-        excluded_index_instances: tuple[UUID, ...] = (),
-    ) -> list[VectorSearchResult]:
-        """通过 current Alias 执行一次 dense Vector 最近邻查询。
-
-        Args:
-            query_vector: 上层已按 VectorIndexSpec 校验的 query Embedding；不会记录或
-                包含在异常中，也不会随响应返回。
-            top_k: 最多返回的 Qdrant Point 数，已经由请求模型限制为 1..100。
-            score_threshold: 可选 Cosine score 下限；``None`` 表示不设置。
-            filters: 已校验的 Payload 过滤条件；不同字段用 AND，labels 用 MatchAny。
-
-        Returns:
-            与 Qdrant ``response.points`` 完全相同顺序的 Pydantic 搜索结果列表。
-
-        Raises:
-            QdrantSearchAuthenticationError: Qdrant 返回 401 或 403。
-            QdrantSearchConnectionError: DNS、TCP、TLS 或网络连接失败。
-            QdrantSearchTimeoutError: 客户端或网关查询超时。
-            QdrantSearchTargetNotFoundError: current Alias 或 Collection 不存在。
-            QdrantSearchConfigurationError: Collection Vector 配置无法接受当前 query。
-            QdrantSearchServiceError: 其他远程服务或客户端错误。
-            QdrantSearchResponseError: 返回 Point/Payload 不符合当前 v1 契约。
-            QdrantSearchIndexSpecMismatchError: Alias 指向的集合不属于当前进程的索引规格。
-
-        Notes:
-            本方法不执行 PostgreSQL、Ollama 或 Embedding I/O，只执行一次 Qdrant 只读
-            query_points 网络 I/O（进程内的第一次还会多一次集合元数据读）。它不调用
-            upsert/delete/create_collection/update_alias，不自动创建缺失目标，也不在
-            Python 中过滤、重排或聚合结果。
-        """
-
-        # 1、先核对 Alias 指向的集合就是本规格的索引，不一致就不必再查
-        await self._ensure_index_spec_matches()
-        # 2、把应用过滤条件翻译成 Qdrant Filter（无过滤时返回 None）
-        query_filter = self._build_filter(filters, excluded_index_instances)
-        # 3、发起一次只读查询：current Alias + query 向量 + 过滤 + Top-K
-        try:
-            # 一次只读查询
-            response = await self._client.query_points(
-                collection_name=self._collection_alias,
-                query=[float(value) for value in query_vector],
-                query_filter=query_filter,
-                limit=top_k,
-                # 要 payload（展示用）
-                with_payload=True,
-                # 不要向量（节省带宽）
-                with_vectors=False,
-                score_threshold=score_threshold,
-                timeout=self._request_timeout_seconds,
-            )
-        except Exception as exc:
-            self._raise_mapped_error(exc)
-
-        # 4、校验响应结构：必须有一个 points 列表
-        points = getattr(response, "points", None)
-        if not isinstance(points, list):
-            raise QdrantSearchResponseError(
-                "Qdrant 查询响应必须包含 points 列表。"
-            )
-        # 5、逐个 Point 校验并转成强类型结果；不重新排序——Qdrant 的 score 顺序就是公开契约
-        return [self._map_point(point, index) for index, point in enumerate(points)]
-
     async def search_groups(
         self,
         query_vector: Sequence[Real],
@@ -272,14 +204,14 @@ class QdrantVectorSearch:
     ) -> list[DocumentSearchGroup]:
         """通过 Qdrant 正式 grouped query 返回按文档分组的相关 Chunk。
 
-        分组在 Qdrant 侧按 ``index_instance_id`` 完成，不在 Python 里对 top_k 结果二次去重。
+        分组在 Qdrant 侧按 ``index_instance_id`` 完成，不在 Python 里对已取回的 Chunk 二次去重。
 
         Args:
             query_vector: 上层已按 VectorIndexSpec 校验的 query Embedding。
             document_limit: 最多返回的不同文档数，直接传给 Qdrant ``limit``。
             matches_per_document: 每组最多返回的 Chunk 数，直接传给 ``group_size``。
             score_threshold: 可选原始 Cosine score 下限。
-            filters: 与原始 Chunk 搜索完全相同的 Payload 过滤条件。
+            filters: Payload 过滤条件，只有知识库范围与发布时间区间两个维度。
 
         Returns:
             按每组最高 score 降序排列、组内按 score 降序排列的强类型分组列表。
@@ -295,7 +227,7 @@ class QdrantVectorSearch:
             本方法只执行一次 ``query_points_groups`` 只读网络 I/O（进程内的第一次还会多一次
             集合元数据读），不访问 PostgreSQL，不执行 Point 写入、Alias 生命周期或自动重试。
             ``group_by`` 使用已有的 ``index_instance_id`` keyword Payload index，避免前端在
-            有限 top_k 上错误去重。
+            拉回来的有限条数上错误去重。
 
             本方法是分组不变量的唯一后端防线：Qdrant 响应属于不可信输入，必须在此
             一次验干净。下游 Service 只做纯映射、``DocumentSearchResult`` 只做字段级
@@ -399,7 +331,7 @@ class QdrantVectorSearch:
 
     @staticmethod
     def _build_filter(filters: VectorSearchFilters, excluded_index_instances: tuple[UUID, ...] = ()) -> models.Filter | None:
-        """把应用过滤契约转换成 Qdrant must 条件。"""
+        """把应用过滤契约转换成 Qdrant must 条件（只有知识库范围与发布时间区间）。"""
 
         # 逐个可选条件翻译成 Qdrant 的 FieldCondition，最终拼成一个 must（AND）Filter
         conditions: list[models.FieldCondition] = []
@@ -413,36 +345,6 @@ class QdrantVectorSearch:
                 models.FieldCondition(
                     key="knowledge_base_id",
                     match=models.MatchValue(value=str(filters.knowledge_base_id)),
-                )
-            )
-        if filters.source_id is not None:
-            conditions.append(
-                models.FieldCondition(
-                    key="source_id",
-                    match=models.MatchValue(value=str(filters.source_id)),
-                )
-            )
-        if filters.source_provider is not None:
-            conditions.append(
-                models.FieldCondition(
-                    key="source_provider",
-                    match=models.MatchValue(value=filters.source_provider),
-                )
-            )
-        if filters.document_type is not None:
-            conditions.append(
-                models.FieldCondition(
-                    key="document_type",
-                    match=models.MatchValue(value=filters.document_type.value),
-                )
-            )
-        if filters.labels:
-            # Qdrant 对 array keyword Payload 的 MatchAny 表示数组中至少一个元素命中；
-            # 空 labels 不创建条件，从而明确保持“不过滤”而不是意外返回零条。
-            conditions.append(
-                models.FieldCondition(
-                    key="labels",
-                    match=models.MatchAny(any=list(filters.labels)),
                 )
             )
         if filters.published_from is not None or filters.published_to is not None:

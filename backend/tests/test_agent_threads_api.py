@@ -223,7 +223,8 @@ def test_replay_returns_the_turns_that_were_actually_stored() -> None:
         ("央行降息了吗", "降了 25 个基点。"),
         ("什么时候", "上周四。"),
     ]
-    assert body["memory_boundary_run_id"] is None
+    # 契约里不再有这个字段：不是「值为空」，是整个字段没有。
+    assert "memory_boundary_run_id" not in body
 
 
 def test_replay_reads_the_history_table_not_the_checkpointer() -> None:
@@ -266,21 +267,21 @@ def test_replay_reads_the_history_table_not_the_checkpointer() -> None:
     ]
 
 
-def test_the_boundary_marker_comes_from_the_newest_summary_row() -> None:
-    """压缩分界标记取会话里顺序号**最大**的那条摘要行，不取最旧一条。
+def test_summary_rows_in_the_history_table_are_skipped_by_replay() -> None:
+    """历史库里已经躺着的摘要行照旧被读侧跳过，而且契约里没有分界字段。
 
-    摘要行一次压缩写一行、旧行不删，而分界标记在后来的压缩里可能沿用上一条的值（被折掉的那一段
-    里一条提问都没有时），所以只有最近那一行是「此刻模型只保留了什么」的边界；取最旧一条会把线
-    画得比实际早。两行摘要直接放进表里（写入侧今天还不写摘要行，那是另一条工单）。
+    摘要行不属于任何一次对话，界面也从不展示它的正文；它在轮次里的位置永远是「不存在」。
+    线上的存量库里有大量这种行，跳不过去就会把摘要正文当成一轮问答渲染出来。
+
+    写入端已经不再产生摘要行（列也删了），所以这里放的是**存量行**：读侧仍要跳过它们。
     """
 
     app, _search = create_agent_app(scripted("答案"))
     thread_id = uuid4()
     seed_owned_thread(app, thread_id)
-    earlier_runs, latest_run = uuid4(), uuid4()
     question_run = uuid4()
     app.state.offline_threads.messages[thread_id] = [
-        summary_row(thread_id, seq=0, memory_boundary_run_id=earlier_runs),
+        summary_row(thread_id, seq=0),
         AgentThreadMessageRecord(
             id=uuid4(),
             thread_id=thread_id,
@@ -291,20 +292,18 @@ def test_the_boundary_marker_comes_from_the_newest_summary_row() -> None:
             run_meta={"run_id": str(question_run), "completed": True},
             created_at=datetime.now(UTC),
         ),
-        summary_row(thread_id, seq=9, memory_boundary_run_id=latest_run),
+        summary_row(thread_id, seq=9),
     ]
 
     body = run(send(app, "GET", f"/agent/threads/{thread_id}/messages")).json()
 
-    assert body["memory_boundary_run_id"] == str(latest_run)
-    # 摘要那一行本身不进轮次：它是分界标记的载体，不是用户问过的话。
+    # 摘要那一行本身不进轮次：它不属于任何一次对话，不是用户问过的话。
     assert [turn["question"] for turn in body["turns"]] == ["央行降息了吗"]
+    assert "memory_boundary_run_id" not in body
 
 
-def summary_row(
-    thread_id: UUID, *, seq: int, memory_boundary_run_id: UUID
-) -> AgentThreadMessageRecord:
-    """一行摘要消息：只承载压缩分界标记，正文界面不展示。"""
+def summary_row(thread_id: UUID, *, seq: int) -> AgentThreadMessageRecord:
+    """一行历史摘要消息，形状与历史库里已有的存量行一致：正文界面不展示。"""
 
     return AgentThreadMessageRecord(
         id=uuid4(),
@@ -313,7 +312,6 @@ def summary_row(
         seq=seq,
         role="summary",
         text="Here is a summary of the conversation to date: 旧背景",
-        memory_boundary_run_id=memory_boundary_run_id,
         created_at=datetime.now(UTC),
     )
 
@@ -336,7 +334,8 @@ def test_replay_of_a_thread_with_no_stored_history_is_an_empty_turn_list() -> No
     body = response.json()
     assert body["turns"] == []
     assert body["thread_id"] == str(thread_id)
-    assert body["memory_boundary_run_id"] is None
+    # 契约里不再有这个字段：不是「值为空」，是整个字段没有。
+    assert "memory_boundary_run_id" not in body
 
 
 def test_replaying_someone_elses_thread_is_404_and_leaks_no_content() -> None:

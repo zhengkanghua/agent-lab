@@ -30,8 +30,8 @@ HTTP Pipeline。PostgreSQL 保存状态和结果，Redis 传递任务消息，�
 [ADR 0019](adr/0019-scheduled-execution-and-write-coordination.md)。
 
 **部署方式是「先起后停」**：迁移与起新任务都在旧任务还在服务的时候完成，旧任务只在新任务被判定
-启动成功之后才被停掉；它手上的在途运行会排空到可交接的边界、交给新进程接着跑完
-（见 [ADR 0039](adr/0039-swarm-start-first-deploys.md) 与 [ADR 0040](adr/0040-run-handover-on-deploy.md)）。
+启动成功之后才被停掉；它手上的在途运行会排到可以自己收尾的边界，由它自己收成未完成再退出
+（见 [ADR 0039](adr/0039-swarm-start-first-deploys.md) 与 [ADR 0051](adr/0051-drain-without-handover.md)）。
 **写入者只有 CI**；图形界面（Portainer）只用于查看、看日志、手动重启与应急回滚，不要用它改服务定义。
 
 发布流程：CI 用 `docker stack deploy` 部署，一次性容器（Redis 自检、用量库配置自检、两个迁移、建表初始化）都跑在 `agent-lab-net` 上，运行顺序与几条不可调的顺序约束见下面「二、日常部署」。**网关侧要求**（登录限流、请求体大小、SSE 读超时）见 [`backend/README.md`](../backend/README.md) 的「生产前置要求」一节——服务本身不做这些，需要在 OpenResty 侧落实；Cloudflare 与账号管理在第五节。
@@ -331,23 +331,27 @@ Secrets 和 Variables 填在不同页签里，填错地方工作流读不到（�
 两个容易混的点：**镜像摘要（`@sha256:…`）不在任何文件里**——它是部署时去 registry 解析后钉进服务定义的，回滚（`--rollback`）就靠它；**`.env` 里只有 5 个键会被栈文件引用**（`BACKEND_IMAGE`、`BACKEND_PORT`、`TZ`、`REDIS_URL`、`TASK_WORKER_CONCURRENCY`），部署前由工作流导出成进程环境，其余四十来个键通过 `env_file` 直接注入容器；若在栈文件里新增一个 `${}` 引用，要同步往工作流里那个 5 键列表加一行，删掉一个引用就相应减一行。
 
 CI 的完整顺序在 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) 里。它做的事是：
-**校验候选栈文件 → 在项目网络上跑一次性容器（Redis 自检、用量库配置自检、业务库迁移、建用量库与
+**校验候选栈文件 → 在项目网络上跑一次性容器（Redis 自检、用量库配置自检、业务库第一阶段迁移、建用量库与
 其迁移、建表初始化）→ 停掉还在按旧方式跑的普通容器（只有第一次切换时有活干）→
-`docker stack deploy`（先起后停在这里面）→ 等新任务就绪 → 清理旧镜像与已退出的任务容器**。
+`docker stack deploy`（先起后停在这里面）→ 等新任务就绪 → 等旧任务全部退出 → 业务库第二阶段迁移
+→ 清理旧镜像与已退出的任务容器**。
 下面这些约束是有意的，不要调整：
 
-1. **迁移都在起新任务之前**，且 `alembic upgrade head` 在 `agent-lab init-checkpointer`
-   之前。理由见 [ADR 0004](adr/0004-checkpointer-tables-outside-alembic.md)。关键在于这一整段
-   **发生在旧版本还在服务的时候**——这正是「先起后停」与旧流程的区别（旧流程是「停旧 → 迁移 → 起新」，
-   中间那段端口上没人服务）。
+1. **向后兼容的迁移在起新任务之前，破坏性迁移在旧任务全部退出之后**；任何一个 `alembic upgrade`
+   都在 `agent-lab init-checkpointer` 之前（理由见 [ADR 0004](adr/0004-checkpointer-tables-outside-alembic.md)）。
+   第一阶段**发生在旧版本还在服务的时候**，这正是「先起后停」与旧流程的区别（旧流程是「停旧 → 迁移 →
+   起新」，中间那段端口上没人服务）；第二阶段必须等旧任务真的退出，因为删列会让还在排空的旧容器
+   读到不存在的列，这一点见下面第 8 条。
 2. **后端部署在前端上传之前**：迁移失败时部署中止，前端仍是旧版本，不会出现「新前端调
    老后端」。
 3. **`docker stack deploy` 必须带 `--with-registry-auth`**：它让 CLI 去 registry 解析摘要、把 digest 写进服务定义，于是「回滚到上一版」回到的是那一版**具体镜像**，而不是一个已经被覆盖的可变标签；同时也在告诉节点用哪个凭据去拉私有镜像。
 4. **栈文件里的 `${}` 引用必须在进程环境里**：`docker stack deploy` 与 `docker stack config` 都**不读 `.env`**（只有 `docker compose` 读），所以部署前要把被引用的那几个键从 `.env` 导出——键名与可执行的那段循环见下面「手工跑一遍同一套流程」第 2 步。其余键由服务定义里的 `env_file` 注入容器，不经过环境；**不能整份 `source .env`**（里面 `LLM_USER_AGENT` 这类值带空格与括号，会被 shell 拆坏）。在栈文件里新增一个 `${}` 引用时，记得同步工作流里那个列表；写成 `${VAR:?}` 的键缺值会在校验那一步直接报错。
-5. **停旧任务由更新器按「新任务是否启动成功」判定**，`failure_action: rollback` 管的是「容器退出」那一类（起来了但不健康的，靠就绪端点被看见）。API 的停止宽限 180 秒 = uvicorn 关停超时 30 秒（`entrypoint.sh`）＋ 排空上限 120 秒（`agent/limits.RUN_DRAIN_TIMEOUT_SECONDS`）＋ 收尾写入的余量：旧进程在收尾里把在途运行排空到可交接的 superstep 边界、在会话行上写下「等接手」标记再退出，新 API 起来后扫到标记接手续跑（见 [ADR 0040](adr/0040-run-handover-on-deploy.md)）；副本数不影响这个数——更新是 `parallelism: 1`，一次只换一个任务、两个容器的排空不重叠，代价只是部署总时长；Beat 30 秒（它必须「先停后起」，否则两个调度器同时活着会把周期任务投两次）、Worker 360 秒（让手上的文档批次做完）。只有**第一次切换**时工作流会去停旧的普通容器（Swarm 要发布同一个宿主机端口），之后那一步是空操作。
+5. **停旧任务由更新器按「新任务是否启动成功」判定**，`failure_action: rollback` 管的是「容器退出」那一类（起来了但不健康的，靠就绪端点被看见）。API 的停止宽限 180 秒 = uvicorn 关停超时 30 秒（`entrypoint.sh`）＋ 排空上限 120 秒（`agent/limits.RUN_DRAIN_TIMEOUT_SECONDS`）＋ 收尾写入的余量：旧进程在收尾里把在途运行排空到 superstep 边界，然后自己把那一轮收成未完成再退出（补写、写会话历史、释放会话位、发终态事件，见 [ADR 0051](adr/0051-drain-without-handover.md)）；这些写入都落在排空上限之外、全靠这段余量，所以它不是可选的；副本数不影响这个数——更新是 `parallelism: 1`，一次只换一个任务、两个容器的排空不重叠，代价只是部署总时长；Beat 30 秒（它必须「先停后起」，否则两个调度器同时活着会把周期任务投两次）、Worker 360 秒（让手上的文档批次做完）。只有**第一次切换**时工作流会去停旧的普通容器（Swarm 要发布同一个宿主机端口），之后那一步是空操作。
 6. **用量库配置自检与 Redis 连接自检都排在起新任务之前**：`LLMOPS_DATABASE_URL` 缺失或不合法时应用启动就会失败，把生产停在一半才发现 `.env` 少了一项是完全可以避开的。
-7. **迁移阶段有两条链**：业务库的 `alembic upgrade head`，以及用量库的建库 + `alembic -c alembic_usage.ini upgrade head`。两者都在 `docker stack deploy` 之前完成，任一条失败即中止部署（此时旧版本仍在服务）。
-8. **删列、改列名、改语义、拆约束的迁移拆两次发布**：这次只发「代码不再用它」，下一次发布才真删。原因见第三节「哪种迁移会让回滚退路消失」。
+7. **迁移阶段分三段**：用量库的建库 + `alembic -c alembic_usage.ini upgrade head`，业务库的第一阶段（只跑向后兼容的变更），这两段都在 `docker stack deploy` 之前完成，任一条失败即中止部署（此时旧版本仍在服务）；业务库的第二阶段（破坏性变更）在新容器就绪、**旧任务全部退出之后**执行。分界线由迁移文件里的 `POST_DEPLOY` 标记决定，算法是「从 head 往回走，跳过所有带标记的，停在第一个不带的」——`agent_lab.scripts.alembic_pre_head` 负责算它，迁移链有多个 head 时它会直接失败而不是猜一个值。
+8. **破坏性变更（删列、改列名、改语义、拆约束）必须在迁移文件里写 `POST_DEPLOY = True`**：它让这条迁移被推到第二阶段，也就是旧容器全部退出之后才执行；加列、加表、加索引不带这个标记，照旧在第一阶段跑。这样安排买到的是**部署失败时的退路**：新容器起不来时库还一个字没改，旧容器完好可用，`--rollback` 或重新部署旧版本都安全。它**不改变**「发布成功之后还能不能退回旧代码」——那次发布真删了列，旧代码就跑不了，那个问题见第三节「哪种迁移会拿走回滚退路」。
+
+   **漏写标记不会有任何报错**，只会让那条破坏性迁移按老办法在第一阶段执行，于是把还在排空的旧容器打死。这是这套机制唯一靠人守的地方：写 `drop_column`、`alter_column` 改名、改语义、拆约束时，同时加上那行标记。
 9. **等就绪看两条**：更新器自己的结论（`UpdateStatus.State`）与任务本身（每个服务的运行中任务数不少于**它声明的副本数**、API 的健康容器数不少于 API 的副本数）。副本数从服务定义里读，不写死数字——API 是 2 个，硬编码一个「≥3」在改完拓扑之后仍然会通过，却拦不住「只起来了一个 API 副本」。只看「任务在跑且健康」不够——回滚之后跑的正是旧任务，它当然健康。任务更新进来之后，旧任务容器会被停掉但**留在节点上**（`Exited`），所以工作流在就绪之后会清一次本栈已退出的任务容器；手工跑同一套流程时也要清：`docker ps -a --filter name=agent-lab_ --filter status=exited --format '{{.Names}}' | xargs -r docker rm`。
 
 > **一条与常见说法相反的实测（2026-10-01，本机 Docker 29）。** **未就绪的任务收不到流量**：带健康检查的服务里，新任务在就绪之前那 980 次请求 0 失败、最慢 3ms（对照实验：把健康检查去掉后，窗口里的请求会排上十几秒）；而 `/ready` 一直返 503 的那个任务，入口一次请求都没转运给它（拿到的转发请求数是 **0**）。也就是说这套编排里「就绪之后才切流量」是成立的，不必自己再写一个代理。**升级 Docker 大版本后请复核这一条**——它决定我们还要不要加一个「自己拿指针」的组件。
@@ -376,9 +380,12 @@ done
 # 3) 校验候选栈文件（语法、未知字段、${VAR:?} 缺值都在这里报）
 docker stack config -c docker-stack.next.yml >/dev/null
 
-# 4) 一次性容器（全跑在项目网络上，且都排在起新任务之前）。四条命令的完整程序在
+# 4) 一次性容器（全跑在项目网络上，且都排在起新任务之前）：业务库第一阶段迁移、Redis 自检、
+#    用量库配置自检、建用量库与其迁移、建表初始化。完整程序在
 #    .github/workflows/deploy.yml 的「部署后端」那一步里，照拄即可；形式是：
-docker run --rm --network agent-lab-net --env-file .env "$BACKEND_IMAGE" alembic upgrade head
+PRE_DEPLOY_HEAD="$(docker run --rm --network agent-lab-net --env-file .env \
+  --entrypoint python "$BACKEND_IMAGE" -m agent_lab.scripts.alembic_pre_head)"
+[ -z "$PRE_DEPLOY_HEAD" ] || docker run --rm --network agent-lab-net --env-file .env "$BACKEND_IMAGE" alembic upgrade "$PRE_DEPLOY_HEAD"
 docker run --rm -i --network agent-lab-net --env-file .env --entrypoint python "$BACKEND_IMAGE" - <<'PY'
 ...（Redis 自检 / 用量库配置自检 / 建用量库：从工作流照拄）
 PY
@@ -400,7 +407,16 @@ docker service inspect agent-lab_backend --format '{{json .UpdateStatus}}'      
 docker ps --filter name=agent-lab_backend --format '{{.Names}}\t{{.Status}}'    # 两个副本都应 healthy
 curl -s -o /dev/null -w '/ready=%{http_code}\n' http://127.0.0.1:18000/ready
 
-# 8) 清掉本栈已退出的任务容器
+# 8) 等旧任务全部退出，再跑第二阶段迁移（带 POST_DEPLOY 标记的破坏性变更）。
+#    判据不能是「docker ps 里 Up 的个数」：滚动更新是逐个替换的，中途可能出现一个旧容器已退、
+#    另一个还在排空而 Up 刚好等于副本数。要看的是「已被要求停但仍在对跑」的任务。
+for s in backend task-beat task-worker; do
+  docker service ps "agent-lab_$s" --filter desired-state=shutdown --format '{{.CurrentState}}' \
+    | grep Running && echo "上面是 $s 还在排空的旧任务"
+done   # 三段都不输出才能往下走
+docker run --rm --network agent-lab-net --env-file .env "$BACKEND_IMAGE" alembic upgrade head
+
+# 9) 清掉本栈已退出的任务容器
 docker ps -a --filter name=agent-lab_ --filter status=exited --format '{{.Names}}' | xargs -r docker rm
 ```
 
@@ -548,8 +564,8 @@ docker service ls --filter name=agent-lab    # backend 2/2、task-beat 1/1、tas
 而容器自己始终 `(healthy)`、永远不会被换掉，恢复只能人工重启整个服务。
 
 **嫌 3.7 分钟太长的话，唯一的旋钮是 `stop_grace_period` 的 180 秒**：它同时是部署时的排空预算
-（120 秒排空 + 30 秒 uvicorn 关停 + 余量），调小会连带压掉「部署时把在途运行排空到可交接边界」的
-窗口（见 [ADR 0039](adr/0039-swarm-start-first-deploys.md) 与 [ADR 0040](adr/0040-run-handover-on-deploy.md)）。
+（120 秒排空 + 30 秒 uvicorn 关停 + 余量），调小会连带压掉「部署时把在途运行排空到自己收尾的边界」的
+窗口（见 [ADR 0039](adr/0039-swarm-start-first-deploys.md) 与 [ADR 0051](adr/0051-drain-without-handover.md)）。
 建议保持 180 秒——坏副本存续期间服务没有任何降级。
 
 **要看的证据**（两个副本，所以两条日志都要看；`docker service logs` 把两个任务的流合在一起）：
@@ -576,10 +592,10 @@ docker logs --tail 100 agent-lab_backend.1.xxxx    # 名字从上面那条 docke
 docker service update --force agent-lab_backend
 ```
 
-**仍然存在的边界**：排空与接手（[ADR 0040](adr/0040-run-handover-on-deploy.md)）覆盖的是收到退出信号、
+**仍然存在的边界**：排空（[ADR 0051](adr/0051-drain-without-handover.md)）覆盖的是收到退出信号、
 能跑收尾的进程。一个**卡住**的进程既接不到信号也走不到排空，它手上那次运行只能等会话失活阈值解锁后
 重新提问；强杀、OOM、断电同理。所以这次改造消掉的是「一个坏进程拖垮整个服务」，不是「那次运行一定
-能续上」。
+会有一个体面的终态」。
 
 **想自己复现一次这种「坏副本」（例如升级 Docker 或改探针参数后复核）**：先对路由网格加一份小负载（每 0.2 秒打一次 `http://127.0.0.1:18000/health`），再从**宿主机**把其中一个副本冻住：
 
@@ -720,18 +736,27 @@ docker service inspect agent-lab_backend --format '{{json .Spec.TaskTemplate.Con
 它走的是每个服务自己的 `PreviousSpec`（上一次部署那份定义）。**核对方法**：逐个服务比对回滚前后的
 镜像引用（含摘要）**必须不同**——只比整体差异会掩盖个别服务没换版本，而相同就说明命令成功也只是假绿灯。
 
-**它只回代码，不回数据库。** 能成立要同时满足三件：
+**它只回代码和容器，不碰数据库。** 它能成立的范围要分两段看，因为部署流程对这两段做的事不同。
+
+**新容器没起来的那些情况**（拉不到镜像、启动报错、起来了但不健康）：库只做过第一阶段的向后兼容变更，旧代码跑在新结构上没问题，`--rollback` 或重新部署旧版本都安全。这条退路由部署脚本的「破坏性变更推迟到旧任务退出之后」保证，不靠人记住什么——但它有个前提，就是那条迁移写了 `POST_DEPLOY` 标记。
+
+**新容器已经接班、破坏性变更也已经执行之后**：这时结构真的变了，旧代码跑不了，`--rollback` 会成功、服务是坏的。这一段见下一节。
+
+两段都还有两个与迁移无关的前提：
 
 1. **上一版镜像还在**：部署后它会作为无名镜像留在本地（镜像清理只删 7 天前的无名镜像，就是为了保住它）；
    即使本地没有了，也能按摘要从 ACR 拉回——摘要不可变。
-2. **这次迁移对旧版本安全**：见下一条。
-3. **图状态结构没变**：与接手（排空续跑）同一条前提——旧代码接不了新形状的 checkpoint。
+2. **图状态结构没变**：旧代码接不了新形状的 checkpoint，而旧 checkpoint 又确实会被新代码读到——
+   排空留下的半途状态就在里面，同一会话的下一次提问会按它接着走（那一次的工具调用可能跟着一起跑），
+   所以两次部署之间形状不变仍是一条发布纪律（见 [ADR 0051](adr/0051-drain-without-handover.md)）。
 
-### 哪种迁移会让回滚退路消失
+### 哪种迁移会拿走回滚退路
 
-**删列、改列名、改语义、拆约束的迁移，必须拆两次发布**：这次只发「代码不再用它」，下一次发布才真删。
-原因是任何回滚（`--rollback`，或重新部署旧版本）都要求旧代码能跑在当前结构上：结构先变、代码后退，
-旧代码会直接报「列不存在」，或者更糟——不报错但留下脏数据（当年拆外键约束那次就是这一类）。
+部署脚本已经挡住了「新容器没起来」那一半：破坏性迁移带 `POST_DEPLOY` 标记，等旧任务全部退出才执行，所以在它执行之前回滚，库是干净的。
+
+它挡不住另一半：**发布成功、破坏性迁移执行完之后**，旧代码就跑在当前结构上了。任何回滚（`--rollback`，或重新部署旧版本）都要求旧代码能跑在当前结构上：结构先变、代码后退，旧代码会直接报「列不存在」，或者更糟——不报错但留下脏数据（当年拆外键约束那次就是这一类）。
+
+所以规则收窄成一句：**只有当你需要「这次发布之后还能退回上一版」时，才必须把破坏性迁移拆两次发布**——这次只发「代码不再用它」，下一次发布才真删。只要「部署失败时旧容器顶住」，两阶段执行就够了，不必拆。
 
 做过这类破坏性迁移之后，**回滚退路就不存在了**，只能按「恢复备份」处理；也不能指望 downgrade 一把梭
 （共享任务表的迁移拒绝自动 downgrade）。这条与用不用 Swarm 无关，只是 Swarm 把「秒级回滚」变成一个

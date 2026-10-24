@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0048
 ---
 
 # 检索页重构为多轮检索流，去掉按片段

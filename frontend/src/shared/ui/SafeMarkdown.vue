@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { VueMarkdown, type CustomAttrs } from '@crazydos/vue-markdown'
 import remarkGfm from 'remark-gfm'
 import { useFloatingPosition } from '@/shared/composables/useFloatingPosition'
+import { citationMarkerRegExp } from '@/shared/model/citation-marker'
 
 /* Agent 答案与上传 Markdown 文档共用的安全渲染。
  *
@@ -159,7 +160,7 @@ function remarkCitations() {
       }
       const parts: MarkdownNode[] = []
       let start = 0
-      for (const match of child.value.matchAll(/\[\[(E[0-9a-f]{12})\]\]/g)) {
+      for (const match of child.value.matchAll(citationMarkerRegExp())) {
         const id = match[1]!
         const number = citationNumbers.value.get(id)
         if (number === undefined) continue

@@ -83,18 +83,14 @@ def test_generic_document_roundtrip(missing, processor):
             app.dependency_overrides[get_vector_search_service] = lambda: service
             app.dependency_overrides[get_document_repository] = lambda: SimpleNamespace(get_with_source=AsyncMock(return_value=record))
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://testserver") as http:
-                for path in ("/vector-search", "/document-search"):
-                    response = await http.post(path, json={"query": "技术资料", "knowledge_base_id": str(record.knowledge_base_id)})
-                    assert response.status_code == 200, response.text
-                    result = response.json()[0]
-                    assert result["document_id"] == str(record.id)
-                    assert result["knowledge_base_id"] == str(record.knowledge_base_id)
-                    assert result["mime_type"] == "text/markdown"
-                    assert result["source_name"] == metadata.source_name
-                    assert result["url"] == record.url
-                    if path == "/vector-search":
-                        assert result["document_type"] == "other"
-                        assert result["document_external_id"] == record.external_id
+                response = await http.post("/document-search", json={"query": "技术资料", "knowledge_base_id": str(record.knowledge_base_id)})
+                assert response.status_code == 200, response.text
+                result = response.json()[0]
+                assert result["document_id"] == str(record.id)
+                assert result["knowledge_base_id"] == str(record.knowledge_base_id)
+                assert result["mime_type"] == "text/markdown"
+                assert result["source_name"] == metadata.source_name
+                assert result["url"] == record.url
                 detail = await http.get(f"/documents/{record.id}")
                 assert detail.status_code == 200, detail.text
                 assert detail.json()["source_name"] == metadata.source_name

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, useTemplateRef, watch } from 'vue'
-import { Send, Settings2, Square } from '@lucide/vue'
-import { RouterLink } from 'vue-router'
+import { Send, Square } from '@lucide/vue'
 import BaseButton from '@/shared/ui/BaseButton.vue'
 import ComposerDock from '@/shared/ui/ComposerDock.vue'
 import { useComposerInput } from '@/shared/composables/useComposerInput'
@@ -12,16 +11,10 @@ import { MAX_MESSAGE_CHARACTERS } from '../model/agent-validation'
  * 视觉外壳是共享的 ComposerDock（与检索输入条同一颗坞）；本组件只管输入行为：
  * 随内容长高、Enter 发送（输入法组合期间不发送）、流式中换成停止键。
  * 字段标签改成 sr-only 保留给读屏——底部就一个输入框，再给它加标题是重复。
- *
- * 自定义系统提示词不在这里：它是「改变模型行为」的配置，不是一条消息，归设置中心的
- * 「Agent 偏好」分区（可发现、可持久、可恢复默认）。输入条只在覆盖生效时亮一枚徽章，
- * 点它直达设置页——状态可见，编辑归位。
  */
 
 const props = defineProps<{
   modelValue: string
-  /** 账号偏好里配了非空提示词时为真：输入条亮出徽章，提示「新会话会用它」。 */
-  customPromptActive: boolean
   inputError: string | null
   remainingCharacters: number
   streaming: boolean
@@ -50,7 +43,7 @@ const { draft, tone, onEnter, focusInput } = useComposerInput({
 
 /* 输入框随内容长高，到 CSS 的 max-height（40vh）后转为框内滚动。
    固定 62px 时多行文字在框里滚动，被切半的最后一行紧贴无边框底边，
-   视觉上和下面的控件行糊在一起（2026-09 审查的「自定义 Prompt 重叠」）。 */
+   视觉上和下面的控件行糊在一起（2026-09 审查发现的重叠）。 */
 function autoGrow(): void {
   const el = inputRef.value
   if (!el) return
@@ -95,22 +88,6 @@ defineExpose({ focusInput })
         <!-- 知识库范围选择器插槽（与 SearchComposer 范式对齐） -->
         <slot name="scope" />
 
-        <!-- 账号配了自定义提示词时亮徽章，点它直达设置页。默认状态不打扰：没有可调的东西
-             就不该占一格。徽章说的是「新会话会用它」——提示词按会话快照，已经开始的会话
-             不受设置页改动影响（见 ADR 0029）。 -->
-        <RouterLink
-          v-if="customPromptActive"
-          class="badge-link"
-          :to="{ name: 'settings', params: { section: 'agent' } }"
-          aria-label="自定义提示词已启用，新会话会使用它；去设置页调整"
-          title="自定义提示词已启用，新会话会使用它；去设置页调整"
-        >
-          <span class="prompt-trigger">
-            <Settings2 :size="15" aria-hidden="true" />
-            <span class="prompt-badge" aria-hidden="true"></span>
-          </span>
-          <span class="prompt-badge-text">自定义提示词</span>
-        </RouterLink>
         <!-- 「新会话」不在这里：它是整页的主操作，唯一的一枚在外壳侧栏顶部。 -->
       </template>
 
@@ -188,25 +165,6 @@ defineExpose({ focusInput })
   color: var(--text-tertiary);
 }
 
-/* 徽章皮肤（浅强调底胶囊、悬停、按下、触屏高度）归共享层 badge-link.css，
-   与检索输入条的「检索偏好」同一份——两处原本各写一遍，高度差了 10px。
-   这里只留这一小段特有的结构：图标右上角那枚「已启用」小圆点。 */
-.prompt-trigger {
-  position: relative;
-  display: inline-flex;
-}
-
-.prompt-badge {
-  position: absolute;
-  top: -2px;
-  right: -4px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  pointer-events: none;
-}
-
 .field-error {
   margin-top: 6px;
   color: var(--danger);
@@ -239,11 +197,6 @@ defineExpose({ focusInput })
   /* 窄屏把字数计数撤掉：它和发送键抢同一行，而上界是 4000 字，
      手机上打到临近值的可能极低。临近/超出两档仍然由语气色显示。 */
   .character-count:not(.is-near):not(.is-over) {
-    display: none;
-  }
-
-  /* 徽章收成纯图标：文字挤占输入行，图标 + 小圆点已足够表达状态。 */
-  .prompt-badge-text {
     display: none;
   }
 }

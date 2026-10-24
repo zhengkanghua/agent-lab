@@ -51,21 +51,10 @@ def compiled(statement: Any) -> str:
 
 
 class FakeResult:
-    """带 ``rowcount`` 与 ``returning`` 行集的假执行结果。
+    """带 ``rowcount`` 的假执行结果。"""
 
-    ``first`` 是 ``ensure_thread`` 取回会话提示词用的：它走 ``UPDATE ... RETURNING``，
-    一次往返同时完成「校验 + 续活 + 取值」。这里返回的行由 ``returning_row`` 预置，
-    ``None`` 表示没更新到任何行（等价于 rowcount 为 0）。
-    """
-
-    def __init__(self, rowcount: int, returning_row: tuple[Any, ...] | None = None) -> None:
+    def __init__(self, rowcount: int) -> None:
         self.rowcount = rowcount
-        self._returning_row = returning_row
-
-    def first(self) -> tuple[Any, ...] | None:
-        """返回预置的 RETURNING 行；没有则返回 ``None``。"""
-
-        return self._returning_row
 
 
 class FakeScalars:
@@ -96,22 +85,20 @@ class FakeSession:
         rowcount: int = 1,
         scalar_result: Any = None,
         scalars_result: list[Any] | None = None,
-        returning_row: tuple[Any, ...] | None = None,
     ) -> None:
         self._rowcount = rowcount
         self._scalar_result = scalar_result
         self._scalars_result = scalars_result or []
-        self._returning_row = returning_row
         self.statements: list[Any] = []
         self.added: list[Any] = []
         self.commits = 0
         self.rollbacks = 0
 
     async def execute(self, statement: Any) -> FakeResult:
-        """记下语句并返回预置 rowcount 与 RETURNING 行。"""
+        """记下语句并返回预置 rowcount。"""
 
         self.statements.append(statement)
-        return FakeResult(self._rowcount, self._returning_row)
+        return FakeResult(self._rowcount)
 
     async def scalar(self, statement: Any) -> Any:
         """记下语句并返回预置标量。"""
@@ -169,7 +156,7 @@ def test_new_thread_is_inserted_with_the_calling_account_as_owner() -> None:
     session = FakeSession()
     user_id = uuid4()
 
-    created, prompt = run(
+    created = run(
         service_with(session).ensure_thread(
             user_id=user_id,
             thread_id=None,
@@ -183,34 +170,10 @@ def test_new_thread_is_inserted_with_the_calling_account_as_owner() -> None:
     assert record.thread_id == created
     assert record.user_id == user_id
     assert record.title == "央行降息了吗"
-    # 没配过偏好的账号：快照为空，本轮由运行时回落到内置默认提示词。
-    assert prompt is None
-    assert record.system_prompt is None
-    # 新建路径不该跑 UPDATE：跑了说明「新建」和「续聊」两条分支缠在一起了。
-    # 唯一那条 SELECT 是读该账号的个人偏好，用来给会话拍快照。
-    assert len(session.statements) == 1
-    assert compiled(session.statements[0]).lstrip().upper().startswith("SELECT")
+    # 新建路径一条语句都不该发：跑了语句说明「新建」和「续聊」两条分支缠在一起了，或者又
+    # 回去读别的表给会话凑值（提示词只有内置那一份，没有要读的东西）。
+    assert session.statements == []
     assert (session.commits, session.rollbacks) == (1, 0)
-
-
-def test_new_thread_snapshots_the_account_preference_prompt() -> None:
-    """建会话时把该账号配的提示词写进会话行，并原样返回给调用方。
-
-    「快照」的含义就在这里：会话行存下建立那一刻的值，之后续聊不再回读偏好表。
-    """
-
-    session = FakeSession(scalar_result="只用一句话回答。")
-    user_id = uuid4()
-
-    created, prompt = run(
-        service_with(session).ensure_thread(
-            user_id=user_id, thread_id=None, run_id=uuid4(), first_message="问题"
-        )
-    )
-
-    assert prompt == "只用一句话回答。"
-    assert session.added[0].system_prompt == "只用一句话回答。"
-    assert session.added[0].thread_id == created
 
 
 def test_new_thread_id_is_generated_server_side_not_taken_from_input() -> None:
@@ -220,12 +183,12 @@ def test_new_thread_id_is_generated_server_side_not_taken_from_input() -> None:
     归属校验就成了摆设。
     """
 
-    first, _ = run(
+    first = run(
         service_with(FakeSession()).ensure_thread(
             user_id=uuid4(), thread_id=None, run_id=uuid4(), first_message="问题"
         )
     )
-    second, _ = run(
+    second = run(
         service_with(FakeSession()).ensure_thread(
             user_id=uuid4(), thread_id=None, run_id=uuid4(), first_message="问题"
         )
@@ -241,11 +204,11 @@ def test_continuing_a_thread_filters_by_both_thread_id_and_user_id() -> None:
     正是本次改动要修的漏洞。
     """
 
-    session = FakeSession(rowcount=1, returning_row=("会话里存的那份提示词。",))
+    session = FakeSession(rowcount=1)
     user_id = uuid4()
     thread_id = uuid4()
 
-    returned, prompt = run(
+    returned = run(
         service_with(session).ensure_thread(
             user_id=user_id,
             thread_id=thread_id,
@@ -255,44 +218,13 @@ def test_continuing_a_thread_filters_by_both_thread_id_and_user_id() -> None:
     )
 
     assert returned == thread_id
-    # 续聊的提示词来自会话行，不是偏好表——UPDATE 上没有第二条 SELECT 就是证据。
-    assert prompt == "会话里存的那份提示词。"
+    # 续聊只有那一条 UPDATE，没有第二条 SELECT。
     assert len(session.statements) == 1
     sql = compiled(session.statements[0])
     assert sql.lstrip().upper().startswith("UPDATE")
     assert str(thread_id) in sql
     assert str(user_id) in sql
     assert (session.commits, session.rollbacks) == (1, 0)
-
-
-def test_continuing_a_thread_never_writes_the_prompt_column() -> None:
-    """续聊的 UPDATE **不改** ``system_prompt``——这是「会话级快照」在语句层的落点。
-
-    上一条只断言「续聊只有一条 UPDATE」，挡不住「往这条 UPDATE 的 ``.values()`` 里加一个
-    ``system_prompt=...``」——那种改动会让会话中途换设定，而语句条数不变、上一条照样绿。
-    所以这里单独看 SET 子句：``scope`` 可以改（改选是允许的），提示词不可以。
-
-    注意 RETURNING 里**有** ``system_prompt``，那是取回会话值用的，不是写入。所以不能整条
-    SQL 搜字段名，只能看 SET 与 WHERE 之间那一段。
-    """
-
-    session = FakeSession(rowcount=1, returning_row=(None,))
-    user_id, thread_id = uuid4(), uuid4()
-
-    run(
-        service_with(session).ensure_thread(
-            user_id=user_id, thread_id=thread_id, run_id=uuid4(), first_message="继续"
-        )
-    )
-
-    sql = compiled(session.statements[0]).upper()
-    assignments = sql.split(" SET ", 1)[1].split(" WHERE ", 1)[0]
-    assert "SYSTEM_PROMPT" not in assignments
-    # 正面那一半：``last_active_at`` 是这条 UPDATE 必写的列，它不在说明 SET 子句根本没取到，
-    # 那样上面的断言就是空转。
-    assert "LAST_ACTIVE_AT" in assignments
-    # 取回会话值用的 RETURNING 里**有**这一列，这是对的——所以上面只能看 SET 段。
-    assert "RETURNING" in sql and "SYSTEM_PROMPT" in sql.split("RETURNING", 1)[1]
 
 
 def test_continuing_a_thread_writes_the_model_column_only_when_the_request_carried_one() -> None:
@@ -302,7 +234,7 @@ def test_continuing_a_thread_writes_the_model_column_only_when_the_request_carri
     记录是另一回事，会让会话平白从「没选过」变成「选了当时的默认」，默认后来换掉也不会跟着走。
     """
 
-    session = FakeSession(rowcount=1, returning_row=(None,))
+    session = FakeSession(rowcount=1)
     chosen = uuid4()
 
     run(
@@ -319,7 +251,7 @@ def test_continuing_a_thread_writes_the_model_column_only_when_the_request_carri
     assert "LLM_MODEL_ID" in assignments
     assert str(chosen) in with_model
 
-    untouched = FakeSession(rowcount=1, returning_row=(None,))
+    untouched = FakeSession(rowcount=1)
     run(
         service_with(untouched).ensure_thread(
             user_id=uuid4(), thread_id=uuid4(), run_id=uuid4(), first_message="继续"
@@ -405,7 +337,7 @@ def test_claiming_a_thread_requires_no_live_run_and_clears_the_stale_stop_reques
       杀掉，留下一个陈旧的停止标记，于是刚起步的新运行一开场就被它停掉。
     """
 
-    session = FakeSession(rowcount=1, returning_row=(None,))
+    session = FakeSession(rowcount=1)
     run_id = uuid4()
 
     run(
@@ -843,14 +775,16 @@ def test_new_thread_title_comes_from_the_same_rule_as_the_helper() -> None:
     assert session.added[0].title == derive_thread_title(message)
 
 
-def test_claiming_a_thread_excludes_a_drained_one_from_the_zombie_branch() -> None:
-    """占位那条条件写入把带「等接手」标记的会话整个排除掉，**包括失活分支**。
+def test_claiming_a_thread_keeps_the_zombie_branch_and_drops_the_drain_marker() -> None:
+    """占位那条条件写入仍放行失活分支，且再没有任何排空标记的排除条件。
 
-    排空之后旧进程不再续期活跃时间，两分钟后失活分支就会命中。不排除的话，用户能在标记还在的
-    时候开新一轮，而旧的 checkpoint 停在半途、还有待跑的节点——两个进程会写同一份图状态。
+    失活分支（在途标记为空，或久未活跃）是防孤儿会话的那一条：进程在运行中死掉不会释放占位，
+    只能靠它让下一次提问接上。曾经还有一条「带排空标记的会话连失活分支也不放行」，理由是
+    两个进程会写同一份图状态；排空改由旧进程自己收尾之后不存在第二个写者，那条条件连同
+    它的字段一起删了。两半都钉住：失活分支还在，标记条件不在。
     """
 
-    session = FakeSession(rowcount=1, returning_row=(None,))
+    session = FakeSession(rowcount=1)
 
     run(
         service_with(session).ensure_thread(
@@ -862,78 +796,7 @@ def test_claiming_a_thread_excludes_a_drained_one_from_the_zombie_branch() -> No
     )
 
     conditions = compiled(session.statements[0]).upper().split(" WHERE ", 1)[1]
-    assert "DRAINED_AT IS NULL" in conditions
+    assert "DRAINED_AT" not in conditions
     # 正面那一半：失活分支还在，说明我们不是把整段条件删了。
     assert "ACTIVE_RUN_ID IS NULL" in conditions
     assert "LAST_ACTIVE_AT <" in conditions
-
-
-def test_marking_a_run_drained_only_touches_its_own_claim() -> None:
-    """写标记的条件是「占位的就是这次运行」——被失活判定顶掉的旧运行不能把标记写到新运行头上。"""
-
-    session = FakeSession(rowcount=1)
-    thread_id, run_id = uuid4(), uuid4()
-    now = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
-
-    updated = run(
-        service_with(session).mark_drained(thread_id=thread_id, run_id=run_id, now=now)
-    )
-
-    assert updated == 1
-    sql = compiled(session.statements[0]).upper()
-    assignments = sql.split(" SET ", 1)[1].split(" WHERE ", 1)[0]
-    conditions = sql.split(" WHERE ", 1)[1]
-    assert "DRAINED_AT" in assignments
-    assert "ACTIVE_RUN_ID =" in conditions and str(run_id).upper() in conditions
-    assert str(thread_id).upper() in conditions
-    assert session.commits == 1
-
-
-def test_claiming_a_drained_run_consumes_the_marker_in_one_write() -> None:
-    """抢所有权是「判标记非空 + 置空」的同一条语句，且不碰停止请求那一列。
-
-    分开做会出现两个进程都读到标记、都以为自己接手的窗口。不碰停止请求是因为用户在部署窗口里
-    按下的停止要照样生效——接手之后的驱动者还要能读到它并停下这次运行。
-    """
-
-    thread_id, run_id, user_id = uuid4(), uuid4(), uuid4()
-    session = FakeSession(returning_row=(run_id, user_id, "会话里存的提示词。"))
-
-    claim = run(service_with(session).claim_drained_run(thread_id=thread_id))
-
-    assert claim is not None
-    assert (claim.thread_id, claim.run_id, claim.user_id) == (thread_id, run_id, user_id)
-    assert claim.system_prompt == "会话里存的提示词。"
-    sql = compiled(session.statements[0]).upper()
-    assignments = sql.split(" SET ", 1)[1].split(" WHERE ", 1)[0]
-    conditions = sql.split(" WHERE ", 1)[1]
-    assert "DRAINED_AT=NULL" in assignments
-    assert "DRAINED_AT IS NOT NULL" in conditions
-    assert "STOP_REQUESTED_AT" not in assignments
-    returning = sql.split("RETURNING", 1)[1]
-    assert "ACTIVE_RUN_ID" in returning
-    assert "USER_ID" in returning
-    assert "SYSTEM_PROMPT" in returning
-    assert session.commits == 1
-
-
-def test_claiming_a_drained_run_returns_nothing_when_the_marker_is_gone() -> None:
-    """标记已经被别的进程消费时返回 ``None``，调用方据此什么都不做。"""
-
-    session = FakeSession(returning_row=None)
-
-    assert run(service_with(session).claim_drained_run(thread_id=uuid4())) is None
-
-
-def test_listing_drained_threads_reads_only_flagged_rows() -> None:
-    """扫描只取带标记的会话，不把整个会话表拉出来。"""
-
-    thread_id = uuid4()
-    session = FakeSession(scalars_result=[thread_id])
-
-    ids = run(service_with(session).list_drained_thread_ids())
-
-    assert ids == [thread_id]
-    sql = compiled(session.statements[0]).upper()
-    assert sql.lstrip().startswith("SELECT")
-    assert "DRAINED_AT IS NOT NULL" in sql

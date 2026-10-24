@@ -419,7 +419,6 @@ def build_offline_graph(
         tools=list(tools),
         middleware=build_agent_middleware(
             summarization_model=model,
-            tool_names=frozenset(each.name for each in tools),
             retry_initial_delay=retry_initial_delay,
         ),
         context_schema=AgentContext,

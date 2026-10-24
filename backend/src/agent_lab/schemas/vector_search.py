@@ -1,15 +1,15 @@
-"""定义 Vector Search 的请求、过滤和结果契约（Pydantic 模型）。
+"""定义 Vector Search 的过滤条件和命中载荷契约（Pydantic 模型）。
 
 Vector Search（向量检索）把用户 query 变成向量，与 Qdrant 里存好的新闻 Chunk 向量
-比较相似度，返回最相似的若干条。本模块只定义「输入长什么样、输出长什么样」，
+比较相似度，返回最相似的若干条。本模块只定义「过滤条件长什么样、输出长什么样」，
 不做任何实际工作：不生成向量、不构造 Qdrant 过滤条件、不访问网络或数据库、
-不生成 LLM 回答。
+不生成 LLM 回答。请求体契约在 ``schemas/document_search.py``。
 
 先记一组会反复出现的术语（后面字段描述里不再重复解释）：
 - Point：Qdrant 里一条存储记录 = 一个向量 + 一堆附加字段；
 - Payload：Point 上附加的普通 JSON 字段（标题、URL、发布时间等），检索时可按它过滤；
-- keyword 匹配：字符串精确相等（不是模糊或包含关系）；
-- MatchAny：标签过滤的 OR 语义，命中任意一个就算通过；
+- MatchValue：单个取值精确相等（不是模糊或包含关系）；
+- MatchAny：一组取值里命中任意一个就算通过；
 - gte/lte：大于等于 / 小于等于（Qdrant 时间过滤的区间写法）；
 - Cosine score：余弦相似度分数，范围 [-1, 1]，通常越大越相似；
 - 带时区 datetime：带 UTC 偏移的时间，如 2025-01-01T08:00:00+08:00；
@@ -32,18 +32,9 @@ from pydantic import (
 )
 
 from agent_lab.domain.enums import DocumentType
-from agent_lab.knowledge.scope import (
-    KnowledgeBaseSelection, ResolvedKnowledgeBaseScope,
-    require_explicit_scope, validate_scope_compatibility,
-)
-from agent_lab.schemas._query_validators import (
-    require_non_whitespace_query,
-    require_numeric_threshold,
-)
+from agent_lab.knowledge.scope import validate_scope_compatibility
 
 
-DEFAULT_TOP_K = 10
-MAX_TOP_K = 100
 MAX_QUERY_CHARACTERS = 4096
 
 
@@ -51,9 +42,10 @@ class VectorSearchFilters(BaseModel):
     """一组可选的检索过滤条件，交给 Qdrant 在向量排序之前先筛掉不匹配的 Point。
 
     为什么过滤要在 Qdrant 里做而不是取回结果后用 Python 筛：向量库直接在候选集上
-    执行过滤，避免把大量数据拉回内存。多个条件之间是 AND（都要满足），labels
-    内部是 OR（命中任意一个标签即可）。空 labels 明确表示不过滤；时间范围是包含
-    端点的 gte/lte，缺 published_at 的 Point 一旦启用时间过滤就不命中。
+    执行过滤，避免把大量数据拉回内存。可用的维度只有知识库范围与发布时间区间两样，
+    多个条件之间是 AND（都要满足）。时间范围是包含端点的 gte/lte，缺 published_at
+    的 Point 一旦启用时间过滤就不命中。来源、文档类型与标签是命中载荷而不是过滤维度，
+    它们只用于展示。
 
     实例只存在于一次搜索请求的内存中，字段来自调用方而不是 PostgreSQL 查询。
     """
@@ -64,34 +56,6 @@ class VectorSearchFilters(BaseModel):
     )
     knowledge_base_ids: tuple[UUID, ...] | None = Field(
         default=None, min_length=1, description="明确的非空知识库过滤集合。",
-    )
-    source_id: UUID | None = Field(
-        default=None,
-        description=(
-            "可选来源过滤值，来自调用方；格式为 PostgreSQL sources.id UUID，Qdrant "
-            "按 Payload source_id 精确匹配，用于限定单一来源。"
-        ),
-    )
-    source_provider: str | None = Field(
-        default=None,
-        description=(
-            "可选提供方过滤值，来自调用方；非空 keyword 字符串，Qdrant 按 Payload "
-            "source_provider 精确匹配，例如 freshrss_main。"
-        ),
-    )
-    document_type: DocumentType | None = Field(
-        default=None,
-        description=(
-            "可选文档类型过滤值，来自调用方；必须是 DocumentType 合法字符串，Qdrant "
-            "按 Payload document_type 精确匹配。"
-        ),
-    )
-    labels: tuple[str, ...] = Field(
-        default=(),
-        description=(
-            "可选标签 keyword 列表，来自调用方；空列表表示不过滤，非空时 Qdrant "
-            "MatchAny 要求 Point labels 至少包含其中一个值，不要求包含全部值。"
-        ),
     )
     published_from: datetime | None = Field(
         default=None,
@@ -113,54 +77,6 @@ class VectorSearchFilters(BaseModel):
         frozen=True,
         hide_input_in_errors=True,
     )
-
-    @field_validator("source_provider")
-    @classmethod
-    def normalize_optional_keyword(cls, value: str | None) -> str | None:
-        """去除可选 keyword 两端空白，并拒绝纯空白过滤值。
-
-        Args:
-            value: 调用方传入的 source provider，或 ``None``。
-
-        Returns:
-            ``None`` 或可直接用于 Qdrant keyword 精确匹配的字符串。
-
-        Raises:
-            ValueError: 提供了只含空白的 keyword。
-        """
-
-        if value is None:
-            return None
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("source_provider 不能只包含空白字符")
-        return normalized
-
-    @field_validator("labels")
-    @classmethod
-    def normalize_labels(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        """规范化标签并保持首次出现顺序，空列表仍表示不过滤。
-
-        Args:
-            values: 调用方提供的标签序列。
-
-        Returns:
-            去除两端空白且去重后的不可变标签元组。
-
-        Raises:
-            ValueError: 任一标签只包含空白字符。
-        """
-
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for value in values:
-            label = value.strip()
-            if not label:
-                raise ValueError("labels 不能包含空值")
-            if label not in seen:
-                normalized.append(label)
-                seen.add(label)
-        return tuple(normalized)
 
     @field_validator("published_from", "published_to", mode="before")
     @classmethod
@@ -221,104 +137,6 @@ class VectorSearchFilters(BaseModel):
         ):
             raise ValueError("published_from 不能晚于 published_to")
         return self
-
-
-class VectorSearchRequest(BaseModel):
-    """一次只读语义检索请求（不含生成式回答参数）。
-
-    请求对象由 API 边界为每次调用创建，校验完成后可安全传给并发共享的
-    ``VectorSearchService``。query 被设为不进 repr（不显示在调试输出里），避免
-    日志意外记录完整敏感文本；它只会交给 query Embedding，不会写入 PostgreSQL
-    或 Qdrant。
-    """
-
-    scope: KnowledgeBaseSelection | None = Field(
-        default=None, description="新调用方显式选择全部启用库或非空列表；遗漏保留旧 news 契约。",
-    )
-    _validate_scope = field_validator("scope")(require_explicit_scope)
-
-    query: str = Field(
-        max_length=MAX_QUERY_CHARACTERS,
-        repr=False,
-        description=(
-            "用户提交的检索文本，不可为空、纯空白或超过 4096 个 Unicode 字符；原文"
-            "可能敏感，不写日志或异常，仅用于 Ollama query Embedding，不保存为 Payload。"
-        ),
-    )
-    top_k: int = Field(
-        default=DEFAULT_TOP_K,
-        ge=1,
-        le=MAX_TOP_K,
-        strict=True,
-        description=(
-            "调用方请求的最大 Chunk 命中数；不可空，默认 10、范围 1..100，用于限制 "
-            "Qdrant limit 和单次返回正文体积。"
-        ),
-    )
-    score_threshold: float | None = Field(
-        default=None,
-        ge=-1.0,
-        le=1.0,
-        allow_inf_nan=False,
-        description=(
-            "可选 Qdrant Cosine score 下限；为空时不设阈值，存在时必须是 [-1, 1] "
-            "有限数值。它不是概率，生产阈值需用真实新闻评测后决定。"
-        ),
-    )
-    knowledge_base_id: UUID | None = Field(
-        default=None,
-        description=(
-            "可选 KnowledgeBase 范围；普通 HTTP 边界缺省时解析为固定的 news KnowledgeBase。"
-        ),
-    )
-    filters: VectorSearchFilters = Field(
-        default_factory=VectorSearchFilters,
-        description=(
-            "调用方提供的可选 Payload 过滤集合；不可空对象，各条件在 Qdrant 中执行，"
-            "不会先取大量结果再由 Python 筛选。"
-        ),
-    )
-
-    model_config = ConfigDict(
-        extra="forbid",
-        frozen=True,
-        hide_input_in_errors=True,
-    )
-
-    # 与 DocumentSearchRequest 共用同一份实现和同一份错误文案，见 _query_validators。
-    _validate_query = field_validator("query")(require_non_whitespace_query)
-    _validate_threshold = field_validator("score_threshold", mode="before")(
-        require_numeric_threshold
-    )
-
-    @model_validator(mode="after")
-    def validate_knowledge_base_scope(self) -> "VectorSearchRequest":
-        """拒绝顶层范围和过滤器范围互相矛盾，避免调用方误以为只查一个库。"""
-
-        nested = self.filters.knowledge_base_id
-        validate_scope_compatibility(
-            self.scope, self.knowledge_base_id, nested,
-            filter_ids=self.filters.knowledge_base_ids,
-        )
-        if (
-            self.knowledge_base_id is not None
-            and nested is not None
-            and self.knowledge_base_id != nested
-        ):
-            raise ValueError("knowledge_base_id 与 filters.knowledge_base_id 必须一致")
-        return self
-
-    def with_knowledge_base_scope(self, knowledge_base_id: UUID) -> "VectorSearchRequest":
-        """返回同时填充顶层和过滤器范围的副本，供 HTTP 边界传给应用 Service。"""
-
-        return self.model_copy(
-            update={
-                "knowledge_base_id": knowledge_base_id,
-                "filters": self.filters.model_copy(
-                    update={"knowledge_base_id": knowledge_base_id}
-                ),
-            }
-        )
 
 
 class VectorSearchResult(BaseModel):
@@ -420,7 +238,7 @@ class VectorSearchResult(BaseModel):
     document_type: DocumentType = Field(
         description=(
             "来自 Qdrant Point Payload.document_type 的必需业务枚举；不可空，用于展示"
-            "命中文档类型并对应精确过滤值。"
+            "命中文档类型，不是过滤维度。"
         ),
     )
     mime_type: str = Field(min_length=1, description="文档内容的 MIME 格式，与 document_type 业务类型独立。")
@@ -428,14 +246,14 @@ class VectorSearchResult(BaseModel):
     source_id: UUID | None = Field(
         description=(
             "来自 Qdrant Point Payload.source_id 的可空 UUID；有 Source 时关联 PostgreSQL "
-            "sources.id 并对应来源过滤条件，无 Source 时为 null。"
+            "sources.id，无 Source 时为 null，仅供展示与审计、不是过滤维度。"
         ),
     )
     source_provider: str | None = Field(
         min_length=1,
         description=(
             "来自 Qdrant Point Payload.source_provider 的可空 keyword；有 Source 时"
-            "标识接入提供方并对应精确过滤条件。"
+            "标识接入提供方，仅供展示、不是过滤维度。"
         ),
     )
     source_name: str | None = Field(
@@ -468,7 +286,7 @@ class VectorSearchResult(BaseModel):
     labels: list[str] = Field(
         description=(
             "来自 Qdrant Point Payload.labels 的必需 keyword 字符串列表；不可为 null、"
-            "允许空列表，用于展示并支持 MatchAny 标签过滤。"
+            "允许空列表，用于展示，不是过滤维度。"
         ),
     )
     previous_chunk_id: UUID | None = Field(
@@ -577,18 +395,8 @@ class VectorSearchResult(BaseModel):
         return self
 
 
-class ScopedVectorSearchResponse(BaseModel):
-    """显式范围请求的结果与实际范围快照；旧请求仍返回数组。"""
-
-    scope: ResolvedKnowledgeBaseScope
-    results: list[VectorSearchResult]
-
-
 __all__ = [
-    "DEFAULT_TOP_K",
     "MAX_QUERY_CHARACTERS",
-    "MAX_TOP_K",
     "VectorSearchFilters",
-    "VectorSearchRequest",
     "VectorSearchResult",
 ]

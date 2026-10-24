@@ -16,17 +16,14 @@
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
-from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
 from fastapi import FastAPI
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage
 
-from agent_lab.agent.runs import AgentRunRegistry
 from agent_lab.api.dependencies import get_llm_model_selection_service
-from agent_lab.schemas.llm_models import ResolvedLlmModel
 from tests.agent_helpers import ScriptedChatModel
 from tests.app_helpers import (
     InMemoryLlmModelSelectionService,
@@ -353,38 +350,3 @@ def test_a_turn_keeps_the_name_it_ran_with_when_the_entry_is_later_renamed() -> 
         assert history["llm_model"] == {"id": str(SECOND_MODEL), "display_name": "改过的名字"}
 
     run(within_lifespan(app, verify))
-
-
-def test_a_rebuilt_run_context_reads_the_frozen_model_instead_of_the_thread_row() -> None:
-    """接手重建上下文读的是提问消息上冻结的那一份，不是会话行上的当前选择。
-
-    走的是接手者真正用的那个读取器：冻结的口袋与回放是同一个（提问消息的 ``agent_run``），
-    所以接手那一轮用的模型与回看显示的是同一个。它只读冻结值，**不重查目录、也不重判可用性**
-    ——快照里的模型在排空期间被停用时仍用它跑完。
-    """
-
-    thread_id = uuid4()
-    run_id = uuid4()
-    frozen = ResolvedLlmModel(id=SECOND_MODEL, display_name="备用模型", context_window=8192)
-    message = HumanMessage(
-        content="问",
-        additional_kwargs={
-            "agent_run": {
-                "run_id": str(run_id),
-                "llm_model": frozen.model_dump(mode="json"),
-            }
-        },
-    )
-
-    class ReadOnlyGraph:
-        """只实现读取器要用的那一个方法。"""
-
-        async def aget_state(self, _config: Any) -> Any:
-            return SimpleNamespace(values={"messages": [message]})
-
-    found, scope, model = run(
-        AgentRunRegistry._read_frozen_run_meta(ReadOnlyGraph(), thread_id=thread_id, run_id=run_id)
-    )
-
-    assert (found, scope) == (True, None)
-    assert model == frozen

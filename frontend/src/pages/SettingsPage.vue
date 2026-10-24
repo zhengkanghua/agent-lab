@@ -1,15 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
-import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { X } from '@lucide/vue'
 import AppShell from '@/layouts/AppShell.vue'
 import BaseIconButton from '@/shared/ui/BaseIconButton.vue'
 import { authSession, useLogout } from '@/features/auth'
 import { useModalLayer } from '@/shared/composables/useModalLayer'
-import { requestConfirm } from '@/shared/composables/confirm'
 import {
   AccountSection,
-  AgentPromptSection,
   SearchPreferencesSection,
   SettingsNav,
   UsageSection,
@@ -18,94 +16,30 @@ import {
 } from '@/features/settings'
 
 /**
- * 设置中心：账号安全、检索偏好、Agent 偏好、用量都在这里。
+ * 设置中心：账号安全、检索偏好、用量都在这里。
  *
  * 桌面端是外壳内容区上的居中浮层（2026-09 重设计 P4）：路由与深链不变，
  * /settings/search 等地址仍然直达。遮罩盖满整页、含侧栏，出口只有关闭键与 Esc。
  * 窄屏（≤720px）回退整页形态——没有遮罩与 Esc，dialog 语义一并撤掉。
- * 分区由路由参数决定，分区组件按需渲染。四个分区都对所有登录账号开放。
+ * 分区由路由参数决定，分区组件按需渲染。三个分区都对所有登录账号开放。
  */
 const route = useRoute()
 const router = useRouter()
 
 const { loggingOut, logoutError, logout } = useLogout()
 
-const { preferences, load: loadPreferences } = usePreferences()
-const agentPromptDraft = ref(preferences.agentSystemPrompt)
-
-/**
- * 用户是否动过草稿。
- *
- * 用它而不是「草稿 != 已保存值」来判断要不要用服务端那份覆盖草稿：刚进页面时草稿是默认值、
- * 服务端那份还没加载回来，两者本来就不等——那个不等不是「用户在编辑」。按值比较会让加载
- * 完成后不敢覆盖，于是服务端存的提示词永远显示不出来。
- */
-const draftTouched = ref(false)
-const hasUnsavedPrompt = computed(
-  () => draftTouched.value && agentPromptDraft.value !== preferences.agentSystemPrompt,
-)
-
-/** 用户编辑草稿。与程序化同步分开，前者标记「已动过」，后者不标记。 */
-function onDraftEdit(value: string): void {
-  draftTouched.value = true
-  agentPromptDraft.value = value
-}
-
-// 服务端那份回来后同步进草稿，但只在用户还没动过它时。保存成功后也走这里，
-// 把草稿对齐到服务端归一化过的那份。
-watch(
-  () => preferences.agentSystemPrompt,
-  (saved) => {
-    if (!draftTouched.value) agentPromptDraft.value = saved
-  },
-)
+const { load: loadPreferences } = usePreferences()
 
 // 读一次账号偏好。读失败由 store 落回默认值，不阻塞页面——偏好是体验数据，
 // 拿它换掉整个设置页是不划算的（见 usePreferences 的说明）。
 //
-// 外壳（AppShell）已经为三个页面读过一次，这里再调通常是命中缓存、不发请求；留着它是因为
+// 外壳（AppShell）挂载时已经读过一次，这里再调通常是命中缓存、不发请求；留着它是因为
 // 设置页是唯一会**展示**偏好值的地方，直接依赖外壳的加载时序会让「外壳改了、这里静默失效」。
 onMounted(() => {
   void loadPreferences(authSession.user.value?.id)
 })
 
-/**
- * 有未保存的提示词草稿时先问一句。返回「可以继续」，页面内跳转与退出登录共用。
- *
- * 用应用内的确认框而不是 window.confirm：全站不可恢复的动作只有一个确认形态。
- * 唯一还留原生的地方是下面的 beforeunload——刷新与关标签页由浏览器接管，
- * 它只接受原生弹窗，自绘框在那条路径上不可能出现，不是写法选择。
- *
- * 导航守卫可以是异步的（Vue Router 会等它 resolve），所以这里直接返回那个 Promise，
- * 不需要「先拦住再手动重推一次」那套绕法。
- */
-async function confirmDiscardPrompt(): Promise<boolean> {
-  if (!hasUnsavedPrompt.value) return true
-  return requestConfirm({
-    title: '放弃尚未保存的提示词？',
-    description: '设置中心里这段还没保存的草稿会丢失，已保存的版本不受影响。',
-    confirmLabel: '放弃修改',
-    tone: 'danger',
-  })
-}
-
-onBeforeRouteLeave(confirmDiscardPrompt)
-
-async function requestLogout(): Promise<void> {
-  if (!(await confirmDiscardPrompt())) return
-  await logout()
-}
-
-function warnBeforeUnload(event: BeforeUnloadEvent): void {
-  if (!hasUnsavedPrompt.value) return
-  event.preventDefault()
-  event.returnValue = ''
-}
-
-onMounted(() => window.addEventListener('beforeunload', warnBeforeUnload))
-onScopeDispose(() => window.removeEventListener('beforeunload', warnBeforeUnload))
-
-const SECTION_KEYS: readonly SettingsSection[] = ['account', 'search', 'agent', 'usage']
+const SECTION_KEYS: readonly SettingsSection[] = ['account', 'search', 'usage']
 
 const section = computed<SettingsSection>(() => {
   const value = route.params.section
@@ -142,7 +76,7 @@ function updateViewport(): void {
 const panelRef = ref<HTMLElement | null>(null)
 
 /** 关闭浮层：有来路就回上一页，否则回默认入口（Agent 对话）——与 `/` 的落点一致。
- *  离开确认不在这里做——onBeforeRouteLeave 守卫统一拦，Esc 和关闭键走同一条路。 */
+ *  Esc 与关闭键走同一个函数，两个出口的行为不会漂。 */
 function closeSettings(): void {
   const historyState = router.options.history.state as { back?: string | null }
   if (historyState.back != null) router.back()
@@ -177,7 +111,7 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
     skip-label="跳到设置内容"
     :logging-out="loggingOut"
     :logout-error="logoutError"
-    @logout="requestLogout"
+    @logout="logout"
   >
     <main id="settings-page" class="settings-page">
       <div
@@ -212,11 +146,6 @@ onScopeDispose(() => window.removeEventListener('resize', updateViewport))
             <div class="settings-content">
               <AccountSection v-if="section === 'account'" :user="authSession.user.value" />
               <SearchPreferencesSection v-else-if="section === 'search'" />
-              <AgentPromptSection
-                v-else-if="section === 'agent'"
-                :model-value="agentPromptDraft"
-                @update:model-value="onDraftEdit"
-              />
               <UsageSection v-else-if="section === 'usage'" />
             </div>
           </div>

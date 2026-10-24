@@ -1,6 +1,6 @@
 """把冻结候选中的展示正文与索引身份映射为受控的 Qdrant Payload。
 
-Payload = 向量旁边附带的结构化数据，用途有四：展示新闻内容、按来源/时间过滤、
+Payload = 向量旁边附带的结构化数据，用途有四：展示新闻内容、按知识库/时间过滤、
 按文档清理旧 Chunk、审计索引版本。本模块只从 Chunk 的 ``page_content`` 和「白名单
 Metadata」生成一个扁平字典（纯内存操作，无任何 I/O）。
 
@@ -37,7 +37,7 @@ class QdrantPayloadMapper:
     实例无状态、可多任务共享；映射过程不进行任何网络/数据库/Embedding/向量库 I/O。
     """
 
-    # 缺少其中任何一个字段就无法回查 PostgreSQL 实体或按来源过滤，因此宁可整批失败
+    # 缺少其中任何一个字段就无法回查 PostgreSQL 实体或向界面展示来源与类型，因此宁可整批失败
     # 也不写入半残 Payload；chunk_index/chunk_count 另行校验，它们是 Chunk 级而非文档级。
     REQUIRED_FIELDS = (
         "document_id",

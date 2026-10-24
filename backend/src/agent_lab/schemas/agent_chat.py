@@ -298,26 +298,11 @@ class AgentRunStopResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
 
-class AgentDefaultPromptResponse(BaseModel):
-    """``GET /agent/default-prompt`` 的响应。
-
-    包成对象而不是直接返回一个 JSON 字符串：裸字符串的响应体没有加字段的余地，以后想带上
-    「这份提示词的版本号」或「可用工具清单」就得改破坏性接口。
-    """
-
-    system_prompt: str = Field(
-        description="不传 system_prompt 时实际生效的默认系统提示词全文。",
-    )
-
-    model_config = ConfigDict(frozen=True)
-
-
 __all__ = [
     "AgentChatErrorResponse",
     "AgentChatEvent",
     "AgentChatEventEnvelope",
     "AgentChatRequest",
-    "AgentDefaultPromptResponse",
     "AgentDoneEvent",
     "AgentErrorEvent",
     "AgentRunStopRequest",

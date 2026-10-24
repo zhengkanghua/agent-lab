@@ -1,26 +1,14 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
-import { createMemoryHistory, createRouter } from 'vue-router'
 import AgentComposer from '../components/AgentComposer.vue'
 import { MAX_MESSAGE_CHARACTERS } from '../model/agent-validation'
 
 type ComposerProps = InstanceType<typeof AgentComposer>['$props']
 
-function testRouter() {
-  return createRouter({
-    history: createMemoryHistory(),
-    routes: [
-      { path: '/', name: 'search', component: { template: '<div />' } },
-      { path: '/settings/:section?', name: 'settings', component: { template: '<div />' } },
-    ],
-  })
-}
-
 function mountComposer(overrides: Partial<ComposerProps> = {}) {
   return mount(AgentComposer, {
     props: {
       modelValue: '央行利率',
-      customPromptActive: false,
       inputError: null,
       remainingCharacters: 3996,
       streaming: false,
@@ -28,13 +16,12 @@ function mountComposer(overrides: Partial<ComposerProps> = {}) {
       canSend: true,
       ...overrides,
     },
-    global: { plugins: [testRouter()] },
   })
 }
 
 describe('AgentComposer', () => {
   it('提问输入框的上界与校验常量同源', () => {
-    // 否则会出现「能打进去但一提交就报错」。系统提示词的上界在设置中心的编辑器里测。
+    // 否则会出现「能打进去但一提交就报错」。
     const wrapper = mountComposer()
 
     expect(wrapper.get('.message-input').attributes('maxlength')).toBe(
@@ -106,17 +93,6 @@ describe('AgentComposer', () => {
 
     expect(wrapper.find('.stop-button').exists()).toBe(false)
     expect(wrapper.find('.send-button').exists()).toBe(true)
-  })
-
-  it('偏好里存了自定义提示词时亮徽章并链到设置页，默认时不打扰', async () => {
-    const wrapper = mountComposer({ customPromptActive: false })
-    expect(wrapper.find('.badge-link').exists()).toBe(false)
-
-    await wrapper.setProps({ customPromptActive: true })
-
-    const badge = wrapper.get('.badge-link')
-    expect(badge.attributes('aria-label')).toContain('自定义提示词')
-    expect(badge.attributes('href')).toBe('/settings/agent')
   })
 
   it('校验错误挂到输入框的 aria-describedby 上', async () => {

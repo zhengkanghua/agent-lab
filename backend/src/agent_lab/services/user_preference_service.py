@@ -7,14 +7,11 @@
 注销账号**不会删这张表里的行**：个人偏好是这个人留下的记录，注销后仍然保留（见
 ``docs/adr/0034-account-deletion-is-soft-delete.md``）。所以这里没有任何「供删账号连带清理」
 的方法，偏好与账号行同生共死这件事已经不再成立。
-
-它同时也是「建会话时该用哪份提示词」的读取入口：``AgentThreadService`` 不直接碰这张表，
-而是经由本 Service 取值，免得「偏好从哪来」出现第二处实现。
 """
 
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,8 +49,7 @@ class UserPreferenceService:
         """读取该账号的偏好；没有配过时返回契约默认值。
 
         没有行**不是错误**，而是「还没配过」这个正常状态。返回默认值而不是 404，调用方
-        （设置页、建会话时取提示词）就不必各自处理「查不到」这一支——设置页直接拿到可渲染
-        的一份，建会话时拿到的 ``system_prompt`` 是 ``None``，正好表示「使用内置默认提示词」。
+        （设置页）就不必各自处理「查不到」这一支，直接拿到可渲染的一份。
 
         Args:
             user_id: 当前登录账号 id。
@@ -68,34 +64,10 @@ class UserPreferenceService:
         record = await self._session.get(UserPreferenceRecord, user_id)
         if record is None:
             return UserPreferenceResponse(
-                system_prompt=None,
                 document_limit=DEFAULT_DOCUMENT_LIMIT,
                 matches_per_document=DEFAULT_MATCHES_PER_DOCUMENT,
             )
         return UserPreferenceResponse.model_validate(record)
-
-    async def system_prompt_for(self, user_id: UUID) -> str | None:
-        """只取该账号的提示词，供建会话时快照。
-
-        ``None`` 表示没配过，调用方据此让运行使用内置默认提示词。刻意单独开一个只读一列的
-        方法而不是复用 ``get``：建会话在 ``AgentThreadService`` 的短事务里，多读两列整数没
-        意义，而这个方法的返回值语义（``None`` = 用默认）值得在签名上写明。
-
-        Args:
-            user_id: 当前登录账号 id。
-
-        Returns:
-            该账号配置的提示词；未配置时为 ``None``。
-
-        Notes:
-            一次 PostgreSQL 单列查询。
-        """
-
-        return await self._session.scalar(
-            select(UserPreferenceRecord.system_prompt).where(
-                UserPreferenceRecord.user_id == user_id
-            )
-        )
 
     async def replace(
         self,
@@ -126,7 +98,6 @@ class UserPreferenceService:
 
         statement = insert(UserPreferenceRecord).values(
             user_id=user_id,
-            system_prompt=request.system_prompt,
             document_limit=request.document_limit,
             matches_per_document=request.matches_per_document,
         )
@@ -134,7 +105,6 @@ class UserPreferenceService:
             statement.on_conflict_do_update(
                 index_elements=[UserPreferenceRecord.user_id],
                 set_={
-                    "system_prompt": statement.excluded.system_prompt,
                     "document_limit": statement.excluded.document_limit,
                     "matches_per_document": statement.excluded.matches_per_document,
                     "updated_at": func.now(),

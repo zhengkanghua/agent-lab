@@ -38,13 +38,9 @@ PAYLOAD_INDEX_SCHEMAS: Mapping[str, models.PayloadSchemaType] = {
     "document_id": models.PayloadSchemaType.KEYWORD,
     "index_instance_id": models.PayloadSchemaType.KEYWORD,
     # 归属过滤字段：普通检索与清理都按 knowledge_base_id 精确匹配，共享 Collection
-    # 依赖这个索引避免全表扫描；语义与 source_id 相同，使用 UUID 索引。
+    # 依赖这个索引避免全表扫描，使用 UUID 索引。
     "knowledge_base_id": models.PayloadSchemaType.UUID,
-    "source_id": models.PayloadSchemaType.UUID,
-    "source_provider": models.PayloadSchemaType.KEYWORD,
-    "document_type": models.PayloadSchemaType.KEYWORD,
     "published_at": models.PayloadSchemaType.DATETIME,
-    "labels": models.PayloadSchemaType.KEYWORD,
 }
 
 

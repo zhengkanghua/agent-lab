@@ -4,8 +4,8 @@
 映射；它不在路由中对 Chunk 去重、不访问 PostgreSQL，也不拼装 Qdrant Filter。分组和
 排序由 ``VectorSearchService`` 与 Qdrant grouped query 负责。
 
-它与 ``vector_search`` 是平级的特性路由：两者都依赖 ``agent_lab.api.dependencies``
-提供的注入函数和 ``agent_lab.api.error_contract`` 的共享错误表，彼此不互相 import。
+它与其他特性路由一样依赖 ``agent_lab.api.dependencies`` 提供的注入函数和
+``agent_lab.api.error_contract`` 的共享错误表，不自行装配 Runtime。
 """
 
 import logging
@@ -69,13 +69,11 @@ async def document_search(
     这份 docstring 是给维护者看的，不会进 OpenAPI：装饰器上显式写了 ``description=``，
     FastAPI 优先用那一份（``description or cleandoc(__doc__)``）。
 
-    和 ``POST /vector-search`` 的区别只在 Service 那一层：那条按 Chunk 返回，这条让
-    Qdrant 按 document_id 分组，同一篇新闻的多个片段收拢成一条结果。分组在 Qdrant 侧做，
-    不是查回来再在 Python 里去重。
+    分组在 Qdrant 侧做，不是查回来再在 Python 里去重；同一篇新闻的多个片段因此收拢成
+    一条结果，``document_limit`` 限制的是文档数而不是 Chunk 数。
 
-    捕获范围与 ``POST /vector-search`` 完全一致（同一个 ``SEARCH_UPSTREAM_EXCEPTIONS``
-    元组和同一张错误表）；Runtime 缺失由依赖在进入本方法前抛出，两条路由共用应用级
-    handler 的同一个 503 响应。
+    捕获范围是一份共享元组和一张共享错误表（``SEARCH_UPSTREAM_EXCEPTIONS``）；Runtime
+    缺失由依赖在进入本方法前抛出，由应用级 handler 映射成同一个 503 响应。
 
     Args:
         search_request: 解析后的 query、document_limit 和 matches_per_document。

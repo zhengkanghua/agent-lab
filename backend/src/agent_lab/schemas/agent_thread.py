@@ -187,8 +187,7 @@ class AgentThreadMessagesResponse(BaseModel):
     数据源是业务表 ``agent_thread_messages``（见 ADR 0044），不是 checkpointer：用户看到的记录
     写完不再改，压缩策略怎么改都不影响它。
 
-    ``memory_boundary_run_id`` 是唯一的「早期历史已经不在模型上下文里」的线索：它指向
-    「模型只剩摘要」那一段的最后一轮，界面据此画那条分界线。**不回摘要正文**——界面不展示它。
+    **不回摘要正文**：界面从不展示历史摘要本身。
     """
 
     thread_id: UUID = Field(description="本次回放所属的会话 id。")
@@ -212,15 +211,6 @@ class AgentThreadMessagesResponse(BaseModel):
     )
     turns: tuple[AgentReplayTurn, ...] = Field(
         description="按时间顺序的历史轮次；不包含摘要那条伪提问。",
-    )
-    memory_boundary_run_id: UUID | None = Field(
-        default=None,
-        description=(
-            "模型只保留了摘要的那一段的最后一轮运行 id：这一轮及其之前的轮次已不在模型上下文里"
-            "（界面据此画那条分界线）。为 null 表示历史没有被压缩过。\n\n"
-            "同一会话里每次压缩都留下一行摘要，但后来的压缩可能沿用更早那条的标记，所以这一项"
-            "取的是**最近**那一行的值。"
-        ),
     )
 
     model_config = ConfigDict(frozen=True)

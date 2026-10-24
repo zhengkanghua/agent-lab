@@ -17,7 +17,6 @@ POST /knowledge-bases                     创建知识库（超级用户）
 PATCH /knowledge-bases/{knowledge_base_id}  改名称、说明或启停；无物理删除（超级用户）
 GET  /sources                             外部来源列表与绑定状态（超级用户）
 PATCH /sources/{source_id}/knowledge-base 修改来源的知识库绑定（超级用户）
-POST /vector-search                       Chunk 级只读语义检索
 POST /document-search                     文档分组只读语义检索
 GET  /documents/{document_id}             按需读取 PostgreSQL 完整正文
 GET  /file-documents                      分页列出文件资料与处理状态（超级用户）
@@ -42,7 +41,6 @@ DELETE /document-management/{document_id}          完整删除文档（超级�
 POST /pipeline/run-once                   持久受理手动 Pipeline，返回 202 和执行编号（超级用户）
 POST /agent/chat                          Agent 对话，SSE 流式；运行不随连接中断
 POST /agent/stop                          停下某一次正在跑的运行，请求体带会话 id 与运行 id
-GET  /agent/default-prompt                默认系统提示词
 GET    /agent/threads                     列出自己的会话，分页
 GET    /agent/threads/{thread_id}/messages 回放一个会话的历史问答
 PATCH  /agent/threads/{thread_id}/scope    保存会话知识库选择
@@ -81,9 +79,9 @@ GET    /task-policy/changes               最近的策略修改记录（超级�
 账号只能由超级用户或 CLI 创建。
 
 ``/agent/*`` 曾经也限超级用户，理由是「每次对话是真金白银的模型调用」和「自定义提示词等于
-让调用方改模型行为」。两者都已不成立：前者是成本不是访问控制，后者戴着护栏（中间件在选定
-提示词后无条件追加「自定义提示词不能扩大」的资料边界段）；而真正需要挡的「跨账号读对话」由
-会话归属单独解决，它按 ``user_id`` 判断、与角色无关。代价如实记录在
+让调用方改模型行为」。两者都已不成立：前者是成本不是访问控制，后者随自定义提示词一并撤掉
+（系统提示词现在只有服务端内置那一份，见 [ADR 0050](../../docs/adr/0050-prompt-only-built-in.md)）；
+而真正需要挡的「跨账号读对话」由会话归属单独解决，它按 ``user_id`` 判断、与角色无关。代价如实记录在
 [ADR 0030](../../docs/adr/0030-agent-open-to-all-accounts.md)：模型额度对全部登录账号共享。
 
 ## KnowledgeBase 范围
@@ -94,7 +92,7 @@ Collection 靠它过滤隔离。知识库用例的契约、端口和适配器组
 导入与重建应用在其中，索引、搜索、清理和 Source 配置复用 `services/` 中的端口用例；HTTP 与任务入口从 composition 装配取服务，
 领域层不依赖 FastAPI、SQLAlchemy 或 Qdrant。
 
-两个搜索接口兼容旧 HTTP：省略 `scope` 时缺省到稳定键 `news`，返回旧数组；显式单库请求
+文档分组检索接口兼容旧 HTTP：省略 `scope` 时缺省到稳定键 `news`，返回旧数组；显式单库请求
 仍有效。新页面发送所有启用库或非空 ID 集合，返回 `{scope, results}`；scope 包含本次实际
 知识库展示快照。新旧范围并存必须一致，空集合和显式 null 不退化成全库查询。
 
@@ -269,35 +267,13 @@ Payload 保存独立 `index_instance_id`、Document/KnowledgeBase 身份、Chunk
 只读 Runtime 按进程共享，写客户端按工作生命周期创建。各客户端都尝试关闭，并保留首个关闭异常；
 网络调用不占用业务长事务。
 
-## Chunk 级语义检索：POST /vector-search
-
-搜索链路：
-
-```text
-VectorSearchRequest.query
-    -> OllamaEmbeddingProvider.embed_query()
-    -> bge-m3:567m / 1024 维有限非零 Vector
-    -> QdrantVectorSearch.query_points(current Alias)
-    -> list[VectorSearchResult]
-```
-
-请求契约在 ``schemas/vector_search.py``：``top_k`` 的默认值与上限、``query`` 的字符上限都是该文件
-顶部的 ``DEFAULT_TOP_K`` / ``MAX_TOP_K`` / ``MAX_QUERY_CHARACTERS`` 常量，数值以代码为准；
-``score_threshold`` 可选，必须是 [-1, 1] 内的有限数，拒绝 bool 与字符串；``labels`` 是 MatchAny
-（命中任意标签，空数组表示不过滤）；``published_from/to`` 带时区且包含端点。
-
-不同 Payload 字段以 AND 组合并由 Qdrant 在候选集合中执行。缺失 ``published_at`` 的 Point 在没有
-时间条件时可以返回，一旦设置时间范围便不匹配。结果顺序完全沿用 Qdrant Cosine score，不在
-Python 中重排；同一 Document 的多个 Chunk 可以分别返回，不做 document 聚合或时间加权。成功返回
-``VectorSearchResult[]``，空命中返回 200 ``[]``。
-
 程序内构造只读 Runtime 时也必须显式提供知识库范围与已采用版本可见性端口，不能绕过 HTTP 后省略权限和版本核验。
 生产装配由 `main.py` 完成；离线与隔离测试的端口注入见 `tests/test_qdrant_runtime.py`。
 
 ## 文档级语义检索：POST /document-search
 
 `POST /document-search` 使用 Qdrant 的 `query_points_groups()`，按 Payload
-`index_instance_id` 在服务端分组，再核验并投影为当前可用的 Document。它不先取 ``top_k`` Chunk 再由前端
+`index_instance_id` 在服务端分组，再核验并投影为当前可用的 Document。它不先取固定条数的 Chunk 再由前端
 去重，因此 ``document_limit`` 始终限制不同 Document 数量，``matches_per_document`` 始终限制
 每篇 Document 返回的相关片段数量：
 
@@ -307,12 +283,19 @@ Python 中重排；同一 Document 的多个 Chunk 可以分别返回，不做 d
   "document_limit": 10,
   "matches_per_document": 3,
   "score_threshold": null,
-  "filters": {"labels": ["宏观", "利率"]}
+  "filters": {"published_from": "2026-01-01T00:00:00+00:00"}
 }
 ```
 
 两个数量参数的默认值与上限是 ``schemas/document_search.py`` 顶部的 ``DEFAULT_*`` / ``MAX_*``
 常量，前端 ``api/document-search.ts`` 里有对应的镜像常量（文档数那一对在前端叫 ``*_RESULT_LIMIT``），数值以代码为准。
+``query`` 的字符上限（``MAX_QUERY_CHARACTERS``，定义在 ``schemas/vector_search.py``）、
+``score_threshold`` 的 [-1, 1] 有限数要求，与 ``published_from/to`` 的带时区且包含端点规则，
+同样以代码为准。
+
+``filters`` 只有两个维度：知识库范围与发布时间区间。来源、来源提供方、文档类型与标签是命中
+载荷而不是过滤维度，它们照旧出现在结果里供展示，但不能拿来过滤；请求体里带上它们会被
+``VectorSearchFilters`` 的 ``extra="forbid"`` 拒绝（422 并指出字段名），而不是静默忽略。
 
 成功响应是 ``DocumentSearchResult[]``。每个文档包含 ``document_id``、``content_hash``、标题、
 来源、时间、作者、标签、``chunk_count``、最高的 ``best_score``、``best_match`` 和有限的
@@ -368,17 +351,13 @@ Python 中重排；同一 Document 的多个 Chunk 可以分别返回，不做 d
 有一个轮询协程批量读自己手上在跑的那几次运行的停止请求，写进内存标志；驱动者每轮只看那个标志，不为此
 碰数据库。
 
-**部署或重启时排空、由别的进程接手**（见 ADR 0040）：进程在 ASGI 生命周期收尾里先
+**部署或重启时排空，由旧进程自己收尾**（见 ADR 0051）：进程在 ASGI 生命周期收尾里先
 ``AgentRunRegistry.drain()``，对手上所有在途运行一起请求排空（上限
 ``agent/limits.RUN_DRAIN_TIMEOUT_SECONDS``）——图在当前 superstep 落盘后停下并抛 ``GraphDrained``，
-驱动者不补写、不标未完成、不释放会话位，而是在 ``agent_threads.drained_at`` 上写下「等接手」标记后
-退出；到点还没走到边界的由 ``close()`` 取消，沿用既有的「被中断」收尾（补写、释放）。每个 API 进程
-另有一个接手扫描协程（启动时先扫一次，之后每 ``RUN_HANDOVER_SCAN_INTERVAL_SECONDS`` 一次）：扫到标记
-就用同一条条件写入抢所有权（判标记非空、置空，**不碰停止请求那一列**），从 checkpoint 重建这一轮
-冻结的范围、从会话行取账号与提示词，再以「无新输入」的方式接着跑；抢不到就什么都不做。**拿不到可用的
-图（Agent 装配失败）就不认领**，把标记留给能跑的进程；认领之后重建不出上下文或运行中途抛错，按未完成
-收尾并释放会话位。带标记的会话不接受新提问（占位那条条件写入的失活分支排除它），因为旧的 checkpoint
-停在半途、还有待跑的节点。强杀、OOM、断电没有收尾机会，仍按 ADR 0036 收尾。
+驱动者把它按同一个终态收尾（补写、写会话历史、释放会话位、发终态事件），会话因此立刻能接新提问；
+到点还没走到边界的由 ``close()`` 取消，沿用既有的「被中断」收尾（补写、释放）。不存在「交给下一个
+进程接着跑」这条路：驱动者与运行同在一个进程，进程走了这次运行就结束。强杀、OOM、断电没有收尾机会，
+仍按 ADR 0036 收尾。
 
 被中断的运行会把**尚未落库**的那部分模型输出补写进会话（见 ADR 0036）：累积以「最近一次已落库的模型
 消息」为界，边界由 ``streaming.PersistedModelMessage`` 这个只给驱动者看的信号给出。没有文本就不写；
@@ -389,16 +368,16 @@ Python 中重排；同一 Document 的多个 Chunk 可以分别返回，不做 d
 ```text
 config/llm.py       LlmSettings（LLM_ 前缀，只剩温度/超时/UA/连接池）与 LangSmithSettings
 agent/limits.py     一次运行的有界执行参数，全是代码常量、刻意不进 .env
-agent/prompts.py    默认系统提示词与摘要压缩提示词
+agent/prompts.py    内置系统提示词（唯一的提示词来源）与摘要压缩提示词
 agent/chat_model.py 按一行渠道构造模型客户端（接入类型决定用哪个客户端类）
 agent/model_resolution.py 按当轮选定的模型解析客户端（装配期不连库、不发请求）
-agent/context.py    AgentContext：不可变 run_id、实际范围和自定义提示词
+agent/context.py    AgentContext：不可变 run_id、实际范围与当轮模型
 agent/tools/        两个只读工具：search_documents、read_document
 agent/evidence.py   Tool artifact 与引用核验，SSE 和回放共用
 agent/replay.py     从保留消息得到问答、范围、完成状态和引用
 agent/middleware.py 中间件流水线；顺序有语义，见 ADR 0005
 agent/runtime.py    组装根：编译一次图，进程级共享
-agent/runs.py       脱离连接的运行驱动者与订阅者、停止标志、失活续期、收尾排空与接手扫描（见 ADR 0035/0037/0040）
+agent/runs.py       脱离连接的运行驱动者与订阅者、停止标志、失活续期、收尾排空（见 ADR 0035/0037/0051）
 agent/streaming.py  翻译 LangGraph 事件，从持久状态确定 Done
 agent/checkpointer.py  四张 checkpointer 表名的唯一真源 + Alembic 的 include_object
 agent/errors.py     本层的已分类异常（叶子模块，不 import 框架图相关模块）
@@ -417,11 +396,13 @@ agent/errors.py     本层的已分类异常（叶子模块，不 import 框架�
 那个客户端（账本取模型名走的正是 `_get_ls_params`），委托值放在按协程隔离的上下文变量里、
 不挂在包装实例上（图是进程共享的）。客户端按模型 id 缓存：未命中就查库（所以新建的模型立刻可用），
 命中后信任 60 秒、超时只重校验那一行的内容（地址、接入类型、凭据密文、上游模型名、上下文窗口），
-内容没变就继续复用同一个客户端；**「只是被停用」不重建**——接手一条在途运行还要用它跑完。
+内容没变就继续复用同一个客户端；**「只是被停用」不重建**——一次正在跑的运行可能仍用着它（这一轮
+的模型在提问时就定下了）。
 可用性判定不经过这个缓存：那道门直读目录表，所以刚停用的模型立刻不能选。
 
 图能进程级共享是因为它无状态：模型上下文记录存在 checkpointer 里、按 ``thread_id`` 取；系统提示词
-由 ``dynamic_prompt`` 每次从 ``AgentContext`` 读。所以「换会话」和「换提示词」都不需要重新编译。
+由 ``dynamic_prompt`` 每次调模型前现拼（内置正文加三段追加，见 ``middleware.select_system_prompt``）。
+所以「换会话」不需要重新编译。
 
 Agent 装配失败**不致命**：lifespan 捕获、只记异常类型、``app.state.agent_runtime`` 留 ``None``，
 于是只有 ``/agent/*`` 返回 503，检索和流水线照常。反过来会让一个缺失的模型凭据或会话记忆配置把整个
@@ -434,14 +415,13 @@ Agent 装配失败**不致命**：lifespan 捕获、只记异常类型、``app.s
 ``SUMMARIZATION_KEEP_FRACTION`` 按**当轮模型的上下文窗口占比**触发并保留历史（触发 80%、压缩后保留
 30%），窗口不是常量——它在每次模型调用时从本次运行的上下文里读，所以换一个窗口不同的模型触发点跟
 着变，而 ``SUMMARIZATION_PLACEHOLDER_WINDOW`` 只是构造期的占位值，唯一职责是通过上游的构造校验；
-``MAX_USER_MESSAGE_CHARS`` 与 ``MAX_SYSTEM_PROMPT_CHARS`` 超过直接拒绝而不截断，截断会把提示词砍成
-半句、行为更难预期；
+``MAX_USER_MESSAGE_CHARS`` 超过直接拒绝而不截断，截断会把提问砍成半句、行为更难预期；
 ``SEARCH_TOOL_MAX_DOCUMENTS`` 与 ``SEARCH_TOOL_MAX_MATCHES_PER_DOCUMENT`` 管的是检索请求要几篇几段，
 不是输出长度；**工具输出不截断**：正文不论多长都整份交给模型（没有按窗口比例的上限，也不再报截断）。
 代价是正文超过模型窗口时上游报错、那一轮按失败收尾——这是已接受的边界（与“一轮内不压缩”同一套前提）；
 ``SSE_HEARTBEAT_INTERVAL_SECONDS`` 是心跳间隔，前端的空闲超时按它的倍数留余量。
-``RUN_DRAIN_TIMEOUT_SECONDS`` 是收尾排空的总预算（不是每个运行一份），``RUN_HANDOVER_SCAN_INTERVAL_SECONDS``
-是接手扫描的节奏；它们与容器停止宽限的关系见 ADR 0040 与 ``docker-compose.yml`` 的注释。
+``RUN_DRAIN_TIMEOUT_SECONDS`` 是收尾排空的总预算（不是每个运行一份），它与容器停止宽限的关系见
+ADR 0051 与 ``docker-compose.yml`` 的注释。
 
 SSE 侧的实现约束（心跳与订阅在 ``api/agent_chat.py``，事件流在 ``agent/runs.py``）：
 
@@ -468,7 +448,7 @@ error        已分类的失败，同样带 thread_id（理由见下）
 ```
 
 主模型每次接收 checkpoint 里的整份上下文记录（历史提问、回答、Tool 结果与摘要）；范围只约束工具能取到什么，历史内容不再被裁剪，但送出去的那一份会剥掉旧引用标识。
-自定义提示词后仍追加应用的范围与引用规则。实际 Tool 结果带应用生成的引用标识及 artifact，
+实际 Tool 结果带应用生成的引用标识及 artifact，
 保存文档归属、来源和读取时的 content_hash；只接受本次成功且未越界的证据，身份核验不等于事实正确性判断。
 
 Done 与回放口径一致：Done 用 `build_replay_turns` 从 checkpoint 现算，用户回看用 `build_replay_turns_from_rows`
@@ -619,7 +599,7 @@ checkpointer 按 ADR 0004 走独立的 psycopg 池，不经过 SQLAlchemy，所�
 搜索错误响应固定三字段 ``code``/``detail``/``retryable``（``retryable=true`` 只表示稍后重试
 可能恢复，不代表服务会自动重试）。任务受理错误保留稳定 code、中文说明与适用的执行编号；业务错误只在执行详情记录脱敏统计和 Python 异常类名，不再返回旧同步 Pipeline 结果包装。
 
-两条搜索路由通过共享的 ``SEARCH_UPSTREAM_EXCEPTIONS``（``OllamaEmbeddingError``、
+只读检索路由通过共享的 ``SEARCH_UPSTREAM_EXCEPTIONS``（``OllamaEmbeddingError``、
 ``QueryVectorValidationError``、``QdrantVectorSearchError``）捕获已分类上游失败。它不含
 ``VectorSearchRuntimeUnavailableError``——那个由依赖注入在进入 endpoint 前抛出，endpoint 内的
 try 接不到，统一由应用级 handler 映射成同一个 503。
@@ -638,12 +618,12 @@ try 接不到，统一由应用级 handler 映射成同一个 503。
 ``api/dependencies.py`` 位于 FastAPI 边界层最底部，只从 ``application.state`` 取装配根放进
 去的组件，不构造 Runtime、不做任何 I/O。``get_vector_search_service()`` 取进程级共享
 Service，`get_task_service()` 取得公共任务受理与查询组件；API 不取得 Pipeline 写 Runtime。组件缺失分别抛 `VectorSearchRuntimeUnavailableError` 或 `SchedulerRuntimeUnavailableError`，在边界映射成稳定 503。存在的意义是让
-``vector_search`` 与 ``document_search`` 这类平级路由都依赖公共模块，而不是互相 import。
+``document_search``、``documents`` 这类平级路由都依赖公共模块，而不是互相 import。
 
 ``schemas/_query_validators.py`` 提供 ``require_non_whitespace_query()`` 和
-``require_numeric_threshold()``，被 ``VectorSearchRequest`` 与 ``DocumentSearchRequest`` 共用。
-两者是独立请求契约（字段集合不同，不能合并成一个模型），但对 ``query`` 和 ``score_threshold``
-的要求必须完全一致——**包括错误文案**，因为 422 响应体里的文案属于对外契约且有测试直接断言。
+``require_numeric_threshold()``，被 ``DocumentSearchRequest`` 与 Agent 对话请求共用。
+两者是独立请求契约（字段集合不同，不能合并成一个模型），但对 ``query`` 的要求必须
+完全一致——**包括错误文案**，因为 422 响应体里的文案属于对外契约且有测试直接断言。
 
 ## 文档处理与采用状态
 
@@ -738,11 +718,10 @@ document_versions           已采用的正文、结构、Chunk、元数据、�
 document_review_records     人工或自动审核结论及当时正文依据
 users            内部登录邮箱、Argon2 密码 Hash、启用/超级用户状态和唯一环境托管标记
 access_tokens    浏览器登录产生的可撤销随机 Token、创建时间和所属用户
-agent_threads    Agent 会话的账号归属、选择范围、**当前选择的模型**、会话级系统提示词快照、标题、最后活动时刻
-                 （提问受理时写一次、运行期间由驱动者续期）与运行协调三列（在途运行 id、
-                 停止请求时刻、被排空时刻）；不含任何消息内容
-user_preferences 账号级个人偏好：自定义系统提示词与两个检索数量参数；一行一个账号，
-                 system_prompt 为空表示用服务端内置默认提示词
+agent_threads    Agent 会话的账号归属、选择范围、**当前选择的模型**、标题、最后活动时刻
+                 （提问受理时写一次、运行期间由驱动者续期）与运行协调两列（在途运行 id、
+                 停止请求时刻）；不含任何消息内容
+user_preferences 账号级个人偏好：两个检索数量参数；一行一个账号，没有行就是两个参数都用默认值
 scheduled_jobs   周期配置：key 唯一、类型、cron、params、启停、配置版本与下一计划时刻
 scheduled_job_runs  周期及一次性任务执行：受理快照、稳定来源、策略、状态、投递、领取与结果；
                     删除配置保留执行，普通终态详情到期清理，未结束和恢复依据受保护
@@ -755,9 +734,10 @@ llm_providers    模型目录的上游渠道：显示名、接入类型、地址
                  启用位；只有停用、没有删除
 llm_models       模型目录的可用模型：上游模型名、展示名（可空，回落上游名）、上下文窗口（必填）、
                  是否默认、启用位；同一渠道内上游模型名唯一，全目录最多一条默认（部分唯一索引兜底）
-agent_thread_messages  用户回看的会话历史：一条消息一行（提问、回答、每个工具调用、每个工具结果、
-                 摘要），按（会话，运行）整组替换写入、写入后永不清理；与 checkpointer 里的
-                 上下文记录相互独立（ADR 0044）
+agent_thread_messages  用户回看的会话历史：一条消息一行（提问、回答、每个工具调用、每个工具结果），
+                 按（会话，运行）整组替换写入、写入后永不清理；摘要不写入（存量库里还留着
+                 早期版本写下的摘要行，读侧跳过），与 checkpointer 里的上下文记录相互独立
+                 （ADR 0044，摘要停写见 ADR 0049）
 alembic_version  由 Alembic 维护当前迁移版本
 
 以下四张由 langgraph-checkpoint-postgres 自建自迁移，Alembic 既不生成也不删除（ADR 0004）：
@@ -776,17 +756,17 @@ Chunk 清单与结构作为预览和已采用快照保存在 PostgreSQL，向量
 ``backend/src/agent_lab/usage/`` 与 ``agent/usage_recording.py``。
 
 Agent 的会话数据分在两处，边界是「内容 / 归属」：四张 ``checkpoint*`` 表存消息内容，
-``agent_threads`` 存归属、展示元信息、下一次运行的选择范围和会话级提示词快照。前者由第三方库管、不由 Alembic 管；后者是普通业务表，
+``agent_threads`` 存归属、展示元信息与下一次运行的选择范围。前者由第三方库管、不由 Alembic 管；后者是普通业务表，
 ``user_id`` 是指向 ``users`` 的**逻辑外键**（库上无约束；注销账号**不删**这些归属行，
 ``UserAdminService.delete_user`` 在同一个事务里只撤销登录 Token，见
 [ADR 0028](../../docs/adr/0028-drop-database-foreign-keys.md) 与
 [ADR 0034](../../docs/adr/0034-account-deletion-is-soft-delete.md)），并有 ``(user_id, last_active_at DESC)`` 索引。
 分开的理由见 [ADR 0009](../../docs/adr/0009-agent-thread-ownership-in-own-table.md)。
 
-``agent_threads`` 的两列写入语义**相反**，这不是疏漏：``scope`` 续聊时可被请求覆盖（另有专门的
-PATCH 路由），``system_prompt`` 在会话建立时从该账号的 ``user_preferences`` 拍下快照、续聊不重读
-偏好表——设置页改提示词只影响新开的会话。改动其中一列前先读
-[ADR 0029](../../docs/adr/0029-session-scoped-system-prompt.md)。
+``agent_threads`` 上会话级的选择只有 ``scope`` 与 ``llm_model_id`` 两列，两者同一条写入规则：
+续聊时请求里带了才写回，没带就沿用行上已存的那份（``scope`` 另有一条 PATCH 路由给「只换范围」用）。
+提示词不在这张表里——它只有服务端内置那一份，不随会话变化（见
+[ADR 0050](../../docs/adr/0050-prompt-only-built-in.md)）。
 
 ## 删父表必须连带子表：当前的删除入口清单
 

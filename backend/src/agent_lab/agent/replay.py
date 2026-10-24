@@ -2,11 +2,13 @@
 
 本模块只做纯内存翻译：输入是一串 LangChain 消息，输出是 ``schemas.agent_thread`` 的回放模型。
 它不读数据库、不调 checkpointer、不校验归属——取状态在消费方（``agent/streaming.py`` 的终态事件、
-``agent/runs.py`` 的接手重建、写入侧收尾）。
+``agent/runs.py`` 的写入侧收尾）。
 
-**谁还从 checkpointer 读**：终态事件（一次运行结束时把最终答案、完成状态与引用发给前端）与接手
-时重建「本轮冻结的范围与模型」。两件事都发生在收尾前后，那时这一轮可能还没写进业务表。**用户回看**
-不再走这里：它读 ``agent_thread_messages``（见 ADR 0043 与 ADR 0044），组装在
+**谁还从 checkpointer 读**：终态事件（一次运行结束时把最终答案、完成状态与引用发给前端）与写入
+侧（把这一轮组装成 ``agent_thread_messages`` 的行）。两件事都发生在收尾前后，那时这一轮可能还没
+写进业务表。
+
+**用户回看**不再走这里：它读 ``agent_thread_messages``（见 ADR 0043 与 ADR 0044），组装在
 ``agent/replay_rows.py``。两条路径共用本模块与 ``agent/evidence.py`` 里的纯函数，口径才不分叉。
 
 **摘要那条消息长什么样**（langchain 1.3.15 实测，见本模块的测试）：压缩动作是
@@ -59,26 +61,6 @@ def _is_summary_message(message: BaseMessage) -> bool:
         return False
     extra = getattr(message, "additional_kwargs", None) or {}
     return extra.get("lc_source") == _SUMMARY_SOURCE_MARKER
-
-
-def summary_messages(messages: Sequence[BaseMessage]) -> tuple[BaseMessage, ...]:
-    """取出会话快照里的摘要消息（压缩留下的伪提问），按它们在快照里的先后。
-
-    写入侧要用它：``group_messages_by_run`` 会把摘要跳过（它不属于某一次对话），而摘要行承载
-    压缩分界标记、必须落表（见 ``agent/thread_messages``）。这里只负责把摘要**筛出来**，不判断
-    它属于哪一次运行——那个判据在写入侧，按 ``produced_by_run_id`` 与组绑定。
-
-    Args:
-        messages: ``graph.aget_state`` 给出的 ``messages`` 列表，按时间正序。
-
-    Returns:
-        摘要消息（压缩伪提问）的元组；没有被压缩过时是空元组。
-
-    Notes:
-        纯内存转换，不执行 I/O。读取路径不受影响：回放仍然不看摘要消息的内容。
-    """
-
-    return tuple(message for message in messages if _is_summary_message(message))
 
 
 def text_of(message: BaseMessage) -> str:
@@ -337,7 +319,6 @@ __all__ = [
     "RunMessageGroup",
     "build_replay_turns",
     "group_messages_by_run",
-    "summary_messages",
     "text_of",
     "turn_status",
 ]

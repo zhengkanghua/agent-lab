@@ -108,13 +108,13 @@ def test_ownership_filter_really_isolates_two_accounts() -> None:
 
             # 1、Alice 建两个会话，Bob 建一个。返回值是 (会话 id, 会话提示词)。
             alice_first_run = uuid4()
-            alice_first, _ = await threads.ensure_thread(
+            alice_first = await threads.ensure_thread(
                 user_id=alice.id, thread_id=None, run_id=alice_first_run, first_message="Alice 的第一个会话"
             )
-            alice_second, _ = await threads.ensure_thread(
+            alice_second = await threads.ensure_thread(
                 user_id=alice.id, thread_id=None, run_id=uuid4(), first_message="Alice 的第二个会话"
             )
-            bob_only, _ = await threads.ensure_thread(
+            bob_only = await threads.ensure_thread(
                 user_id=bob.id, thread_id=None, run_id=uuid4(), first_message="Bob 的会话"
             )
             assert len({alice_first, alice_second, bob_only}) == 3
@@ -127,7 +127,7 @@ def test_ownership_filter_really_isolates_two_accounts() -> None:
                     user_id=bob.id, thread_id=alice_first, run_id=uuid4(), first_message="偷看"
                 )
             # 自己的能续，返回同一个 id。
-            resumed, _ = await threads.ensure_thread(
+            resumed = await threads.ensure_thread(
                 user_id=alice.id, thread_id=alice_first, run_id=uuid4(), first_message="接着聊"
             )
             assert resumed == alice_first
@@ -215,7 +215,7 @@ def test_a_thread_holds_exactly_one_run_and_stale_claims_expire() -> None:
             threads = AgentThreadService(factory)
 
             first_run = uuid4()
-            thread_id, _ = await threads.ensure_thread(
+            thread_id = await threads.ensure_thread(
                 user_id=owner.id, thread_id=None, run_id=first_run, first_message="第一轮"
             )
 
@@ -253,86 +253,6 @@ def test_a_thread_holds_exactly_one_run_and_stale_claims_expire() -> None:
     asyncio.run(verify(), loop_factory=asyncio.SelectorEventLoop)
 
 
-def test_thread_snapshots_the_account_prompt_on_a_real_database() -> None:
-    """真库上验「建会话时快照提示词、续聊不重读偏好」。
-
-    语句级测试只能证明 SQL 里带了那个列，证明不了它在真库上生效：列名写错、类型不匹配、
-    ``RETURNING`` 拿不到值，编译文本都照样通过。这条在真 PostgreSQL 上跑一遍完整路径——
-    写偏好、建会话、改偏好、续聊——直接看会话里存的是哪一份。
-    """
-
-    async def verify() -> None:
-        suffix = uuid4().hex
-        connection = await engine.connect()
-        outer_transaction = await connection.begin()
-        factory = async_sessionmaker(
-            bind=connection,
-            class_=AsyncSession,
-            expire_on_commit=False,
-            join_transaction_mode="create_savepoint",
-        )
-        try:
-            owner = await _create_user(factory, f"prefs-{suffix}@example.com")
-            threads = AgentThreadService(factory)
-
-            # 1、先配一份偏好，再建会话——会话该拍下这一份。
-            async with factory() as session:
-                await UserPreferenceService(session).replace(
-                    owner.id,
-                    UserPreferenceUpdateRequest(
-                        system_prompt="第一版提示词。",
-                        document_limit=10,
-                        matches_per_document=3,
-                    ),
-                )
-            first_run = uuid4()
-            thread_id, prompt = await threads.ensure_thread(
-                user_id=owner.id, thread_id=None, run_id=first_run, first_message="第一轮"
-            )
-            assert prompt == "第一版提示词。"
-            async with factory() as session:
-                stored = await session.get(AgentThreadRecord, thread_id)
-                assert stored is not None and stored.system_prompt == "第一版提示词。"
-            # 第一轮没有真实运行在跑，它的占位要自己结算掉，否则下面的续聊会被判成重复提交。
-            # 走 Service 的释放路径，不直接改库：这样测的才是产品实际走的那条路。
-            await threads.finish_run(thread_id=thread_id, run_id=first_run)
-
-            # 2、改偏好之后续聊：会话里那份不变。
-            async with factory() as session:
-                await UserPreferenceService(session).replace(
-                    owner.id,
-                    UserPreferenceUpdateRequest(
-                        system_prompt="第二版提示词。",
-                        document_limit=20,
-                        matches_per_document=5,
-                    ),
-                )
-            same_thread, resumed_prompt = await threads.ensure_thread(
-                user_id=owner.id, thread_id=thread_id, run_id=uuid4(), first_message="第二轮"
-            )
-            assert same_thread == thread_id
-            assert resumed_prompt == "第一版提示词。"
-
-            # 3、新开的会话用改过之后的那份。
-            _, new_prompt = await threads.ensure_thread(
-                user_id=owner.id, thread_id=None, run_id=uuid4(), first_message="新会话"
-            )
-            assert new_prompt == "第二版提示词。"
-
-            # 4、没配过提示词的账号：快照为空，运行时回落到内置默认。
-            other = await _create_user(factory, f"noprefs-{suffix}@example.com")
-            _, empty_prompt = await threads.ensure_thread(
-                user_id=other.id, thread_id=None, run_id=uuid4(), first_message="没配过"
-            )
-            assert empty_prompt is None
-        finally:
-            await outer_transaction.rollback()
-            await connection.close()
-            await engine.dispose()
-
-    asyncio.run(verify(), loop_factory=asyncio.SelectorEventLoop)
-
-
 def test_deregistering_an_account_keeps_its_thread_rows() -> None:
     """注销账号不再清掉它的会话归属与个人偏好，只揣销登录 Token。
 
@@ -359,7 +279,7 @@ def test_deregistering_an_account_keeps_its_thread_rows() -> None:
         try:
             doomed = await _create_user(factory, f"doomed-{suffix}@example.com")
             threads = AgentThreadService(factory)
-            thread_id, _ = await threads.ensure_thread(
+            thread_id = await threads.ensure_thread(
                 user_id=doomed.id, thread_id=None, run_id=uuid4(), first_message="注销后仍然在"
             )
             # 也把这个账号的偏好与登录 Token 备齐：注销之后偏好必须还在，
@@ -368,7 +288,6 @@ def test_deregistering_an_account_keeps_its_thread_rows() -> None:
                 await UserPreferenceService(session).replace(
                     doomed.id,
                     UserPreferenceUpdateRequest(
-                        system_prompt="注销后仍然在。",
                         document_limit=10,
                         matches_per_document=3,
                     ),
@@ -406,7 +325,7 @@ def test_deregistering_an_account_keeps_its_thread_rows() -> None:
                 # 3、偏好行仍在，内容一字未改。
                 preferences = await session.get(UserPreferenceRecord, doomed.id)
                 assert preferences is not None
-                assert preferences.system_prompt == "注销后仍然在。"
+                assert preferences.document_limit == 10
                 # 4、登录 Token 一条不剩。
                 tokens = (
                     await session.scalars(

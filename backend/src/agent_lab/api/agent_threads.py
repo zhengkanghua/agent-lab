@@ -132,9 +132,7 @@ async def list_agent_threads(
         "回放某个会话已经存下的问答，供前端在续聊前把界面补齐。"
         "不分页：一次会话的消息行本来就有限。\n\n"
         "读的是我们自己的会话历史表，不是 checkpointer：那份记录写完不再改，"
-        "模型上下文怎么压缩都不影响它。\n\n"
-        "`memory_boundary_run_id` 是「模型只保留了摘要」那条边界的标记，"
-        "为 null 表示历史没有被压缩过。"
+        "模型上下文怎么压缩都不影响它。"
     ),
 )
 async def get_agent_thread_messages(
@@ -152,7 +150,7 @@ async def get_agent_thread_messages(
         models: 读会话当前那个选择此刻在目录里的展示名（含已停用的条目）。
 
     Returns:
-        按时间排列的历史轮次，以及压缩分界标记。
+        按时间排列的历史轮次。
 
     Raises:
         AgentThreadNotFoundError: 会话不存在或不属于当前账号；由 handler 映射成 404。
@@ -181,7 +179,7 @@ async def get_agent_thread_messages(
     except SQLAlchemyError as error:
         return _database_error(error)
 
-    turns, memory_boundary_run_id = build_replay_turns_from_rows(rows)
+    turns = build_replay_turns_from_rows(rows)
     return AgentThreadMessagesResponse(
         thread_id=thread_id,
         # 在途运行的 id 从会话行上读，不从消息里推：正在跑的那一轮还没落表，
@@ -197,7 +195,6 @@ async def get_agent_thread_messages(
                 display_name=current_model.display_name if current_model is not None else None,
             )
         ),
-        memory_boundary_run_id=memory_boundary_run_id,
     )
 
 

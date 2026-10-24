@@ -162,7 +162,7 @@ async def replace_own_preferences(
     """整体覆盖当前登录账号的个人偏好。
 
     Args:
-        body: 完整的一份偏好，已在 schema 层过边界校验与空白归一化。
+        body: 完整的一份偏好，已在 schema 层过边界校验。
         user: 当前登录账号。
         preferences: 个人偏好 Service。
 
@@ -170,9 +170,7 @@ async def replace_own_preferences(
         落库后重新读出的偏好；数据库故障时稳定的 503 JSON。
 
     Notes:
-        一次 PostgreSQL 写入事务。提示词长度上限由 ``UserPreferenceUpdateRequest`` 上的
-        ``max_length`` 把关——那道约束原先挂在请求体的 ``system_prompt`` 字段上，随本次改动
-        删除了，不在这里补回来服务端就没有真边界。
+        一次 PostgreSQL 写入事务。
     """
 
     try:

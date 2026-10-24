@@ -137,8 +137,11 @@ def test_adoption_switch_and_cleanup_are_scoped_to_one_instance(processor):
             visibility.adopt(other)
             search = AdoptedVectorSearch(QdrantVectorSearch(client, settings, spec), visibility)
             async def visible():
-                return await search.search([1.0, 0.0, 0.0], top_k=10, score_threshold=None,
-                                           filters=VectorSearchFilters(knowledge_base_id=kb))
+                groups = await search.search_groups(
+                    [1.0, 0.0, 0.0], document_limit=10, matches_per_document=3,
+                    score_threshold=None, filters=VectorSearchFilters(knowledge_base_id=kb),
+                )
+                return [hit for group in groups for hit in group.matches]
             assert {hit.index_instance_id for hit in await visible()} == {old.index_instance_id, other.index_instance_id}
             visibility.adopt(new)
             assert {hit.index_instance_id for hit in await visible()} == {new.index_instance_id, other.index_instance_id}
@@ -150,8 +153,7 @@ def test_adoption_switch_and_cleanup_are_scoped_to_one_instance(processor):
     asyncio.run(verify())
 
 
-@pytest.mark.parametrize("grouped", [False, True])
-def test_concurrent_candidate_write_or_rejection_requeries_without_losing_slots(processor, grouped):
+def test_concurrent_candidate_write_or_rejection_requeries_without_losing_slots(processor):
     async def verify():
         client, settings, spec, store = await setup()
         try:
@@ -164,7 +166,7 @@ def test_concurrent_candidate_write_or_rejection_requeries_without_losing_slots(
                 await store.prepare_candidate(target, vectors(target, (0.8, 0.6, 0.0)))
                 visibility.adopt(target)
             pending = candidate(processor, spec, kb, document_id=old.document_id, text="高分候选")
-            method_name = "query_points_groups" if grouped else "query_points"
+            method_name = "query_points_groups"
             original = getattr(client, method_name)
             changed = False
             async def concurrent(**kwargs):
@@ -178,9 +180,10 @@ def test_concurrent_candidate_write_or_rejection_requeries_without_losing_slots(
             setattr(client, method_name, concurrent)
             search = AdoptedVectorSearch(QdrantVectorSearch(client, settings, spec), visibility)
             filters = VectorSearchFilters(knowledge_base_id=kb)
-            result = (await search.search_groups([1.0, 0.0, 0.0], document_limit=1, matches_per_document=2,
-                        score_threshold=None, filters=filters)) if grouped else (
-                        await search.search([1.0, 0.0, 0.0], top_k=1, score_threshold=None, filters=filters))
+            result = await search.search_groups(
+                [1.0, 0.0, 0.0], document_limit=1, matches_per_document=2,
+                score_threshold=None, filters=filters,
+            )
             assert len(result) == 1 and result[0].document_id == other.document_id
         finally:
             await client.close()
@@ -196,8 +199,9 @@ def test_continuous_visibility_changes_return_retryable_failure(processor):
             visibility.drift = True
             search = AdoptedVectorSearch(QdrantVectorSearch(client, settings, spec), visibility)
             with pytest.raises(SearchVisibilityError):
-                await search.search([1.0, 0.0, 0.0], top_k=1, score_threshold=None,
-                                    filters=VectorSearchFilters(knowledge_base_id=kb))
+                await search.search_groups([1.0, 0.0, 0.0], document_limit=1, matches_per_document=1,
+                                           score_threshold=None,
+                                           filters=VectorSearchFilters(knowledge_base_id=kb))
         finally:
             await client.close()
     asyncio.run(verify())

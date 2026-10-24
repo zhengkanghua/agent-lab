@@ -1,8 +1,9 @@
 /* 补 jsdom 缺的浏览器 API。
  *
  * 补在测试环境层，不在生产代码里写「有没有这个全局」的分支：那种兜底会让浏览器里真正该走的
- * 路径在测试中被静默跳过。目前缺两个，都是生产代码正当依赖的标准 API：
+ * 路径在测试中被静默跳过。目前缺三个，都是生产代码正当依赖的标准 API：
  *   - ResizeObserver：useStickToBottom 靠它跟随内容长高；
+ *   - Element.prototype.scrollIntoView：证据面板从正文内联小丸打开时要把它滚进视口；
  *   - matchMedia：Agent 页判断是不是触屏（触屏下不自动聚焦，免得弹软键盘）。
  *
  * 本模块被 vitest.config.ts 列为 setupFiles，import 时就装上；测试需要拿到替身实例时
@@ -54,6 +55,19 @@ export function resetResizeObservers(): void {
 
 if (typeof globalThis.ResizeObserver === 'undefined') {
   globalThis.ResizeObserver = ResizeObserverStub as unknown as typeof ResizeObserver
+}
+
+/* ---------- scrollIntoView ---------- */
+
+/* jsdom 没实现 `Element.prototype.scrollIntoView`（属性就是 undefined，调用直接 TypeError）。
+ * 要在 browser（jsdom）环境里补，`node` 环境的用例（model/composable 那种）根本没有 Element，
+ * 所以先确认它存在——另外几项用的都是 globalThis 上的同名成员，同理不需要这道判断。
+ * 要核验真的滚了没，用 vi.spyOn 盯这个方法。 */
+if (
+  typeof globalThis.Element !== 'undefined' &&
+  typeof Element.prototype.scrollIntoView !== 'function'
+) {
+  Element.prototype.scrollIntoView = function scrollIntoView(): void {}
 }
 
 /* ---------- matchMedia ---------- */

@@ -712,12 +712,10 @@ async def _seed_thread(sessions: Any, *, thread_id: Any, last_active_at: Any) ->
                 title="预置会话",
                 scope={"mode": "all"},
                 llm_model_id=None,
-                system_prompt=None,
                 created_at=now,
                 last_active_at=last_active_at,
                 active_run_id=None,
                 stop_requested_at=None,
-                drained_at=None,
             )
         )
         await session.commit()

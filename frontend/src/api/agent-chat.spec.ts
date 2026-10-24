@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   AGENT_STREAM_IDLE_TIMEOUT_MS,
-  fetchAgentDefaultPrompt,
   stopAgentRun,
   streamAgentChat,
   type AgentChatEvent,
@@ -242,8 +241,8 @@ describe('streamAgentChat', () => {
   })
 
   it('只在给了 thread_id 时才发这个字段，且请求体里没有提示词', async () => {
-    // 提示词改为会话级快照后，请求体里不再有 system_prompt（见 ADR 0029）。
-    // 这条同时挡住「有人把它加回请求体」——那会让客户端重新获得改模型行为的能力。
+    // 提示词只留内置那一份，客户端从来没有提交它。这条挡住「有人把它加回请求体」——
+    // 那会让客户端重新获得改模型行为的能力。
     const fetchMock = vi.fn().mockResolvedValue(sseResponse([]))
     vi.stubGlobal('fetch', fetchMock)
 
@@ -404,38 +403,6 @@ describe('streamAgentChat', () => {
     }
 
     expect(cancelled).toBe(true)
-  })
-})
-
-describe('fetchAgentDefaultPrompt', () => {
-  afterEach(() => vi.unstubAllGlobals())
-
-  it('返回默认提示词全文', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ system_prompt: '你是新闻研究助手。' }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
-      ),
-    )
-
-    await expect(fetchAgentDefaultPrompt()).resolves.toBe('你是新闻研究助手。')
-  })
-
-  it('拒绝空提示词或缺字段的响应', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ system_prompt: '  ' }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
-      ),
-    )
-
-    await expect(fetchAgentDefaultPrompt()).rejects.toMatchObject({ code: 'response_invalid' })
   })
 })
 

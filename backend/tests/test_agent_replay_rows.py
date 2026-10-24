@@ -98,7 +98,7 @@ def test_rows_become_the_turn_the_user_saw() -> None:
     """一轮的行拼成用户当时看到的那一轮：问答、工具轨迹、状态、范围与当轮模型。"""
 
     run_id = uuid4()
-    turns, boundary = build_replay_turns_from_rows(
+    turns = build_replay_turns_from_rows(
         [
             question_row(run_id, seq=0, model=FROZEN_MODEL),
             stored("answer", run_id=run_id, seq=1, text="我查一下。"),
@@ -134,9 +134,8 @@ def test_rows_become_the_turn_the_user_saw() -> None:
     assert [(trace.tool, trace.arguments, trace.content, trace.failed) for trace in turn.traces] == [
         ("search_documents", {"query": "央行降息"}, "新闻资料正文。", False)
     ]
-    # 工具轨迹带上这次调用实际使用的范围；没有摘要行时没有分界标记。
+    # 工具轨迹带上这次调用实际使用的范围。
     assert turn.traces[0].scope == NEWS_SCOPE
-    assert boundary is None
 
 
 def test_tool_call_and_result_are_paired_by_tool_call_id() -> None:
@@ -147,7 +146,7 @@ def test_tool_call_and_result_are_paired_by_tool_call_id() -> None:
     """
 
     run_id = uuid4()
-    turns, _boundary = build_replay_turns_from_rows(
+    turns = build_replay_turns_from_rows(
         [
             question_row(run_id),
             stored(
@@ -185,7 +184,7 @@ def test_a_call_without_its_result_is_incomplete_and_has_no_content() -> None:
     """
 
     run_id = uuid4()
-    turns, _boundary = build_replay_turns_from_rows(
+    turns = build_replay_turns_from_rows(
         [
             question_row(run_id, completed=True),
             stored(
@@ -208,7 +207,7 @@ def test_a_run_that_never_answered_stays_incomplete() -> None:
     """写入侧冻结的完成态是未答完时，回放如实标成未完成。"""
 
     run_id = uuid4()
-    turns, _boundary = build_replay_turns_from_rows(
+    turns = build_replay_turns_from_rows(
         [question_row(run_id, completed=False), stored("answer", run_id=run_id, seq=1, text="半句")]
     )
 
@@ -219,7 +218,7 @@ def test_turns_follow_the_sequence_number_across_runs() -> None:
     """同一会话里多次运行按顺序号排成多轮，各自带着自己的范围快照。"""
 
     first_run, second_run = uuid4(), uuid4()
-    turns, _boundary = build_replay_turns_from_rows(
+    turns = build_replay_turns_from_rows(
         [
             question_row(first_run, seq=0, text="第一问"),
             stored("answer", run_id=first_run, seq=1, text="第一答。"),
@@ -237,17 +236,17 @@ def test_turns_follow_the_sequence_number_across_runs() -> None:
     assert turns[1].llm_model is None
 
 
-def test_no_rows_gives_no_turns_and_no_boundary() -> None:
-    """表里一行都没有时给空轮次与空标记，不报错。"""
+def test_no_rows_gives_no_turns() -> None:
+    """表里一行都没有时给空轮次，不报错。"""
 
-    assert build_replay_turns_from_rows([]) == ((), None)
+    assert build_replay_turns_from_rows([]) == ()
 
 
 def test_a_group_without_its_question_row_is_skipped_but_the_rest_still_replays() -> None:
     """没有提问行的那一组不构成一轮（元数据无处可取），但不影响别的轮次。"""
 
     good_run, broken_run = uuid4(), uuid4()
-    turns, _boundary = build_replay_turns_from_rows(
+    turns = build_replay_turns_from_rows(
         [
             stored("answer", run_id=broken_run, seq=0, text="孤零零的回答"),
             question_row(good_run, seq=1, text="完整提问"),
@@ -258,19 +257,17 @@ def test_a_group_without_its_question_row_is_skipped_but_the_rest_still_replays(
     assert [(turn.question, turn.answer) for turn in turns] == [("完整提问", "完整回答。")]
 
 
-def test_a_summary_row_only_carries_the_boundary_marker() -> None:
-    """直接放进表的两行摘要：分界标记取顺序号**最大**那条，摘要行自己不成一轮。"""
+def test_a_summary_row_does_not_become_a_turn() -> None:
+    """历史库里的存量摘要行照旧被跳过，前后各放一行都不成一轮。"""
 
     run_id = uuid4()
-    earlier_runs, latest_run = uuid4(), uuid4()
-    turns, boundary = build_replay_turns_from_rows(
+    turns = build_replay_turns_from_rows(
         [
             stored(
                 "summary",
                 run_id=uuid4(),
                 seq=0,
                 text="Here is a summary of the conversation to date: 旧背景",
-                memory_boundary_run_id=earlier_runs,
             ),
             question_row(run_id, seq=1),
             stored("answer", run_id=run_id, seq=2, text="降了 25 个基点。"),
@@ -279,13 +276,11 @@ def test_a_summary_row_only_carries_the_boundary_marker() -> None:
                 run_id=uuid4(),
                 seq=9,
                 text="Here is a summary of the conversation to date: 新背景",
-                memory_boundary_run_id=latest_run,
             ),
         ]
     )
 
-    assert [turn.question for turn in turns] == ["央行降息了吗"]
-    assert boundary == latest_run
+    assert [(turn.question, turn.answer) for turn in turns] == [("央行降息了吗", "降了 25 个基点。")]
 
 
 def test_citations_come_from_the_answer_identifiers() -> None:
@@ -295,7 +290,7 @@ def test_citations_come_from_the_answer_identifiers() -> None:
     cited = citation(citation_id="E1a2b3c4d5e6f")
     unused = citation(citation_id="Eabcdefabcdef")
     answer = f"降了 25 个基点 [[{cited.citation_id}]]；伪造 [[Edeadbeef0000]]"
-    turns, _boundary = build_replay_turns_from_rows(
+    turns = build_replay_turns_from_rows(
         [
             question_row(run_id),
             stored(
@@ -332,7 +327,7 @@ def test_evidence_covering_a_wider_scope_than_the_turn_is_refused() -> None:
 
     run_id = uuid4()
     cited = citation(citation_id="E1a2b3c4d5e6f")
-    turns, _boundary = build_replay_turns_from_rows(
+    turns = build_replay_turns_from_rows(
         [
             question_row(run_id, scope=NEWS_SCOPE),
             stored(

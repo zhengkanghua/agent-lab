@@ -2,6 +2,7 @@ import { computed } from 'vue'
 import { stopAgentRun, streamAgentChat, type AgentChatEvent } from '@/api/agent-chat'
 import { copySelection } from '@/api/knowledge-scope'
 import { ApiError } from '@/api/client'
+import { createStaleGuard } from '@/shared/model/stale-guard'
 import { presentAgentError } from '../model/agent-error'
 import { MAX_MESSAGE_CHARACTERS, validateMessage } from '../model/agent-validation'
 import {
@@ -22,9 +23,7 @@ import type { useThreadHistory } from './useThreadHistory'
  * 这里只管流本身，历史对账、范围保存与模型保存通过参数注入（同步历史、读在途 run id、
  * 会话刚建出来时补存改选），依赖方向是单向的：流 → 历史，流 → 范围/模型，没有回头边。
  *
- * 陈旧响应守卫沿用同一招：runSequence 与本轮 runId 比较。AbortController 只能拦住还没 resolve
- * 的读取，而「事件已经拿到、await 还没恢复执行」的窗口内 abort 不起作用，只有序号比较能拦住
- * 已取消的那一轮继续往界面上写字。
+ * 陈旧响应守卫见 `@/shared/model/stale-guard`。
  */
 
 /** 注入流实现，测试里可以不打桩 fetch 就驱动整个状态机。 */
@@ -33,7 +32,7 @@ export type AgentChatStream = typeof streamAgentChat
 /** 注入停止实现，测试里可以点「停止」这条路。 */
 export type AgentRunStopper = typeof stopAgentRun
 
-const FAILED_TRACE_NOTE = '本轮对话中断，这次工具调用的结果未送达。'
+const FAILED_TRACE_NOTE = '这次调用没有拿到结果，可以重发这一轮。'
 
 type ScopeApi = ReturnType<typeof useChatScope>
 type ModelApi = ReturnType<typeof useChatModel>
@@ -61,8 +60,7 @@ export function useChatStream(
   const remainingCharacters = computed(() => MAX_MESSAGE_CHARACTERS - state.draft.value.length)
   const isStreaming = computed(() => state.status.value === 'streaming')
 
-  let runSequence = 0
-  let activeController: AbortController | null = null
+  const guard = createStaleGuard()
   // 用户已点停止、但还没拿到运行 id。``run_started`` 是第一个事件，这个窗口极小，
   // 但留一个意图位比让那次点击静默丢掉要好。
   let stopPending = false
@@ -104,9 +102,7 @@ export function useChatStream(
     // 这一轮别把「另一个模型」带成上一轮那个：模型也一样在出发前拍一份。
     const submittedModelId = model.selectedId()
     const submittedModelVersion = model.editVersion()
-    const runId = ++runSequence
-    const controller = new AbortController()
-    activeController = controller
+    const run = guard.begin()
 
     state.turns.value.push(createTurn(question))
     // 取回代理对象而不是用上面那个原始对象：深层 ref 里只有代理上的写入会触发渲染。
@@ -122,11 +118,11 @@ export function useChatStream(
         threadId: state.threadId.value,
         scope: submittedSelection,
         llmModelId: submittedModelId,
-        signal: controller.signal,
+        signal: run.signal,
       })) {
         // 已被取消或已被更新的一轮不再往界面上写：break 会走生成器的 finally，
         // 顺带取消 reader、关掉连接。
-        if (runId !== runSequence) break
+        if (!run.isCurrent()) break
         applyEvent(live, event)
         if (event.event === 'run_started' && submittedScopeVersion !== scope.editVersion()) {
           // 新会话还没拿到 ID 时发生的改选，也要保存为下一次提问的选择。
@@ -145,7 +141,7 @@ export function useChatStream(
         if (event.event === 'done' || event.event === 'error') break
       }
 
-      if (runId !== runSequence) return
+      if (!run.isCurrent()) return
 
       if (live.status === 'streaming') {
         // 已收到的片段保留，但没有服务端终态就不能当作完整答案。
@@ -153,16 +149,16 @@ export function useChatStream(
         settlePendingTraces(live, FAILED_TRACE_NOTE)
       } else if (live.status === 'done' || live.status === 'incomplete') {
         await history.synchronizeHistory({
-          signal: controller.signal,
-          isStale: () => runId !== runSequence,
+          signal: run.signal,
+          isStale: () => !run.isCurrent(),
         })
       }
     } catch (error) {
-      if (runId !== runSequence) return
+      if (!run.isCurrent()) return
 
       // 连接被中断不一定是失败：部署切换会断掉订阅连接，而运行本身还在服务端跑。
       // 先读一次回放，服务端仍报有在途运行就转成等待态，而不是把这轮标成错误。
-      if (await history.recoverInterruptedRun(() => runId !== runSequence)) return
+      if (await history.recoverInterruptedRun(() => !run.isCurrent())) return
 
       live.status = 'error'
       live.error = presentAgentError(
@@ -176,10 +172,10 @@ export function useChatStream(
       )
       settlePendingTraces(live, FAILED_TRACE_NOTE)
     } finally {
-      if (runId === runSequence) {
-        activeController = null
-        state.status.value = 'idle'
-      }
+      // 两句话各管一件事：状态只在仍是当前这一轮时才写回空闲（陈旧的那一轮不许把新一轮的
+      // 状态按回去），释放控制器引用则无条件调用，它自带同一份比对。
+      if (run.isCurrent()) state.status.value = 'idle'
+      run.release()
     }
   }
 
@@ -291,10 +287,9 @@ export function useChatStream(
   }
 
   function cancelActiveRun(): void {
-    runSequence += 1
+    guard.cancel()
+    // stopPending 的复位留在原处：它不是守卫的一部分。
     stopPending = false
-    activeController?.abort()
-    activeController = null
   }
 
   return {

@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0050
 ---
 
 # 会话级系统提示词在建立时固定

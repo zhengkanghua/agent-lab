@@ -22,7 +22,7 @@ import { usePreferences } from '../composables/usePreferences'
  * 忘记点。提交失败时把本地值退回改动前那一份并给出提示，避免界面显示一个没存进去的值。
  *
  * **读成功之前两个下拉都禁用。** 提交是整体覆盖，此时 store 里装的是默认值，改一下就会把
- * 账号上的真实配置（包括自定义提示词）一起覆盖成默认——用户只是调了个下拉，提示词却没了。
+ * 账号上的真实配置（另一个数量参数）一起覆盖成默认——用户只是调了个下拉，另一个却被改回去了。
  * 加载中禁用是暂时的，读失败则要说明原因，否则用户会以为页面坏了。
  *
  * **加载中不另发一条「正在读取」的提示**（原来这里是这么写的，理由成立：那只是一瞬间，
@@ -88,7 +88,7 @@ const matchesPerDocument = computed({
    于是它在按钮上撒谎——而按钮本身管的就是「恢复成哪两个数」。 */
 const defaultSummary = `${DEFAULT_PREFERENCES.documentLimit} 篇 · 每篇 ${DEFAULT_PREFERENCES.matchesPerDocument} 条`
 
-/** 两个数量参数一起恢复默认。提示词不跟进：清空提示词是 Agent 分区里一个显式动作。 */
+/** 两个数量参数一起恢复默认。 */
 function resetSearchDefaults(): void {
   void commit({
     documentLimit: DEFAULT_PREFERENCES.documentLimit,

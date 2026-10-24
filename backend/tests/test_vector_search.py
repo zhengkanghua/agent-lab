@@ -1,8 +1,8 @@
-"""阶段 3 Vector Search 的请求校验、只读编排、过滤和内存 Qdrant 测试。
+"""只读检索读路径的过滤、编排、响应契约与内存 Qdrant 测试。
 
 默认测试只使用 fake Embeddings 与 qdrant-client ``:memory:`` 模式，不访问远程
-Ollama、PostgreSQL 或远程 Qdrant。测试重点是 query/document Embedding 边界、current
-Alias、Qdrant 原始 score 顺序、Payload 响应契约和搜索不执行任何写操作。
+Ollama、PostgreSQL 或远程 Qdrant。测试重点是 query Embedding 边界、current
+Alias、Payload 过滤在 grouped 查询里的效果、响应契约和搜索不执行任何写操作。
 """
 
 import asyncio
@@ -25,7 +25,6 @@ from qdrant_client.http.exceptions import UnexpectedResponse
 
 from agent_lab.config.ollama_embedding import OllamaEmbeddingSettings
 from agent_lab.config.qdrant import QdrantSettings
-from agent_lab.domain.enums import DocumentType
 from agent_lab.knowledge.domain import DEFAULT_NEWS_KNOWLEDGE_BASE_ID
 from agent_lab.pipeline.ollama_embedding_provider import (
     OllamaEmbeddingProvider,
@@ -43,12 +42,8 @@ from agent_lab.qdrant.search import (
     QdrantSearchTimeoutError,
     QdrantVectorSearch,
 )
-from agent_lab.schemas.vector_search import (
-    DEFAULT_TOP_K,
-    MAX_TOP_K,
-    VectorSearchFilters,
-    VectorSearchRequest,
-)
+from agent_lab.schemas.document_search import DocumentSearchRequest
+from agent_lab.schemas.vector_search import VectorSearchFilters
 from agent_lab.services.vector_search_service import (
     QueryVectorValidationError,
     VectorSearchService,
@@ -204,49 +199,6 @@ def build_runtime_components(
     return service, component, spec, settings
 
 
-def test_request_defaults_and_safe_repr() -> None:
-    request = VectorSearchRequest(query="包含敏感内容的检索词")
-
-    assert request.top_k == DEFAULT_TOP_K
-    assert request.score_threshold is None
-    assert request.filters.labels == ()
-    assert "包含敏感内容" not in repr(request)
-
-
-@pytest.mark.parametrize(
-    "value",
-    ["", " \n\t "],
-)
-def test_request_rejects_empty_query(value: str) -> None:
-    with pytest.raises(ValidationError, match="空白字符") as exc_info:
-        VectorSearchRequest(query=value)
-
-    if value:
-        assert value not in str(exc_info.value)
-
-
-# top_k 与 score_threshold 的非法取值。两个字段合成一条：断言完全相同（构造即抛
-# ValidationError），分开写只是重复同一个 with 块。
-# score_threshold 那几个值各有针对：±1.1 越界；nan/inf 非有限；True 是 bool（Python 里
-# bool 是 int 的子类，不挡住的话 True 会被当成 1 收下）；"0.8" 是字符串，不能靠隐式转换。
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("top_k", 0),
-        ("top_k", MAX_TOP_K + 1),
-        ("score_threshold", -1.1),
-        ("score_threshold", 1.1),
-        ("score_threshold", float("nan")),
-        ("score_threshold", float("inf")),
-        ("score_threshold", True),
-        ("score_threshold", "0.8"),
-    ],
-)
-def test_request_rejects_invalid_numeric_fields(field: str, value: object) -> None:
-    with pytest.raises(ValidationError):
-        VectorSearchRequest(query="查询", **{field: value})  # type: ignore[arg-type]
-
-
 def test_filters_reject_naive_datetime_and_reversed_range() -> None:
     with pytest.raises(ValidationError, match="时区"):
         VectorSearchFilters(published_from=datetime(2026, 1, 1))
@@ -259,29 +211,38 @@ def test_filters_reject_naive_datetime_and_reversed_range() -> None:
         VectorSearchFilters(published_from=1786579200)  # type: ignore[arg-type]
 
 
-def test_filters_define_empty_labels_as_no_filter_and_any_match() -> None:
-    empty = VectorSearchFilters(labels=[])
-    normalized = VectorSearchFilters(labels=[" 宏观 ", "宏观", "利率"])
+def test_empty_filters_leave_qdrant_without_any_condition() -> None:
+    """两个维度都没填时不造任何条件，明确保持「不过滤」而不是意外返回零条。"""
 
-    assert empty.labels == ()
-    assert normalized.labels == ("宏观", "利率")
-    built = QdrantVectorSearch._build_filter(normalized)  # noqa: SLF001
-    assert built is not None
-    assert built.must[0].key == "labels"  # type: ignore[union-attr]
-    assert built.must[0].match.any == ["宏观", "利率"]  # type: ignore[union-attr]
-    assert QdrantVectorSearch._build_filter(empty) is None  # noqa: SLF001
+    assert QdrantVectorSearch._build_filter(VectorSearchFilters()) is None  # noqa: SLF001
+    assert QdrantVectorSearch._build_filter(  # noqa: SLF001
+        VectorSearchFilters(knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID)
+    ).must is not None  # type: ignore[union-attr]
 
 
-def test_each_filter_uses_the_expected_qdrant_model() -> None:
-    source_id = uuid4()
+@pytest.mark.parametrize(
+    ("dimension", "value"),
+    [
+        ("source_id", str(uuid4())),
+        ("source_provider", "freshrss_main"),
+        ("document_type", "article"),
+        ("labels", ["宏观"]),
+    ],
+)
+def test_filters_reject_removed_dimensions(dimension: str, value: object) -> None:
+    """四个空转维度已从契约里删除；带了就报错，不能静默忽略。"""
+
+    with pytest.raises(ValidationError) as exc_info:
+        VectorSearchFilters(**{dimension: value})  # type: ignore[arg-type]
+
+    assert dimension in str(exc_info.value)
+
+
+def test_published_range_uses_the_expected_qdrant_model() -> None:
     published_from = datetime(2026, 1, 1, tzinfo=UTC)
     published_to = datetime(2026, 2, 1, tzinfo=UTC)
     built = QdrantVectorSearch._build_filter(  # noqa: SLF001
         VectorSearchFilters(
-            source_id=source_id,
-            source_provider="provider_a",
-            document_type=DocumentType.PRESS_RELEASE,
-            labels=["宏观", "利率"],
             published_from=published_from,
             published_to=published_to,
         )
@@ -289,12 +250,7 @@ def test_each_filter_uses_the_expected_qdrant_model() -> None:
 
     assert built is not None
     conditions = {condition.key: condition for condition in built.must}  # type: ignore[union-attr]
-    assert conditions["source_id"].match == models.MatchValue(value=str(source_id))
-    assert conditions["source_provider"].match == models.MatchValue(value="provider_a")
-    assert conditions["document_type"].match == models.MatchValue(
-        value="press_release"
-    )
-    assert conditions["labels"].match == models.MatchAny(any=["宏观", "利率"])
+    assert set(conditions) == {"published_at"}
     assert conditions["published_at"].range == models.DatetimeRange(
         gte=published_from,
         lte=published_to,
@@ -343,15 +299,16 @@ def test_shared_collection_search_does_not_cross_knowledge_bases() -> None:
         news_point = uuid4()
         other_point = uuid4()
         other_knowledge_base_id = uuid4()
+        news_payload = build_payload(
+            knowledge_base_id=str(DEFAULT_NEWS_KNOWLEDGE_BASE_ID)
+        )
         await client.upsert(
             collection_name=settings.collection_alias,
             points=[
                 build_point(
                     point_id=news_point,
                     vector=[1.0, 0.0, 0.0],
-                    payload=build_payload(
-                        knowledge_base_id=str(DEFAULT_NEWS_KNOWLEDGE_BASE_ID)
-                    ),
+                    payload=news_payload,
                 ),
                 build_point(
                     point_id=other_point,
@@ -364,15 +321,17 @@ def test_shared_collection_search_does_not_cross_knowledge_bases() -> None:
         )
 
         try:
-            results = await service.search(
-                VectorSearchRequest(
+            results = await service.search_documents(
+                DocumentSearchRequest(
                     query="只查新闻库",
                     filters=VectorSearchFilters(
                         knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID
                     ),
                 )
             )
-            assert [result.chunk_id for result in results] == [news_point]
+            assert [result.document_id for result in results] == [
+                UUID(news_payload["document_id"])
+            ]
         finally:
             await client.close()
 
@@ -416,13 +375,13 @@ def test_query_service_uses_embed_query_and_qdrant_current_alias() -> None:
             client=client,
         )
         query_calls: list[dict[str, Any]] = []
-        original_query_points = client.query_points
+        original_query_points = client.query_points_groups
 
         async def spy_query_points(**kwargs: Any) -> Any:
             query_calls.append(kwargs)
             return await original_query_points(**kwargs)
 
-        client.query_points = spy_query_points  # type: ignore[method-assign]
+        client.query_points_groups = spy_query_points  # type: ignore[method-assign]
         collection = settings.collection_name
         # 同上：带上规格快照 metadata，否则读路径的集合自证会直接拒掉。
         await client.create_collection(
@@ -450,14 +409,18 @@ def test_query_service_uses_embed_query_and_qdrant_current_alias() -> None:
                     )
                 ],
             )
-            results = await service.search(VectorSearchRequest(query="安全 query", knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID))
+            results = await service.search_documents(DocumentSearchRequest(
+                query="安全 query", document_limit=4,
+                knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID,
+            ))
             assert fake_embeddings.query_calls == ["安全 query"]
             assert fake_embeddings.document_calls == []
-            assert results[0].chunk_id == point_id
-            assert results[0].score == pytest.approx(1.0)
+            assert results[0].best_match.chunk_id == point_id
+            assert results[0].best_score == pytest.approx(1.0)
             assert query_calls[0]["collection_name"] == settings.collection_alias
             assert collection not in [call["collection_name"] for call in query_calls]
-            assert query_calls[0]["limit"] == DEFAULT_TOP_K
+            assert query_calls[0]["limit"] == 4
+            assert query_calls[0]["group_by"] == "index_instance_id"
             assert query_calls[0]["with_vectors"] is False
         finally:
             await client.close()
@@ -497,19 +460,22 @@ def test_memory_qdrant_cosine_score_threshold_and_order_are_preserved() -> None:
         ]
         try:
             await client.upsert(settings.collection_alias, points)
-            all_results = await service.search(
-                VectorSearchRequest(query="排序", top_k=3, knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID)
+            all_results = await service.search_documents(
+                DocumentSearchRequest(query="排序", document_limit=3, matches_per_document=1,
+                                      knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID)
             )
-            threshold_results = await service.search(
-                VectorSearchRequest(query="阈值", top_k=3, score_threshold=0.7, knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID)
+            threshold_results = await service.search_documents(
+                DocumentSearchRequest(query="阈值", document_limit=3, matches_per_document=1,
+                                      score_threshold=0.7,
+                                      knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID)
             )
-            assert [result.chunk_id for result in all_results] == [
-                UUID(str(point.id)) for point in points
+            assert [result.document_id for result in all_results] == [
+                UUID(str(point.payload["document_id"])) for point in points
             ]
-            assert [result.score for result in all_results] == pytest.approx(
+            assert [result.best_score for result in all_results] == pytest.approx(
                 [1.0, 0.6, 0.0]
             )
-            assert [result.score for result in threshold_results] == pytest.approx(
+            assert [result.best_score for result in threshold_results] == pytest.approx(
                 [1.0]
             )
         finally:
@@ -518,7 +484,7 @@ def test_memory_qdrant_cosine_score_threshold_and_order_are_preserved() -> None:
     run(verify())
 
 
-def test_memory_qdrant_combined_filters_and_missing_published_at_semantics() -> None:
+def test_memory_qdrant_published_range_and_missing_published_at_semantics() -> None:
     async def verify() -> None:
         fake_embeddings = FakeEmbeddings([1.0, 0.0, 0.0])
         client = AsyncQdrantClient(location=":memory:")
@@ -531,54 +497,34 @@ def test_memory_qdrant_combined_filters_and_missing_published_at_semantics() -> 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             await lifecycle.ensure_current_collection()
-        source_id = uuid4()
         matching = build_point(
             point_id=uuid4(),
             vector=[1.0, 0.0, 0.0],
-            payload=build_payload(
-                source_id=source_id,
-                source_provider="provider_a",
-                document_type="article",
-                labels=["宏观", "利率"],
-                published_at="2026-08-13T01:02:03+00:00",
-            ),
+            payload=build_payload(published_at="2026-08-13T01:02:03+00:00"),
         )
         missing_time = build_point(
             point_id=uuid4(),
             vector=[0.99, 0.01, 0.0],
-            payload=build_payload(
-                source_id=source_id,
-                source_provider="provider_a",
-                labels=["宏观"],
-                published_at=None,
-            ),
+            payload=build_payload(published_at=None),
         )
-        wrong_source = build_point(
+        too_early = build_point(
             point_id=uuid4(),
             vector=[0.98, 0.02, 0.0],
-            payload=build_payload(
-                source_id=uuid4(),
-                source_provider="provider_a",
-                labels=["宏观"],
-                published_at="2026-08-13T01:02:03+00:00",
-            ),
+            payload=build_payload(published_at="2026-07-31T23:59:59+00:00"),
         )
         try:
-            await client.upsert(settings.collection_alias, [matching, missing_time, wrong_source])
-            request = VectorSearchRequest(
-                query="组合过滤",
+            await client.upsert(settings.collection_alias, [matching, missing_time, too_early])
+            request = DocumentSearchRequest(
+                query="发布时间区间",
                 knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID,
                 filters=VectorSearchFilters(
-                    source_id=source_id,
-                    source_provider="provider_a",
-                    document_type=DocumentType.ARTICLE,
-                    labels=["不存在", "利率"],
                     published_from=datetime(2026, 8, 1, tzinfo=UTC),
                     published_to=datetime(2026, 8, 31, tzinfo=UTC),
                 ),
             )
-            results = await service.search(request)
-            assert [result.chunk_id for result in results] == [UUID(str(matching.id))]
+            results = await service.search_documents(request)
+            # 缺 published_at 的 Point（score 更高）一旦设了时间范围便不再命中。
+            assert [result.best_match.chunk_id for result in results] == [UUID(str(matching.id))]
             assert results[0].published_at == datetime(
                 2026, 8, 13, 1, 2, 3, tzinfo=UTC
             )
@@ -627,7 +573,7 @@ def test_search_service_rejects_invalid_query_vectors_before_qdrant_call() -> No
             knowledge_base_scope=ActiveKnowledgeBaseScope(),
         )
         with pytest.raises(QueryVectorValidationError, match=message):
-            run(service.search(VectorSearchRequest(query="向量校验", knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID)))
+            run(service.search_documents(DocumentSearchRequest(query="向量校验", knowledge_base_id=DEFAULT_NEWS_KNOWLEDGE_BASE_ID)))
         assert provider.query_calls == ["向量校验"]
 
 
@@ -678,7 +624,7 @@ def test_qdrant_search_maps_remote_errors_without_secrets(
     expected: type[Exception],
 ) -> None:
     class ErrorClient:
-        async def query_points(self, **kwargs: Any) -> Any:
+        async def query_points_groups(self, **kwargs: Any) -> Any:
             raise error
 
     fake_embeddings = FakeEmbeddings([1.0, 0.0, 0.0])
@@ -689,9 +635,10 @@ def test_qdrant_search_maps_remote_errors_without_secrets(
     secret = "secret-key"
     with pytest.raises(expected) as exc_info:
         run(
-            component.search(
+            component.search_groups(
                 [1.0, 0.0, 0.0],
-                top_k=1,
+                document_limit=1,
+                matches_per_document=1,
                 score_threshold=None,
                 filters=VectorSearchFilters(),
             )
@@ -711,9 +658,10 @@ def test_missing_alias_from_memory_qdrant_is_classified() -> None:
         )
         try:
             with pytest.raises(QdrantSearchTargetNotFoundError):
-                await component.search(
+                await component.search_groups(
                     [1.0, 0.0, 0.0],
-                    top_k=1,
+                    document_limit=1,
+                    matches_per_document=1,
                     score_threshold=None,
                     filters=VectorSearchFilters(),
                 )
@@ -726,13 +674,18 @@ def test_missing_alias_from_memory_qdrant_is_classified() -> None:
 def test_search_response_requires_uuid_and_complete_typed_payload() -> None:
     valid_point_id = uuid4()
     valid_payload = build_payload()
+    # 分组 ID 必须与组内 Point 的 index_instance_id 一致，否则先撞上的是「组 ID 不符」
+    # 那条校验，掩盖本用例要验的逐点契约。
+    group_id = valid_payload["index_instance_id"]
 
     class ResponseClient:
         def __init__(self, point: Any) -> None:
             self.point = point
 
-        async def query_points(self, **kwargs: Any) -> Any:
-            return SimpleNamespace(points=[self.point])
+        async def query_points_groups(self, **kwargs: Any) -> Any:
+            return SimpleNamespace(
+                groups=[SimpleNamespace(id=group_id, hits=[self.point])]
+            )
 
     cases = [
         (SimpleNamespace(id="not-a-uuid", score=1.0, payload=valid_payload), "不是 UUID"),
@@ -758,9 +711,10 @@ def test_search_response_requires_uuid_and_complete_typed_payload() -> None:
         )
         with pytest.raises(QdrantSearchResponseError, match=message):
             run(
-                component.search(
+                component.search_groups(
                     [1.0, 0.0, 0.0],
-                    top_k=1,
+                    document_limit=1,
+                    matches_per_document=1,
                     score_threshold=None,
                     filters=VectorSearchFilters(),
                 )
@@ -776,8 +730,10 @@ def test_optional_payload_fields_are_none_when_missing() -> None:
     )
 
     class ResponseClient:
-        async def query_points(self, **kwargs: Any) -> Any:
-            return SimpleNamespace(points=[point])
+        async def query_points_groups(self, **kwargs: Any) -> Any:
+            return SimpleNamespace(
+                groups=[SimpleNamespace(id=point.payload["index_instance_id"], hits=[point])]
+            )
 
     fake_embeddings = FakeEmbeddings([1.0, 0.0, 0.0])
     _service, component, _spec, _settings = build_runtime_components(
@@ -785,13 +741,14 @@ def test_optional_payload_fields_are_none_when_missing() -> None:
         client=ResponseClient(),
     )
     result = run(
-        component.search(
+        component.search_groups(
             [1.0, 0.0, 0.0],
-            top_k=1,
+            document_limit=1,
+            matches_per_document=1,
             score_threshold=None,
             filters=VectorSearchFilters(),
         )
-    )[0]
+    )[0].matches[0]
 
     assert result.published_at is None
     assert result.source_updated_at is None
@@ -799,73 +756,27 @@ def test_optional_payload_fields_are_none_when_missing() -> None:
     assert result.next_chunk_id is None
 
 
-def test_same_document_chunk_hits_are_not_aggregated_or_reordered() -> None:
-    document_id = uuid4()
-    first_id = uuid4()
-    second_id = uuid4()
-    points = [
-        models.ScoredPoint(
-            id=first_id,
-            version=1,
-            score=0.91,
-            payload=build_payload(
-                document_id=document_id,
-                chunk_index=0,
-                chunk_count=2,
-                next_chunk_id=str(second_id),
-            ),
-        ),
-        models.ScoredPoint(
-            id=second_id,
-            version=1,
-            score=0.82,
-            payload=build_payload(
-                document_id=document_id,
-                chunk_index=1,
-                chunk_count=2,
-                previous_chunk_id=str(first_id),
-            ),
-        ),
-    ]
-
-    class ResponseClient:
-        async def query_points(self, **kwargs: Any) -> Any:
-            return SimpleNamespace(points=points)
-
-    fake_embeddings = FakeEmbeddings([1.0, 0.0, 0.0])
-    _service, component, _spec, _settings = build_runtime_components(
-        fake_embeddings=fake_embeddings,
-        client=ResponseClient(),
-    )
-    results = run(
-        component.search(
-            [1.0, 0.0, 0.0],
-            top_k=2,
-            score_threshold=None,
-            filters=VectorSearchFilters(),
-        )
-    )
-
-    assert [result.chunk_id for result in results] == [first_id, second_id]
-    assert [result.document_id for result in results] == [document_id, document_id]
-    assert [result.score for result in results] == [0.91, 0.82]
-
-
 def test_search_has_no_qdrant_write_methods_or_physical_collection_name() -> None:
     class ReadOnlySpyClient:
         def __init__(self) -> None:
             self.calls: list[str] = []
 
-        async def query_points(self, **kwargs: Any) -> Any:
-            self.calls.append("query_points")
+        async def query_points_groups(self, **kwargs: Any) -> Any:
+            self.calls.append("query_points_groups")
             assert kwargs["collection_name"] == "knowledge_chunks_read_only_test_current"
+            payload = build_payload()
             return SimpleNamespace(
-                points=[
-                    models.ScoredPoint(
-                        id=uuid4(),
-                        version=1,
-                        score=0.5,
-                        payload=build_payload(),
+                groups=[
+                    SimpleNamespace(
+                        id=payload["index_instance_id"],
+                        hits=[
+                            models.ScoredPoint(
+                                id=uuid4(),
+                                version=1,
+                                score=0.5,
+                                payload=payload,
+                            )
+                        ],
                     )
                 ]
             )
@@ -883,15 +794,16 @@ def test_search_has_no_qdrant_write_methods_or_physical_collection_name() -> Non
         environment="read_only_test",
     )
     results = run(
-        component.search(
+        component.search_groups(
             [1.0, 0.0, 0.0],
-            top_k=1,
+            document_limit=1,
+            matches_per_document=1,
             score_threshold=None,
             filters=VectorSearchFilters(),
         )
     )
     assert len(results) == 1
-    assert client.calls == ["query_points"]
+    assert client.calls == ["query_points_groups"]
     assert component.collection_name == settings.collection_alias
     assert settings.collection_name not in repr(component)
 
@@ -1021,40 +933,14 @@ def test_read_path_rejects_collection_whose_spec_differs_from_config(drifted_fie
     assert client.get_collection_calls == 1
 
 
-def test_chunk_search_also_verifies_alias_spec() -> None:
-    """按 Chunk 返回的那条路径同样要自证，否则只剩一半入口受保护。"""
-
-    spec = VectorIndexSpec.from_settings(qdrant_settings(), ollama_settings())
-    client = CollectionInfoClient(build_collection_info(spec, schema_version="v1"))
-    component = QdrantVectorSearch(client, qdrant_settings(), spec)
-
-    with pytest.raises(QdrantSearchIndexSpecMismatchError):
-        run(
-            component.search(
-                [1.0, 0.0, 0.0],
-                top_k=1,
-                score_threshold=None,
-                filters=VectorSearchFilters(),
-            )
-        )
-
-
 def test_read_path_verifies_alias_spec_once_then_keeps_serving() -> None:
-    """规格一致时只核一次，且不改变两种检索的结果。"""
+    """规格一致时只核一次，且不改变分组检索的结果。"""
 
     spec = VectorIndexSpec.from_settings(qdrant_settings(), ollama_settings())
-    group, point = build_grouped_hit()
-    client = CollectionInfoClient(build_collection_info(spec), points=[point], groups=[group])
+    group, _point = build_grouped_hit()
+    client = CollectionInfoClient(build_collection_info(spec), groups=[group])
     component = QdrantVectorSearch(client, qdrant_settings(), spec)
 
-    chunk_results = run(
-        component.search(
-            [1.0, 0.0, 0.0],
-            top_k=1,
-            score_threshold=None,
-            filters=VectorSearchFilters(),
-        )
-    )
     grouped_results = run(
         component.search_groups(
             [1.0, 0.0, 0.0],
@@ -1065,7 +951,6 @@ def test_read_path_verifies_alias_spec_once_then_keeps_serving() -> None:
         )
     )
 
-    assert len(chunk_results) == 1
     assert len(grouped_results) == 1
     assert client.get_collection_calls == 1
 
@@ -1074,14 +959,15 @@ def test_read_path_probe_failure_does_not_add_a_new_failure_path() -> None:
     """探针自己失败（Qdrant 不可达）时按「没核过」处理：检索结果与今天一致。"""
 
     spec = VectorIndexSpec.from_settings(qdrant_settings(), ollama_settings())
-    client = CollectionInfoClient(httpx.ConnectError("qdrant down"), points=[build_grouped_hit()[1]])
+    client = CollectionInfoClient(httpx.ConnectError("qdrant down"), groups=[build_grouped_hit()[0]])
     component = QdrantVectorSearch(client, qdrant_settings(), spec)
 
     for _ in range(2):
         results = run(
-            component.search(
+            component.search_groups(
                 [1.0, 0.0, 0.0],
-                top_k=1,
+                document_limit=1,
+                matches_per_document=1,
                 score_threshold=None,
                 filters=VectorSearchFilters(),
             )

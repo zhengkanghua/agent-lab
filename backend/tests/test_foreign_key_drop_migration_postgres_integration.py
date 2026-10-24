@@ -62,9 +62,10 @@ PREVIOUS = "b6e2f9047a31"
 CURRENT = "d4b7c1e93a58"
 # 当前 head。验收条件停在 **head** 上而不是 CURRENT：本文件要保护的性质是「库里一个外键都没有，
 # 且业务层清理真的生效」，那是**当前**库的形态。若停在 CURRENT，之后任何一条加了外键的迁移都能
-# 悄悄溜过这条断言。升级到 head 之后才能跑删除路径——``agent_threads.system_prompt`` 是后续
-# 迁移加的列，停在 CURRENT 上跑 ORM 会报「列不存在」。
-HEAD = "c1f4a7d92e60"
+# 悄悄溜过这条断言。另外，只有走到 head 库结构才与 ORM 一致——停在中间某条上，后面的迁移加过
+# 又删掉的那些列会让两侧对不上（历史上 ``agent_threads.system_prompt`` 就是这样：它停在
+# CURRENT 上会报「列不存在」，停在它自己那一版上则多出一列）。
+HEAD = "a3c8e5d719bf"
 # 「账号注销」那条迁移之前的 head。需要在旧结构下造存量账号的用例先停在这里，
 # 才能验「升级不动存量数据、回退能还原结构」。
 BEFORE_SOFT_DELETE = "e2c8f14b7a30"
@@ -326,12 +327,10 @@ def test_deleting_an_account_leaves_no_orphans_on_the_constraint_free_schema(mig
             session.add(review)
             # 个人偏好：注销后必须保留的三类记录之一。
             session.add(UserPreferenceRecord(
-                user_id=user_id, system_prompt="注销后仍然在。",
-                document_limit=20, matches_per_document=5,
+                user_id=user_id, document_limit=20, matches_per_document=5,
             ))
             session.add(UserPreferenceRecord(
-                user_id=bystander_id, system_prompt="别人的配置。",
-                document_limit=10, matches_per_document=3,
+                user_id=bystander_id, document_limit=10, matches_per_document=3,
             ))
             await session.commit()
             review_id = review.id
@@ -375,7 +374,7 @@ def test_deleting_an_account_leaves_no_orphans_on_the_constraint_free_schema(mig
             # 偏好行仍然在，且内容一字未改。
             preferences = await session.get(UserPreferenceRecord, user_id)
             assert preferences is not None
-            assert preferences.system_prompt == "注销后仍然在。"
+            assert preferences.matches_per_document == 5
 
             # 4、别人名下的东西一点没动。
             assert await session.get(UserRecord, bystander_id) is not None

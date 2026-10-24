@@ -7,11 +7,9 @@
 **为什么这一层要有**：行级形状是这张表的对外事实（一条消息几行、工具调用与结果怎么拆、运行
 元数据装什么），抽成纯函数才能离线钉住；``runs.py`` 那边只剩「读一次快照 → 分组 → 投影 → 交出去」。
 
-**摘要消息不进任何一组，但它的行照样由本模块造**：``group_messages_by_run`` 会把摘要跳过（它
-不属于某一次对话），所以这里单独给它造一行、插到「产生它的那一次运行」那一组的**最前面**。
-判据是 ``produced_by_run_id`` 等于该组的 ``run_id``：摘要消息一次压缩之后就留在状态头部、不会
-自己消失，照「快照里有摘要就写」实现会让之后每一次运行的收尾都凭空多写一行；按产生它的运行
-绑定，头部沿用下来的旧摘要（它的产生运行是更早的某一次）自然不属于本组、写不进去。
+**摘要消息不进任何一组，也不产生行**：``group_messages_by_run`` 会把摘要跳过（它不属于某一次
+对话），收尾写入也只投影分组出来的消息，所以压缩留下的摘要伪提问在业务表里一行都不占。历史摘要
+只活在 checkpointer 的上下文记录里，会话历史那头只能看到压缩前的原文。
 """
 
 import logging
@@ -20,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import UUID
 
-from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
 from agent_lab.agent.evidence import ToolEvidence, tool_evidence
 from agent_lab.agent.replay import RunMessageGroup, text_of
@@ -31,8 +29,9 @@ from agent_lab.schemas.agent_thread import AgentReplayTurn
 logger = logging.getLogger(__name__)
 
 # 行的角色取值，与 ``models.agent_thread_message.AgentThreadMessageRecord.role`` 的列说明同一套。
-# 五种角色都在这里：``summary`` 由 ``project_run_messages`` 从摘要消息单独造出来。
-MessageRole = Literal["question", "answer", "tool_call", "tool_result", "summary"]
+# 写入端只产出前四种；``summary`` 是历史库存量行里才有的取值，读侧仍然跳过它（列说明因此保留
+# 这个值），但写入端不再产生它——摘要不被写进业务表。
+MessageRole = Literal["question", "answer", "tool_call", "tool_result"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,7 +49,6 @@ class ThreadMessageRow:
         failed: 这次调用是否失败，只有工具结果行有。
         evidence: 该次调用实际使用的范围与引用证据，只有工具结果行有。
         run_meta: 运行元数据，只有该运行的提问行有。
-        memory_boundary_run_id: 压缩边界标记，只有摘要行有。
     """
 
     role: MessageRole
@@ -61,7 +59,6 @@ class ThreadMessageRow:
     failed: bool | None = None
     evidence: dict[str, Any] | None = None
     run_meta: dict[str, Any] | None = None
-    memory_boundary_run_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,15 +78,12 @@ def project_run_messages(
     groups: Sequence[RunMessageGroup],
     *,
     turns: Sequence[AgentReplayTurn],
-    summaries: Sequence[BaseMessage],
 ) -> tuple[RunMessageRows, ...]:
     """把按运行分好的消息投影成落表的行，逐组返回。
 
     Args:
         groups: ``replay.group_messages_by_run`` 的产物。
         turns: ``replay.build_replay_turns`` 算好的轮次；「是否完整作答」从它按运行标识取。
-        summaries: 快照里的摘要消息（``replay.summary_messages`` 的产物）；按 ``produced_by_run_id``
-            归到产生它的那一组，其余组不受影响。
 
     Returns:
         每组一项，按传入顺序；**运行标识取不到的组不在里面**。
@@ -105,7 +99,6 @@ def project_run_messages(
     """
 
     completed_by_run = {turn.run_id: turn.status == "completed" for turn in turns}
-    summaries_by_run = _summary_rows_by_producing_run(summaries)
     projected: list[RunMessageRows] = []
     for group in groups:
         if group.run_id is None:
@@ -117,66 +110,12 @@ def project_run_messages(
         projected.append(
             RunMessageRows(
                 run_id=group.run_id,
-                # 摘要行排在它所属那一组的最前面（提问行之前）：压缩发生在那轮提问之时、模型从
-                # 那轮起只剩摘要，而读方只按顺序号排序，所以它应当紧跟在上一轮之后、本组提问之前
-                # ——「按顺序号排序」与「按组归类」因此保持一致。
-                rows=(
-                    *summaries_by_run.get(group.run_id, ()),
-                    *_rows_of_group(
-                        group, completed=completed_by_run.get(group.run_id, False)
-                    ),
+                rows=_rows_of_group(
+                    group, completed=completed_by_run.get(group.run_id, False)
                 ),
             )
         )
     return tuple(projected)
-
-
-def _summary_rows_by_producing_run(
-    summaries: Sequence[BaseMessage],
-) -> dict[UUID, tuple[ThreadMessageRow, ...]]:
-    """把摘要消息按「产生它的那一次运行」归堆，供一组一组地取。
-
-    **判据写在这一处**：摘要行只跟着 ``produced_by_run_id`` 等于该组运行标识的那一组走。写成
-    「快照里有摘要就写」是错的——摘要消息一次压缩之后就留在状态头部、不会自己消失，那样之后
-    每一次运行的收尾都会凭空多写一行，同一会话里累积一串。头部沿用下来的旧摘要，它的产生运行
-    是更早的某一次、不属于本组，因此取不到。一次压缩最多只留一条摘要，同一组的摘要行按它们在
-    快照里的先后排好。
-
-    产生运行取不到的摘要（字段为空）不归任何一组：编不出「它属于哪一次运行」，而这一列对不上
-    就写不进去。
-    """
-
-    rows: dict[UUID, list[ThreadMessageRow]] = {}
-    for message in summaries:
-        producing_run_id = _run_id_of(message.additional_kwargs.get("produced_by_run_id"))
-        if producing_run_id is None:
-            continue
-        rows.setdefault(producing_run_id, []).append(_summary_row(message))
-    return {run_id: tuple(group) for run_id, group in rows.items()}
-
-
-def _summary_row(message: BaseMessage) -> ThreadMessageRow:
-    """把一条摘要消息摊成摘要行。
-
-    正文存摘要消息的原文（界面上不展示它，这一行存在的意义是承载分界标记）；分界标记取消息上
-    的 ``memory_boundary_run_id``，取不到时留空——不编一个「等于本次运行」的值，那会把分界线
-    画在错的轮次上，比没有线更糟。这一行属于哪一次运行由 ``RunMessageRows.run_id`` 表达（写入
-    方按整组填），与「覆盖到哪一轮」的 ``memory_boundary_run_id`` 是两件事。
-    """
-
-    return ThreadMessageRow(
-        role="summary",
-        text=text_of(message),
-        memory_boundary_run_id=_run_id_of(
-            message.additional_kwargs.get("memory_boundary_run_id")
-        ),
-    )
-
-
-def _run_id_of(value: Any) -> UUID | None:
-    """把消息上记的运行标识（字符串，取不到时是 ``None``）解成 ``UUID``。"""
-
-    return UUID(str(value)) if value else None
 
 
 def _rows_of_group(group: RunMessageGroup, *, completed: bool) -> tuple[ThreadMessageRow, ...]:

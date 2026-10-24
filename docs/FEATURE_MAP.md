@@ -30,16 +30,14 @@
 | 全部任务执行、独立详情、取消与人工重试 | `/admin/scheduled-jobs?view=executions` | `/task-runs`、`/task-runs/{run_id}`、`/{run_id}/cancel`、`/{run_id}/retry` | `api/task_runs.py`、`tasks/`、`task_assembly.py`；前端 `api/tasks.ts`、`features/scheduled-jobs/` | `test_task_api.py`、`test_task_execution.py`、`test_task_queue_integration.py`（默认跳过）；`src/pages/ScheduledJobsPage.spec.ts` |
 | 默认重试与任务历史策略 | 任务管理的策略对话框 | `/task-policy`、`/task-policy/changes` | `api/task_runs.py`、`tasks/service.py`、`tasks/repository.py`；前端 `TaskPolicyPanel.vue` | `test_task_api.py`、`test_task_execution.py`、`src/api/tasks.spec.ts` |
 | 文档批次交接与清理恢复 | 文件／文档管理与任务执行详情 | 文档管理写入口、`GET /task-runs/{run_id}` | [文档生命周期](flows/file-document-lifecycle.md)；`knowledge/task_intake.py`、`knowledge/adapters/pending_work.py`、`services/write_coordination.py`、`services/document_retention_service.py` | `test_news_pipeline_execution.py`、`test_task_execution.py`、`test_task_cross_storage_integration.py`、`test_task_migration_postgres_integration.py`（真实依赖默认跳过） |
-| Agent 对话（模型自己调检索工具再作答，SSE 流式；运行不随连接中断，停止走独立接口，部署时排空交新进程续跑；所有登录账号可用） | `/agent` | `POST /agent/chat`、`POST /agent/stop` | [Agent 回答与引用](flows/agent-answer-evidence.md)；`api/agent_chat.py` → `agent/runs.py`、`agent/runtime.py`、`agent/streaming.py`、`agent/tools/`；前端 `api/agent-chat.ts`、`features/agent-chat/`、`pages/AgentChatPage.vue` | `tests/test_agent_chat_api.py`、`tests/test_agent_runs.py`、`tests/test_agent_streaming.py`、`tests/test_agent_tools.py`、`tests/test_agent_middleware.py`、`tests/test_agent_handover.py`、`src/api/agent-chat.spec.ts`、`src/features/agent-chat/tests/`、`src/pages/AgentChatPage.spec.ts` |
+| Agent 对话（模型自己调检索工具再作答，SSE 流式；运行不随连接中断，停止走独立接口，部署时排空由旧进程自己收成未完成；所有登录账号可用） | `/agent` | `POST /agent/chat`、`POST /agent/stop` | [Agent 回答与引用](flows/agent-answer-evidence.md)；`api/agent_chat.py` → `agent/runs.py`、`agent/runtime.py`、`agent/streaming.py`、`agent/tools/`；前端 `api/agent-chat.ts`、`features/agent-chat/`、`pages/AgentChatPage.vue` | `tests/test_agent_chat_api.py`、`tests/test_agent_runs.py`、`tests/test_agent_streaming.py`、`tests/test_agent_tools.py`、`tests/test_agent_middleware.py`、`tests/test_agent_drain.py`、`src/api/agent-chat.spec.ts`、`src/features/agent-chat/tests/`、`src/pages/AgentChatPage.spec.ts` |
 | Agent 会话知识库选择与证据引用 | `/agent`、`/agent/:threadId` | `PATCH /agent/threads/{thread_id}/scope`、`POST /agent/chat`、`GET /agent/threads/{thread_id}/messages` | [回答与引用链路](flows/agent-answer-evidence.md)；`agent/context.py`、`agent/evidence.py`、`agent/replay.py`、`agent/middleware.py`；前端 `useAgentChat.ts`、`AgentTurnCard.vue` | `tests/test_agent_evidence_scope.py`、`src/api/agent-threads.spec.ts`、`src/features/agent-chat/tests/useAgentChat.spec.ts`、`src/pages/AgentChatPage.spec.ts` |
 | 检索偏好（数量参数的默认值，改动即生效，存在账号上） | `/settings/search`（检索输入条有直达入口） | `GET`/`PUT /auth/me/preferences` | `api/account.py` → `services/user_preference_service.py`；前端 `api/preferences.ts`、`features/settings/`、`pages/SettingsPage.vue` | `tests/test_account.py`、`src/api/preferences.spec.ts`、`src/features/settings/tests/`、`src/pages/SettingsPage.spec.ts` |
-| Agent 偏好（自定义系统提示词，作为新会话的初始值） | `/settings/agent`（输入条徽章直达） | `GET`/`PUT /auth/me/preferences` | `api/account.py` → `services/user_preference_service.py`；前端 `api/preferences.ts`、`features/settings/`、`pages/SettingsPage.vue` | `tests/test_account.py`、`src/api/preferences.spec.ts`、`src/features/settings/tests/`、`src/pages/SettingsPage.spec.ts` |
-| 读取 Agent 默认系统提示词 | `/settings/agent`（提示词编辑器内） | `GET /agent/default-prompt` | `api/agent_chat.py` → `agent/prompts.py`；前端 `features/settings/composables/useDefaultAgentPrompt.ts` | `tests/test_agent_chat_api.py`、`src/features/settings/tests/useDefaultAgentPrompt.spec.ts` |
-| 会话记录（列出自己的会话、点进去看历史并接着聊、删除正在运行的会话时先停后删；排空中的会话不接受新提问） | `/agent`（侧栏）、`/agent/:threadId` | `GET /agent/threads`、`GET /agent/threads/{thread_id}/messages`、`DELETE /agent/threads/{thread_id}` | `api/agent_threads.py` → `services/agent_thread_service.py`、`agent/replay.py`、`models/agent_thread.py`；前端 `api/agent-threads.ts`、`features/agent-chat/composables/useThreadList.ts`、`components/ThreadSidebar.vue` | `tests/test_agent_threads_api.py`、`tests/test_agent_thread_service.py`、`tests/test_agent_thread_deletion.py`、`tests/test_agent_replay.py`、`tests/test_thread_drain_migration.py`、`tests/test_agent_thread_ownership_integration.py`（真库，默认跳过）、`src/api/agent-threads.spec.ts`、`src/features/agent-chat/tests/useThreadList.spec.ts` |
+| 会话记录（列出自己的会话、点进去看历史并接着聊、删除正在运行的会话时先停后删） | `/agent`（侧栏）、`/agent/:threadId` | `GET /agent/threads`、`GET /agent/threads/{thread_id}/messages`、`DELETE /agent/threads/{thread_id}` | `api/agent_threads.py` → `services/agent_thread_service.py`、`agent/replay.py`、`models/agent_thread.py`；前端 `api/agent-threads.ts`、`features/agent-chat/composables/useThreadList.ts`、`components/ThreadSidebar.vue` | `tests/test_agent_threads_api.py`、`tests/test_agent_thread_service.py`、`tests/test_agent_thread_deletion.py`、`tests/test_agent_replay.py`、`tests/test_thread_drain_migration.py`、`tests/test_agent_thread_ownership_integration.py`（真库，默认跳过）、`src/api/agent-threads.spec.ts`、`src/features/agent-chat/tests/useThreadList.spec.ts` |
 | 读取自己的模型调用用量（明细与汇总，按时间范围与模型筛选） | `/settings/usage` | `GET /usage/records`、`GET /usage/summary`、`GET /usage/models` | `api/usage.py` → `usage/`（契约、采集器、仓储、用料表与它自己的迁移环境）、`agent/usage_recording.py`；前端 `api/usage.ts`、`features/settings/components/UsageSection.vue`、`composables/useUsage.ts` | `tests/test_usage_api.py`、`tests/test_usage_queue.py`、`tests/test_usage_persistence.py`、`tests/test_usage_postgres_integration.py`（真库，默认跳过）；`src/api/usage.spec.ts`、`src/features/settings/tests/UsageSection.spec.ts`、`src/pages/SettingsPage.spec.ts` |
 | 健康检查 | 无 | `GET /health` | `api/health.py` | 无（真连 PostgreSQL，离线测试跑不了） |
 
-`/vector-search`、`/document-search`、`/documents`、`/auth/me/*`、`/agent/*` 要求普通启用账号；
+`/document-search`、`/documents`、`/auth/me/*`、`/agent/*` 要求普通启用账号；
 `/pipeline`、`/admin/users`、`/scheduled-jobs`、`/task-runs`、`/task-policy`、
 `/file-documents`、`/document-management`、`/sources` 要求超级用户。
 `/knowledge-bases` 两开：`GET` 列表对所有启用账号开放（默认只返回启用库，非超管传
@@ -53,8 +51,8 @@
 公共任务的持久受理、Celery/Redis 进程形态、写资源协调及恢复决策见 [ADR 0019](adr/0019-scheduled-execution-and-write-coordination.md)。
 
 检索页重构后去掉了「按片段」模式，前端只走 `POST /document-search`（按 Document 分组）并在页内做
-多轮累积（检索流）；后端 `/vector-search` 接口与后端单测仍保留，只是前端不再调用它，因此
-不再占「对外能力」一行。
+多轮累积（检索流）；旧的按片段检索接口连同它的请求模型已删除，对外只剩这一条
+检索路径，因此不再占「对外能力」一行。
 
 Agent 那几行的能力边界（只读）、会话数据为什么分两处存、归属校验为什么在流开始前，分别见
 [`adr/0003`](adr/0003-agent-v1-is-read-only.md)、[`adr/0004`](adr/0004-checkpointer-tables-outside-alembic.md)、
@@ -95,5 +93,5 @@ Agent 那几行的能力边界（只读）、会话数据为什么分两处存�
 | 运行时装配 | `backend/src/agent_lab/runtime.py`、`qdrant/runtime.py`、`pipeline/write_runtime.py`、`agent/runtime.py` | 进程级资源的构造与复用 |
 | 错误契约 | `backend/src/agent_lab/api/error_contract.py` | 异常到 `code`/`status`/`retryable` 的映射规则，按链路各一张有序表，清单见 `backend/docs/architecture.md` 的「集中的错误契约」 |
 | 错误文案收敛 | `frontend/src/api/error-copy.ts` | 查表机制；文案表在各领域的 `model/*-error.ts` 里 |
-| 个人偏好 | `frontend/src/features/settings/composables/usePreferences.ts` | 应用级单例，读写后端 `user_preferences`；为什么入库见 `docs/adr/0027-user-level-preferences-in-database.md`，读失败与未加载完时的退化行为见该文件的头注释 |
+| 个人偏好 | `frontend/src/features/settings/composables/usePreferences.ts` | 应用级单例，读写后端 `user_preferences` 上的两个检索数量参数；为什么入库见 `docs/adr/0027-user-level-preferences-in-database.md`，读失败与未加载完时的退化行为见该文件的头注释 |
 | OpenAPI 类型 | `frontend/src/api/generated/openapi.ts` | 由后端 `/openapi.json` 生成，命令见 `frontend/README.md` |

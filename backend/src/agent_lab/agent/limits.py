@@ -47,7 +47,7 @@ SUMMARIZATION_PLACEHOLDER_WINDOW = 32768
 # 的东西。
 PRUNED_TOOL_RESULT_HEAD_CHARS = 512
 PRUNED_TOOL_RESULT_TAIL_CHARS = 256
-PRUNED_TOOL_RESULT_PLACEHOLDER = "[... tool result middle pruned ...]"
+PRUNED_TOOL_RESULT_PLACEHOLDER = "（中间部分已省略）"
 
 
 # ---- 模型客户端缓存（见 ADR 0046）----
@@ -66,10 +66,6 @@ MODEL_CLIENT_CACHE_MAX_ENTRIES = 32
 
 
 # ---- 输入上限：约束用户和外部内容能往模型上下文里塞多少 ----
-
-# 自定义系统提示词的字符上限。超过直接拒绝请求，不截断——截断会把提示词砍成半句，
-# 模型的行为反而更难预期。
-MAX_SYSTEM_PROMPT_CHARS = 4000
 
 # 单条用户消息的字符上限。
 MAX_USER_MESSAGE_CHARS = 4000
@@ -141,9 +137,9 @@ DELETE_RUNNING_THREAD_POLL_INTERVAL_SECONDS = 0.2
 RUN_STATE_POLL_INTERVAL_SECONDS = 1.0
 
 
-# ---- 部署时的排空与接手（见 ADR 0040）----
+# ---- 部署时的排空（见 ADR 0051）----
 
-# 进程收尾时等手上在途运行走到「可交接边界」的总预算。**是整次收尾的总预算，不是每个运行各一份**
+# 进程收尾时等手上在途运行走到「可排空边界」的总预算。**是整次收尾的总预算，不是每个运行各一份**
 # （收尾时对手上所有运行一起请求排空、并发等待，所以运行数不影响这个上限）。它覆盖的是典型的一次
 # 模型调用或一批工具调用（几秒到三十秒），**不覆盖**最坏的重试链（模型 60 秒超时 × 3 次尝试再叠
 # 主备回退、工具 30 秒 × 3）——那种 superstep 会被放弃。这是刻意的取舍：宁可最坏部署少等一会儿、
@@ -153,15 +149,10 @@ RUN_STATE_POLL_INTERVAL_SECONDS = 1.0
 # 的余量，见 docs/container_deployment.md 与 docker-compose.yml。
 RUN_DRAIN_TIMEOUT_SECONDS = 120.0
 
-# 每个 API 进程扫描「被排空、等接手」标记的节奏。启动时先扫一次，之后按这个间隔再扫。
-# 扫到就抢所有权接着跑（见 ADR 0040）。
-RUN_HANDOVER_SCAN_INTERVAL_SECONDS = 30.0
-
 
 __all__ = [
     "DELETE_RUNNING_THREAD_POLL_INTERVAL_SECONDS",
     "DELETE_RUNNING_THREAD_WAIT_SECONDS",
-    "MAX_SYSTEM_PROMPT_CHARS",
     "MAX_USER_MESSAGE_CHARS",
     "MODEL_CALL_RUN_LIMIT",
     "MODEL_CLIENT_CACHE_MAX_ENTRIES",
@@ -173,7 +164,6 @@ __all__ = [
     "RETRY_INITIAL_DELAY_SECONDS",
     "RUN_DRAIN_TIMEOUT_SECONDS",
     "RUN_EVENT_POLL_INTERVAL_SECONDS",
-    "RUN_HANDOVER_SCAN_INTERVAL_SECONDS",
     "RUN_LIVENESS_UPDATE_INTERVAL_SECONDS",
     "RUN_STATE_POLL_INTERVAL_SECONDS",
     "RUN_ZOMBIE_THRESHOLD_SECONDS",

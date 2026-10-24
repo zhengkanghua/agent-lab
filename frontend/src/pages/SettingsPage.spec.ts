@@ -2,21 +2,14 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { pendingConfirm, resetConfirm, settleConfirm } from '@/shared/composables/confirm'
 
 const api = vi.hoisted(() => ({
-  // 设置页会经 useDefaultAgentPrompt 拉默认提示词；会读写个人偏好；也会读用量。
-  fetchAgentDefaultPrompt: vi.fn(),
+  // 设置页会读写个人偏好，也会读用量。
   fetchPreferences: vi.fn(),
   savePreferences: vi.fn(),
   fetchUsageSummary: vi.fn(),
   fetchUsageRecords: vi.fn(),
   fetchUsageModels: vi.fn(),
-}))
-
-vi.mock('@/api/agent-chat', () => ({
-  fetchAgentDefaultPrompt: api.fetchAgentDefaultPrompt,
-  MAX_SYSTEM_PROMPT_CHARACTERS: 4000,
 }))
 
 vi.mock('@/api/preferences', () => ({
@@ -31,9 +24,9 @@ vi.mock('@/api/usage', () => ({
   fetchUsageModels: api.fetchUsageModels,
 }))
 
-/** 后端那一份的形状：字段名与前端不同，默认是「未配置 + 默认数量参数」。 */
+/** 后端那一份的形状：字段名与前端不同，默认是两个数量参数的默认档。 */
 function remote(overrides: Record<string, unknown> = {}) {
-  return { systemPrompt: '', documentLimit: 10, matchesPerDocument: 3, ...overrides }
+  return { documentLimit: 10, matchesPerDocument: 3, ...overrides }
 }
 
 const session = vi.hoisted(() => ({
@@ -91,15 +84,11 @@ async function mountAt(path: string) {
 
 describe('SettingsPage', () => {
   beforeEach(() => {
-    // 确认请求是模块级单例，会跨用例存活；不清理的话下一条用例一上来就顶着一个打开态的确认框。
-    resetConfirm()
     usePreferences().resetForTests()
     api.fetchPreferences.mockReset()
     api.fetchPreferences.mockResolvedValue(remote())
     api.savePreferences.mockReset()
     api.savePreferences.mockImplementation((next: unknown) => Promise.resolve(next))
-    api.fetchAgentDefaultPrompt.mockReset()
-    api.fetchAgentDefaultPrompt.mockResolvedValue('你是新闻检索助手。')
     session.user.value = { email: 'admin@example.com', is_superuser: true }
     session.logout.mockReset()
     api.fetchUsageSummary.mockReset()
@@ -181,7 +170,7 @@ describe('SettingsPage', () => {
 
   it('偏好还没读回来时两个下拉禁用，改动不会把服务端配置覆盖成默认值', async () => {
     // 这条守的是一次真实的数据丢失：写入是整体覆盖（提交 `{...preferences}` 整份），
-    // 读还没回来时 store 里是默认值，此时放行一次改动就会把账号上的自定义提示词一起
+    // 读还没回来时 store 里是默认值，此时放行一次改动就会把账号上的两个数量参数一起
     // 覆盖成默认——用户只是想调个下拉。用「永远不 resolve」把加载态钉住。
     let release!: (value: unknown) => void
     api.fetchPreferences.mockImplementation(() => new Promise((resolve) => (release = resolve)))
@@ -196,7 +185,7 @@ describe('SettingsPage', () => {
     expect(api.savePreferences).not.toHaveBeenCalled()
 
     // 读回来之后才可编辑。
-    release(remote({ systemPrompt: '账号上的提示词', documentLimit: 10 }))
+    release(remote({ documentLimit: 10 }))
     await flushPromises()
     expect(
       wrapper.findAll('select').every((each) => each.attributes('disabled') === undefined),
@@ -214,103 +203,28 @@ describe('SettingsPage', () => {
     wrapper.unmount()
   })
 
-  it('Agent 偏好分区：保存把草稿提交进偏好并内联确认', async () => {
-    const { wrapper } = await mountAt('/settings/agent')
-
-    expect(wrapper.find('#agent-prefs-heading').exists()).toBe(true)
-    expect(api.fetchAgentDefaultPrompt).toHaveBeenCalledOnce()
-
-    const editor = wrapper.get('textarea')
-    await editor.setValue('你是财经记者。')
-    expect(wrapper.get('.status-badge').text()).toContain('使用服务端默认提示词')
-
-    await wrapper.get('.editor-actions button[type="button"]').trigger('click')
-    await flushPromises()
-
-    expect(api.savePreferences).toHaveBeenCalledWith(
-      expect.objectContaining({ systemPrompt: '你是财经记者。' }),
-      { notifyUnauthorized: false },
-    )
-    expect(usePreferences().preferences.agentSystemPrompt).toBe('你是财经记者。')
-    expect(wrapper.get('.status-badge').text()).toContain('已启用自定义提示词')
-    expect(wrapper.get('.saved-note').text()).toContain('已保存')
-    wrapper.unmount()
-  })
-
-  it('普通账号也能看到 Agent 偏好分区——它随 Agent 对话一起放开', async () => {
-    // 原先这里断言的是「普通用户被拉回账号分区」。那条行为随 ADR 0030 作废：
-    // Agent 对话对所有登录账号开放，它的偏好就不再是超级用户专有。
+  it('普通账号能进设置页，导航有三项', async () => {
+    // 原先这里断言的是「普通用户被拉回账号分区」。那条行为随 ADR 0030 作废：设置中心的
+    // 三个分区（账号安全、检索偏好、用量）都对所有登录账号开放。
     session.user.value = { email: 'user@example.com', is_superuser: false }
-    const { wrapper } = await mountAt('/settings/agent')
+    const { wrapper } = await mountAt('/settings')
 
-    expect(wrapper.find('#agent-prefs-heading').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Agent 偏好')
-    // 三个分区都在导航里。
-    expect(wrapper.text()).toContain('账号安全')
-    expect(wrapper.text()).toContain('检索偏好')
+    expect(wrapper.find('#account-heading').exists()).toBe(true)
+    const labels = wrapper.findAll('.section-link').map((link) => link.text())
+    expect(labels).toHaveLength(3)
+    expect(labels.join()).toContain('账号安全')
+    expect(labels.join()).toContain('检索偏好')
+    expect(labels.join()).toContain('用量')
     wrapper.unmount()
   })
 
-  it('分区切换保留提示词草稿，离开时可取消，保存后可直接离开', async () => {
+  it('旧深链 /settings/agent 被改写到账号分区', async () => {
+    // 收藏里可能还留着这条地址。非法分区走的是既有机制：回落到 account 并把 URL 一起改写，
+    // 不换 URL 静默吞掉会让地址栏与界面各说一句话。
     const { wrapper, router } = await mountAt('/settings/agent')
-    await wrapper.get('textarea').setValue('尚未保存的完整提示词')
-    await router.push('/settings/search')
-    await router.push('/settings/agent')
-    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('尚未保存的完整提示词')
-    expect(usePreferences().preferences.agentSystemPrompt).toBe('')
-    // 分区之间切换不算离开，不该弹确认框。
-    expect(pendingConfirm.value).toBeNull()
 
-    // 离开设置中心：确认框弹出并点名是提示词草稿；取消就留在原处。
-    const leaving = router.push('/')
-    await flushPromises()
-    expect(pendingConfirm.value?.title).toContain('提示词')
-    settleConfirm(false)
-    await leaving
-    expect(router.currentRoute.value.path).toBe('/settings/agent')
-
-    // 保存之后离开不再问。
-    await wrapper.get('.editor-actions button').trigger('click')
-    await flushPromises()
-    await router.push('/')
-    expect(pendingConfirm.value).toBeNull()
-    expect(router.currentRoute.value.path).toBe('/')
-    wrapper.unmount()
-  })
-
-  it('有提示词草稿时刷新页面触发离开提醒', async () => {
-    const { wrapper } = await mountAt('/settings/agent')
-    await wrapper.get('textarea').setValue('需要保留的草稿')
-    const event = new Event('beforeunload', { cancelable: true })
-    window.dispatchEvent(event)
-    expect(event.defaultPrevented).toBe(true)
-    wrapper.unmount()
-  })
-
-  it('退出前确认未保存草稿，取消不发请求，退出失败仍保留草稿', async () => {
-    const { wrapper } = await mountAt('/settings/agent')
-    await wrapper.get('textarea').setValue('退出前尚未保存的草稿')
-    const logout = wrapper.get('button[aria-label="退出登录"]')
-
-    // 取消：不退出。
-    const cancelled = logout.trigger('click')
-    await flushPromises()
-    expect(pendingConfirm.value?.title).toContain('提示词')
-    settleConfirm(false)
-    await cancelled
-    await flushPromises()
-    expect(session.logout).not.toHaveBeenCalled()
-
-    // 确认：真的退出，失败后草稿仍在。
-    session.logout.mockRejectedValue(new Error('offline'))
-    const confirmed = logout.trigger('click')
-    await flushPromises()
-    settleConfirm(true)
-    await confirmed
-    await flushPromises()
-    expect(session.logout).toHaveBeenCalledOnce()
-    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('退出前尚未保存的草稿')
-    expect(wrapper.text()).toContain('退出失败')
+    expect(wrapper.find('#account-heading').exists()).toBe(true)
+    expect(router.currentRoute.value.path).toBe('/settings/account')
     wrapper.unmount()
   })
 
@@ -349,20 +263,6 @@ describe('SettingsPage', () => {
     await flushPromises()
     // 无来路时回默认入口（Agent 对话）——与 `/` 的落点一致。
     expect(router.currentRoute.value.path).toBe('/agent')
-    wrapper.unmount()
-  })
-
-  it('吸附保存条提供放弃修改：草稿退回已保存值，不落盘', async () => {
-    const { wrapper } = await mountAt('/settings/agent')
-    await wrapper.get('textarea').setValue('改了一半的提示词')
-
-    const discard = wrapper
-      .findAll('.editor-actions button')
-      .find((button) => button.text() === '放弃修改')!
-    await discard.trigger('click')
-
-    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('')
-    expect(usePreferences().preferences.agentSystemPrompt).toBe('')
     wrapper.unmount()
   })
 

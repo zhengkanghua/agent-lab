@@ -3,7 +3,7 @@
 本模块位于 FastAPI 边界层最底部，是各特性路由共同依赖的基础设施，而不是某个接口的
 一部分：它只从 ``application.state`` 取出 composition root（``main.py``）在 lifespan
 或创建应用时放进去的进程级/请求级组件。把这些依赖放在独立模块里，是为了让
-``vector_search`` 与 ``document_search`` 这类平级路由都依赖公共模块，而不是互相
+``document_search`` 与 ``documents`` 这类平级路由都依赖公共模块，而不是互相
 import——否则任何一个特性路由都会同时扮演「接口」和「基础设施」两种角色。
 
 本模块只读取进程内对象，既不构造 Runtime，也不执行 PostgreSQL、FreshRSS、
