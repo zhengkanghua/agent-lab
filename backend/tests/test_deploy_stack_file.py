@@ -137,6 +137,40 @@ def test_every_service_declares_its_own_stop_grace_period() -> None:
         assert duration_seconds(services[name]["stop_grace_period"]) == expected, name
 
 
+def test_drain_wait_covers_the_longest_start_first_stop_grace() -> None:
+    """等旧容器退出的上限，必须盖住「会带着旧任务走出部署」的那几个停止宽限。
+
+    ``stack deploy --detach=false`` 返回只说明更新完成，而 ``start-first`` 的服务在那一刻只是
+    **被要求停**，进程还在跑排空：API 要排空在途运行（180 秒），Worker 要先把手上的文档批次
+    做完（360 秒）。上限按 API 的 180 秒取，会在 Worker 真有活儿时提前超时，后果是破坏性迁移
+    被跳过、部署报红一次——服务不坏，但这次发布白跑。所以断言的是「上限 ≥ 两者中最长的那个
+    + 余量」，余量给每轮 5 秒轮询与 ``docker service ps`` 的调用开销。
+
+    只算 ``start-first`` 的服务是有意的：``stop-first`` 的服务（Beat）由 Swarm 等它停完才起
+    新的，不会带着旧任务走出部署；把它的 30 秒也算进来只会让断言失去意义。
+    """
+
+    services = load_stack()["services"]
+    start_first = {
+        name: duration_seconds(service["stop_grace_period"])
+        for name, service in services.items()
+        if service["deploy"]["update_config"]["order"] == "start-first"
+    }
+    # 前提本身也要钉住：有服务改用 stop-first 时，这条断言连同它的理由都该重写。
+    assert sorted(start_first) == ["backend", "task-worker"]
+
+    workflow = WORKFLOW_FILE.read_text(encoding="utf-8")
+    match = re.search(r"drain_deadline=\$\(\(SECONDS \+ (\d+)\)\)", workflow)
+    assert match is not None, "部署工作流里找不到等旧容器退出的期限"
+
+    wait = int(match.group(1))
+    longest = max(start_first.values())
+    assert wait >= longest + 10, (
+        f"等待上限 {wait} 秒盖不住最长的停止宽限 {longest} 秒："
+        "旧容器还没退完就放行，破坏性迁移会落在还在读库的旧代码上"
+    )
+
+
 def test_api_healthcheck_points_at_the_readiness_endpoint() -> None:
     """API 的健康检查目标是只读的就绪端点，四个时间参数按初值声明。
 

@@ -483,15 +483,19 @@ jobs:
             done
 
             # ---------- 等旧容器真正退出 ----------
-            # UpdateStatus 完成只说明旧任务被更新器判定为停止，**不等于进程已经退出**：
-            # stop_grace_period 是 180 秒，排空期间旧代码还在读库。破坏性迁移必须等它真的没了，
-            # 否则删掉的列会被那台还在跑排空的容器读到。
+            # UpdateStatus 完成只说明旧任务被更新器判定为停止，**不等于进程已经退出**：排空期间
+            # 旧代码还在读库。破坏性迁移必须等它真的没了，否则删掉的列会被那台还在跑排空的容器读到。
+            #
+            # 上限取「**先起后停**服务的停止宽限里最长那个」加余量：API 是 180 秒，Worker 是
+            # 360 秒（它要让手上的文档批次做完）。Worker 也是 start-first，所以它同样会带着旧任务
+            # 走出 `stack deploy`，只按 API 的 180 秒取上限会在有文档批次时提前超时。Beat 是
+            # stop-first，Swarm 会等它停完才起新的，不残留。测试钉住这条不等式。
             #
             # 判据不能用「docker ps 里 Up 的个数降到副本数」：滚动更新是逐个替换的，中途可能出现
             # 「一个旧容器已退、另一个还在排空」，而 Up 个数刚好等于副本数，那时候提前放行就会
             # 删掉另一个旧容器正在读的列。要数的是「已经被要求停、但容器还在跑」的任务：
             # desired-state=shutdown 而 CurrentState 仍是 Running，就是还在排空的那种。
-            drain_deadline=$((SECONDS + 240))
+            drain_deadline=$((SECONDS + 420))
             draining=""
             while [ "$SECONDS" -lt "$drain_deadline" ]; do
               draining=""
@@ -508,7 +512,7 @@ jobs:
               fi
             done
             if echo "$draining" | grep -q '=[1-9]'; then
-              echo "等待旧容器退出超时（240 秒）：$draining"
+              echo "等待旧容器退出超时（420 秒）：$draining"
               docker service ps agent-lab_backend --no-trunc 2>/dev/null | head -20 || true
               echo "破坏性迁移不执行：旧容器还在读库，此时删列会把它打死。"
               echo "新容器已经在服务，服务不受影响；下次部署会重试这一步。"

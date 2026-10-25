@@ -8,13 +8,13 @@
 它们会红，而不是等到某次发布把旧容器打死才发现。
 """
 
+import ast
 from pathlib import Path
 
 import pytest
 from alembic.script import ScriptDirectory
-
 from agent_lab.scripts.alembic_pre_head import from_config, pre_deploy_head
-from tests.migration_helpers import VERSIONS_DIR
+from tests.migration_helpers import VERSIONS_DIR, load_migration, migration_chain
 
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
@@ -151,3 +151,77 @@ def test_deferred_migrations_are_marked_in_source(migration: Path) -> None:
 
     assert migration.exists(), f"迁移文件不见了：{migration}"
     assert "POST_DEPLOY = True" in migration.read_text(encoding="utf-8")
+
+
+def _destructive_operations(path: Path) -> list[str]:
+    """列出迁移文件里那些「会让旧代码读不下去」的操作。
+
+    用 AST 而不是正则：迁移文件开头那段中文说明里很容易出现 ``op.drop_column`` 这样的字面量，
+    正则会把说明当成操作。
+
+    Args:
+        path: 迁移文件路径。
+
+    Returns:
+        命中的操作名，空列表表示这条迁移对旧代码安全。
+    """
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "op"
+        ):
+            continue
+        if func.attr in {"drop_column", "drop_table"}:
+            found.append(func.attr)
+        elif func.attr == "alter_column" and any(
+            keyword.arg == "new_column_name" for keyword in node.keywords
+        ):
+            found.append("alter_column(new_column_name=)")
+    return found
+
+
+def test_destructive_migrations_after_the_boundary_are_marked() -> None:
+    """边界之后新写的破坏性迁移，必须自己写明 ``POST_DEPLOY``。
+
+    这是整套机制唯一靠人的地方：忘写不会报任何错，那条迁移会按老办法在旧容器还在排空时
+    执行，把它打死。所以这里逐条扫边界之后的迁移源码——说明里提到这些操作不算，只有真的调
+    用了才算。
+
+    只扫边界之后：再往前的那些库里已经执行过、永远不会再跑，标记对它们没有意义，全链扫描
+    只会制造一片假红。
+
+    ``op.drop_constraint`` 与 ``op.drop_index`` 刻意不算：拆掉约束不会让旧代码崩（拆外键约束
+    那次就是它），而它真正的风险是留下脏数据，静态判不出来；把它们算进来会让一批历史迁移
+    全部误报。
+    """
+
+    chain = migration_chain()
+    assert EXPECTED_PRE_DEPLOY_HEAD in chain, (
+        "边界 revision 不在链上：改过链之后要同步 EXPECTED_PRE_DEPLOY_HEAD"
+    )
+    after = chain[: chain.index(EXPECTED_PRE_DEPLOY_HEAD)]
+    assert after, "边界之后没有任何迁移，这条断言要跟着链一起改"
+
+    files = {
+        load_migration(path).revision: path
+        for path in VERSIONS_DIR.glob("*.py")
+        if not path.name.startswith("__")
+    }
+    offenders: list[str] = []
+    for revision in after:
+        path = files[revision]
+        operations = _destructive_operations(path)
+        if operations and "POST_DEPLOY = True" not in path.read_text(encoding="utf-8"):
+            offenders.append(f"{path.name}（{sorted(set(operations))}）")
+
+    assert not offenders, (
+        "这些迁移里有破坏性操作却没写 POST_DEPLOY = True，会在旧容器还在排空时执行：\n"
+        + "\n".join(offenders)
+    )
